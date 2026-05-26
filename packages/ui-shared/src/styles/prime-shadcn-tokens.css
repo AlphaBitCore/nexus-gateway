@@ -1,0 +1,172 @@
+/*
+ * Prime-console alignment layer.
+ * These tokens mirror the local prime-console palette while keeping Nexus's
+ * own CSS-variable architecture and true light/dark mode support.
+ */
+
+@theme {
+  --color-navy-900: #192033;
+  --color-brand: #3b518a;
+  --color-brand-hover: #324570;
+  --color-brand-soft: #eef2fa;
+  --color-brand-dark: #243969;
+  --color-gray-bg: #f1f2f4;
+  --color-page-bg: #ffffff;
+  --color-gray-50: #f7f8f8;
+  --color-text-primary: #000000;
+  --color-text-secondary: #5a607f;
+  --color-text-tertiary: #6e768c;
+  --color-text-placeholder: #9ba1ae;
+  --color-divider: #e6e9f4;
+  --color-divider-strong: #d7dde7;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #f8f9fb;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #3b518a;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f2f4;
+  --secondary-foreground: #192033;
+  --muted: #f7f8f8;
+  --muted-foreground: #5a607f;
+  --accent: #eef2fa;
+  --accent-foreground: #192033;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e6e9f4;
+  --input: #d7dde7;
+  --ring: #3b518a;
+  --chart-1: #3b518a;
+  --chart-2: #5a607f;
+  --chart-3: #16a34a;
+  --chart-4: #d97706;
+  --chart-5: #0891b2;
+  --sidebar: #192033;
+  --sidebar-foreground: #6e768c;
+  --sidebar-primary: #3b518a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: oklch(1 0 0 / 8%);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: color-mix(in srgb, #5a607f 24%, transparent);
+  --sidebar-ring: #8ea4da;
+}
+
+.dark,
+[data-theme="dark"] {
+  --background: #0f1422;
+  --foreground: #f8f9fb;
+  --card: #141b2b;
+  --card-foreground: #f8f9fb;
+  --popover: #171f31;
+  --popover-foreground: #f8f9fb;
+  --primary: #3b518a;
+  --primary-foreground: #ffffff;
+  --secondary: #1b2436;
+  --secondary-foreground: #f8f9fb;
+  --muted: #1b2436;
+  --muted-foreground: #aab3c8;
+  --accent: #223050;
+  --accent-foreground: #f8f9fb;
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: color-mix(in srgb, #d7dde7 16%, transparent);
+  --input: color-mix(in srgb, #d7dde7 22%, transparent);
+  --ring: #8ea4da;
+  --chart-1: #8ea4da;
+  --chart-2: #aab3c8;
+  --chart-3: #4ade80;
+  --chart-4: #fb923c;
+  --chart-5: #22d3ee;
+  --sidebar: #192033;
+  --sidebar-foreground: #8a93ad;
+  --sidebar-primary: #8ea4da;
+  --sidebar-primary-foreground: #0f1422;
+  --sidebar-accent: oklch(1 0 0 / 8%);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: color-mix(in srgb, #5a607f 24%, transparent);
+  --sidebar-ring: #8ea4da;
+}
+
+@layer utilities {
+  .page-shell {
+    position: relative;
+    isolation: isolate;
+    background-color: var(--color-bg);
+    color: var(--foreground);
+  }
+
+  .page-shell::before {
+    content: '';
+    position: absolute;
+    top: -126px;
+    left: -39px;
+    width: 553px;
+    height: 315px;
+    border-radius: var(--g-radius-full);
+    pointer-events: none;
+    background: var(--page-shell-glow);
+    opacity: var(--page-shell-glow-opacity);
+    filter: blur(100px);
+    z-index: 0;
+  }
+
+  .page-shell > * {
+    position: relative;
+    z-index: 1;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

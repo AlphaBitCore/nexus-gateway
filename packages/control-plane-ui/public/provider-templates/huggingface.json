@@ -1,0 +1,63 @@
+{
+  "name": "huggingface",
+  "displayName": "Hugging Face Inference",
+  "description": "Hugging Face TGI \u2014 OpenAI-compatible chat completions on Hugging Face's serverless inference (api-inference.huggingface.co). Model availability and pricing depend on the active provider partnership; admin should verify against https://huggingface.co/docs/api-inference/index before customer-facing use.",
+  "baseUrl": "https://api-inference.huggingface.co",
+  "adapterType": "huggingface",
+  "models": [
+    {
+      "code": "meta-llama/Llama-3.3-70B-Instruct",
+      "name": "Llama 3.3 70B Instruct",
+      "description": "Meta's Llama 3.3 70B served via HF TGI (OpenAI-compat /v1/chat/completions).",
+      "providerModelId": "meta-llama/Llama-3.3-70B-Instruct",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "name": "Llama 3.1 8B Instruct",
+      "description": "Smaller Llama 3.1 8B for cheap latency-sensitive workloads.",
+      "providerModelId": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "Qwen/Qwen2.5-72B-Instruct",
+      "name": "Qwen 2.5 72B Instruct",
+      "description": "Alibaba Qwen 2.5 72B served via HF TGI.",
+      "providerModelId": "Qwen/Qwen2.5-72B-Instruct",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "mistralai/Mistral-7B-Instruct-v0.3",
+      "name": "Mistral 7B Instruct v0.3",
+      "description": "Mistral's compact 7B instruct model.",
+      "providerModelId": "mistralai/Mistral-7B-Instruct-v0.3",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 32768,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

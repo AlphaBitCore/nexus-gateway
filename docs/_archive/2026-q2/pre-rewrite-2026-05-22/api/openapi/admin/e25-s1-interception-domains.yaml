@@ -1,0 +1,554 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway Admin — Interception Domains (E25-S1)
+  version: "1.0.0"
+  description: |
+    Admin CRUD API over the `interception_domain` + `interception_path`
+    tables that drive the Compliance Proxy interception catalog and the
+    Agent's Category B `interception_domains` configuration pull.
+
+    The two tables are authoritative for:
+      - compliance-proxy: consumed via `store.ListEnabledInterceptionDomains`
+        on every reducer tick for `interception_domains` (and derived
+        `domain_allowlist`).
+      - agent: consumed via Hub's `AgentInterceptionDomainsLoader`
+        (Category B pull).
+
+    Every successful write on these endpoints fires exactly ONE Hub
+    invalidation: `InvalidateConfig("compliance-proxy",
+    "interception_domains")`. Compliance Proxy's shadow reducer already
+    cascades that key to both `CategoryInterceptionDomains` and
+    `CategoryAllowlists` caches, so `domain_allowlist` does not need a
+    second push. Agent's Category B pull re-reads the same key from Hub.
+
+    `domain_allowlist` is a **derived projection** of enabled
+    InterceptionDomain rows (their `host_pattern` field). There is no
+    separate admin surface for it.
+
+    Source of truth: `docs/developers/specs/e25/e25-s1-interception-domains-admin.md`.
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane dev server
+
+tags:
+  - name: Interception Domains
+    description: Admin CRUD for interception domains and their paths.
+  - name: Traffic Adapters
+    description: Catalog of built-in traffic adapter identifiers.
+
+paths:
+  /api/admin/traffic-adapters:
+    get:
+      summary: List built-in traffic adapter IDs
+      description: |
+        Returns the sorted list of adapter IDs from
+        `packages/shared/traffic/adapters` (same set `RegisterBuiltins`
+        wires at Compliance Proxy / Agent startup). Used by the interception
+        domain admin UI for the Adapter dropdown. Requires `admin:ReadSettings`.
+      operationId: listBuiltinTrafficAdapters
+      tags: [Traffic Adapters]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Sorted adapter identifier strings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { type: string }
+              example:
+                data:
+                  - anthropic
+                  - azure-openai
+                  - bedrock
+                  - deepseek
+                  - gemini
+                  - generic-jsonpath
+                  - glm
+                  - minimax
+                  - openai-compat
+                  - vertex
+
+  /api/admin/interception-domains:
+    get:
+      summary: List interception domains (with nested paths)
+      description: |
+        Paginated list of interception domains. Unlike
+        `ListEnabledInterceptionDomains` (the read-only runtime loader),
+        this endpoint includes disabled rows so admins can toggle them
+        without losing visibility. Requires `admin:ReadSettings`.
+      operationId: listInterceptionDomains
+      tags: [Interception Domains]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: search
+          schema: { type: string }
+          description: ILIKE match on name, hostPattern, or adapterId.
+        - in: query
+          name: enabled
+          schema: { type: string, enum: ["true", "false"] }
+          description: Optional enabled filter. Omit for "all".
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: A page of interception domains.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/InterceptionDomain' }
+                  total:
+                    type: integer
+                    minimum: 0
+              examples:
+                oneEnabled:
+                  summary: Single enabled domain with one path
+                  value:
+                    data:
+                      - id: "d-openai"
+                        name: "OpenAI (chat + completions)"
+                        hostPattern: "api.openai.com"
+                        hostMatchType: "EXACT"
+                        adapterId: "openai"
+                        enabled: true
+                        priority: 100
+                        defaultPathAction: "PROCESS"
+                        onAdapterError: "FAIL_OPEN"
+                        networkZone: "PUBLIC"
+                        source: "admin"
+                        paths:
+                          - id: "p-chat"
+                            domainId: "d-openai"
+                            pathPattern: ["/v1/chat/completions"]
+                            matchType: "PREFIX"
+                            action: "PROCESS"
+                            priority: 10
+                            enabled: true
+                    total: 1
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    post:
+      summary: Create an interception domain (optionally with paths)
+      description: |
+        Creates a domain and any nested `paths[]` entries in a single
+        transaction. Fires `InvalidateConfig("compliance-proxy",
+        "interception_domains")` on 201 and emits an admin audit entry
+        `Action=create, EntityType=interceptionDomain`. Requires
+        `admin:UpdateSettings`.
+      operationId: createInterceptionDomain
+      tags: [Interception Domains]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InterceptionDomainCreate' }
+            examples:
+              openaiWithChat:
+                summary: OpenAI + /v1/chat/completions PROCESS rule
+                value:
+                  name: "OpenAI (chat + completions)"
+                  description: "Primary OpenAI API endpoint"
+                  hostPattern: "api.openai.com"
+                  hostMatchType: "EXACT"
+                  adapterId: "openai"
+                  priority: 100
+                  defaultPathAction: "PROCESS"
+                  onAdapterError: "FAIL_OPEN"
+                  networkZone: "PUBLIC"
+                  paths:
+                    - pathPattern: ["/v1/chat/completions"]
+                      matchType: "PREFIX"
+                      action: "PROCESS"
+                      priority: 10
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterceptionDomain' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/interception-domains/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get an interception domain by id
+      operationId: getInterceptionDomain
+      tags: [Interception Domains]
+      security: [ { cookieAuth: [] } ]
+      responses:
+        '200':
+          description: Domain with nested paths.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterceptionDomain' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    put:
+      summary: Update an interception domain (partial)
+      description: |
+        Patch-style partial update: fields omitted from the body are
+        left unchanged. Paths are NOT edited through this endpoint —
+        use the nested `/paths` collection. Requires
+        `admin:UpdateSettings`.
+      operationId: updateInterceptionDomain
+      tags: [Interception Domains]
+      security: [ { cookieAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InterceptionDomainUpdate' }
+      responses:
+        '200':
+          description: Updated domain.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterceptionDomain' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    delete:
+      summary: Delete an interception domain (cascades to paths)
+      description: |
+        Removes the domain and all its paths (DB `ON DELETE CASCADE`).
+        Requires `admin:UpdateSettings`.
+      operationId: deleteInterceptionDomain
+      tags: [Interception Domains]
+      security: [ { cookieAuth: [] } ]
+      responses:
+        '204': { description: Deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/interception-domains/{id}/paths:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+        description: Parent domain id.
+    post:
+      summary: Create a path under a domain
+      operationId: createInterceptionPath
+      tags: [Interception Domains]
+      security: [ { cookieAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InterceptionPathCreate' }
+            examples:
+              chatCompletions:
+                summary: Process /v1/chat/completions
+                value:
+                  pathPattern: ["/v1/chat/completions"]
+                  matchType: "PREFIX"
+                  action: "PROCESS"
+                  priority: 10
+                  enabled: true
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterceptionPath' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/interception-domains/{id}/paths/{pathId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: pathId
+        required: true
+        schema: { type: string }
+    put:
+      summary: Update a path under a domain (partial)
+      description: |
+        Partial update. Validates that `pathId` resolves to a path whose
+        `domainId` matches the URL `id`; mismatches return 404 (not 400)
+        to avoid leaking the existence of sibling rows.
+      operationId: updateInterceptionPath
+      tags: [Interception Domains]
+      security: [ { cookieAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InterceptionPathUpdate' }
+      responses:
+        '200':
+          description: Updated path.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterceptionPath' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    delete:
+      summary: Delete a path under a domain
+      operationId: deleteInterceptionPath
+      tags: [Interception Domains]
+      security: [ { cookieAuth: [] } ]
+      responses:
+        '204': { description: Deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: nexus_admin_session
+
+  responses:
+    Unauthorized:
+      description: Session missing / expired.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but lacks the required IAM action.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No row with the given id.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Malformed body or invalid enum value.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    HostMatchType:
+      type: string
+      enum: [EXACT, PREFIX, GLOB, REGEX]
+    PathMatchType:
+      type: string
+      enum: [EXACT, PREFIX, GLOB, REGEX]
+    PathAction:
+      type: string
+      enum: [PROCESS, PASSTHROUGH, BLOCK]
+    DefaultPathAction:
+      type: string
+      enum: [PROCESS, PASSTHROUGH, BLOCK]
+    FailureAction:
+      type: string
+      enum: [FAIL_OPEN, FAIL_CLOSED]
+    NetworkZone:
+      type: string
+      enum: [PUBLIC, INTERNAL]
+
+    InterceptionPath:
+      type: object
+      required: [id, pathPattern, matchType, action, priority, enabled]
+      properties:
+        id: { type: string }
+        domainId: { type: string }
+        pathPattern:
+          type: array
+          items: { type: string }
+        matchType: { $ref: '#/components/schemas/PathMatchType' }
+        action: { $ref: '#/components/schemas/PathAction' }
+        priority:
+          type: integer
+          default: 0
+        description:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+          default: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    InterceptionPathCreate:
+      type: object
+      required: [pathPattern, action]
+      properties:
+        pathPattern:
+          type: array
+          items: { type: string }
+        matchType: { $ref: '#/components/schemas/PathMatchType' }
+        action: { $ref: '#/components/schemas/PathAction' }
+        priority:
+          type: integer
+          default: 0
+        description:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+          default: true
+
+    InterceptionPathUpdate:
+      type: object
+      properties:
+        pathPattern:
+          type: array
+          items: { type: string }
+        matchType: { $ref: '#/components/schemas/PathMatchType' }
+        action: { $ref: '#/components/schemas/PathAction' }
+        priority: { type: integer }
+        description:
+          type: string
+          nullable: true
+        enabled: { type: boolean }
+
+    InterceptionDomain:
+      type: object
+      required:
+        - id
+        - name
+        - hostPattern
+        - hostMatchType
+        - adapterId
+        - enabled
+        - priority
+        - defaultPathAction
+        - onAdapterError
+        - networkZone
+        - paths
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description:
+          type: string
+          nullable: true
+        hostPattern: { type: string }
+        hostMatchType: { $ref: '#/components/schemas/HostMatchType' }
+        adapterId: { type: string }
+        adapterConfig:
+          description: |
+            Opaque JSON blob passed to the adapter at init time. Shape is
+            adapter-specific.
+          nullable: true
+        enabled: { type: boolean }
+        priority: { type: integer }
+        defaultPathAction: { $ref: '#/components/schemas/DefaultPathAction' }
+        onAdapterError: { $ref: '#/components/schemas/FailureAction' }
+        networkZone: { $ref: '#/components/schemas/NetworkZone' }
+        source:
+          type: string
+          description: Provenance marker; `admin` for UI-authored rows.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          nullable: true
+        paths:
+          type: array
+          items: { $ref: '#/components/schemas/InterceptionPath' }
+
+    InterceptionDomainCreate:
+      type: object
+      required: [name, hostPattern, adapterId]
+      properties:
+        name: { type: string }
+        description:
+          type: string
+          nullable: true
+        hostPattern: { type: string }
+        hostMatchType: { $ref: '#/components/schemas/HostMatchType' }
+        adapterId: { type: string }
+        adapterConfig:
+          description: Adapter-specific JSON blob.
+          nullable: true
+        enabled:
+          type: boolean
+          default: true
+        priority:
+          type: integer
+          default: 0
+        defaultPathAction: { $ref: '#/components/schemas/DefaultPathAction' }
+        onAdapterError: { $ref: '#/components/schemas/FailureAction' }
+        networkZone: { $ref: '#/components/schemas/NetworkZone' }
+        source:
+          type: string
+        paths:
+          type: array
+          items: { $ref: '#/components/schemas/InterceptionPathCreate' }
+
+    InterceptionDomainUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        description:
+          type: string
+          nullable: true
+        hostPattern: { type: string }
+        hostMatchType: { $ref: '#/components/schemas/HostMatchType' }
+        adapterId: { type: string }
+        adapterConfig:
+          description: Adapter-specific JSON blob.
+          nullable: true
+        enabled: { type: boolean }
+        priority: { type: integer }
+        defaultPathAction: { $ref: '#/components/schemas/DefaultPathAction' }
+        onAdapterError: { $ref: '#/components/schemas/FailureAction' }
+        networkZone: { $ref: '#/components/schemas/NetworkZone' }
+        source: { type: string }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message: { type: string }
+            type: { type: string }
+            code: { type: string }

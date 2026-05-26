@@ -1,0 +1,84 @@
+openapi: 3.1.0
+info:
+  title: E46 Traffic Normalized Read API
+  version: "1.0.0"
+  description: |
+    Admin read endpoint for the normalized payload stored in the
+    traffic_event_normalized sidecar table. Introduced in E46-S2 alongside
+    the OpenAI Chat normalizer wiring; serves all kinds in subsequent stories.
+
+paths:
+  /api/admin/traffic/{id}/normalized:
+    get:
+      tags: [Traffic]
+      summary: Fetch normalized payload for a traffic event
+      description: |
+        Returns the normalized JSON representation produced at capture time
+        plus normalize status / error reason / redaction spans. Behaves
+        identically across all kinds; the caller switches the UI renderer
+        based on `NormalizedPayload.kind`.
+      operationId: getTrafficEventNormalized
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrafficEventNormalized" }
+        "404":
+          description: Traffic event not found or has no normalized row
+        "403":
+          description: Caller lacks admin:traffic.read
+        "401":
+          description: Missing or invalid bearer token
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    TrafficEventNormalized:
+      type: object
+      required: [trafficEventId, normalizeVersion]
+      properties:
+        trafficEventId:
+          type: string
+          format: uuid
+        normalizeVersion:
+          type: string
+        requestNormalized:
+          oneOf:
+            - { $ref: "./e46-s1-foundation.yaml#/components/schemas/NormalizedPayload" }
+            - type: "null"
+        responseNormalized:
+          oneOf:
+            - { $ref: "./e46-s1-foundation.yaml#/components/schemas/NormalizedPayload" }
+            - type: "null"
+        requestStatus:
+          type: string
+          enum: [ok, partial, failed]
+          description: "null when no request body was captured for this event."
+        responseStatus:
+          type: string
+          enum: [ok, partial, failed]
+        requestErrorReason:
+          type: string
+        responseErrorReason:
+          type: string
+        requestRedactionSpans:
+          type: array
+          items: { $ref: "./e46-s1-foundation.yaml#/components/schemas/RedactionSpan" }
+        responseRedactionSpans:
+          type: array
+          items: { $ref: "./e46-s1-foundation.yaml#/components/schemas/RedactionSpan" }
+        createdAt:
+          type: string
+          format: date-time

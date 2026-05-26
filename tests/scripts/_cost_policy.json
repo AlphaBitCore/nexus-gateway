@@ -1,0 +1,11 @@
+{
+  "phases": {
+    "P3":  { "mode": "real-upstream", "rationale": "chat tokens cost negligible" },
+    "P3R": { "mode": "real-upstream" },
+    "P3A": { "mode": "real-upstream" },
+    "P3G": { "mode": "real-upstream" },
+    "P3E": { "mode": "real-upstream", "rationale": "embedding tokens cost negligible (~$0.0002 per smoke run)" }
+  },
+  "default_override_flag": "--all-upstream",
+  "future_phases_default": "fixture"
+}

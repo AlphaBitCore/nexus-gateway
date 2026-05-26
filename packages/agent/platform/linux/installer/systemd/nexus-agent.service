@@ -1,0 +1,60 @@
+[Unit]
+# Nexus Agent — runs as a dedicated nexus-agent system user with the
+# minimum capabilities (CAP_NET_ADMIN for iptables, CAP_NET_RAW for
+# diagnostics). The daemon's iptables Reconciler keeps the
+# NEXUS_AGENT chain healed against firewalld / ufw / manual flushes;
+# ExecStopPost is a belt-and-suspenders cleanup that fires on
+# unclean shutdowns (SIGKILL, OOM).
+Description=Nexus Agent (compliance + traffic interception daemon)
+Documentation=https://nexus-gateway.com/docs/agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus-agent
+Group=nexus-agent
+ExecStart=/usr/lib/nexus-agent/nexus-agent run -config /etc/nexus-agent/agent.yaml
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+
+# OOMScoreAdjust = -500 protects the agent from being chosen first
+# by the kernel OOM killer when memory pressure builds — without it
+# the iptables NEXUS_AGENT chain can survive past the agent that
+# was supposed to clean it up (until the next service start
+# triggers ExecStopPost). Docker, kubelet, kube-proxy all set this
+# for the same reason.
+OOMScoreAdjust=-500
+
+# Cleanup belt: if the daemon dies hard (SIGKILL / OOM / panic
+# before the runtime teardown handler fires), this script unhooks
+# and removes the NEXUS_AGENT chain so the box doesn't end up with
+# zombie redirect rules pointing at a defunct port. Idempotent;
+# safe to run when the chain is already absent.
+ExecStopPost=/usr/lib/nexus-agent/iptables-cleanup.sh
+
+# Working dir holds the audit DB / certs / device CA. Owned by
+# nexus-agent:nexus-agent (postinstall.sh chowns).
+WorkingDirectory=/var/lib/nexus-agent
+StateDirectory=nexus-agent
+StateDirectoryMode=0750
+LogsDirectory=nexus-agent
+LogsDirectoryMode=0750
+
+# Sandbox: only the capabilities the daemon needs. NoNewPrivileges
+# = true is fine now that we don't fork + exec privileged helpers
+# at runtime — install-time helpers (install-ca, nfpm postinstall)
+# run as root from postinstall.sh, never from the daemon.
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

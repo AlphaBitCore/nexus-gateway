@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  E23W-S2: Windows Service metadata for the Nexus Agent.
+
+  This file is the human-readable single source of truth for service settings.
+  The WiX installer (NexusAgent.wxs) hard-codes the same values inside its
+  <ServiceInstall> element. Update both files together when changing service
+  metadata.
+-->
+<service>
+    <name>NexusAgent</name>
+    <displayName>Nexus Agent</displayName>
+    <description>AI traffic policy enforcement agent (Nexus Gateway).</description>
+
+    <!-- Service Control Manager configuration -->
+    <startType>auto</startType>
+    <errorControl>normal</errorControl>
+    <serviceType>own</serviceType>
+    <account>LocalSystem</account>
+
+    <!-- Command-line arguments passed by SCM when starting the service -->
+    <arguments>run-svc</arguments>
+
+    <!-- Recovery actions: restart 3 times within 24h before giving up -->
+    <recovery>
+        <action delaySeconds="5">restart</action>
+        <action delaySeconds="5">restart</action>
+        <action delaySeconds="30">restart</action>
+        <resetPeriodSeconds>86400</resetPeriodSeconds>
+    </recovery>
+</service>

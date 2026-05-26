@@ -1,0 +1,247 @@
+openapi: 3.1.0
+info:
+  title: Admin — Latency Phase Analytics (E50-S6)
+  version: 1.0.0
+  description: |
+    Per-phase latency analytics endpoints introduced by E50. Splits the
+    historic single `latency_ms` value into a closed set of phases captured
+    by ai-gateway, compliance-proxy, and agent (and partly back-filled on
+    pre-E50 rows).
+
+    Endpoints:
+      - `GET /api/admin/analytics/latency-phases` — new — P50/P95/P99 per
+        phase per groupBy dimension over a time window.
+      - `GET /api/admin/analytics/summary` — extended — adds three phase
+        P95 aggregates.
+      - `GET /api/admin/analytics/sparkline` — extended — per-bucket phase
+        sums.
+      - `GET /api/admin/analytics/by-provider` — extended — per-provider
+        phase P95s.
+
+    All endpoints are gated by `admin:observability.read`. No new IAM
+    resource is introduced — phase data is conceptually part of the
+    existing observability surface.
+
+servers:
+  - url: https://nexus.example.com
+    description: Production
+  - url: http://localhost:3001
+    description: Local dev
+
+paths:
+
+  /api/admin/analytics/latency-phases:
+    get:
+      summary: Per-phase latency aggregates by dimension
+      tags: [Analytics]
+      security: [{bearerAuth: ['admin:observability.read']}]
+      parameters:
+        - in: query
+          name: groupBy
+          required: true
+          schema:
+            type: string
+            enum: [provider, model, virtual_key, node, host, device]
+        - in: query
+          name: start
+          required: true
+          schema: {type: string, format: date-time}
+        - in: query
+          name: end
+          required: true
+          schema: {type: string, format: date-time}
+        - in: query
+          name: source
+          required: false
+          schema:
+            type: string
+            enum: [all, ai-gateway, compliance-proxy, agent]
+            default: all
+        - in: query
+          name: percentile
+          required: false
+          schema:
+            type: string
+            description: Comma-separated subset of [p50,p95,p99]; default p50,p95,p99
+            default: "p50,p95,p99"
+      responses:
+        '200':
+          description: One row per group key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatencyPhasesResponse'
+        '400': {$ref: '#/components/responses/ValidationError'}
+
+  /api/admin/analytics/summary:
+    get:
+      summary: Existing summary endpoint — extended with phase P95s
+      tags: [Analytics]
+      security: [{bearerAuth: ['admin:observability.read']}]
+      parameters:
+        - {in: query, name: startTime, required: true, schema: {type: string, format: date-time}}
+        - {in: query, name: endTime,   required: true, schema: {type: string, format: date-time}}
+        - {in: query, name: source,    required: false, schema: {type: string, enum: [all, vk, proxy, agent], default: all}}
+      responses:
+        '200':
+          description: Summary with phase P95 additions.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AnalyticsSummary'}
+
+  /api/admin/analytics/sparkline:
+    get:
+      summary: Existing sparkline endpoint — extended with phase sums per bucket
+      tags: [Analytics]
+      security: [{bearerAuth: ['admin:observability.read']}]
+      parameters:
+        - {in: query, name: startTime, required: true, schema: {type: string, format: date-time}}
+        - {in: query, name: endTime,   required: true, schema: {type: string, format: date-time}}
+        - {in: query, name: source,    required: false, schema: {type: string, enum: [all, vk, proxy, agent], default: all}}
+      responses:
+        '200':
+          description: Sparkline buckets with phase sum/count pairs.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SparklineResponse'}
+
+  /api/admin/analytics/by-provider:
+    get:
+      summary: Existing by-provider endpoint — extended with phase P95s
+      tags: [Analytics]
+      security: [{bearerAuth: ['admin:observability.read']}]
+      parameters:
+        - {in: query, name: startTime, required: true, schema: {type: string, format: date-time}}
+        - {in: query, name: endTime,   required: true, schema: {type: string, format: date-time}}
+      responses:
+        '200':
+          description: Per-provider rows with phase P95 additions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ProviderBreakdownRow'}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    LatencyPhasesResponse:
+      type: object
+      required: [rows, window]
+      properties:
+        window:
+          type: object
+          required: [start, end]
+          properties:
+            start: {type: string, format: date-time}
+            end:   {type: string, format: date-time}
+        rows:
+          type: array
+          items: {$ref: '#/components/schemas/LatencyPhaseRow'}
+
+    LatencyPhaseRow:
+      type: object
+      required: [groupKey, requestCount]
+      description: |
+        Per-group aggregate row. Phase percentile fields are nullable when
+        the corresponding column is NULL on all matched rows (e.g.
+        `upstreamTtfb*` for historical rows pre-E50 that were back-filled
+        without TTFB).
+      properties:
+        groupKey:
+          type: string
+          description: Stable identifier (e.g. provider_id, model_id, virtual_key_id).
+        groupLabel:
+          type: string
+          description: Human-readable label when groupKey is a UUID.
+        requestCount: {type: integer, minimum: 0}
+
+        # Total latency (always present)
+        totalP50Ms: {type: integer, nullable: true}
+        totalP95Ms: {type: integer, nullable: true}
+        totalP99Ms: {type: integer, nullable: true}
+
+        # Our overhead = total - upstream_total
+        usOverheadP50Ms: {type: integer, nullable: true}
+        usOverheadP95Ms: {type: integer, nullable: true}
+        usOverheadP99Ms: {type: integer, nullable: true}
+
+        # Upstream phases
+        upstreamTtfbP50Ms:  {type: integer, nullable: true}
+        upstreamTtfbP95Ms:  {type: integer, nullable: true}
+        upstreamTtfbP99Ms:  {type: integer, nullable: true}
+        upstreamTotalP50Ms: {type: integer, nullable: true}
+        upstreamTotalP95Ms: {type: integer, nullable: true}
+        upstreamTotalP99Ms: {type: integer, nullable: true}
+
+        # Hook aggregates
+        requestHooksP50Ms:  {type: integer, nullable: true}
+        requestHooksP95Ms:  {type: integer, nullable: true}
+        responseHooksP50Ms: {type: integer, nullable: true}
+        responseHooksP95Ms: {type: integer, nullable: true}
+
+    AnalyticsSummary:
+      type: object
+      required: [totalRequests, errorRate]
+      properties:
+        totalRequests:        {type: integer}
+        errorRate:            {type: number}
+        avgLatencyMs:         {type: integer, nullable: true}
+        p95LatencyMs:         {type: integer, nullable: true}
+        usOverheadP95Ms:      {type: integer, nullable: true, description: New in E50}
+        upstreamTtfbP95Ms:    {type: integer, nullable: true, description: New in E50}
+        upstreamTotalP95Ms:   {type: integer, nullable: true, description: New in E50}
+        # (other existing fields elided for brevity — additive change only)
+
+    SparklineResponse:
+      type: object
+      required: [buckets]
+      properties:
+        buckets:
+          type: array
+          items: {$ref: '#/components/schemas/SparklineBucket'}
+
+    SparklineBucket:
+      type: object
+      required: [bucketStart]
+      properties:
+        bucketStart:           {type: string, format: date-time}
+        requestCount:          {type: integer}
+        latencySum:            {type: integer, nullable: true}
+        latencyCount:          {type: integer, nullable: true}
+        usOverheadSum:         {type: integer, nullable: true, description: New in E50}
+        usOverheadCount:       {type: integer, nullable: true, description: New in E50}
+        upstreamTtfbSum:       {type: integer, nullable: true, description: New in E50}
+        upstreamTtfbCount:     {type: integer, nullable: true, description: New in E50}
+        upstreamTotalSum:      {type: integer, nullable: true, description: New in E50}
+        upstreamTotalCount:    {type: integer, nullable: true, description: New in E50}
+
+    ProviderBreakdownRow:
+      type: object
+      required: [providerId, providerName, requestCount]
+      properties:
+        providerId:           {type: string}
+        providerName:         {type: string}
+        requestCount:         {type: integer}
+        avgLatencyMs:         {type: integer, nullable: true}
+        usOverheadP95Ms:      {type: integer, nullable: true, description: New in E50}
+        upstreamTtfbP95Ms:    {type: integer, nullable: true, description: New in E50}
+        upstreamTotalP95Ms:   {type: integer, nullable: true, description: New in E50}
+
+  responses:
+    ValidationError:
+      description: Invalid query parameters.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, code]
+            properties:
+              error: {type: string}
+              code:  {type: string}

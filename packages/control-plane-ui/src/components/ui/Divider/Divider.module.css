@@ -1,0 +1,33 @@
+/* ─── Divider ────────────────────────────────────────────────────────────── */
+
+.divider {
+  border: none;
+  flex-shrink: 0;
+}
+
+/* ── Orientation ────────────────────────────────────────────────────────── */
+
+.horizontal {
+  width: 100%;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.vertical {
+  width: 1px;
+  height: 100%;
+  align-self: stretch;
+  background: var(--color-border);
+}
+
+/* ── Spacing ────────────────────────────────────────────────────────────── */
+
+.horizontal.spacing-sm { margin-top: var(--g-space-2); margin-bottom: var(--g-space-2); }
+.horizontal.spacing-md { margin-top: var(--g-space-4); margin-bottom: var(--g-space-4); }
+.horizontal.spacing-lg { margin-top: var(--g-space-6); margin-bottom: var(--g-space-6); }
+.horizontal.spacing-none { margin-top: 0; margin-bottom: 0; }
+
+.vertical.spacing-sm { margin-left: var(--g-space-2); margin-right: var(--g-space-2); }
+.vertical.spacing-md { margin-left: var(--g-space-4); margin-right: var(--g-space-4); }
+.vertical.spacing-lg { margin-left: var(--g-space-6); margin-right: var(--g-space-6); }
+.vertical.spacing-none { margin-left: 0; margin-right: 0; }

@@ -1,0 +1,15 @@
+/* ── RequireRole — access denied page ─────────────────────────────────────── */
+
+.container {
+  padding: var(--g-space-8);
+  text-align: center;
+}
+
+.heading {
+  color: var(--color-text-muted);
+  margin-bottom: var(--g-space-4);
+}
+
+.message {
+  color: var(--color-text-muted);
+}

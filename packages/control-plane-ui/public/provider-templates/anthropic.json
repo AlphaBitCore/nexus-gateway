@@ -1,0 +1,122 @@
+{
+  "name": "anthropic",
+  "displayName": "Anthropic",
+  "description": "Anthropic API \u2014 Claude model family.",
+  "baseUrl": "https://api.anthropic.com",
+  "adapterType": "anthropic",
+  "models": [
+    {
+      "code": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "description": "Latest top-tier Claude. Strongest reasoning, agentic, and coding model in the Claude 4 family.",
+      "providerModelId": "claude-opus-4-7",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "thinking"
+      ],
+      "inputPricePerMillion": 5.0,
+      "outputPricePerMillion": 25.0,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 131072,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 6.25
+    },
+    {
+      "code": "claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "description": "Previous Claude Opus 4 generation. Strong reasoning and agentic capabilities.",
+      "providerModelId": "claude-opus-4-6",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "thinking"
+      ],
+      "inputPricePerMillion": 5.0,
+      "outputPricePerMillion": 25.0,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 131072,
+      "cachedInputReadPricePerMillion": 0.5,
+      "cachedInputWritePricePerMillion": 6.25
+    },
+    {
+      "code": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "description": "Latest balanced Claude. Best price-to-performance for production traffic in the Claude 4 family.",
+      "providerModelId": "claude-sonnet-4-6",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "thinking"
+      ],
+      "inputPricePerMillion": 3.0,
+      "outputPricePerMillion": 15.0,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 65536,
+      "cachedInputReadPricePerMillion": 0.3,
+      "cachedInputWritePricePerMillion": 3.75
+    },
+    {
+      "code": "claude-sonnet-4-5-20250929",
+      "name": "Claude Sonnet 4.5",
+      "description": "Pinned Sonnet 4.5 snapshot. Earlier Claude 4 Sonnet for reproducible deployments.",
+      "providerModelId": "claude-sonnet-4-5-20250929",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "thinking"
+      ],
+      "inputPricePerMillion": 3.0,
+      "outputPricePerMillion": 15.0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 65536,
+      "cachedInputReadPricePerMillion": 0.3,
+      "cachedInputWritePricePerMillion": 3.75
+    },
+    {
+      "code": "claude-haiku-4-5-20251001",
+      "name": "Claude Haiku 4.5",
+      "description": "Fast, affordable Claude 4 tier. Optimised for high-volume routing, summarisation, and simple agent steps.",
+      "providerModelId": "claude-haiku-4-5-20251001",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 1.0,
+      "outputPricePerMillion": 5.0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 65536,
+      "cachedInputReadPricePerMillion": 0.1,
+      "cachedInputWritePricePerMillion": 1.25
+    },
+    {
+      "code": "claude-opus-4-1-20250805",
+      "name": "Claude Opus 4.1",
+      "description": "Pinned Opus 4.1 snapshot. Pin for reproducibility; prefer claude-opus-4-7 for new deployments.",
+      "providerModelId": "claude-opus-4-1-20250805",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "thinking"
+      ],
+      "inputPricePerMillion": 15.0,
+      "outputPricePerMillion": 75.0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 65536,
+      "cachedInputReadPricePerMillion": 1.5,
+      "cachedInputWritePricePerMillion": 18.75
+    }
+  ]
+}

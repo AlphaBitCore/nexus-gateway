@@ -1,0 +1,98 @@
+/* ── InfraJobDetailPage ──────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.headerName {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.headerActions {
+  display: flex;
+  gap: var(--g-space-2);
+  margin-left: auto;
+}
+
+/* ── Section titles ──────────────────────────────────────────────── */
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--g-space-3);
+}
+
+/* ── Info grid (two-column dl) ───────────────────────────────────── */
+
+.infoGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0;
+}
+
+.infoRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--g-space-3);
+  padding: var(--g-space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.infoLabel {
+  flex: 0 0 160px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.infoValue {
+  flex: 1;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  margin: 0;
+  word-break: break-word;
+}
+
+.mono {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+}
+
+.errorText {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  color: var(--color-danger-text);
+}
+
+.errorCount {
+  color: var(--color-danger-text);
+  font-weight: 600;
+}
+
+/* ── Run history header (title + refresh button) ─────────────────── */
+
+.runsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  margin-bottom: var(--g-space-2);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .infoGrid {
+    grid-template-columns: 1fr;
+  }
+}

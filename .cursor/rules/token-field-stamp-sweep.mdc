@@ -1,0 +1,39 @@
+---
+description: Adding a usage/token field requires 5 stamp sites
+globs:
+  - packages/ai-gateway/internal/**/proxy*.go
+  - packages/ai-gateway/internal/providers/types.go
+  - packages/ai-gateway/internal/providers/**
+---
+
+# Token-field stamp sweep (binding)
+
+You are editing AI Gateway provider / proxy code. **Adding a new usage / token field requires 5 stamp sites, not just the obvious one.** Missing the 4 cache-side sites = all prod cache traffic NULL on the new column. Memory anchor: [[feedback_token_field_handler_sweep]].
+
+**Read `docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md` §5 BEFORE editing.**
+
+## The 5 stamp sites
+
+1. **`handleNonStream`** — non-streaming response path.
+2. **`handleStream`** — streaming response path (at stream end).
+3. **`proxy_cache.go:cacheStoreNonStream`** — cache write path for non-streaming.
+4. **`proxy_cache.go:cacheStoreStream`** — cache write path for streaming.
+5. **`proxy_cache.go:cacheRead*`** — cache read path (deserialise the stamped value).
+
+## Checklist when adding a token field
+
+- [ ] Field added to `Usage` struct in `providers/types.go`.
+- [ ] Column added to `traffic_event` schema (Prisma + migration).
+- [ ] Stamped in `handleNonStream`.
+- [ ] Stamped in `handleStream`.
+- [ ] Stamped in `cacheStoreNonStream`.
+- [ ] Stamped in `cacheStoreStream`.
+- [ ] Deserialised in `cacheRead*`.
+- [ ] Unit test exercises both non-stream and stream cache paths.
+- [ ] Smoke test confirms the new column is non-NULL after a cache hit + cache miss.
+
+## Why it matters
+
+The cache paths are easy to forget — they share the data layout with the live paths but live in `proxy_cache.go`, a separate file. Stamping `handleNonStream` only is the canonical mistake; cache traffic then writes NULL for the new column and the failure is silent until an analytics dashboard notices.
+
+Skipping this rule requires **explicit user approval** in chat.

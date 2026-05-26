@@ -1,0 +1,190 @@
+name: nexus/content-safety
+version: v1.0.0
+maintainer: nexus
+description: >-
+  Content-safety patterns across 5 restricted categories: violence,
+  hate_speech, self_harm, sexual, illegal. Each rule emits
+  `detector:content-safety`, `category:<name>`, and `severity:restricted`
+  labels. Patterns are intentionally contextual (verb + target / how-to
+  framing) to keep idiomatic business text — "kill the process", "attack
+  the problem", "human trafficking survivor", "the book covers the
+  Holocaust" — out of the match set. Severity defaults to `soft`; the P-E
+  content-safety hook escalates via AI Guard when configured.
+rules:
+  # =====================================================================
+  # Violence (cs-v-001 .. cs-v-005)
+  # =====================================================================
+  - id: cs-v-001
+    category: content_safety.violence
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|best\s+way\s+to)\s+(?:murder|assassinate|kill)\s+(?:a\s+person|someone|him|her|them)\b'
+    description: How-to framing targeting a human (excludes "kill the process" idiom).
+    labels: [detector:content-safety, category:violence, severity:restricted]
+  - id: cs-v-002
+    category: content_safety.violence
+    severity: soft
+    pattern: '(?i)\b(?:bomb|explosive|ied|pipe\s+bomb)\s+(?:making|construction|build(?:ing)?|recipe|instructions?)\b'
+    description: Weapon / explosive construction how-to.
+    labels: [detector:content-safety, category:violence, severity:restricted]
+  - id: cs-v-003
+    category: content_safety.violence
+    severity: soft
+    pattern: '(?i)\b(?:shoot|stab|strangle|poison|behead)\s+(?:them|him|her|the\s+(?:victim|target|family|children))\b'
+    description: Physical-harm verb directed at a human target.
+    labels: [detector:content-safety, category:violence, severity:restricted]
+  - id: cs-v-004
+    category: content_safety.violence
+    severity: soft
+    pattern: '(?i)\b(?:carry\s+out|plan|organize|execute)\s+(?:a\s+)?(?:massacre|genocide|ethnic\s+cleansing|mass\s+shooting)\b'
+    description: Mass / group violence planning.
+    labels: [detector:content-safety, category:violence, severity:restricted]
+  - id: cs-v-005
+    category: content_safety.violence
+    severity: warn
+    pattern: '(?i)\b(?:torture|maim|mutilate|dismember)\s+(?:them|him|her|the\s+(?:victim|prisoner|hostage))\b'
+    description: Torture / mutilation directed at a human target.
+    labels: [detector:content-safety, category:violence, severity:restricted]
+  # =====================================================================
+  # Hate speech (cs-h-001 .. cs-h-005)
+  # =====================================================================
+  - id: cs-h-001
+    category: content_safety.hate_speech
+    severity: soft
+    pattern: '(?i)\b(?:tell\s+me|give\s+me|list)\s+(?:a\s+)?(?:racial|ethnic|homophobic|transphobic)\s+slurs?\b'
+    description: Direct request for slur enumeration.
+    labels: [detector:content-safety, category:hate_speech, severity:restricted]
+  - id: cs-h-002
+    category: content_safety.hate_speech
+    severity: soft
+    pattern: '(?i)\b(?:[a-z]+s?)\s+(?:are|is)\s+(?:an?\s+)?inferior\s+(?:race|ethnicity|species|people|group)\b'
+    description: Dehumanization framed as biological / inherent inferiority.
+    labels: [detector:content-safety, category:hate_speech, severity:restricted]
+  - id: cs-h-003
+    category: content_safety.hate_speech
+    severity: warn
+    pattern: '(?i)\b(?:white\s+power|white\s+supremac(?:y|ist)|14\s*words|sieg\s+heil|blood\s+and\s+soil)\b'
+    description: Supremacist / neo-nazi slogan markers.
+    labels: [detector:content-safety, category:hate_speech, severity:restricted]
+  - id: cs-h-004
+    category: content_safety.hate_speech
+    severity: soft
+    pattern: '(?i)\b(?:deport|expel|remove|exterminate)\s+(?:all\s+)?(?:the\s+)?(?:jews|muslims|blacks|gays|immigrants|migrants)\b'
+    description: Group expulsion / extermination rhetoric.
+    labels: [detector:content-safety, category:hate_speech, severity:restricted]
+  - id: cs-h-005
+    category: content_safety.hate_speech
+    severity: soft
+    pattern: '(?i)\b(?:the\s+)?holocaust\s+(?:didn''?t\s+happen|never\s+happened|is\s+(?:a\s+)?(?:lie|hoax|myth|fake|fabrication)|was\s+(?:faked|fabricated|made\s+up))\b'
+    description: Holocaust-denial assertion (does NOT match neutral references like "the book discusses the Holocaust").
+    labels: [detector:content-safety, category:hate_speech, severity:restricted]
+  # =====================================================================
+  # Self-harm (cs-sh-001 .. cs-sh-004)
+  # =====================================================================
+  - id: cs-sh-001
+    category: content_safety.self_harm
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|best\s+way\s+to|easiest\s+way\s+to)\s+(?:commit\s+suicide|kill\s+myself|end\s+my\s+(?:life|existence))\b'
+    description: Direct suicide how-to request.
+    labels: [detector:content-safety, category:self_harm, severity:restricted]
+  - id: cs-sh-002
+    category: content_safety.self_harm
+    severity: soft
+    pattern: '(?i)\b(?:instructions?|guide|tutorial|methods?)\s+for\s+self[-\s]?harm(?:ing)?\b'
+    description: Self-harm instruction request.
+    labels: [detector:content-safety, category:self_harm, severity:restricted]
+  - id: cs-sh-003
+    category: content_safety.self_harm
+    severity: soft
+    pattern: '(?i)\boverdose\s+(?:on\s+\w+\s+(?:to|so\s+i)\s+die|and\s+(?:die|end\s+it))\b'
+    description: Overdose-to-die request (does NOT match "the overdose epidemic").
+    labels: [detector:content-safety, category:self_harm, severity:restricted]
+  - id: cs-sh-004
+    category: content_safety.self_harm
+    severity: warn
+    pattern: '(?i)\b(?:pro[-\s]?ana|pro[-\s]?mia|thinspo|meanspo|bonespo)\b'
+    description: Pro-anorexia / pro-bulimia community markers.
+    labels: [detector:content-safety, category:self_harm, severity:restricted]
+  - id: cs-sh-005
+    category: content_safety.self_harm
+    severity: soft
+    pattern: '(?i)\b(?:cut|burn|hurt)\s+myself\s+(?:to|so\s+(?:i|that))\s+(?:die|bleed\s+out|feel\s+(?:something|alive))\b'
+    description: First-person self-injury intent statement.
+    labels: [detector:content-safety, category:self_harm, severity:restricted]
+  - id: cs-sh-006
+    category: content_safety.self_harm
+    severity: warn
+    pattern: '(?i)\b(?:lethal|fatal|effective)\s+(?:dose|dosage|amount)\s+of\s+(?:tylenol|acetaminophen|paracetamol|aspirin|insulin|fentanyl|opioids?)\s+(?:to|for)\s+(?:die|kill\s+(?:myself|me)|suicide|overdose)\b'
+    description: Lethal-dose query for known overdose vectors.
+    labels: [detector:content-safety, category:self_harm, severity:restricted]
+  # =====================================================================
+  # Sexual (cs-x-001 .. cs-x-006)
+  # =====================================================================
+  - id: cs-x-001
+    category: content_safety.sexual
+    severity: soft
+    pattern: '(?i)\b(?:child|minor|underage|preteen|teen(?:age)?\s+girl|teen(?:age)?\s+boy)\s+(?:sex|sexual|porn|nude|naked|erotic)\b'
+    description: Minor + sexual context (CSAM proximity).
+    labels: [detector:content-safety, category:sexual, severity:restricted]
+  - id: cs-x-002
+    category: content_safety.sexual
+    severity: soft
+    pattern: '(?i)\b(?:rape|non[-\s]?consensual\s+(?:sex|intercourse|act)|forced\s+(?:sex|intercourse))\s+(?:fantas(?:y|ies)|story|stories|scenario|roleplay)\b'
+    description: Non-consensual sexual content as narrative request.
+    labels: [detector:content-safety, category:sexual, severity:restricted]
+  - id: cs-x-003
+    category: content_safety.sexual
+    severity: warn
+    pattern: '(?i)\b(?:write|describe|generate)\s+(?:a\s+)?(?:graphic|explicit|hardcore|pornographic)\s+(?:sex\s+scene|sexual\s+(?:scene|encounter|description))\b'
+    description: Graphic pornographic generation request.
+    labels: [detector:content-safety, category:sexual, severity:restricted]
+  - id: cs-x-004
+    category: content_safety.sexual
+    severity: soft
+    pattern: '(?i)\b(?:revenge\s+porn|leak(?:ed)?\s+nudes?|share\s+(?:her|his|their)\s+(?:nudes?|intimate\s+(?:photos?|videos?))\s+without\s+consent)\b'
+    description: Revenge-porn / non-consensual intimate-image distribution.
+    labels: [detector:content-safety, category:sexual, severity:restricted]
+  - id: cs-x-005
+    category: content_safety.sexual
+    severity: soft
+    pattern: '(?i)\b(?:bestiality|zoophilia|sex\s+with\s+(?:a\s+)?(?:dog|horse|animal))\b'
+    description: Bestiality content markers.
+    labels: [detector:content-safety, category:sexual, severity:restricted]
+  - id: cs-x-006
+    category: content_safety.sexual
+    severity: soft
+    pattern: '(?i)\b(?:incest(?:uous)?|sex\s+with\s+(?:my|her|his)\s+(?:sister|brother|mother|father|daughter|son))\s+(?:story|stories|fantas(?:y|ies)|roleplay)\b'
+    description: Incest narrative request.
+    labels: [detector:content-safety, category:sexual, severity:restricted]
+  # =====================================================================
+  # Illegal (cs-i-001 .. cs-i-005)
+  # =====================================================================
+  - id: cs-i-001
+    category: content_safety.illegal
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|step[-\s]?by[-\s]?step)\s+(?:synthesi[sz]e|cook|make|manufacture)\s+(?:meth(?:amphetamine)?|fentanyl|heroin|cocaine|crack|mdma|lsd)\b'
+    description: Drug synthesis how-to.
+    labels: [detector:content-safety, category:illegal, severity:restricted]
+  - id: cs-i-002
+    category: content_safety.illegal
+    severity: soft
+    pattern: '(?i)\bhuman\s+trafficking\s+(?:routes?|networks?|operation|ring|methods?|how\s+to)\b'
+    description: Human-trafficking operational discussion (does NOT match "human trafficking survivor / awareness / hotline").
+    labels: [detector:content-safety, category:illegal, severity:restricted]
+  - id: cs-i-003
+    category: content_safety.illegal
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|best\s+(?:way|method)\s+(?:to|for))\s+(?:launder(?:ing)?\s+money|money\s+laundering|hide\s+(?:cash|funds)\s+from\s+(?:the\s+)?(?:irs|tax\s+authorities))\b'
+    description: Money-laundering how-to request.
+    labels: [detector:content-safety, category:illegal, severity:restricted]
+  - id: cs-i-004
+    category: content_safety.illegal
+    severity: soft
+    pattern: '(?i)\b(?:how\s+(?:to|do\s+i)|guide\s+(?:to|for))\s+(?:counterfeit(?:ing)?|forg(?:e|ing|ery))\s+(?:a\s+)?(?:passport|driver''?s?\s+licen[sc]e|id\s+card|currency|bank\s*notes?|us\s+dollars?)\b'
+    description: Counterfeit document / currency how-to.
+    labels: [detector:content-safety, category:illegal, severity:restricted]
+  - id: cs-i-005
+    category: content_safety.illegal
+    severity: soft
+    pattern: '(?i)\b(?:dark[-\s]?(?:web|net)|silk\s+road|dread\s+forum|alphabay)\s+(?:market(?:place)?|listing|vendor|onion\s+(?:link|url|address)|drug\s+market)\b'
+    description: Dark-web marketplace / vendor lookup.
+    labels: [detector:content-safety, category:illegal, severity:restricted]

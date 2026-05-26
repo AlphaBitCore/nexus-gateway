@@ -1,0 +1,286 @@
+openapi: 3.1.0
+info:
+  title: Nexus AI Gateway — E53 Reasoning Passthrough
+  version: "1.0.0"
+  description: |
+    Extends the OpenAI Chat Completions ingress (`POST /v1/chat/completions`)
+    with provider-specific reasoning passthrough via the `nexus.ext` extension
+    object convention (defined in `docs/developers/specs/e28/e28-s6-canonical-hub-completeness.md`
+    §2.5).
+
+    This spec describes ONLY the new fields. The base Chat Completions request
+    and response schemas are defined upstream by OpenAI and inherited by Nexus.
+
+    Companion: `docs/developers/specs/e53/e53-reasoning-passthrough.md`.
+
+paths:
+  /v1/chat/completions:
+    post:
+      tags: [AI Gateway]
+      operationId: chatCompletionsWithReasoningPassthrough
+      summary: Chat Completions request with optional reasoning passthrough
+      description: |
+        Standard OpenAI Chat Completions request, with one optional
+        `nexus.ext` top-level object that allows the client to forward
+        provider-specific reasoning configuration to the upstream provider.
+
+        When the upstream is **Anthropic** (or Bedrock Claude), the value
+        of `nexus.ext.anthropic.thinking` is injected as the `thinking`
+        field in the outgoing Anthropic request body.
+
+        When the upstream is **Gemini**, the value of
+        `nexus.ext.gemini.thinking_config` is injected as
+        `generationConfig.thinkingConfig` in the outgoing Gemini request body.
+
+        For other upstreams (OpenAI, DeepSeek, Moonshot, Kimi, etc.) the
+        extension is ignored — those providers either do not support
+        reasoning passthrough on Chat Completions (OpenAI o-series) or
+        return reasoning content unconditionally (DeepSeek / Moonshot /
+        Kimi). See `docs/_archive/2026-q2/programs/proposal-openai-responses-api-adapter.md`
+        for the deferred OpenAI Responses API plan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/OpenAIChatCompletionRequest"
+                - type: object
+                  properties:
+                    nexus:
+                      $ref: "#/components/schemas/NexusExtensions"
+            examples:
+              anthropic-thinking:
+                summary: Trigger Anthropic extended thinking
+                value:
+                  model: claude-opus-4-7
+                  messages:
+                    - role: user
+                      content: "Explain quantum entanglement in two sentences."
+                  max_tokens: 2000
+                  nexus:
+                    ext:
+                      anthropic:
+                        thinking:
+                          type: enabled
+                          budget_tokens: 4096
+              gemini-thinking:
+                summary: Trigger Gemini thought summary
+                value:
+                  model: gemini-2.5-pro
+                  messages:
+                    - role: user
+                      content: "Explain quantum entanglement in two sentences."
+                  max_tokens: 2000
+                  nexus:
+                    ext:
+                      gemini:
+                        thinking_config:
+                          include_thoughts: true
+      responses:
+        "200":
+          description: |
+            Standard Chat Completion response. When the upstream returned
+            reasoning content (either because of the extension above, or
+            because the provider exposes it by default like DeepSeek), the
+            response carries a `reasoning_content` field on each
+            `choices[].message` (non-stream) or `choices[].delta` (SSE
+            stream chunk).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIChatCompletionResponseWithReasoning"
+              examples:
+                with-reasoning:
+                  summary: Response with reasoning_content
+                  value:
+                    id: chatcmpl-abc123
+                    object: chat.completion
+                    created: 1778776667
+                    model: claude-opus-4-7
+                    choices:
+                      - index: 0
+                        message:
+                          role: assistant
+                          content: "Quantum entanglement is the phenomenon where two particles' quantum states are linked such that measuring one instantly determines the other..."
+                          reasoning_content: "Let me think about this. Entanglement is fundamental to QM. The key points are: linked states, non-local correlation, Bell's inequality... I should compress this to two sentences focused on the user-visible behavior."
+                        finish_reason: stop
+                    usage:
+                      prompt_tokens: 12
+                      completion_tokens: 187
+                      total_tokens: 199
+
+components:
+  schemas:
+    NexusExtensions:
+      type: object
+      description: |
+        Nexus-specific passthrough extensions. None of these fields are
+        required; absent values mean "no passthrough requested" and the
+        request behaves as a standard OpenAI Chat Completions call.
+
+        Each subkey maps to a specific upstream provider. Unknown
+        subkeys are logged as a warning and otherwise ignored — the
+        gateway is permissive to allow forward-compatibility with future
+        providers without breaking existing clients.
+      properties:
+        ext:
+          type: object
+          properties:
+            anthropic:
+              $ref: "#/components/schemas/AnthropicExtensions"
+            gemini:
+              $ref: "#/components/schemas/GeminiExtensions"
+          additionalProperties: true
+      additionalProperties: false
+
+    AnthropicExtensions:
+      type: object
+      description: |
+        Fields forwarded verbatim to the outgoing Anthropic request body
+        when the request routes to an Anthropic-protocol upstream
+        (native Anthropic or Bedrock Claude). The shapes are defined by
+        Anthropic and may evolve — Nexus does not transform or validate
+        beyond JSON type checks.
+      properties:
+        thinking:
+          type: object
+          description: |
+            Anthropic extended thinking configuration. See
+            https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+            for the authoritative schema. Subkeys known to be supported
+            as of 2026-05-15: `type` (string, "enabled"), `budget_tokens`
+            (integer, 1024-100000).
+          properties:
+            type:
+              type: string
+              enum: [enabled, disabled]
+              description: Whether thinking is enabled for this request.
+            budget_tokens:
+              type: integer
+              minimum: 1024
+              description: |
+                Maximum tokens the model may spend on internal thinking
+                before producing visible output. Counts toward `max_tokens`.
+
+    GeminiExtensions:
+      type: object
+      description: |
+        Fields forwarded verbatim to the outgoing Gemini request body
+        when the request routes to a Gemini-protocol upstream. The
+        outgoing path is `generationConfig.thinkingConfig`; other keys
+        in `generationConfig` set by the codec (`temperature`, `topP`,
+        etc.) are preserved via merge.
+      properties:
+        thinking_config:
+          type: object
+          description: |
+            Gemini thinking configuration. See
+            https://ai.google.dev/gemini-api/docs/thinking for the
+            authoritative schema. Subkeys known to be supported as of
+            2026-05-15: `include_thoughts` (boolean), `thinking_budget`
+            (integer, model-dependent maximum).
+          properties:
+            include_thoughts:
+              type: boolean
+              description: |
+                When true and the model supports thinking
+                (gemini-2.5-pro, gemini-2.5-flash), the response
+                candidate parts include the model's thought summary as
+                parts with `thought: true`, surfaced by Nexus as
+                `reasoning_content` in the response.
+            thinking_budget:
+              type: integer
+              description: |
+                Maximum tokens for internal thinking. Model-dependent
+                upper bound (gemini-2.5-pro: ≤32768, gemini-2.5-flash:
+                ≤24576). Counts toward total output budget.
+
+    OpenAIChatCompletionRequest:
+      type: object
+      description: |
+        Standard OpenAI Chat Completions request body. Fields are
+        defined upstream by OpenAI; included here only for the
+        documentation example shape.
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+        max_tokens:
+          type: integer
+        max_completion_tokens:
+          type: integer
+        temperature:
+          type: number
+        top_p:
+          type: number
+        stream:
+          type: boolean
+
+    OpenAIChatCompletionResponseWithReasoning:
+      type: object
+      description: |
+        Standard OpenAI Chat Completion response, extended with the
+        `reasoning_content` field on assistant messages and deltas.
+        This extension is shared with DeepSeek / Moonshot / Kimi which
+        also surface reasoning content this way through the
+        OpenAI-compatible Chat Completions surface.
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: string
+                  reasoning_content:
+                    type: string
+                    description: |
+                      Chain-of-thought / thinking text emitted by the
+                      model. Populated when the upstream returned
+                      reasoning content (either via the `nexus.ext.*`
+                      passthrough for Anthropic/Gemini, or
+                      unconditionally for DeepSeek/Moonshot/Kimi).
+                      Absent for OpenAI o-series / gpt-5.x because
+                      Chat Completions does not expose reasoning text
+                      (use the Responses API epic when shipped).
+              finish_reason:
+                type: string
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+            completion_tokens_details:
+              type: object
+              properties:
+                reasoning_tokens:
+                  type: integer
+                  description: |
+                    Token count of reasoning content (chain-of-thought).
+                    Populated when the upstream reports it. Mirrored
+                    into the `traffic_event.reasoning_tokens` audit
+                    column for billing and dashboard surfaces.

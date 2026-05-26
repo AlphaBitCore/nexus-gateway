@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  E59-S3 — WFP-driver MSI components. Referenced from NexusAgent.wxs
+  via <?include wfp.wxi ?> (the prior windivert.wxi has been deleted
+  in the same PR that landed this file in production form).
+
+  Authoritative design: docs/developers/architecture/agent-windows-wfp-driver.md §10
+  SDD: docs/developers/specs/e59-s3-msi-changes.md
+  Cross-arch (NT$ARCH$, amd64+arm64): docs/developers/specs/e59-s4-cross-arch-build.md
+
+  Sequencing intent (architecture §10):
+
+    InstallFiles                       ← MSI puts .inf + .sys staging files in place
+    └→ WfpDriverInstall  CA            ← pnputil /add-driver /install
+                                          (also registers SCM service per INF)
+       └→ WfpServiceStart CA           ← sc.exe start NexusWFP (start now,
+                                          not wait for next boot)
+          └→ InstallServices           ← creates NexusAgent user-mode service
+                                          which declares ServiceDependency
+                                          Id="NexusWFP"
+             └→ StartServices          ← starts NexusAgent; SCM resolves
+                                          dependency (driver is already up).
+
+  Uninstall (reverse, sequencing per architecture §10):
+
+    StopServices       ← stops NexusAgent (ServiceControl Stop="both")
+    └→ DeleteServices  ← deletes NexusAgent (ServiceControl Remove="uninstall")
+       └→ WfpServiceStop CA             ← sc.exe stop NexusWFP
+          └→ WfpDriverUninstall CA      ← pnputil /delete-driver /uninstall /force
+             └→ RemoveFiles             ← cleans staging dir
+-->
+<Include xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+    <Fragment>
+        <!-- Driver INF + .sys + .cat staged to a tools dir under
+             INSTALLFOLDER. pnputil owns the driver store layout, so
+             we do NOT copy directly into System32\drivers\. -->
+        <DirectoryRef Id="INSTALLFOLDER">
+            <Directory Id="WfpDriverStaging" Name="wfp-driver">
+                <Component Id="WfpInfFile" Guid="*" Bitness="always64">
+                    <File Id="nexus_wfp.inf"
+                          Source="$(var.StagingDir)\wfp-driver\nexus-wfp.inf"
+                          KeyPath="yes" />
+                </Component>
+
+                <!--
+                  Per-arch .sys components. Each conditioned on the
+                  MSI engine's Msi<arch>= property so only the matching
+                  arch's binary lands at install time. Both ship in the
+                  MSI; pnputil sees one .inf + one .sys per host.
+
+                  E59-S4 §T5 binding: the File@Name is identical
+                  ('nexus-wfp.sys') so the INF NT$ARCH$ section finds
+                  the right file regardless of which Component
+                  installed.
+                -->
+                <Component Id="WfpSysFileAmd64" Guid="*" Bitness="always64">
+                    <File Id="nexus_wfp_sys_amd64"
+                          Source="$(var.StagingDir)\wfp-driver\amd64\nexus-wfp.sys"
+                          Name="nexus-wfp.sys"
+                          KeyPath="yes" />
+                    <Condition><![CDATA[MsiAMD64]]></Condition>
+                </Component>
+
+                <Component Id="WfpSysFileArm64" Guid="*" Bitness="always64">
+                    <File Id="nexus_wfp_sys_arm64"
+                          Source="$(var.StagingDir)\wfp-driver\arm64\nexus-wfp.sys"
+                          Name="nexus-wfp.sys"
+                          KeyPath="yes" />
+                    <Condition><![CDATA[MsiARM64]]></Condition>
+                </Component>
+
+                <Component Id="WfpCatFile" Guid="*" Bitness="always64">
+                    <File Id="nexus_wfp.cat"
+                          Source="$(var.StagingDir)\wfp-driver\nexus-wfp.cat"
+                          KeyPath="yes" />
+                </Component>
+            </Directory>
+        </DirectoryRef>
+
+        <!--
+          CustomAction: pnputil /add-driver /install. Registers the
+          driver package into the driver store AND creates the SCM
+          service per the INF's NexusWfpInstall.<arch>.Services
+          section. Deferred no-impersonate so it runs as LocalSystem
+          (the SCM operation requires it).
+
+          Return="check" because a signing failure here SHOULD fail
+          the install — we don't want a half-installed driver state.
+          On a host without `bcdedit /set testsigning on` AND with a
+          test-signed driver, pnputil returns ERROR_DRIVER_BLOCKED
+          (1289) and the MSI rolls back cleanly.
+
+          R-S3.1 from the SDD: if pnputil returns
+          ERROR_SUCCESS_REBOOT_REQUIRED (3010), the install completes
+          but the MSI should set REBOOT_REQUIRED. We currently use
+          Return="check" — a follow-up will switch to ignoring 3010
+          via a wrapper script.
+        -->
+        <CustomAction Id="WfpDriverInstall"
+                      Directory="WfpDriverStaging"
+                      ExeCommand='pnputil.exe /add-driver "[#nexus_wfp.inf]" /install'
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="check" />
+
+        <!--
+          sc.exe explicit start. INF declares StartType=2 (auto), so
+          SCM would start the driver at next boot anyway, but we want
+          it up now so the NexusAgent ServiceDependency at
+          StartServices resolves without waiting for a reboot.
+        -->
+        <CustomAction Id="WfpServiceStart"
+                      Directory="System64Folder"
+                      ExeCommand="sc.exe start NexusWFP"
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="ignore" />
+
+        <CustomAction Id="WfpServiceStop"
+                      Directory="System64Folder"
+                      ExeCommand="sc.exe stop NexusWFP"
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="ignore" />
+
+        <CustomAction Id="WfpDriverUninstall"
+                      Directory="WfpDriverStaging"
+                      ExeCommand='pnputil.exe /delete-driver "[#nexus_wfp.inf]" /uninstall /force'
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="ignore" />
+
+        <InstallExecuteSequence>
+            <!--
+              Install + major-upgrade install pass: register the driver
+              after files copy, before NexusAgent's
+              ServiceDependency resolution at StartServices.
+            -->
+            <Custom Action="WfpDriverInstall"
+                    After="InstallFiles"
+                    Condition="NOT Installed" />
+            <Custom Action="WfpServiceStart"
+                    After="WfpDriverInstall"
+                    Condition="NOT Installed" />
+
+            <!--
+              Uninstall + major-upgrade uninstall pass: stop the
+              driver after NexusAgent is gone (NexusAgent's
+              ServiceControl Stop="both" Remove="uninstall" triggers
+              StopServices+DeleteServices), then delete the driver
+              package before RemoveFiles clears the staging dir.
+            -->
+            <Custom Action="WfpServiceStop"
+                    After="DeleteServices"
+                    Condition="REMOVE=&quot;ALL&quot;" />
+            <Custom Action="WfpDriverUninstall"
+                    After="WfpServiceStop"
+                    Condition="REMOVE=&quot;ALL&quot;" />
+        </InstallExecuteSequence>
+    </Fragment>
+
+</Include>

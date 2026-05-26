@@ -1,0 +1,35 @@
+/* LiveTrafficActiveFiltersBar styles */
+
+.wrapper {
+  margin-bottom: var(--g-space-4);
+}
+
+.heading {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: var(--g-space-2);
+}
+
+.chipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  align-items: center;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--g-radius-full);
+  background: var(--color-muted);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-light);
+  max-width: 100%;
+  line-height: 1.35;
+}

@@ -1,0 +1,10 @@
+{
+  "embedding": [
+    "text-embedding-3-",
+    "text-embedding-ada-",
+    "text-embedding-",
+    "embed-english-v",
+    "embed-multilingual-v",
+    "gemini-embedding-"
+  ]
+}

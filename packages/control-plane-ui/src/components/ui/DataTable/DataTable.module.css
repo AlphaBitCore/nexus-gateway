@@ -1,0 +1,307 @@
+/* ─── DataTable ──────────────────────────────────────────────────────────── */
+
+.root {}
+
+/* ── Search toolbar ─────────────────────────────────────────────────────── */
+
+.searchToolbar {
+  margin-bottom: var(--g-space-2);
+}
+
+.searchInput {
+  height: 32px;
+  width: 250px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: transparent;
+  outline: none;
+  box-shadow: var(--g-shadow-xs);
+  transition: border-color var(--g-transition-fast), box-shadow var(--g-transition-fast);
+}
+
+.searchInput:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-ring);
+}
+
+/* ── Table container ────────────────────────────────────────────────────── */
+
+.tableContainer {
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  overflow-x: auto;
+  background: var(--color-surface);
+}
+
+.tableContainerFrameless {
+  border: none;
+  border-radius: 0;
+  overflow-x: auto;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  position: relative;
+  isolation: isolate;
+}
+
+/**
+ * Horizontal scroll hints: fade at the edge only when more content exists
+ * in that direction. (Previously a right-edge ::after showed on every hover
+ * because `data-scrolled-end` was never set in JS, which washed out the last column.)
+ */
+.tableScroll::before,
+.tableScroll::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  z-index: 1;
+}
+
+.tableScroll::before {
+  left: 0;
+  background: linear-gradient(to right, var(--color-bg), transparent);
+}
+
+.tableScroll::after {
+  right: 0;
+  background: linear-gradient(to left, var(--color-bg), transparent);
+}
+
+.tableScroll[data-scroll-left='true']::before,
+.tableScroll[data-scroll-right='true']::after {
+  opacity: 1;
+}
+
+/* ── Table element ──────────────────────────────────────────────────────── */
+
+.table {
+  width: 100%;
+  min-width: 800px;
+  border-collapse: collapse;
+}
+
+@media (max-width: 640px) {
+  .table {
+    min-width: unset;
+  }
+
+  .th,
+  .td {
+    padding: var(--g-space-1) var(--g-space-2);
+    font-size: 12px;
+  }
+
+  .searchInput {
+    width: 100%;
+  }
+}
+
+/* ── Header cells ───────────────────────────────────────────────────────── */
+
+.th {
+  text-align: left;
+  padding: 10px 22px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.thFrameless {
+  background: var(--color-muted);
+}
+
+.thSortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.thSortable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+/* ── Body cells ─────────────────────────────────────────────────────────── */
+
+.td {
+  padding: 13px 22px;
+  font-size: var(--g-font-size-sm);
+  white-space: nowrap;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border-light);
+  font-family: var(--g-font-sans);
+}
+
+/* ── Rows ───────────────────────────────────────────────────────────────── */
+
+.row {
+  transition: background var(--g-transition-fast);
+  animation: rowFadeIn var(--g-transition-normal) ease-out both;
+}
+
+/* AC14: nodes whose killswitch is bypassed by an emergency override get a
+   red left stripe + pale red row tint so an SRE scanning the list can spot
+   them at a glance. The marker is the per-row data-killswitch-bypass
+   attribute set by the consumer's getRowProps; first <td> carries the
+   stripe via box-shadow so we don't need a dedicated <td>. */
+.row[data-killswitch-bypass='true'] {
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+}
+
+.row[data-killswitch-bypass='true'] td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-danger);
+}
+
+/* Stagger first 15 rows by 30ms each */
+.row:nth-child(1) { animation-delay: 0ms; }
+.row:nth-child(2) { animation-delay: 30ms; }
+.row:nth-child(3) { animation-delay: 60ms; }
+.row:nth-child(4) { animation-delay: 90ms; }
+.row:nth-child(5) { animation-delay: 120ms; }
+.row:nth-child(6) { animation-delay: 150ms; }
+.row:nth-child(7) { animation-delay: 180ms; }
+.row:nth-child(8) { animation-delay: 210ms; }
+.row:nth-child(9) { animation-delay: 240ms; }
+.row:nth-child(10) { animation-delay: 270ms; }
+.row:nth-child(n+11) { animation-delay: 300ms; }
+
+@keyframes rowFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row {
+    animation: none;
+  }
+}
+
+.rowClickable {
+  cursor: pointer;
+  transition: background var(--g-transition-fast);
+}
+
+.rowClickable:hover {
+  background: var(--color-surface-hover);
+}
+
+.rowClickable:active {
+  background: var(--color-border-light);
+}
+
+.rowClickable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  background: var(--color-muted);
+}
+
+/* ── Empty & loading states ─────────────────────────────────────────────── */
+
+.emptyContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+}
+
+.emptyText {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.noResultsCell {
+  text-align: center;
+  height: 96px;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.skeleton {
+  height: 14px;
+  border-radius: 4px;
+  background: var(--color-muted);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* ── Expandable row ─────────────────────────────────────────────────────── */
+
+.expandToggleCell {
+  width: 28px;
+  padding: 0 4px;
+  text-align: center;
+}
+
+.expandToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.expandToggle:hover {
+  background: var(--color-muted);
+  color: var(--color-text);
+}
+
+.expandToggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.expandToggleOpen {
+  color: var(--color-text);
+}
+
+.rowExpanded {
+  background: var(--color-muted);
+}
+
+.expandedPanelRow {
+  background: var(--color-bg-subtle);
+}
+
+.expandedPanelCell {
+  padding: var(--g-space-4) var(--g-space-4) var(--g-space-4) calc(28px + var(--g-space-3));
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}

@@ -1,0 +1,46 @@
+---
+description: Read 3 docs before changing code (architecture + feature + conventions)
+alwaysApply: true
+---
+
+# Pre-edit reading — binding 3-doc requirement
+
+Before writing any code change, you **MUST** read all three of:
+
+1. **Architecture doc(s)** — find your edit area in `docs/developers/architecture/README.md` and open the listed doc(s).
+2. **Feature doc(s)** — if the change affects a user-visible surface, open the matching doc:
+   - CP-UI menu sections → `docs/users/features/cp-ui/<section>.md`
+   - Agent-UI pages → `docs/users/features/agent-ui/<page>.md`
+   - Cross-feature flows (admin → CP → Hub → effect → audit) → `docs/users/features/flows/<flow>.md`
+3. **Conventions** — `docs/developers/workflow/conventions.md` for code style, naming, idioms, commit style, PR review checklist.
+
+This rule keeps three things from drifting apart:
+
+- **Architecture** (what the code is supposed to do structurally).
+- **User-facing surface** (what the human-readable contract looks like).
+- **Code style** (so the change reads consistently with the rest of the repo).
+
+A change that lands without consulting all three is the failure mode that causes architecture rot under new contributors.
+
+## How to apply
+
+When the user asks you to edit code:
+
+1. Read `docs/developers/architecture/README.md` → find row matching the edit area → open the listed architecture doc(s).
+2. Identify the affected user-facing surface (if any) and open the matching feature doc.
+3. Open `docs/developers/workflow/conventions.md` if you have not internalised it for this language.
+4. Then write code.
+
+## What if a doc is missing?
+
+- **No architecture doc for the edit area** → raise it with the user. Either the architecture is genuinely undocumented (start a new arch doc + trigger row in the same PR) or it's a small piece of an existing area and the relevant arch doc covers it implicitly.
+- **No feature doc for a user-visible change** → raise it with the user. If you're adding a new CP-UI section or Agent-UI page, add the feature doc in the same PR.
+- **No conventions for what you're doing** → if your work is genuinely a new style decision (e.g., introducing a third UI tier), raise it and propose an addition to `docs/developers/workflow/conventions.md`.
+
+## What this rule does NOT require
+
+- It does **not** require updating the docs unless the architecture / feature / conventions are themselves changing.
+- It is **not** a substitute for the Plan / Todo discipline in CLAUDE.md.
+- It does **not** mean "read every doc" — only the ones that cover your edit area.
+
+Skipping this rule requires **explicit user approval** in chat.

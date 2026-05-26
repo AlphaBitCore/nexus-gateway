@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  E23-S5: MDM configuration profile for the Nexus Agent.
+  Pre-approves the System Extension and Network Extension capabilities so that
+  end users do not see consent prompts when the agent is silently deployed
+  through Jamf, Mosyle, Kandji, Intune, or another MDM.
+
+  USAGE:
+    1. Replace {{TEAM_ID}} with your Apple Developer Team ID (10 characters).
+    2. Replace {{ORGANIZATION}} with your organization name.
+    3. Replace {{PROFILE_UUID}} with a fresh UUID (uuidgen).
+    4. Upload the resulting .mobileconfig to your MDM and assign to managed Macs.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <!-- System Extension policy: pre-approve com.nexus-gateway.agent for the configured Team. -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.system-extension-policy</string>
+            <key>PayloadIdentifier</key>
+            <string>com.nexus-gateway.agent.systemextension-policy</string>
+            <key>PayloadUUID</key>
+            <string>{{PROFILE_UUID}}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadDisplayName</key>
+            <string>Nexus Agent System Extension</string>
+            <key>PayloadDescription</key>
+            <string>Allows the Nexus Agent network extension to load without user prompts.</string>
+            <key>AllowUserOverrides</key>
+            <false/>
+            <key>AllowedSystemExtensions</key>
+            <dict>
+                <key>{{TEAM_ID}}</key>
+                <array>
+                    <string>com.nexus-gateway.agent</string>
+                </array>
+            </dict>
+            <key>AllowedSystemExtensionTypes</key>
+            <dict>
+                <key>{{TEAM_ID}}</key>
+                <array>
+                    <string>NetworkExtension</string>
+                </array>
+            </dict>
+        </dict>
+
+        <!-- Content Filter capability: required for the transparent proxy provider. -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.webcontent-filter</string>
+            <key>PayloadIdentifier</key>
+            <string>com.nexus-gateway.agent.contentfilter</string>
+            <key>PayloadUUID</key>
+            <string>{{PROFILE_UUID}}-cf</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadDisplayName</key>
+            <string>Nexus Agent Content Filter</string>
+            <key>FilterType</key>
+            <string>Plugin</string>
+            <key>UserDefinedName</key>
+            <string>Nexus Agent</string>
+            <key>PluginBundleID</key>
+            <string>com.nexus-gateway.agent</string>
+            <key>FilterSockets</key>
+            <true/>
+            <key>FilterPackets</key>
+            <false/>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Nexus Agent Configuration</string>
+    <key>PayloadIdentifier</key>
+    <string>com.nexus-gateway.agent.configuration</string>
+    <key>PayloadOrganization</key>
+    <string>{{ORGANIZATION}}</string>
+    <key>PayloadRemovalDisallowed</key>
+    <true/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{{PROFILE_UUID}}-root</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadDescription</key>
+    <string>Configures the Nexus Agent network extension and content filter on managed devices.</string>
+</dict>
+</plist>

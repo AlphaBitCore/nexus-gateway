@@ -1,0 +1,123 @@
+# Nexus AI Gateway — production config template.
+# Every field in internal/config/config.go.Config appears here.
+# Env var overrides (applied after YAML): DATABASE_URL, REDIS_* (see
+# packages/shared/storage/redisfactory for the full universal Redis env
+# contract), ADMIN_KEY_HMAC_SECRET, CREDENTIAL_ENCRYPTION_KEY,
+# CREDENTIAL_KEY_MAP, AI_GATEWAY_PORT, LOG_LEVEL, LOG_FORMAT,
+# NEXUS_HUB_URL, INTERNAL_SERVICE_TOKEN, MQ_DRIVER, NATS_URL,
+# AI_GATEWAY_CORS_ENABLED, AI_GATEWAY_CORS_ALLOWED_ORIGINS,
+# AI_GATEWAY_CACHE_ENABLED, AI_GATEWAY_CACHE_TTL,
+# AI_GATEWAY_CACHE_PREFIX, OTEL_ENDPOINT, OTEL_SERVICE_NAME.
+
+server:
+  port: 3050
+  readTimeout: "30s"
+  writeTimeout: "360s"
+
+database:
+  url: ""
+
+redis:
+  # Universal Redis configuration. See packages/shared/storage/redisfactory
+  # + docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9 for the full
+  # contract. Empty addrs disables Redis — ai-gateway falls back to local-
+  # only response cache and in-memory rate limiter.
+  mode: standalone
+  addrs: []
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+auth:
+  # 32+ byte hex string, required.
+  hmacSecret: ""
+  # 64-hex AES-256 key (single-key mode).
+  credentialMasterKey: ""
+  # Optional multi-key: "v1:hex64,v2:hex64" — takes precedence over
+  # credentialMasterKey when set.
+  credentialKeyMap: ""
+  # Shared secret for inter-service auth (Bearer on Hub calls,
+  # X-RS-Token on /v1/ai-guard/classify). Must match Hub
+  # auth.internalServiceToken. Overridable via INTERNAL_SERVICE_TOKEN.
+  internalServiceToken: ""
+
+log:
+  level: "info"
+  format: "json"
+
+# Registered with Hub as a Thing; shadow config listener.
+registry:
+  nexusHubUrl: ""
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+cors:
+  enabled: false
+  allowedOrigins: []
+  allowedMethods: ["GET", "POST", "OPTIONS"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  maxAgeSec: 600
+
+# Response cache (Redis). Stores non-stream upstream JSON keyed by
+# SHA-256 of (provider, model, post-hook body bytes). Override TTL
+# via env AI_GATEWAY_CACHE_TTL (any time.ParseDuration value).
+# Streaming and requests carrying x-nexus-aigw-no-cache always bypass.
+cache:
+  enabled: true
+  ttl: 5m
+  prefix: "ai-gw:"
+  # In-flight same-key dedupe broker. Default true preserves cache
+  # fill on MISS. Flip false for same-key high-concurrency perf tests.
+  broker: true
+
+# OpenTelemetry file-level settings. Runtime toggles
+# (enabled, samplingRate) live in system_metadata row
+# observability.config and override these at runtime.
+otel:
+  endpoint: ""
+  serviceName: "nexus-ai-gateway"
+
+# Per-request instrumentation knobs. Yaml-only — redeploy to flip.
+observability:
+  # latencyDetail: when true, latency_breakdown JSONB on traffic_event
+  # includes sub-millisecond phases (floored to 1ms). Default true
+  # during the perf-investigation window; flip to false to keep prod
+  # rows compact.
+  latencyDetail: true
+
+# Platform-wide routing defaults. Per-rule RetryPolicy on a RoutingRule
+# field-merges over these values at evaluation time, so an admin can
+# leave a knob unset on a rule and inherit the platform default.
+# MaxAttemptsPerTarget is clamped to [1,5] at load.
+routing:
+  defaultRetryPolicy:
+    maxAttemptsPerTarget: 1
+    retryOn: ["network", "timeout", "429", "5xx"]
+    backoffInitial: 250ms
+    backoffMax: 5s
+    backoffJitter: 0.2

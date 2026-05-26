@@ -1,0 +1,45 @@
+{
+  "name": "minimax",
+  "displayName": "MiniMax",
+  "description": "MiniMax API \u2014 OpenAI-compatible MoE chat models.",
+  "baseUrl": "https://api.minimax.io",
+  "adapterType": "minimax",
+  "models": [
+    {
+      "code": "minimax-m2-7",
+      "name": "MiniMax M2.7",
+      "description": "Latest MiniMax release. Currently the recommended default for production traffic.",
+      "providerModelId": "MiniMax-M2.7",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.3,
+      "outputPricePerMillion": 1.2,
+      "maxContextTokens": 204800,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "minimax-m2-5",
+      "name": "MiniMax M2.5",
+      "description": "MiniMax M2.5 \u2014 better instruction following and tool-use stability at lower cost.",
+      "providerModelId": "MiniMax-M2.5",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.15,
+      "outputPricePerMillion": 1.2,
+      "maxContextTokens": 196608,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

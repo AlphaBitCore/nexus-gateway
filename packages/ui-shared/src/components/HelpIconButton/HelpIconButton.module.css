@@ -1,0 +1,37 @@
+/* ─── HelpIconButton ─────────────────────────────────────────────────────── */
+
+.helpIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-full);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 1;
+  cursor: help;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast),
+    border-color var(--g-transition-fast);
+}
+
+.helpIconButton:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
+  border-color: var(--color-accent-foreground);
+}
+
+.helpIconButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 3px var(--color-ring);
+}
+
+.helpIconButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

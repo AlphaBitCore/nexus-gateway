@@ -1,0 +1,162 @@
+/* ── ProviderModelCapabilitiesPanel ─────────────────────────── */
+
+.panel {
+  margin-top: var(--g-space-4);
+  padding: var(--g-space-4);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.subtitle {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--g-space-4);
+}
+
+/* ── Field wrapper ───────────────────────────────────────────── */
+
+.field {
+  margin-bottom: var(--g-space-4);
+}
+
+.fieldError {
+  display: block;
+  font-size: 11px;
+  color: var(--color-danger);
+  margin-top: 4px;
+}
+
+.fieldHint {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+/* ── Number input (short) ─────────────────────────────────────── */
+
+.numberInput {
+  width: 160px;
+}
+
+/* ── Chip multi-select ──────────────────────────────────────── */
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  margin-top: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+  user-select: none;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.chipActive {
+  composes: chip;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-bg);
+}
+
+.chipActive:disabled {
+  opacity: 0.85;
+}
+
+/* ── Chip ×-close button (inside active chip) ────────────────── */
+
+.chipXBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin-left: 2px;
+  opacity: 0.7;
+  transition: opacity var(--g-transition-fast);
+}
+
+.chipXBtn:hover {
+  opacity: 1;
+}
+
+/* ── Dimension editor ──────────────────────────────────────── */
+
+.dimRoot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.dimInput {
+  width: 120px;
+}
+
+/* ── Key-value editor ──────────────────────────────────────── */
+
+.kvEditorRoot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.kvEditorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+}
+
+.kvInput {
+  flex: 1 1 120px;
+  max-width: 200px;
+}
+
+.kvEquals {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.kvRemove {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--color-text-muted);
+  padding: 0 4px;
+  transition: color var(--g-transition-fast);
+}
+
+.kvRemove:hover {
+  color: var(--color-danger);
+}

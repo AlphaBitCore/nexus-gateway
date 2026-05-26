@@ -1,0 +1,112 @@
+/* ─── Animations & Transitions ───────────────────────────────────────────── */
+
+/* ── Keyframes ───────────────────────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideLeft {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideRight {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.97) translateY(4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ── Animation Utility Classes ───────────────────────────────────────────── */
+
+.anim-fade-in     { animation: fadeIn var(--g-transition-normal) ease-out; }
+.anim-fade-out    { animation: fadeOut var(--g-transition-normal) ease-out; }
+.anim-slide-up    { animation: slideUp var(--g-transition-normal) ease-out; }
+.anim-slide-down  { animation: slideDown var(--g-transition-normal) ease-out; }
+.anim-slide-left  { animation: slideLeft var(--g-transition-normal) ease-out; }
+.anim-slide-right { animation: slideRight var(--g-transition-normal) ease-out; }
+.anim-scale-in    { animation: scaleIn var(--g-transition-fast) ease-out; }
+
+/* ── Layout Shift Smoothing ──────────────────────────────────────────────── */
+
+.anim-layout {
+  transition:
+    width var(--g-transition-normal) ease,
+    height var(--g-transition-normal) ease,
+    padding var(--g-transition-normal) ease,
+    margin var(--g-transition-normal) ease,
+    gap var(--g-transition-normal) ease,
+    grid-template-columns var(--g-transition-normal) ease;
+}
+
+.anim-sidebar {
+  transition:
+    width var(--g-transition-slow) ease,
+    transform var(--g-transition-slow) ease;
+}
+
+/* ── Skeleton Loader ─────────────────────────────────────────────────────── */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--color-muted) 25%, var(--color-border) 50%, var(--color-muted) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--g-radius-md);
+}
+
+/* ── Reduced Motion ──────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-in,
+  .anim-fade-out,
+  .anim-slide-up,
+  .anim-slide-down,
+  .anim-slide-left,
+  .anim-slide-right,
+  .anim-scale-in {
+    animation: none !important;
+  }
+
+  .anim-layout,
+  .anim-sidebar {
+    transition: none !important;
+  }
+
+  .skeleton {
+    animation: none !important;
+  }
+}

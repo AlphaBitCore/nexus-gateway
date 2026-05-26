@@ -1,0 +1,40 @@
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  background: var(--color-surface-alt);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.currentRange {
+  color: var(--color-text-primary);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.presetButtons {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.presetBtn {
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.presetBtnActive {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-color: var(--color-primary);
+}

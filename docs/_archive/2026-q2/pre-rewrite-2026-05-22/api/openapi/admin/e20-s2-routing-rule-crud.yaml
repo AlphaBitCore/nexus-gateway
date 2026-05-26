@@ -1,0 +1,379 @@
+openapi: "3.1.0"
+info:
+  title: Nexus — Routing Rule CRUD (E20 / Story 2)
+  description: |
+    Admin CRUD surface for routing rules after the E20-S2 cleanup that
+    removes the redundant `RoutingRule.modelId` column.
+
+    **Change from prior (undocumented) shape:** the `modelId` field on the
+    `RoutingRule` resource and on create/update request bodies is removed.
+    Per-rule model filtering is expressed exclusively via
+    `matchConditions.models` (see E20-S1). The Go routing engine's
+    `ruleMatches` now decides applicability only from `matchConditions`.
+
+    Per dev-phase policy (no backward compatibility, pre-GA), the legacy
+    field is **gone**, not aliased. Requests that send `modelId` will have
+    the field ignored by Echo's binder (unknown fields are silently
+    dropped); admin clients MUST stop sending it.
+
+    Authentication: all routes require a valid admin session cookie,
+    established via `POST /api/admin/auth/login`.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane instance
+
+tags:
+  - name: Routing Rules
+    description: Admin CRUD for routing rules (post-modelId-removal shape)
+
+paths:
+  /api/admin/routing-rules:
+    get:
+      tags: [Routing Rules]
+      operationId: adminListRoutingRules
+      summary: List routing rules
+      description: |
+        Returns a page of routing rules ordered by `priority DESC, name ASC`.
+        Supports free-text search by rule name/description and filters by
+        `strategyType` and `enabled`.
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive substring match on name + description.
+        - in: query
+          name: strategyType
+          schema:
+            type: string
+            enum: [single, fallback, loadbalance, ab_split, conditional, smart, policy]
+        - in: query
+          name: enabled
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Page of routing rules.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RoutingRule"
+                  total:
+                    type: integer
+        "401":
+          description: Missing or invalid admin session.
+
+    post:
+      tags: [Routing Rules]
+      operationId: adminCreateRoutingRule
+      summary: Create a routing rule
+      description: |
+        Creates a routing rule. The request body MUST NOT include a
+        top-level `modelId` field — it has been removed. Use
+        `matchConditions.models` to restrict a rule to specific model ids.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoutingRuleCreatePayload"
+            examples:
+              singleStrategy:
+                summary: Single-target rule with model filter
+                value:
+                  name: "moonshot-v1-8k primary"
+                  priority: 10
+                  enabled: true
+                  pipelineStage: 1
+                  strategyType: single
+                  config:
+                    type: single
+                    providerId: "p-moonshot"
+                    modelId: "moonshot-v1-8k"
+                  matchConditions:
+                    models: ["moonshot-v1-8k"]
+      responses:
+        "201":
+          description: Routing rule created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRule"
+        "400":
+          description: Malformed body or missing required fields.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+        "422":
+          description: |
+            Semantic validation error. Returned when
+            `matchConditions.organizations` is present (legacy key rejected by
+            E20-S1).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+  /api/admin/routing-rules/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Routing Rules]
+      operationId: adminGetRoutingRule
+      summary: Read one routing rule
+      responses:
+        "200":
+          description: Routing rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRule"
+        "404":
+          description: Routing rule not found.
+
+    put:
+      tags: [Routing Rules]
+      operationId: adminUpdateRoutingRule
+      summary: Update a routing rule (partial via nullable fields)
+      description: |
+        Partial update. Every field in the request body is optional; omitted
+        fields keep their current value (SQL `COALESCE` at the store layer).
+        The request body MUST NOT include a top-level `modelId` field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoutingRuleUpdatePayload"
+            examples:
+              toggleEnabled:
+                summary: Disable a rule without touching anything else
+                value:
+                  enabled: false
+              editMatchConditions:
+                summary: Narrow an existing rule to a new model
+                value:
+                  matchConditions:
+                    models: ["moonshot-v1-8k"]
+      responses:
+        "200":
+          description: Routing rule updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRule"
+        "404":
+          description: Routing rule not found.
+        "422":
+          description: Semantic validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+    delete:
+      tags: [Routing Rules]
+      operationId: adminDeleteRoutingRule
+      summary: Delete a routing rule
+      responses:
+        "204":
+          description: Routing rule deleted.
+        "404":
+          description: Routing rule not found.
+
+components:
+  schemas:
+    StrategyType:
+      type: string
+      enum: [single, fallback, loadbalance, ab_split, conditional, smart, policy]
+
+    MatchConditions:
+      type: object
+      additionalProperties: false
+      description: |
+        Per-rule filter block. A rule applies to a request iff every
+        dimension this block specifies matches the request. Empty / omitted
+        fields mean "no filter on this dimension". See E20-S1 for the
+        `organizations` → `projects` rename.
+      properties:
+        models:
+          type: array
+          description: |
+            Match only requests whose `RequestedModel.ID` is in this list.
+            This is the only per-rule model filter since E20-S2.
+          items:
+            type: string
+        modelTypes:
+          type: array
+          description: Match only requests whose `RequestedModel.Type` is in this list.
+          items:
+            type: string
+        providers:
+          type: array
+          description: Match only requests whose resolved route targets one of these provider ids.
+          items:
+            type: string
+            format: uuid
+        projects:
+          type: array
+          description: Match only requests whose virtual key's ProjectID is in this list.
+          items:
+            type: string
+            format: uuid
+        virtualKeys:
+          type: array
+          description: Match only requests bearing a virtual key whose slug matches one of these glob patterns.
+          items:
+            type: string
+
+    FallbackChainEntry:
+      type: object
+      required: [providerId, modelId]
+      properties:
+        providerId:
+          type: string
+          format: uuid
+        modelId:
+          type: string
+
+    RoutingRuleCreatePayload:
+      type: object
+      required: [name, strategyType, config]
+      description: |
+        Create payload. Note the absence of a top-level `modelId` — the
+        column was dropped in E20-S2. Use `matchConditions.models` instead.
+      properties:
+        name:
+          type: string
+          description: Unique rule name.
+        description:
+          type: string
+          nullable: true
+        strategyType:
+          $ref: "#/components/schemas/StrategyType"
+        config:
+          type: object
+          description: Strategy-specific payload (shape depends on strategyType); out of scope for this spec.
+        matchConditions:
+          $ref: "#/components/schemas/MatchConditions"
+        priority:
+          type: integer
+          default: 0
+        pipelineStage:
+          type: integer
+          enum: [0, 1]
+          default: 1
+          description: |
+            0 = policy narrowing stage (allow/deny). 1 = route decision
+            stage (single winning rule).
+        fallbackChain:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/FallbackChainEntry"
+        enabled:
+          type: boolean
+          default: true
+
+    RoutingRuleUpdatePayload:
+      type: object
+      description: |
+        Update payload. All fields are optional; omitted keys keep their
+        current value. Top-level `modelId` is **not** accepted — the column
+        was dropped in E20-S2.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        strategyType:
+          $ref: "#/components/schemas/StrategyType"
+        config:
+          type: object
+        matchConditions:
+          $ref: "#/components/schemas/MatchConditions"
+        priority:
+          type: integer
+        pipelineStage:
+          type: integer
+          enum: [0, 1]
+        fallbackChain:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/FallbackChainEntry"
+        enabled:
+          type: boolean
+
+    RoutingRule:
+      type: object
+      required:
+        [id, name, strategyType, config, priority, pipelineStage, enabled, createdAt, updatedAt]
+      description: |
+        Routing rule resource as returned by the admin API. Does not
+        include a top-level `modelId` field (removed in E20-S2).
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        strategyType:
+          $ref: "#/components/schemas/StrategyType"
+        config:
+          type: object
+        matchConditions:
+          $ref: "#/components/schemas/MatchConditions"
+        priority:
+          type: integer
+        pipelineStage:
+          type: integer
+          enum: [0, 1]
+        fallbackChain:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/FallbackChainEntry"
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ValidationError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string

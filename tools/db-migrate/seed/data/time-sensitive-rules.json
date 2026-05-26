@@ -1,0 +1,93 @@
+{
+  "_comment": "Default time-sensitive rule list for the response cache freshness gate. Single source of truth — seed.ts UPSERTs this into semantic_cache_config.time_sensitive_overrides on a fresh DB; AIGW pulls it via Hub shadow. Both RequireQuestionMark and RequireEntity default to false: keyword strength carries the signal. Editing this file changes the on-DB defaults for newly-seeded clusters; existing clusters keep whatever the admin has saved.",
+  "rules": [
+    {
+      "id": "time-current",
+      "keywords": ["now", "today", "latest", "current", "this week", "this month", "现在", "今天", "最新", "当前", "本周", "本月", "目前"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "stock-price",
+      "keywords": ["stock price", "share price", "market cap", "stock quote", "股价", "市值", "股票价格", "当前价格"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "exchange-rate",
+      "keywords": ["exchange rate", "conversion rate", "forex", "fx rate", "汇率", "兑换率", "外汇汇率"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "weather",
+      "keywords": ["weather", "temperature", "forecast", "humidity", "wind speed", "天气", "温度", "天气预报", "气温", "湿度", "风速"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "news",
+      "keywords": ["news", "headline", "breaking", "latest news", "today's news", "新闻", "头条", "最新新闻", "突发", "今日头条"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "score",
+      "keywords": ["score", "current score", "game result", "match result", "live score", "比分", "当前比分", "比赛结果", "实时比分", "赛果"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "crypto-price",
+      "keywords": ["crypto price", "bitcoin price", "ethereum price", "coin price", "加密货币价格", "比特币价格", "以太坊价格", "币价"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "oil-price",
+      "keywords": ["oil price", "crude price", "brent crude", "wti crude", "油价", "原油价格", "布伦特原油", "原油"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "interest-rate",
+      "keywords": ["interest rate", "federal reserve rate", "repo rate", "bond yield", "利率", "美联储利率", "基准利率", "债券收益率", "存款利率"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "inflation",
+      "keywords": ["inflation rate", "cpi", "consumer price index", "inflation today", "通货膨胀", "通胀率", "CPI", "消费者价格指数"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    },
+    {
+      "id": "population",
+      "keywords": ["population", "current population", "how many people", "人口", "当前人口", "多少人口", "人口数量"],
+      "requireQuestionMark": false,
+      "requireEntity": false,
+      "languages": ["en", "zh"],
+      "enabled": true
+    }
+  ]
+}

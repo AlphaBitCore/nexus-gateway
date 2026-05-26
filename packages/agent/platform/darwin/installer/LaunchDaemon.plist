@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Unique identifier matching the bundle ID. -->
+    <key>Label</key>
+    <string>com.nexus-gateway.agent</string>
+
+    <!-- Run the Go binary inside the .app bundle with the production config file.
+         Paths follow Apple's File System Programming Guide:
+           config → /Library/Application Support/<bundle-id>/agent.yaml
+           state  → /Library/Application Support/<bundle-id>/        (cert, key, audit DB)
+           logs   → /Library/Logs/<bundle-id>/                       (stdout, stderr) -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/NexusAgent.app/Contents/MacOS/nexus-agent</string>
+        <string>run</string>
+        <string>-config</string>
+        <string>/Library/Application Support/com.nexus-gateway.agent/agent.yaml</string>
+    </array>
+
+    <!-- Start at boot. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart if the process exits unexpectedly. The menu's Quit
+         action does NOT rely on KeepAlive=false to stop the daemon —
+         instead it writes a user-writable quit-flag file
+         (/Library/Application Support/com.nexus-gateway.agent/flags/user-quit)
+         that the daemon's main() reads on every launchd respawn and
+         exits if present. This way:
+           - no sudo prompt is needed to "really quit" the daemon
+           - re-opening NexusAgent.app removes the flag and the next
+             launchd respawn brings the daemon back up (~10s, bounded
+             by ThrottleInterval below)
+         See [[agent-quit-flag-design]]. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Run as root so the agent can manage network filtering. -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Capture stdout/stderr to log files for debugging. -->
+    <key>StandardOutPath</key>
+    <string>/Library/Logs/com.nexus-gateway.agent/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Logs/com.nexus-gateway.agent/launchd.err.log</string>
+
+    <!-- Resource limits. -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <!-- Throttle restart loop to prevent thrashing. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

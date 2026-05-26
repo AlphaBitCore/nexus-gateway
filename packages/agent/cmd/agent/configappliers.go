@@ -1,0 +1,162 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"sync/atomic"
+
+	agentcompliance "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/compliance"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/killswitch"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/protectionpause"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/exemption"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/policies"
+	config "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/schema"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/shadow"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/status"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/cmd/agent/platformshim"
+)
+
+// configAppliers holds all the shadow key applier closures and derived objects.
+type configAppliers struct {
+	// Per-key appliers for configDispatchDeps.
+	exemptions          rawApply
+	killSwitchApply     rawApply
+	agentSettings       rawApply
+	interceptionDomains rawApply
+	hookConfig          rawApply
+	payloadCapture      rawApply
+	streamingCompliance rawApply
+	installedRulePacks  rawApply
+	userContext         rawApply
+
+	// Objects derived during applier construction.
+	killSwitchObj *killswitch.Switch
+	pauser        *protectionpause.Pauser
+}
+
+// buildConfigAppliersArgs carries the dependencies for buildConfigAppliers.
+type buildConfigAppliersArgs struct {
+	cfg                  *config.AgentConfig
+	cfgMgr               *config.Manager
+	logger               *slog.Logger
+	statusCollectorPtr   **status.Collector
+	agentPipeline        *agentcompliance.AgentPipeline
+	exemptionStore       *exemption.Store
+	payloadCaptureStore  *payloadcapture.Store
+	streamingPolicyStore *streampolicy.Store
+	policiesCache        *policies.SnapshotCache
+	// attestationEnabled is the live boolean read by the agent's
+	// tlsbump request injector before stamping every outbound HTTPS
+	// request with X-Nexus-Attestation. The agent_settings shadow
+	// applier writes it; the attestation Signer reads it on every
+	// Sign call so admin toggles propagate without a daemon restart.
+	// Nil means attestation is not wired in this build — applier
+	// no-ops, Signer fail-opens (omits header).
+	attestationEnabled   *atomic.Bool
+}
+
+func applyOf(a shadow.ShadowApplier) rawApply {
+	return func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
+		return nil, a.ApplyShadowState(ctx, raw)
+	}
+}
+
+func adaptApplyFunc(fn func(ctx context.Context, raw json.RawMessage) error) rawApply {
+	return func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
+		return nil, fn(ctx, raw)
+	}
+}
+
+func teeCatB(key string, inner shadow.ShadowApplier, cache *policies.SnapshotCache) shadow.ShadowApplier {
+	return policies.TeeApplier{Inner: inner, Cache: cache, CfgKey: key}
+}
+
+// buildConfigAppliers constructs all shadow key applier closures. This is
+// called once in cmdRun after all the subsystem objects have been created.
+func buildConfigAppliers(a buildConfigAppliersArgs) configAppliers {
+	// Kill switch + pauser (needed by agentSettings applier + network layer).
+	ks := killswitch.New(a.logger)
+	pauser := protectionpause.New(ks)
+
+	agentSettingsApply := adaptApplyFunc(func(_ context.Context, raw json.RawMessage) error {
+		if len(raw) == 0 {
+			return nil
+		}
+		var as struct {
+			QuitAllowed            *bool             `json:"quitAllowed"`
+			ShutdownWarning        map[string]string `json:"shutdownWarning"`
+			ShutdownWarningEnabled bool              `json:"shutdownWarningEnabled"`
+			TrafficUploadLevel     string            `json:"trafficUploadLevel"`
+			ForceQUICFallbackBundles []string        `json:"forceQUICFallbackBundles"`
+			// Fleet toggle for traffic attestation. When true and an Ed25519
+			// cert is on disk, the request injector stamps X-Nexus-Attestation
+			// on every outbound HTTPS request.
+			AttestationEnabled bool `json:"attestationEnabled"`
+		}
+		if err := json.Unmarshal(raw, &as); err != nil {
+			return fmt.Errorf("decode agent_settings state: %w", err)
+		}
+		remoteOverlay := map[string]any{}
+		if as.QuitAllowed != nil {
+			remoteOverlay["quitAllowed"] = *as.QuitAllowed
+		}
+		if as.TrafficUploadLevel != "" {
+			remoteOverlay["trafficUploadLevel"] = as.TrafficUploadLevel
+		}
+		if as.ForceQUICFallbackBundles != nil {
+			remoteOverlay["forceQUICFallbackBundles"] = platformshim.AnySlice(as.ForceQUICFallbackBundles)
+		}
+		if len(remoteOverlay) > 0 {
+			next := config.MergeConfig(a.cfgMgr.Get(), remoteOverlay)
+			a.cfgMgr.Swap(next)
+		}
+		if as.ForceQUICFallbackBundles != nil {
+			if err := platformshim.WriteQUICFallbackBundlesFile(as.ForceQUICFallbackBundles, a.logger); err != nil {
+				a.logger.Warn("write quic-bundles.json failed", "error", err, "count", len(as.ForceQUICFallbackBundles))
+			}
+		}
+		if sc := *a.statusCollectorPtr; sc != nil {
+			if as.ShutdownWarningEnabled && as.ShutdownWarning != nil {
+				sc.SetShutdownWarning(as.ShutdownWarning)
+			} else {
+				sc.SetShutdownWarning(nil)
+			}
+		}
+		// Propagate attestationEnabled to the runtime atomic so the
+		// Signer's enabled-lookup closure sees the live value on the
+		// next outbound request. Nil flag is a no-op.
+		if a.attestationEnabled != nil {
+			a.attestationEnabled.Store(as.AttestationEnabled)
+		}
+		a.logger.Info("agent_settings shadow applied",
+			"quitAllowedSet", as.QuitAllowed != nil,
+			"shutdownWarningEnabled", as.ShutdownWarningEnabled,
+			"trafficUploadLevel", as.TrafficUploadLevel,
+			"attestationEnabled", as.AttestationEnabled,
+		)
+		return nil
+	})
+
+	return configAppliers{
+		exemptions:          applyOf(teeCatB("exemptions", a.exemptionStore, a.policiesCache)),
+		killSwitchApply:     applyOf(ks),
+		agentSettings:       agentSettingsApply,
+		interceptionDomains: applyOf(teeCatB("interception_domains", shadow.AdapterFunc(a.agentPipeline.ApplyDomainsShadowState), a.policiesCache)),
+		hookConfig:          applyOf(teeCatB("hooks", shadow.AdapterFunc(a.agentPipeline.ApplyHooksShadowState), a.policiesCache)),
+		payloadCapture:      applyOf(teeCatB("payload_capture", shadow.AdapterFunc(a.payloadCaptureStore.ApplyShadowState), a.policiesCache)),
+		streamingCompliance: applyOf(teeCatB("streaming_compliance", shadow.AdapterFunc(a.streamingPolicyStore.ApplyShadowState), a.policiesCache)),
+		installedRulePacks: applyOf(teeCatB("installed_rule_packs", shadow.AdapterFunc(func(ctx context.Context, raw json.RawMessage) error {
+			return a.agentPipeline.ApplyRulePacksShadowState(ctx, raw)
+		}), a.policiesCache)),
+		userContext: applyOf(teeCatB("user_context", shadow.AdapterFunc(func(_ context.Context, _ json.RawMessage) error {
+			return nil
+		}), a.policiesCache)),
+		killSwitchObj: ks,
+		pauser:        pauser,
+	}
+}

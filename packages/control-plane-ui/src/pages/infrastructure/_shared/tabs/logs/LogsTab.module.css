@@ -1,0 +1,139 @@
+/* Filter bar */
+
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+  align-items: flex-end;
+}
+
+.filterField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.filterLabel {
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.searchField {
+  flex: 1 1 200px;
+  min-width: 200px;
+}
+
+.rangeButtons {
+  display: flex;
+  gap: var(--g-space-2);
+  flex-wrap: wrap;
+}
+
+/* Events table */
+
+.eventsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+}
+
+.eventsTable th {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.eventsTable td {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.eventsTable tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+.eventRow {
+  cursor: pointer;
+}
+
+.messageCell {
+  display: inline-block;
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codeCell {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+}
+
+.empty {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+  padding: var(--g-space-2) 0;
+}
+
+/* Detail dialog */
+
+.detailMeta {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: var(--g-space-2) var(--g-space-3);
+  margin: 0;
+}
+
+.detailMeta dt {
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+}
+
+.detailMeta dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.subHeading {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  margin: var(--g-space-3) 0 var(--g-space-1);
+}
+
+.detailJson,
+.detailStack {
+  margin: 0;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--color-bg-hover);
+  padding: var(--g-space-3);
+  border-radius: var(--g-radius-sm);
+}
+
+.detailStack {
+  max-height: 360px;
+  overflow: auto;
+}

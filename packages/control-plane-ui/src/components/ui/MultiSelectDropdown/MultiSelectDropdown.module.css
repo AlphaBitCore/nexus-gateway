@@ -1,0 +1,126 @@
+.root {
+  position: relative;
+  width: 100%;
+}
+
+.label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.trigger {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 36px 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: var(--shadow-xs);
+  position: relative;
+}
+
+.trigger:disabled {
+  background: var(--color-muted);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.triggerText {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triggerArrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  z-index: 50;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--g-space-2);
+}
+
+.emptyMessage {
+  padding: var(--g-space-2);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.searchWrap {
+  padding: 4px 4px 8px;
+  position: sticky;
+  top: 0;
+  background: var(--color-surface);
+  z-index: 1;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-sizing: border-box;
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.groupHeader {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: 6px 8px;
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  font-size: var(--g-font-size-sm);
+  background: transparent;
+}
+
+.optionRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.optionRowSelected {
+  background: var(--color-surface-hover);
+}

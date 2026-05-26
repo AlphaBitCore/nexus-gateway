@@ -1,0 +1,36 @@
+/* ─── Card ───────────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+  transition: transform var(--g-transition-fast), box-shadow var(--g-transition-normal), border-color var(--g-transition-normal);
+}
+
+/* Hover lift is reserved for cards that behave like a control. */
+.card[data-interactive='true']:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm), var(--g-effect-card-hover-shadow);
+}
+
+.card[data-interactive='true'] {
+  cursor: pointer;
+}
+
+/* Click-shrink feedback removed by user request — every Card had a
+   `:active { transform: scale(0.985) }` rule that fired on every
+   mousedown, even for non-clickable cards used as plain containers. */
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+}
+
+/* ── Padding ─────────────────────────────────────────────────────────────── */
+
+.pad-none { padding: 0; }
+.pad-sm   { padding: var(--g-space-3); }
+.pad-md   { padding: var(--g-space-4); }
+.pad-lg   { padding: var(--g-space-6); }

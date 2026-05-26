@@ -1,0 +1,841 @@
+openapi: 3.1.0
+info:
+  title: Nexus AI Gateway — Native Ingress Endpoints (E28 S4)
+  version: 0.1.0
+  description: >
+    Provider-native ingress endpoints served by the AI Gateway so vendor
+    SDKs can target Nexus unchanged. Every native route accepts a Nexus
+    Virtual Key (VK) via either the Nexus-native header, the standard
+    `Authorization: Bearer`, **or** the vendor-conventional header used by
+    that vendor's SDK (listed per route below).
+
+
+    For **non-streaming chat**, the response wire shape matches the
+    **ingress** format (Anthropic Messages envelope, Gemini
+    `generateContent` envelope, or OpenAI chat.completion JSON on
+    OpenAI-compat routes) even when the routed upstream uses a different
+    provider wire format; the gateway translates via an internal OpenAI
+    chat-completion hub. **Streaming** across mismatched SSE families
+    returns HTTP 400 `cross_format_stream_unsupported` until streaming
+    transcoders exist. Unsupported hub pairs still return HTTP 400
+    `no_compatible_provider`.
+
+servers:
+  - url: http://localhost:3050
+    description: Local development
+
+security:
+  - VirtualKeyAuth: []
+  - BearerAuth: []
+  - AnthropicApiKey: []
+  - GeminiApiKeyHeader: []
+  - GeminiApiKeyQuery: []
+  - AzureApiKey: []
+
+paths:
+  /v1/messages:
+    post:
+      operationId: createAnthropicMessage
+      summary: Anthropic-native messages endpoint
+      description: >
+        Anthropic-shaped chat completion (`messages`, `system`, `tool_use`).
+        Routing may resolve any compatible provider; non-streaming
+        responses are reshaped to the Anthropic Messages response
+        envelope. Returns `400 no_compatible_provider` when no compatible
+        target exists, or `400 cross_format_stream_unsupported` for
+        disallowed streaming cross-format pairs.
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+        - AnthropicApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnthropicMessagesRequest'
+            example:
+              model: claude-3-5-sonnet-20241022
+              max_tokens: 1024
+              system: You are a helpful assistant.
+              messages:
+                - role: user
+                  content: Hello, Claude.
+              stream: false
+      responses:
+        '200':
+          description: Non-streaming Anthropic response or SSE stream (depending on `stream`)
+          headers:
+            x-nexus-request-id: { $ref: '#/components/headers/x-nexus-request-id' }
+            x-nexus-provider:   { $ref: '#/components/headers/x-nexus-provider' }
+            x-nexus-model:      { $ref: '#/components/headers/x-nexus-model' }
+            x-nexus-latency-ms: { $ref: '#/components/headers/x-nexus-latency-ms' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnthropicMessagesResponse'
+            text/event-stream:
+              schema:
+                type: string
+                description: Anthropic-format SSE stream with `event:` and `data:` frames
+        '400':
+          $ref: '#/components/responses/NoCompatibleProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1beta/models/{model}:generateContent:
+    post:
+      operationId: generateGeminiContent
+      summary: Gemini-native non-streaming generate content
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+        - GeminiApiKeyHeader: []
+        - GeminiApiKeyQuery: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string, example: gemini-1.5-pro }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeminiGenerateContentRequest'
+            example:
+              contents:
+                - role: user
+                  parts:
+                    - text: Hello, Gemini.
+              systemInstruction:
+                parts:
+                  - text: You are a helpful assistant.
+              generationConfig:
+                temperature: 0.7
+                maxOutputTokens: 1024
+      responses:
+        '200':
+          description: Gemini-format non-streaming response
+          headers:
+            x-nexus-request-id: { $ref: '#/components/headers/x-nexus-request-id' }
+            x-nexus-provider:   { $ref: '#/components/headers/x-nexus-provider' }
+            x-nexus-model:      { $ref: '#/components/headers/x-nexus-model' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeminiGenerateContentResponse'
+        '400':
+          $ref: '#/components/responses/NoCompatibleProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1beta/models/{model}:streamGenerateContent:
+    post:
+      operationId: streamGenerateGeminiContent
+      summary: Gemini-native streaming generate content
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+        - GeminiApiKeyHeader: []
+        - GeminiApiKeyQuery: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string, example: gemini-1.5-pro }
+        - name: alt
+          in: query
+          required: false
+          schema: { type: string, enum: [sse] }
+          description: When `sse`, upstream returns server-sent events instead of a JSON array
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeminiGenerateContentRequest'
+      responses:
+        '200':
+          description: Streaming Gemini response (SSE when `alt=sse`, JSON-array otherwise)
+          content:
+            text/event-stream:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GeminiGenerateContentResponse'
+        '400':
+          $ref: '#/components/responses/NoCompatibleProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /openai/deployments/{deployment}/chat/completions:
+    post:
+      operationId: createAzureChatCompletion
+      summary: Azure OpenAI native chat completion
+      description: >
+        Azure OpenAI URL shape with `deployment` in the path. Body is
+        OpenAI-compat; `api-version` is required per Azure convention and
+        is forwarded to the upstream along with the deployment.
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+        - AzureApiKey: []
+      parameters:
+        - name: deployment
+          in: path
+          required: true
+          schema: { type: string, example: gpt-4o-prod }
+        - name: api-version
+          in: query
+          required: true
+          schema: { type: string, example: '2024-10-21' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAIChatCompletionRequest'
+      responses:
+        '200':
+          description: Azure OpenAI response (non-streaming) or SSE stream
+          headers:
+            x-nexus-request-id: { $ref: '#/components/headers/x-nexus-request-id' }
+            x-nexus-provider:   { $ref: '#/components/headers/x-nexus-provider' }
+            x-nexus-model:      { $ref: '#/components/headers/x-nexus-model' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/NoCompatibleProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /openai/deployments/{deployment}/embeddings:
+    post:
+      operationId: createAzureEmbedding
+      summary: Azure OpenAI native embeddings
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+        - AzureApiKey: []
+      parameters:
+        - name: deployment
+          in: path
+          required: true
+          schema: { type: string }
+        - name: api-version
+          in: query
+          required: true
+          schema: { type: string, example: '2024-10-21' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAIEmbeddingRequest'
+      responses:
+        '200':
+          description: Azure OpenAI embeddings response (OpenAI-compat)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIEmbeddingResponse'
+        '400': { $ref: '#/components/responses/NoCompatibleProvider' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/paas/v4/chat/completions:
+    post:
+      operationId: createGLMChatCompletion
+      summary: GLM (ZhipuAI) native chat completion
+      description: >
+        OpenAI-compat body shape with GLM-specific extension fields
+        (`do_sample`, `request_id`, GLM `tools[].type=web_search`, etc.)
+        passed through verbatim. Authenticate with `Authorization:
+        Bearer <vk>` (Nexus VK; the gateway exchanges it for the
+        upstream GLM JWT server-side).
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GLMChatCompletionRequest'
+            example:
+              model: glm-4
+              messages:
+                - role: system
+                  content: You are a helpful assistant.
+                - role: user
+                  content: Hello.
+              do_sample: true
+              temperature: 0.7
+              stream: false
+      responses:
+        '200':
+          description: GLM-format response (non-streaming) or SSE stream
+          headers:
+            x-nexus-request-id: { $ref: '#/components/headers/x-nexus-request-id' }
+            x-nexus-provider:   { $ref: '#/components/headers/x-nexus-provider' }
+            x-nexus-model:      { $ref: '#/components/headers/x-nexus-model' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GLMChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/NoCompatibleProvider' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/paas/v4/embeddings:
+    post:
+      operationId: createGLMEmbedding
+      summary: GLM native embeddings
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAIEmbeddingRequest'
+            example:
+              model: embedding-3
+              input:
+                - Hello world.
+      responses:
+        '200':
+          description: GLM embeddings response (OpenAI-compat shape)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIEmbeddingResponse'
+        '400': { $ref: '#/components/responses/NoCompatibleProvider' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/paas/v4/models:
+    get:
+      operationId: listGLMModels
+      summary: GLM native model listing
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: GLM model catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        object: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/text/chatcompletion_pro:
+    post:
+      operationId: createMiniMaxChatCompletion
+      summary: MiniMax-native chat completion
+      tags: [Native Ingress]
+      security:
+        - VirtualKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MiniMaxChatCompletionRequest'
+            example:
+              model: abab5.5-chat
+              messages:
+                - sender_type: USER
+                  sender_name: User
+                  text: Hello.
+              bot_setting:
+                - bot_name: MM
+                  content: You are a helpful assistant.
+              reply_constraints:
+                sender_type: BOT
+                sender_name: MM
+      responses:
+        '200':
+          description: MiniMax-format non-streaming response or SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniMaxChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/NoCompatibleProvider' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+components:
+  securitySchemes:
+    VirtualKeyAuth:
+      type: apiKey
+      in: header
+      name: x-nexus-virtual-key
+      description: Nexus-native VK carrier. Works on every route.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: VirtualKey
+      description: Standard `Authorization: Bearer <nvk_...>`. Works on every route.
+    AnthropicApiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Accepted **only on `/v1/messages`** as a VK carrier for Anthropic SDK compatibility.
+    GeminiApiKeyHeader:
+      type: apiKey
+      in: header
+      name: x-goog-api-key
+      description: Accepted **only on Gemini native routes** as a VK carrier.
+    GeminiApiKeyQuery:
+      type: apiKey
+      in: query
+      name: key
+      description: Accepted **only on Gemini native routes** as a VK carrier (Gemini SDK default).
+    AzureApiKey:
+      type: apiKey
+      in: header
+      name: api-key
+      description: Accepted **only on Azure OpenAI native routes** as a VK carrier.
+
+  headers:
+    x-nexus-request-id:
+      schema: { type: string }
+      description: Server-generated request identifier (ULID).
+    x-nexus-provider:
+      schema: { type: string }
+      description: Slug of the provider the request was routed to.
+    x-nexus-model:
+      schema: { type: string }
+      description: Final upstream model ID (may differ from the client's requested model after routing).
+    x-nexus-latency-ms:
+      schema: { type: integer }
+      description: Upstream round-trip in milliseconds.
+
+  responses:
+    NoCompatibleProvider:
+      description: >
+        The ingress body format cannot be served by any resolved routing
+        target (no hub path exists for this endpoint and format pair).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [type, message]
+                properties:
+                  type:
+                    type: string
+                    enum: [no_compatible_provider]
+                  message: { type: string }
+    CrossFormatStreamUnsupported:
+      description: >
+        Streaming was requested but ingress and upstream SSE wire shapes
+        are not compatible without a streaming transcoder.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [type, message]
+                properties:
+                  type:
+                    type: string
+                    enum: [cross_format_stream_unsupported]
+                  message: { type: string }
+    Unauthorized:
+      description: Missing or invalid Virtual Key.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  type: { type: string, enum: [unauthorized] }
+                  message: { type: string }
+    RateLimited:
+      description: Rate limit or quota exceeded.
+      headers:
+        retry-after:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  type: { type: string, enum: [rate_limited, quota_exceeded] }
+                  message: { type: string }
+
+  schemas:
+    AnthropicMessagesRequest:
+      type: object
+      required: [model, messages, max_tokens]
+      properties:
+        model: { type: string }
+        max_tokens: { type: integer, minimum: 1 }
+        system: { type: string }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [user, assistant] }
+              content:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string, enum: [text, image, tool_use, tool_result] }
+                        text: { type: string }
+        temperature: { type: number }
+        top_p: { type: number }
+        stream: { type: boolean }
+        tools:
+          type: array
+          items:
+            type: object
+        tool_choice:
+          type: object
+
+    AnthropicMessagesResponse:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [message] }
+        role: { type: string, enum: [assistant] }
+        content:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string }
+              text: { type: string }
+        model: { type: string }
+        stop_reason: { type: string }
+        usage:
+          type: object
+          properties:
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+
+    GeminiGenerateContentRequest:
+      type: object
+      required: [contents]
+      properties:
+        contents:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string, enum: [user, model] }
+              parts:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    text: { type: string }
+                    inlineData:
+                      type: object
+                      properties:
+                        mimeType: { type: string }
+                        data: { type: string }
+        systemInstruction:
+          type: object
+          properties:
+            parts:
+              type: array
+              items:
+                type: object
+                properties:
+                  text: { type: string }
+        generationConfig:
+          type: object
+          properties:
+            temperature: { type: number }
+            maxOutputTokens: { type: integer }
+            topP: { type: number }
+        tools:
+          type: array
+          items:
+            type: object
+
+    GeminiGenerateContentResponse:
+      type: object
+      properties:
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              content:
+                type: object
+                properties:
+                  role: { type: string }
+                  parts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        text: { type: string }
+              finishReason: { type: string }
+        usageMetadata:
+          type: object
+          properties:
+            promptTokenCount: { type: integer }
+            candidatesTokenCount: { type: integer }
+            totalTokenCount: { type: integer }
+
+    OpenAIChatCompletionRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string, enum: [system, user, assistant, tool] }
+              content: { type: string }
+        temperature: { type: number }
+        max_tokens: { type: integer }
+        stream: { type: boolean }
+        tools:
+          type: array
+          items:
+            type: object
+      description: Azure OpenAI request body is OpenAI-compat; `model` is derived from the `deployment` URL segment and must NOT be set in the body.
+
+    OpenAIChatCompletionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string }
+        created: { type: integer }
+        model: { type: string }
+        choices:
+          type: array
+          items:
+            type: object
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+            total_tokens: { type: integer }
+
+    OpenAIEmbeddingRequest:
+      type: object
+      required: [input]
+      properties:
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        encoding_format: { type: string, enum: [float, base64] }
+        dimensions: { type: integer }
+
+    OpenAIEmbeddingResponse:
+      type: object
+      properties:
+        object: { type: string, enum: [list] }
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              object: { type: string, enum: [embedding] }
+              index: { type: integer }
+              embedding:
+                type: array
+                items: { type: number }
+        model: { type: string }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            total_tokens: { type: integer }
+
+    GLMChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      description: >
+        Same shape as `OpenAIChatCompletionRequest` plus GLM-specific
+        extension fields. Unlisted properties are forwarded verbatim
+        when ingress format equals provider format (passthrough).
+      properties:
+        model: { type: string, example: glm-4 }
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string, enum: [system, user, assistant, tool] }
+              content: { type: string }
+        temperature: { type: number }
+        top_p: { type: number }
+        max_tokens: { type: integer }
+        stream: { type: boolean }
+        do_sample:
+          type: boolean
+          description: GLM-specific. When false, sampling is disabled (greedy decoding).
+        request_id:
+          type: string
+          description: GLM-specific request identifier echoed in the response.
+        tools:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                description: GLM additionally accepts `web_search` and `retrieval` beyond the OpenAI `function` type.
+
+    GLMChatCompletionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string }
+        created: { type: integer }
+        model: { type: string }
+        request_id:
+          type: string
+          description: Echoes the request's `request_id` if provided.
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              message:
+                type: object
+                properties:
+                  role: { type: string, enum: [assistant] }
+                  content: { type: string }
+              finish_reason: { type: string }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+            total_tokens: { type: integer }
+
+    MiniMaxChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [sender_type, text]
+            properties:
+              sender_type: { type: string, enum: [USER, BOT, FUNCTION] }
+              sender_name: { type: string }
+              text: { type: string }
+        bot_setting:
+          type: array
+          items:
+            type: object
+            properties:
+              bot_name: { type: string }
+              content: { type: string }
+        reply_constraints:
+          type: object
+          properties:
+            sender_type: { type: string, enum: [BOT] }
+            sender_name: { type: string }
+        tokens_to_generate: { type: integer }
+        temperature: { type: number }
+        top_p: { type: number }
+        stream: { type: boolean }
+
+    MiniMaxChatCompletionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        created: { type: integer }
+        model: { type: string }
+        reply: { type: string }
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              messages:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    sender_type: { type: string }
+                    sender_name: { type: string }
+                    text: { type: string }
+              finish_reason: { type: string }
+        usage:
+          type: object
+          properties:
+            total_tokens: { type: integer }
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+        base_resp:
+          type: object
+          properties:
+            status_code: { type: integer }
+            status_msg: { type: string }

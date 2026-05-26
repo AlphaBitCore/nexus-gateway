@@ -1,0 +1,18 @@
+.helpTextSecondary {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.warningText {
+  font-size: 0.875rem;
+  color: var(--color-text-warning);
+}
+
+.tokenDisplay {
+  padding: 1rem;
+  background: var(--color-bg-subtle);
+  border-radius: 0.5rem;
+  font-family: monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}

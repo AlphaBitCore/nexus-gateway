@@ -1,0 +1,9 @@
+.emptyMessage {
+  color: var(--color-text-secondary);
+}
+
+.nodeId {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  font-family: monospace;
+}

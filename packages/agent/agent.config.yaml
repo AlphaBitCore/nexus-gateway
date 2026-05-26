@@ -1,0 +1,58 @@
+# Nexus Agent - production config template.
+# Every field in internal/config/config.go.AgentConfig appears here.
+# Only env override applied inside Load is LOG_LEVEL (all other
+# settings come from YAML + Hub-pushed shadow config at runtime).
+
+log:
+  level: "info"
+  format: "json"
+
+# Hub connection (config sync + audit + heartbeat + updates).
+hubURL: ""       # e.g. wss://hub.example.com/ws
+hubHTTPURL: ""   # e.g. https://hub.example.com
+hubCACertFile: "" # optional bootstrap CA for Hub enrollment (falls back to caCertFile)
+
+# Device identity / mTLS materials. Paths must be readable by the
+# agent user.
+deviceID: ""      # populated by `nexus-agent enroll` into the cert dir
+certFile: ""
+keyFile: ""
+caCertFile: ""
+
+# Local bridge listen address used by the platform interceptor on Linux
+# and Windows. Ignored on Darwin (uses Unix socket).
+platformBridgeAddress: "127.0.0.1:19080"
+
+# Local audit queue (SQLCipher-encrypted).
+auditDBPath: "audit.db"
+heartbeatIntervalSec: 60
+auditDrainIntervalSec: 30
+auditBatchSize: 200
+auditRetentionDays: 30
+configRefreshSec: 300
+
+# Policy engine default action (overridden by Hub-pushed shadow config).
+# The retired policy_rules shadow key was deleted in PR-0 with no live
+# publisher; admin-pushed inspection now flows through interception_domains.
+defaultAction: "passthrough"
+
+# Auto-updater.
+updaterEnabled: false
+updaterCheckSec: 3600
+
+# Whether the tray GUI "Quit" action is allowed.
+quitAllowed: true
+
+# E20: Cert-pin auto-exemption.
+exemptionEnabled: true
+exemptionFailureThreshold: 3
+exemptionWindowSec: 3600
+exemptionDurationSec: 86400
+exemptionAllowlist: []
+exemptionDenylist: []
+
+# E21: OpenTelemetry.
+otelEnabled: false
+otelEndpoint: "http://localhost:4318"
+otelServiceName: "nexus-agent"
+otelSamplingRate: 1.0

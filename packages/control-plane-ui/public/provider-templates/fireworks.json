@@ -1,0 +1,79 @@
+{
+  "name": "fireworks",
+  "displayName": "Fireworks AI",
+  "description": "Fireworks AI serverless inference \u2014 OpenAI-compatible API serving open-weight models with optimized inference profiles. Model list per 2026-04 training data; admin must verify against https://fireworks.ai/models before customer-facing use (this provider's catalog rotates frequently).",
+  "baseUrl": "https://api.fireworks.ai",
+  "adapterType": "fireworks",
+  "models": [
+    {
+      "code": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+      "name": "Llama 3.3 70B Instruct",
+      "description": "Meta's Llama 3.3 70B served on Fireworks.",
+      "providerModelId": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "accounts/fireworks/models/llama-v3p1-405b-instruct",
+      "name": "Llama 3.1 405B Instruct",
+      "description": "Meta's Llama 3.1 405B reference model.",
+      "providerModelId": "accounts/fireworks/models/llama-v3p1-405b-instruct",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "accounts/fireworks/models/deepseek-v3",
+      "name": "DeepSeek V3",
+      "description": "DeepSeek's V3 chat model on Fireworks.",
+      "providerModelId": "accounts/fireworks/models/deepseek-v3",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 65536,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "accounts/fireworks/models/deepseek-r1",
+      "name": "DeepSeek R1",
+      "description": "DeepSeek's R1 reasoning model on Fireworks.",
+      "providerModelId": "accounts/fireworks/models/deepseek-r1",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "thinking"
+      ],
+      "maxContextTokens": 65536,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "accounts/fireworks/models/qwen2p5-72b-instruct",
+      "name": "Qwen 2.5 72B Instruct",
+      "description": "Alibaba's Qwen 2.5 72B on Fireworks.",
+      "providerModelId": "accounts/fireworks/models/qwen2p5-72b-instruct",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

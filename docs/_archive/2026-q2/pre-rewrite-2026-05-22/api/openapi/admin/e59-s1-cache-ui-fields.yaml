@@ -1,0 +1,242 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway Admin — Cache UX Honesty (E59-S1, Vocabulary + State Model)
+  version: "1.1.0"
+  description: |
+    Documents both the L1-L4 vocabulary cleanup (field renames on admin
+    cache-ROI and cost-summary endpoints) AND the unified cache_status
+    state model (2-value HIT|MISS filter on admin traffic, plus 4 new
+    detail columns on each traffic_event row). Backend JSON keys are
+    renamed; consumers update at the same release. No backward-compat
+    alias on the JSON field names.
+
+    Supersedes `e31-s1-admin-traffic-cache-status.yaml` for the
+    `/api/admin/traffic` cacheStatus query and response shape.
+
+    Source of truth: `docs/developers/specs/e59/e59-s1-cache-ux-honesty.md`;
+    derivation rule in `docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md` § 6.4.
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane dev server
+
+paths:
+  /api/admin/cost-summary:
+    get:
+      summary: Aggregate cost summary (field rename only)
+      description: |
+        Field rename only — no semantic change. Old name on the left,
+        new name on the right:
+
+        ```
+        totalGatewayCacheSavingsUsd       → totalGatewayCacheSavingsUsd      (UNCHANGED — already correctly named)
+        totalL4CacheNetSavingsUsd         → totalProviderPromptCacheNetSavingsUsd  (RENAMED)
+        ```
+      operationId: getCostSummaryE59Renamed
+      tags: [Admin Analytics / Cache]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Same structure as pre-E59 with the field renamed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostSummary'
+
+  /api/admin/cache-roi:
+    get:
+      summary: Cache ROI rollup (field renames, no semantic change)
+      description: |
+        Per-day + per-adapter breakdown. All L4 references renamed to
+        provider-prompt-cache. Inline comments in the Go source
+        (`admin_cache_roi.go`) updated likewise.
+      operationId: getCacheRoiE59Renamed
+      tags: [Admin Analytics / Cache]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Same payload structure, renamed fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheRoiResponse'
+
+  /api/admin/traffic:
+    get:
+      summary: List traffic events (unified cache_status filter — E59-S1 state model)
+      description: |
+        Replaces the pre-E59 multi-value `cacheStatus` query param with a
+        2-value enum (`HIT | MISS`). Drill-down detail (gateway-cache
+        status, provider-cache status, skip reason, kind) is exposed via
+        4 new response fields — not as filter params.
+
+        Other filter params on this endpoint (timestamps, vk, model, etc.)
+        are unchanged and not re-specified here.
+
+        Supersedes the `/api/admin/traffic` cache surface in
+        `e31-s1-admin-traffic-cache-status.yaml`.
+      operationId: listAdminTrafficE59StateModel
+      tags: [Admin Traffic / Cache]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: cacheStatus
+          description: |
+            Filter rows by unified cache outcome. Only `HIT` or `MISS`
+            accepted; empty drops the filter. Pre-E59 enum values
+            (`HIT_LIVE`, `DISABLED`, `SKIP_NO_CACHE`, `PASSTHROUGH_SKIP`)
+            are explicitly rejected with HTTP 400.
+          required: false
+          schema:
+            type: string
+            enum: [HIT, MISS]
+      responses:
+        '200':
+          description: Paginated list with the 5 cache fields on each row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrafficEventCacheFieldsE59'
+                  total: { type: integer }
+                  offset: { type: integer }
+                  limit: { type: integer }
+        '400':
+          description: |
+            Invalid `cacheStatus` value (any string other than `HIT`,
+            `MISS`, or empty).
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CostSummary:
+      type: object
+      properties:
+        totalCostUsd: { type: number }
+        totalGatewayCacheSavingsUsd:
+          type: number
+          description: |
+            Total cost avoided by gateway-cache (full response) hits in
+            the window. Each hit = the upstream cost the request would
+            have incurred if it had been forwarded.
+        totalProviderPromptCacheNetSavingsUsd:
+          type: number
+          description: |
+            RENAMED from totalL4CacheNetSavingsUsd. Net savings from the
+            upstream provider's prompt cache discount (input tokens
+            served at a reduced rate), minus the cache-write surcharge
+            that created the cache on the first turn. Anthropic example:
+            (input × 0.1) − (creation × 1.25); negative on first turn,
+            positive on subsequent hits.
+        windowStart: { type: string, format: date-time }
+        windowEnd:   { type: string, format: date-time }
+
+    CacheRoiResponse:
+      type: object
+      properties:
+        totalGatewayCacheSavingsUsd: { type: number }
+        gatewayCacheHitCount:        { type: integer }
+        totalProviderPromptCacheNetSavingsUsd:
+          type: number
+          description: RENAMED from totalL4CacheNetSavingsUsd
+        requestsWithCacheHit:
+          type: integer
+          description: |
+            Number of requests in the window where the upstream provider
+            reported a cache_read token count > 0. Comment updated from
+            "requests with L4 provider cache read tokens" to "requests
+            with provider prompt cache read tokens".
+        perAdapter:
+          type: array
+          items: { $ref: '#/components/schemas/CacheRoiPerAdapter' }
+        perDay:
+          type: array
+          items: { $ref: '#/components/schemas/CacheRoiPerDay' }
+
+    CacheRoiPerAdapter:
+      type: object
+      properties:
+        adapterType: { type: string }
+        gatewayCacheSavingsUsd:
+          type: number
+          description: |
+            Comment renamed from "L1/L2/L3 response cache savings for
+            this adapter" to "Gateway response cache savings for this
+            adapter".
+        gatewayCacheHitCount: { type: integer }
+        providerPromptCacheNetSavingsUsd: { type: number }
+
+    CacheRoiPerDay:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        gatewayCacheSavingsUsd: { type: number }
+        providerPromptCacheNetSavingsUsd: { type: number }
+
+    TrafficEventCacheFieldsE59:
+      type: object
+      description: |
+        The 5 cache-related fields on each `traffic_event` row after the
+        E59-S1 state-model expansion. All nullable. Full semantics live in
+        `docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md` § 6.4.
+      properties:
+        cacheStatus:
+          type: string
+          nullable: true
+          enum: [HIT, MISS, null]
+          description: |
+            Unified cache outcome. The single field every UI filter binds
+            to. Derived at write time from `gatewayCacheStatus` +
+            `providerCacheStatus` per the derivation rule:
+            `HIT iff gatewayCacheStatus ∈ {hit, hit_inflight} OR providerCacheStatus = 'hit'`,
+            `MISS` otherwise.
+        gatewayCacheStatus:
+          type: string
+          nullable: true
+          enum: [hit, hit_inflight, miss, skipped, null]
+          description: |
+            Internal gateway-cache decision (detail-only; not a filter).
+              - **hit**: extract cache served; upstream not called.
+              - **hit_inflight**: singleflight coalescer attached this request to an in-flight identical one; leader's response replayed.
+              - **miss**: cache key looked up; not found; upstream called.
+              - **skipped**: cache layer not consulted; see `gatewayCacheSkipReason`.
+        gatewayCacheSkipReason:
+          type: string
+          nullable: true
+          enum: [disabled, no_cache, passthrough, not_cacheable, null]
+          description: |
+            Populated only when `gatewayCacheStatus = 'skipped'`.
+              - **disabled**: cache module nil (config off).
+              - **no_cache**: client sent `x-nexus-aigw-no-cache` header.
+              - **passthrough**: E48 emergency passthrough active for this provider.
+              - **not_cacheable**: response shape ineligible for caching.
+        gatewayCacheKind:
+          type: string
+          nullable: true
+          enum: [extract, semantic, null]
+          description: |
+            Populated only when `gatewayCacheStatus ∈ {hit, hit_inflight}`.
+            Today always `extract` (the one exact-match response cache).
+            `semantic` is reserved schema-only for a future semantic-cache
+            implementation; no code writes this value today.
+        providerCacheStatus:
+          type: string
+          nullable: true
+          enum: [hit, miss, na, null]
+          description: |
+            Provider prompt-cache outcome (detail-only; not a filter).
+              - **hit**: provider response reported `cache_read_tokens > 0`.
+              - **miss**: provider was called, the model supports prompt-cache, and `cache_read_tokens = 0`.
+              - **na**: provider was NOT called (gateway hit / singleflight coalesce) OR the provider was called but the model doesn't support prompt-caching (e.g. self-hosted vLLM). Disambiguate by checking whether `cacheReadTokens` is `null` (no provider call) vs zero (called, no cache support).

@@ -1,0 +1,1 @@
+export { RoutingRuleForm } from './RoutingRuleFormPage';

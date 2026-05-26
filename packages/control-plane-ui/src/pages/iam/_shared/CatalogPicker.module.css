@@ -1,0 +1,210 @@
+.picker {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  box-shadow: 0 4px 16px var(--shadow-xs);
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+}
+
+.filterInput {
+  flex: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  background: var(--color-bg);
+}
+.filterInput:focus {
+  border-color: var(--color-primary);
+}
+
+.closeBtn {
+  background: transparent;
+  border: 0;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 0 8px;
+}
+.closeBtn:hover {
+  color: var(--color-text);
+}
+
+.masterRow,
+.masterRowActive {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.masterRowActive {
+  background: var(--color-info-light);
+}
+.masterRow:hover {
+  background: var(--color-bg-subtle);
+}
+
+.masterRowCode {
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.resourceList {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.emptyState {
+  padding: var(--g-space-4);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.serviceGroup {
+  border-bottom: 1px solid var(--color-border);
+}
+.serviceGroup:last-child {
+  border-bottom: 0;
+}
+
+.serviceHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px var(--g-space-3);
+  background: var(--color-bg-subtle);
+  font-weight: 600;
+}
+
+.serviceMasterLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  flex: 1;
+  cursor: pointer;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.serviceName {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text);
+}
+
+.serviceCount {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  margin-left: auto;
+  padding-right: var(--g-space-2);
+}
+
+.serviceBody {
+  background: var(--color-bg);
+  padding-left: 20px;
+  border-left: 2px solid var(--color-border-subtle);
+  margin-left: var(--g-space-3);
+}
+
+.resourceGroup {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.resourceGroup:last-child {
+  border-bottom: 0;
+}
+
+.resourceHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px var(--g-space-3);
+}
+
+.chevron,
+.chevronOpen {
+  background: transparent;
+  border: 0;
+  padding: 4px 2px;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.resourceMasterLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  flex: 1;
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.resourceName {
+  font-weight: 500;
+  font-size: 13px;
+  font-family: var(--g-font-mono);
+  color: var(--color-text);
+}
+
+.resourceCount {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-left: auto;
+  padding-right: var(--g-space-2);
+}
+
+.verbList {
+  background: var(--color-bg-subtle);
+  padding: 4px 0;
+}
+
+.verbRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: 4px var(--g-space-3) 4px calc(var(--g-space-3) + 20px);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.verbRow:hover {
+  background: var(--color-bg);
+}
+
+.verbName {
+  font-family: var(--g-font-mono);
+  color: var(--color-text);
+}

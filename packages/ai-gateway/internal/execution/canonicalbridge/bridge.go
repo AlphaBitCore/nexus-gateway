@@ -1,0 +1,641 @@
+// Package canonicalbridge translates between client ingress wire formats and
+// upstream provider wire formats using OpenAI chat.completions JSON as the
+// internal hub representation for the chat endpoint.
+package canonicalbridge
+
+import (
+	"fmt"
+
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/cohere"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+)
+
+// formatsNativelyServingResponsesAPI is the set of provider wire formats whose
+// adapter declares AdapterSpec.RequestShapes ⊇ "responses-api". The bridge
+// consults this set on the /v1/responses ingress path — when the target's
+// Format is in this set, the body is forwarded verbatim and no
+// Responses↔canonical codec runs. Kept in lockstep with each adapter's
+// spec.go RequestShapes declaration (canonical truth:
+// providers/spec_openai/spec.go).
+//
+// Adding a sibling adapter: per provider-adapter-architecture.md §3a Rule 7
+// (binding), confirm via a captured 200 from that provider's real /v1/responses
+// endpoint before adding to this set AND the adapter's RequestShapes.
+var formatsNativelyServingResponsesAPI = map[provcore.Format]bool{
+	provcore.FormatOpenAI: true,
+}
+
+// Bridge performs ingress ↔ canonical ↔ target wire conversions for chat.
+type Bridge struct {
+	codecs map[provcore.Format]provcore.SchemaCodec
+}
+
+// New builds a bridge backed by per-format SchemaCodec instances (typically
+// from [github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins.SchemaCodecs]).
+func New(codecs map[provcore.Format]provcore.SchemaCodec) *Bridge {
+	return &Bridge{codecs: codecs}
+}
+
+// openAILike reports whether a provider format speaks the OpenAI Chat
+// Completions wire schema natively (request body, response body, SSE
+// frame envelope). Delegates to provcore.Format.IsOpenAIFamily —
+// the same canonical list that spec_openai's IdentityCodec covers —
+// so the canonical bridge never under-counts OpenAI-shape providers
+// (Moonshot, Mistral, Groq, Together, Fireworks, Perplexity, XAI,
+// MiniMax, HuggingFace) and rejects them as if they needed a
+// translator. Pre-fix, an OpenAI-ingress streaming request that
+// auto-routed to e.g. Moonshot was rejected at the cross-format
+// stream gate (writeCrossFormatStreamUnsupported) even though both
+// sides speak the same wire shape.
+func openAILike(f provcore.Format) bool {
+	return f.IsOpenAIFamily()
+}
+
+func ingressSupportsHubCanonicalChat(ingress provcore.Format) bool {
+	switch ingress {
+	case provcore.FormatAnthropic, provcore.FormatGemini, provcore.FormatVertex:
+		return true
+	default:
+		return false
+	}
+}
+
+// formatSupportsChat reports whether a provider format has a chat-completions
+// codec at all. Embeddings-only providers (Voyage today; future audio/image-
+// only providers) return false so ChatRoutable does not consider them valid
+// chat targets even though their format value is otherwise registered.
+func formatSupportsChat(f provcore.Format) bool {
+	if !f.Valid() {
+		return false
+	}
+	switch f {
+	case provcore.FormatVoyage:
+		// Voyage is embeddings-only (RequestShapes: ["embeddings"]).
+		return false
+	default:
+		return true
+	}
+}
+
+// ChatRoutable reports whether chat completions traffic from ingressFormat may
+// be routed to a target that uses targetFormat.
+func (b *Bridge) ChatRoutable(ingress, target provcore.Format) bool {
+	if ingress == target {
+		return formatSupportsChat(ingress)
+	}
+	if !formatSupportsChat(target) {
+		return false
+	}
+	if openAILike(ingress) && formatSupportsChat(target) {
+		return true
+	}
+	if openAILike(target) && ingressSupportsHubCanonicalChat(ingress) {
+		return true
+	}
+	return ingressSupportsHubCanonicalChat(ingress) && formatSupportsChat(target)
+}
+
+// TargetNativelyServesResponsesAPI reports whether a target provider wire format
+// natively serves /v1/responses (adapter declares RequestShapes ⊇ "responses-api").
+func (b *Bridge) TargetNativelyServesResponsesAPI(target provcore.Format) bool {
+	return formatsNativelyServingResponsesAPI[target]
+}
+
+// ResponsesRoutable reports whether /v1/responses ingress traffic
+// (FormatOpenAIResponses, EndpointResponsesAPI) may be routed to a
+// target that uses targetFormat. Mirrors ChatRoutable for the new
+// endpoint:
+//   - Native same-shape passthrough: target adapter declares
+//     responses-api support (checked via the lockstep map above).
+//   - Cross-format canonical bridge: any otherwise-valid chat target
+//     (target.Valid()), reached via DecodeResponsesRequest → canonical
+//     chat-completions → target's codec.EncodeRequest.
+//
+// EndpointResponsesAPI traffic is rejected against Bedrock+ since
+// Bedrock uses AWS binary event-stream framing on streams (no SSE,
+// no chat-completions wire shape on responses).
+func (b *Bridge) ResponsesRoutable(target provcore.Format) bool {
+	if formatsNativelyServingResponsesAPI[target] {
+		return true
+	}
+	// Cross-format path requires the target to have a chat-completions
+	// codec we can encode canonical into.
+	if !target.Valid() {
+		return false
+	}
+	// Bedrock streaming uses AWS event-stream framing, not SSE — its
+	// response codec doesn't fit the Responses event grammar. Reject
+	// cross-format routing to Bedrock for Responses ingress (mirrors
+	// the StreamShapeCompatible exclusion).
+	if target == provcore.FormatBedrock {
+		return false
+	}
+	return true
+}
+
+// EmbeddingsRoutable reports whether /v1/embeddings traffic from ingress may be
+// routed to a target. Routable pairs:
+//   - same-format passthrough (any registered ingress/target pair)
+//   - OpenAI / Azure (OpenAI-wire-shape) ingress → any registered target
+//     whose codec implements EndpointEmbeddings
+//   - Cohere / Gemini ingress → OpenAI / Azure / Cohere / Gemini target
+//
+// The capability pre-filter is responsible for dimension / batch-size /
+// encoding-format asymmetry checks. EmbeddingsRoutable only gates
+// wire-shape translatability.
+func (b *Bridge) EmbeddingsRoutable(ingress, target provcore.Format) bool {
+	if ingress == target {
+		return true
+	}
+	if !ingress.Valid() || !target.Valid() {
+		return false
+	}
+	// Codec registration is a necessary precondition for any
+	// canonical-bridge-mediated routing — the codec is the wire-shape
+	// translator on the target side. The capability bridge (b.codecs)
+	// is populated by builtins.SchemaCodecs at startup.
+	if _, ok := b.codecs[ingress]; !ok {
+		return false
+	}
+	if _, ok := b.codecs[target]; !ok {
+		return false
+	}
+	// In-scope ingress formats: OpenAI / Azure (OpenAI-wire-shape), Cohere, Gemini.
+	// Other formats may have codecs registered for chat but no embedding canonical
+	// helper yet — reject until extended.
+	switch {
+	case ingress.IsOpenAIFamily():
+		// OK
+	case ingress == provcore.FormatCohere:
+		// OK
+	case ingress == provcore.FormatGemini, ingress == provcore.FormatVertex:
+		// OK
+	default:
+		return false
+	}
+	switch {
+	case target.IsOpenAIFamily():
+		return true
+	case target == provcore.FormatCohere:
+		return true
+	case target == provcore.FormatGemini, target == provcore.FormatVertex:
+		return true
+	default:
+		return false
+	}
+}
+
+// EndpointRoutable extends routing compatibility beyond chat when embeddings
+// or model listing keep the legacy OpenAI-only translation rule.
+func (b *Bridge) EndpointRoutable(ep typology.WireShape, ingress, target provcore.Format) bool {
+	switch ep {
+	case typology.WireShapeOpenAIChat:
+		return b.ChatRoutable(ingress, target)
+	case typology.WireShapeOpenAIResponses:
+		// /v1/responses ingress: cross-format goes through canonical chat-completions;
+		// same-shape passthrough fires for targets declaring responses-api support.
+		return ingress == provcore.FormatOpenAIResponses && b.ResponsesRoutable(target)
+	case typology.WireShapeOpenAIEmbeddings:
+		// Cross-format routing via the embedding canonical bridge.
+		// Capability mismatch (dimensions / batch / encoding) surfaces at the
+		// routing pre-filter, not here.
+		return b.EmbeddingsRoutable(ingress, target)
+	case typology.WireShapeNone, typology.WireShapeOpenAICompletionsLegacy:
+		if ingress == target {
+			return true
+		}
+		return ingress == provcore.FormatOpenAI
+	default:
+		return ingress == target
+	}
+}
+
+// StreamShapeCompatible reports whether streaming between ingress and target is
+// supported. Every valid non-Bedrock pair is compatible: each ingress format has
+// a registered StreamTranscoder that re-encodes canonical chunks into the
+// ingress-native SSE frames. Bedrock is excluded because it uses AWS binary
+// event-stream framing rather than HTTP SSE.
+func StreamShapeCompatible(ingress, target provcore.Format) bool {
+	if !ingress.Valid() || !target.Valid() {
+		return false
+	}
+	if ingress == provcore.FormatBedrock || target == provcore.FormatBedrock {
+		return false
+	}
+	return true
+}
+
+// NewStreamTranscoder returns a StreamTranscoder for the given ingress→target
+// pair, or nil when the pair is a passthrough (same format or both OpenAI-like)
+// that does not require re-encoding. Callers attach the returned transcoder to
+// the chunkSSEReader so canonical provider chunks are re-encoded into the
+// ingress-native SSE frame format before being forwarded to the client.
+//
+// model is the customer-facing model code (e.g. "claude-opus-4-7") used to
+// populate the `model` field in synthesised OpenAI SSE chunks when the ingress
+// is OpenAI-like but the upstream speaks a different wire format.
+func (b *Bridge) NewStreamTranscoder(ingress, target provcore.Format, model string) StreamTranscoder {
+	// Passthrough: raw provider SSE bytes can be forwarded directly.
+	if ingress == target {
+		return nil
+	}
+	if openAILike(ingress) && openAILike(target) {
+		return nil
+	}
+	// /v1/responses ingress + native responses-api target (today only
+	// spec_openai): the upstream's Responses SSE bytes flow through
+	// unchanged. No transcoder needed.
+	if ingress == provcore.FormatOpenAIResponses && formatsNativelyServingResponsesAPI[target] {
+		return nil
+	}
+	switch {
+	case ingress == provcore.FormatOpenAIResponses:
+		// Cross-format: target is chat-completions wire. The reverse encoder
+		// re-shapes canonical chunks into Responses SSE event grammar before
+		// forwarding to the /v1/responses client.
+		return newResponsesStreamEncoder(model)
+	case openAILike(ingress):
+		return newOpenAIStreamEncoder(model)
+	case ingress == provcore.FormatAnthropic:
+		return newAnthropicStreamEncoder()
+	case ingress == provcore.FormatGemini, ingress == provcore.FormatVertex:
+		return &geminiStreamEncoder{}
+	case ingress == provcore.FormatCohere:
+		return &cohereStreamEncoder{}
+	case ingress == provcore.FormatReplicate:
+		return &replicateStreamEncoder{}
+	default:
+		// Unknown ingress: fall back to passthrough and let the executor
+		// surface any wire-format mismatch as an upstream error.
+		return nil
+	}
+}
+
+// DecodeViaShared is the single entry-point for response-side decoding
+// (wire native → canonical OpenAI chat-completion JSON + extracted Usage).
+// Each provider's SchemaCodec.DecodeResponse is the authoritative projection,
+// but routing every response through this helper guarantees that all callers
+// (proxy handler, /v1/estimate, audit Recorder) see byte-identical Usage values
+// and that any future Usage normalization rule lands in one place (shared/normalize).
+//
+// Returns (canonicalBody, Usage, error). On a nil body it returns zero values
+// with no error (the audit pipeline treats Usage{} as "not reported").
+// Architectural reference: cost-estimation-architecture.md §1.
+func (b *Bridge) DecodeViaShared(format provcore.Format, endpoint typology.WireShape, body []byte) ([]byte, provcore.Usage, error) {
+	codec, ok := b.codecs[format]
+	if !ok || codec == nil {
+		return body, provcore.ExtractUsage(body, format), nil
+	}
+	decodeRes, err := codec.DecodeResponse(endpoint, body, "")
+	if err != nil {
+		return body, provcore.Usage{}, err
+	}
+	canonical := decodeRes.CanonicalBody
+	// Usage is sourced from the shared/normalize Tier-1 normalizer via
+	// provcore.ExtractUsage so the cache HIT replay path + the
+	// estimate compare endpoint + the audit Recorder all see the same
+	// canonical numbers. We discard the codec's local Usage return
+	// value here on purpose: keeping a single Usage source kills any
+	// possibility of drift between the two extraction paths.
+	usage := provcore.ExtractUsage(body, format)
+	return canonical, usage, nil
+}
+
+// IngressChatToCanonical converts the client ingress JSON to canonical OpenAI
+// chat.completions request JSON.
+func (b *Bridge) IngressChatToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error) {
+	if openAILike(ingress) {
+		return body, nil
+	}
+	switch ingress {
+	case provcore.FormatAnthropic:
+		return anthropic.MessagesRequestToOpenAIChatCompletion(body, ct.ProviderModelID)
+	case provcore.FormatGemini, provcore.FormatVertex:
+		// Vertex egress uses the Gemini SchemaCodec; native ingress bodies match
+		// the same generateContent JSON shape.
+		return gemini.GenerateContentRequestToOpenAIChatCompletion(body, ct.ProviderModelID)
+	case provcore.FormatOpenAIResponses:
+		// /v1/responses request body → canonical chat-completions.
+		// Stateful fields (previous_response_id, store, truncation, built-in
+		// tools) ride along under nexus.ext.openai.responses.* for the
+		// cross-format guard to inspect.
+		return openai.DecodeResponsesRequest(body)
+	default:
+		return nil, fmt.Errorf("canonicalbridge: ingress format %q has no chat hub codec", ingress)
+	}
+}
+
+// IngressChatToWire converts ingress JSON to the upstream provider wire body
+// for chat completions.
+func (b *Bridge) IngressChatToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error) {
+	if ingress == target {
+		return body, nil
+	}
+	// /v1/responses ingress + a target whose adapter natively serves
+	// responses-api (today: spec_openai): forward the body verbatim.
+	// This is the capability-driven same-shape passthrough — adding a
+	// new sibling to formatsNativelyServingResponsesAPI activates the
+	// fast path for them without further code changes here.
+	if ingress == provcore.FormatOpenAIResponses && formatsNativelyServingResponsesAPI[target] {
+		return body, nil
+	}
+	canon, err := b.IngressChatToCanonical(ingress, body, ct)
+	if err != nil {
+		return nil, err
+	}
+	codec, ok := b.codecs[target]
+	if !ok || codec == nil {
+		return nil, fmt.Errorf("canonicalbridge: no codec for format %q", target)
+	}
+	encRes, err := codec.EncodeRequest(chatWireShapeForFormat(target), canon, ct)
+	return encRes.Body, err
+}
+
+// chatWireShapeForFormat returns the chat-completions wire shape for a target
+// provider format. Used by the canonical bridge to dispatch codec encode/decode
+// calls to the wire shape the target's codec actually serves (Anthropic codec
+// expects WireShapeAnthropicMessages, Gemini codec expects
+// WireShapeGeminiGenerateContent, etc.).
+//
+// This is NOT a compat shim. It is the structural projection (Format → native
+// chat WireShape) that has to live somewhere — Format identifies the adapter
+// family (b.codecs registry key, routing key, target provider) while WireShape
+// identifies the per-request wire shape that codecs dispatch on. An adapter
+// family has 1-3 native wire shapes; this lookup picks the chat one.
+//
+// Lockstep contract: every Format that maps to an adapter with a chat-shape
+// codec MUST appear in this switch (or fall through to the OpenAI-family
+// default). Adding a new chat adapter requires adding its Format → native
+// chat WireShape mapping here.
+func chatWireShapeForFormat(f provcore.Format) typology.WireShape {
+	switch f {
+	case provcore.FormatAnthropic:
+		return typology.WireShapeAnthropicMessages
+	case provcore.FormatGemini:
+		return typology.WireShapeGeminiGenerateContent
+	case provcore.FormatVertex:
+		return typology.WireShapeVertexGenerateContent
+	case provcore.FormatBedrock:
+		return typology.WireShapeBedrockConverse
+	case provcore.FormatCohere:
+		return typology.WireShapeCohereChat
+	}
+	// Default: every other Format is OpenAI-wire-shape (openai, deepseek,
+	// glm, azure-openai, mistral, xai, groq, perplexity, together,
+	// fireworks, moonshot, minimax, huggingface, replicate). Their codecs
+	// all dispatch on WireShapeOpenAIChat.
+	return typology.WireShapeOpenAIChat
+}
+
+// embeddingsWireShapeForFormat returns the embeddings wire shape for a target
+// provider format. Mirrors chatWireShapeForFormat for the embeddings endpoint;
+// see that helper's doc-comment for why this projection lives here (structural
+// Format → native WireShape mapping, not a compat shim).
+func embeddingsWireShapeForFormat(f provcore.Format) typology.WireShape {
+	switch f {
+	case provcore.FormatGemini:
+		return typology.WireShapeGeminiEmbedContent
+	case provcore.FormatVertex:
+		return typology.WireShapeVertexEmbedContent
+	case provcore.FormatBedrock:
+		return typology.WireShapeBedrockEmbeddings
+	case provcore.FormatCohere:
+		return typology.WireShapeCohereEmbed
+	case provcore.FormatVoyage:
+		return typology.WireShapeVoyageEmbeddings
+	}
+	// Default: OpenAI-wire family.
+	return typology.WireShapeOpenAIEmbeddings
+}
+
+// IngressEmbeddingsToCanonical converts a client ingress embedding
+// request body into canonical OpenAI /v1/embeddings JSON.
+//
+//   - OpenAI / Azure (OpenAI-wire) ingress → identity (canonical IS OpenAI).
+//   - Cohere ingress (POST /v1/embed or /v2/embed) → cohere helper.
+//   - Gemini / Vertex ingress :embedContent (single) and :batchEmbedContents
+//     (batch) → gemini helper. The bridge cannot distinguish single vs
+//     batch from the body alone (a single-element `requests` array vs a
+//     plain `content` object are both valid), so the caller must thread
+//     the choice via `singleEndpoint` when known. When unknown, the
+//     helper detects on body shape (presence of "requests": batch path;
+//     otherwise single).
+//
+// Per S2 T2 the ingress bridge is a pure translation step — capability
+// checks (dimensions / batch size) belong to the routing pre-filter and
+// codec safety net.
+func (b *Bridge) IngressEmbeddingsToCanonical(ingress provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error) {
+	if openAILike(ingress) {
+		return body, nil
+	}
+	switch ingress {
+	case provcore.FormatCohere:
+		return cohere.EmbedRequestToCanonical(body, ct.ProviderModelID)
+	case provcore.FormatGemini, provcore.FormatVertex:
+		// Detect single vs batch by body shape: ":batchEmbedContents"
+		// requests carry a top-level "requests" array; ":embedContent"
+		// carries a top-level "content" object.
+		if hasJSONField(body, "requests") {
+			return gemini.BatchEmbedContentsRequestToCanonical(body, ct.ProviderModelID)
+		}
+		return gemini.EmbedContentRequestToCanonical(body, ct.ProviderModelID)
+	default:
+		return nil, fmt.Errorf("canonicalbridge: ingress format %q has no embeddings hub codec", ingress)
+	}
+}
+
+// IngressEmbeddingsToWire mirrors [Bridge.IngressChatToWire] for embeddings.
+// Same-format ingress=target → passthrough; cross-format goes through
+// canonical → target codec.
+func (b *Bridge) IngressEmbeddingsToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error) {
+	if ingress == target {
+		return body, nil
+	}
+	canon, err := b.IngressEmbeddingsToCanonical(ingress, body, ct)
+	if err != nil {
+		return nil, err
+	}
+	codec, ok := b.codecs[target]
+	if !ok || codec == nil {
+		return nil, fmt.Errorf("canonicalbridge: no codec for format %q", target)
+	}
+	encRes, err := codec.EncodeRequest(embeddingsWireShapeForFormat(target), canon, ct)
+	return encRes.Body, err
+}
+
+// ResponseCanonicalToIngressEmbeddings converts canonical OpenAI
+// /v1/embeddings response JSON back into the client ingress response shape.
+//
+//   - OpenAI / Azure ingress → identity (canonical IS OpenAI).
+//   - Cohere ingress → cohere helper.
+//   - Gemini / Vertex ingress → single vs batch dispatch on the
+//     nexus.ext.gemini.batch flag stamped by [Bridge.IngressEmbeddingsToCanonical].
+//     When the flag is absent (e.g. canonical body originated outside the
+//     bridge) the helper falls back to data[] cardinality: 1 → single,
+//     >1 → batch.
+func (b *Bridge) ResponseCanonicalToIngressEmbeddings(ingress provcore.Format, canonical []byte) ([]byte, error) {
+	if openAILike(ingress) {
+		return canonical, nil
+	}
+	switch ingress {
+	case provcore.FormatCohere:
+		return cohere.CanonicalToEmbedResponse(canonical)
+	case provcore.FormatGemini, provcore.FormatVertex:
+		batch, present := gemini.CanonicalEmbeddingBatchFlag(canonical)
+		if !present {
+			// Fall back to cardinality.
+			if dataLen := embedDataLen(canonical); dataLen > 1 {
+				return gemini.CanonicalToBatchEmbedContentsResponse(canonical)
+			}
+			return gemini.CanonicalToEmbedContentResponse(canonical)
+		}
+		if batch {
+			return gemini.CanonicalToBatchEmbedContentsResponse(canonical)
+		}
+		return gemini.CanonicalToEmbedContentResponse(canonical)
+	default:
+		return nil, fmt.Errorf("canonicalbridge: ingress format %q has no embeddings response codec", ingress)
+	}
+}
+
+// ResponseAcrossFormats reshapes a response body from one wire shape to
+// another via canonical chat.completion. Used by the cache HIT path when
+// the cached entry's origin shape differs from the requesting ingress
+// shape.
+//
+// from / to are canonical typology.WireShape values; each one encodes
+// both the endpoint kind and the body format. Internally the bridge
+// reverses each WireShape back to a (provcore.Format, typology.WireShape)
+// pair via wireShapeToFormatEndpoint to dispatch the per-codec
+// DecodeResponse(fromFormat, body) → canonical chat.completion, then
+// ResponseCanonicalToIngress(toFormat, canonical) → target wire shape.
+// If from == to the function short-circuits and returns body unchanged.
+//
+// Returns the reshaped body. Errors come from codec dispatch (no codec
+// registered for the source wire shape) or from the underlying
+// DecodeResponse / ResponseCanonicalToIngress; callers are expected to
+// fall back to serving the original body and log a warning rather than
+// failing the request (the body is still a parseable response — just in
+// the wrong wire shape — which is strictly less broken than failing the
+// HIT).
+func (b *Bridge) ResponseAcrossFormats(from typology.WireShape, to typology.WireShape, body []byte) ([]byte, error) {
+	if from == to {
+		return body, nil
+	}
+	canonical, err := b.responseToCanonical(from, body)
+	if err != nil {
+		return nil, err
+	}
+	toFormat, _, ok := wireShapeToFormatEndpoint(to)
+	if !ok {
+		return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: no format mapping for to wire-shape %q", to)
+	}
+	return b.ResponseCanonicalToIngress(toFormat, canonical)
+}
+
+// responseToCanonical projects a wire-shape response body to canonical
+// chat-completions JSON. Centralises the dispatch so ResponseAcrossFormats
+// handles ingress-only formats (WireShapeOpenAIResponses, whose codec
+// lives in openai.responses and is addressed by endpoint, not format)
+// without sprinkling special cases.
+func (b *Bridge) responseToCanonical(from typology.WireShape, body []byte) ([]byte, error) {
+	if from == typology.WireShapeOpenAIResponses {
+		canon, _, derr := openai.DecodeResponsesResponse(body)
+		if derr != nil {
+			return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: decode responses-api→canonical: %w", derr)
+		}
+		if len(canon) == 0 {
+			return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: responses-api decoder produced empty canonical body")
+		}
+		return canon, nil
+	}
+	fromFormat, fromEndpoint, ok := wireShapeToFormatEndpoint(from)
+	if !ok {
+		return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: no format mapping for from wire-shape %q", from)
+	}
+	codec, ok := b.codecs[fromFormat]
+	if !ok || codec == nil {
+		return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: no codec for from-format %q", fromFormat)
+	}
+	decodeRes, err := codec.DecodeResponse(fromEndpoint, body, "")
+	if err != nil {
+		return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: decode %s→canonical: %w", fromFormat, err)
+	}
+	if len(decodeRes.CanonicalBody) == 0 {
+		return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: %s decoder produced empty canonical body", fromFormat)
+	}
+	return decodeRes.CanonicalBody, nil
+}
+
+// wireShapeToFormatEndpoint reverses a canonical typology.WireShape to
+// the (provcore.Format, typology.WireShape) pair that the codec registry
+// is keyed on. Returns ok=false for shapes the bridge does not handle
+// (e.g. audio/image/batches surfaces; non-OpenAI/non-Anthropic chat
+// shapes whose codec lookup hits b.codecs by Format only — those callers
+// supply their own mapping).
+func wireShapeToFormatEndpoint(w typology.WireShape) (provcore.Format, typology.WireShape, bool) {
+	switch w {
+	case typology.WireShapeOpenAIChat:
+		return provcore.FormatOpenAI, typology.WireShapeOpenAIChat, true
+	case typology.WireShapeOpenAIResponses:
+		return provcore.FormatOpenAIResponses, typology.WireShapeOpenAIResponses, true
+	case typology.WireShapeOpenAICompletionsLegacy:
+		return provcore.FormatOpenAI, typology.WireShapeOpenAICompletionsLegacy, true
+	case typology.WireShapeOpenAIEmbeddings:
+		return provcore.FormatOpenAI, typology.WireShapeOpenAIEmbeddings, true
+	case typology.WireShapeAnthropicMessages:
+		return provcore.FormatAnthropic, typology.WireShapeOpenAIChat, true
+	}
+	return "", "", false
+}
+
+// ResponseCanonicalToIngress converts canonical OpenAI chat.completion response
+// JSON into the client's ingress response shape.
+func (b *Bridge) ResponseCanonicalToIngress(ingress provcore.Format, canonical []byte) ([]byte, error) {
+	if openAILike(ingress) {
+		return canonical, nil
+	}
+	switch ingress {
+	case provcore.FormatAnthropic:
+		return anthropic.OpenAIChatCompletionToMessagesResponse(canonical)
+	case provcore.FormatGemini, provcore.FormatVertex:
+		return gemini.OpenAIChatCompletionToGenerateContentResponse(canonical)
+	case provcore.FormatOpenAIResponses:
+		// /v1/responses egress shape: modelOverride empty so the canonical
+		// body's `model` field surfaces unchanged; requestID empty triggers
+		// a synth id when the canonical lacks nexus.ext.openai.responses.id.
+		return openai.EncodeResponsesResponse(canonical, "", "")
+	default:
+		return nil, fmt.Errorf("canonicalbridge: ingress format %q has no response hub codec", ingress)
+	}
+}
+
+// SelfCheck walks every [Bridge.ChatRoutable] pair and asserts the bridge can
+// produce upstream wire bytes via [Bridge.IngressChatToWire]. Intended to run
+// at process startup so the routing matrix cannot drift from codec coverage.
+func (b *Bridge) SelfCheck() error {
+	formats := provcore.AllFormats()
+	for _, ingress := range formats {
+		body, err := MinimalNativeChatBody(ingress)
+		if err != nil {
+			continue
+		}
+		for _, target := range formats {
+			if !b.ChatRoutable(ingress, target) {
+				continue
+			}
+			ct := provcore.CallTarget{
+				Format:          target,
+				ProviderModelID: FixtureProviderModel(target),
+			}
+			if _, err := b.IngressChatToWire(ingress, target, body, ct); err != nil {
+				return fmt.Errorf("canonicalbridge: %s→%s unusable: %w", ingress, target, err)
+			}
+		}
+	}
+	return nil
+}

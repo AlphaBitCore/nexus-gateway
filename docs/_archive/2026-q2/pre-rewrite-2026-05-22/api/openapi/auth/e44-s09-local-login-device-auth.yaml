@@ -1,0 +1,232 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Device Authentication mode + Enrollment IAM (E44 / S09)
+  version: 1.0.0
+  description: |
+    Story S09 extends the existing E44 surface with:
+      1. A third device-auth `mode` value `local-login` on
+         `PUT /api/admin/settings/device-auth` and a new
+         `localLoginAvailable` field on `GET /api/admin/settings/device-auth`.
+      2. A new IAM gate (`admin:device-enrollment.enroll`) on
+         `POST /api/agent/sso-enroll`, returning 403 `iam_denied` when the
+         user behind the consumed OAuth auth code lacks the action.
+
+    Local-login is a distinct device-auth mode whose runtime path reuses the
+    Enterprise-Login machinery (browser SSO → CP login page → enrollment JWT
+    → Hub-side verification). The CP login page authenticates against the
+    Nexus Local password store; the seed local IdP row is **not** promoted
+    to a peer IdP in the admin IdP list. Hub's `/api/public/agent-bootstrap`
+    normalises `local-login` to `enterprise-login` in its public response so
+    the agent UI handles both modes through its existing SSO branch.
+
+    Authentication:
+      - Admin endpoints (`/api/admin/settings/device-auth`): Bearer token via
+        `/oauth/token`, gated by `admin:settings.update` / `admin:settings.read`.
+      - Agent endpoint (`/api/agent/sso-enroll`): no Bearer; authenticates by
+        consuming a single-use OAuth `auth_code` whose owning user must hold
+        `admin:device-enrollment.enroll`.
+
+servers:
+  - url: https://nexus.example.com
+    description: Production
+  - url: http://localhost:3001
+    description: Local dev
+
+tags:
+  - name: device-auth-settings
+    description: Admin: read/update device-auth mode.
+  - name: agent-enroll
+    description: Agent SSO enrollment with IAM gate.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    DeviceAuthMode:
+      type: string
+      description: |
+        How desktop agents enroll.
+
+        * `mtls-only` — Agent prompts for a single-use enrollment token.
+        * `enterprise-login` — Agent opens browser SSO; user authenticates
+          against an enabled external IdP (OIDC/SAML).
+        * `local-login` — Agent opens browser SSO; user authenticates
+          against the seeded Nexus Local password store. Suitable for
+          small / demo deployments without an external IdP. Hub
+          normalises this to `enterprise-login` in its public bootstrap
+          response so the agent UI is mode-agnostic.
+      enum: [mtls-only, enterprise-login, local-login]
+      example: local-login
+
+    SsoProvider:
+      type: object
+      required: [id, type, name]
+      properties:
+        id:   { type: string, format: uuid }
+        type: { type: string, enum: [oidc, saml] }
+        name: { type: string }
+
+    DeviceAuthSettings:
+      type: object
+      required: [mode, ssoConfigured, localLoginAvailable, ssoProviders]
+      properties:
+        mode:
+          $ref: '#/components/schemas/DeviceAuthMode'
+        ssoConfigured:
+          type: boolean
+          description: |
+            True iff at least one IdP row with `type != 'local'` exists with
+            `enabled = true`. Drives the "Enterprise Login" radio's enable
+            state in the admin UI.
+        localLoginAvailable:
+          type: boolean
+          description: |
+            True iff the seeded Nexus Local IdP row exists and is enabled.
+            Drives the "Local Login" radio's enable state. Defensive only —
+            the local row is always seeded and enabled by default.
+        ssoProviders:
+          type: array
+          items: { $ref: '#/components/schemas/SsoProvider' }
+          description: |
+            Non-local enabled IdPs surfaced in the Device-Auth Settings page
+            when the operator chooses `enterprise-login`.
+
+    DeviceAuthModeUpdateRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          $ref: '#/components/schemas/DeviceAuthMode'
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+        message:
+          type: string
+          description: Human-readable explanation (optional).
+
+    EnrollmentJWTResponse:
+      type: object
+      required: [enrollment_jwt, user_email, expires_at]
+      properties:
+        enrollment_jwt:
+          type: string
+          description: RS256-signed JWT, audience `nexus-hub-enrollment`, 5-min TTL.
+        user_email: { type: string, format: email }
+        expires_at: { type: string, format: date-time }
+
+    SsoEnrollRequest:
+      type: object
+      required: [code, code_verifier, redirect_uri]
+      properties:
+        code:          { type: string, description: Single-use OAuth auth code. }
+        code_verifier: { type: string, description: PKCE S256 verifier. }
+        redirect_uri:  { type: string, format: uri }
+
+paths:
+  /api/admin/settings/device-auth:
+    get:
+      tags: [device-auth-settings]
+      summary: Read the current device-auth mode and capability flags.
+      security: [{ bearerAuth: [] }]
+      x-iam: { resource: settings, verb: read }
+      responses:
+        '200':
+          description: Current mode + capability flags.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceAuthSettings' }
+        '401': { description: Missing/invalid Bearer token. }
+        '403': { description: IAM denial — caller lacks `admin:settings.read`. }
+    put:
+      tags: [device-auth-settings]
+      summary: Update the device-auth mode.
+      security: [{ bearerAuth: [] }]
+      x-iam: { resource: settings, verb: update }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceAuthModeUpdateRequest' }
+      responses:
+        '200':
+          description: |
+            Updated. Response body is the same shape as `GET` (so the UI can
+            avoid a follow-up read).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceAuthSettings' }
+        '400':
+          description: |
+            Validation error or precondition failure. Possible `error` codes:
+              * `validation_error` — `mode` not one of the three enum values.
+              * `no_sso_provider` — `mode='enterprise-login'` but no enabled
+                non-local IdP exists.
+              * `local_idp_unavailable` — `mode='local-login'` but the
+                seeded local IdP row is missing or disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                no_sso_provider:
+                  value: { error: no_sso_provider }
+                local_idp_unavailable:
+                  value: { error: local_idp_unavailable }
+        '401': { description: Missing/invalid Bearer token. }
+        '403': { description: IAM denial — caller lacks `admin:settings.update`. }
+
+  /api/agent/sso-enroll:
+    post:
+      tags: [agent-enroll]
+      summary: |
+        Exchange a single-use OAuth `auth_code` for a short-lived enrollment
+        JWT the agent presents to Hub. IAM-gated by
+        `admin:device-enrollment.enroll`.
+      description: |
+        Authentication for this endpoint is **the consumed auth code** —
+        there is no Bearer token (the agent has no admin session yet).
+        After PKCE/auth-code validation, the handler resolves the user
+        who minted the auth code (`entry.UserID`) and consults the
+        existing `iam.Authorizer`. Denials short-circuit with 403 and do
+        not consume Hub-side resources.
+
+        Applies uniformly to both `enterprise-login` and `local-login`
+        device-auth modes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SsoEnrollRequest' }
+      responses:
+        '200':
+          description: Enrollment JWT minted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentJWTResponse' }
+        '400':
+          description: |
+            Invalid request, e.g. `invalid_code`, redirect-URI mismatch, PKCE
+            mismatch, or `enrollment_mode_mtls` (device-auth mode is `mtls-only`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: |
+            IAM denial — the user behind the consumed auth code does not hold
+            `admin:device-enrollment.enroll`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                iam_denied:
+                  value: { error: iam_denied, message: "User lacks admin:device-enrollment.enroll" }
+        '429':
+          description: Rate limit exceeded (10 req/min per source IP).

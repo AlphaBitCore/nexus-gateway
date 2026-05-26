@@ -1,0 +1,99 @@
+openapi: 3.1.0
+info:
+  title: Nexus AI Guard — Classify
+  version: 1.0.0
+  description: |
+    Internal endpoint (service-to-service) for ML/LLM classification.
+    Called by compliance-proxy and in-process ai-gateway hooks. The
+    endpoint structurally bypasses the routing engine and hook pipeline
+    so classify calls do not recurse.
+servers:
+  - url: http://ai-gateway:3050
+paths:
+  /v1/ai-guard/classify:
+    post:
+      operationId: classify
+      summary: Classify content with the configured judge backend.
+      security:
+        - RSTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClassifyRequest' }
+      responses:
+        '200':
+          description: Classification result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClassifyResponse' }
+        '400':
+          description: Malformed request or missing required fields.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid service token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '503':
+          description: Judge backend unavailable (network / parse / non-2xx).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+components:
+  securitySchemes:
+    RSTokenAuth:
+      type: apiKey
+      in: header
+      name: X-RS-Token
+  schemas:
+    ClassifyRequest:
+      type: object
+      required: [detector_type, content]
+      properties:
+        detector_type:
+          type: string
+          description: |
+            Free string. Recommended values: prompt_injection, jailbreak,
+            toxicity, secret_leak, tool_call_safety, hallucination,
+            data_exfiltration, custom.
+          example: prompt_injection
+        content:
+          type: string
+          description: The content to classify.
+        context:
+          $ref: '#/components/schemas/ClassifyContext'
+    ClassifyContext:
+      type: object
+      properties:
+        ingress: { type: string, enum: [AI_GATEWAY, COMPLIANCE_PROXY, AGENT] }
+        target_provider: { type: string }
+        target_model: { type: string }
+        upstream_tags: { type: array, items: { type: string } }
+        hook_name: { type: string }
+    ClassifyResponse:
+      type: object
+      required: [decision, metadata]
+      properties:
+        decision: { type: string, enum: [approve, reject_hard, reject_soft, modify] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        reason: { type: string }
+        labels: { type: array, items: { type: string } }
+        modified_content: { type: string, nullable: true }
+        metadata: { $ref: '#/components/schemas/ClassifyMetadata' }
+    ClassifyMetadata:
+      type: object
+      required: [cache_hit, judge_latency_ms]
+      properties:
+        judge_model: { type: string }
+        judge_latency_ms: { type: integer, minimum: 0 }
+        cache_hit: { type: boolean }
+        backend_mode: { type: string, enum: [configured_provider, external_url] }
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        detail: { type: string }

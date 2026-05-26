@@ -1,0 +1,171 @@
+/* ── InfraNodeDetailPage ─────────────────────────────────────────── */
+
+/* ── Header ──────────────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.headerName {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* ── Section titles ──────────────────────────────────────────────── */
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--g-space-3);
+}
+
+/* ── Info grid (two-column dl) ───────────────────────────────────── */
+
+.infoGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0;
+}
+
+.infoRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--g-space-3);
+  padding: var(--g-space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.infoLabel {
+  flex: 0 0 160px;
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  font-size: 11px;
+}
+
+.infoValue {
+  flex: 1;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  margin: 0;
+  word-break: break-all;
+}
+
+.mono {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+}
+
+/* ── Config Sync comparison ──────────────────────────────────────── */
+
+.configSyncHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  margin-bottom: var(--g-space-2);
+}
+
+.verLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.configSyncTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+}
+
+.configSyncTable th {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.configSyncTable td {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.configSyncTable tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+.keyCell code {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  padding: 1px 6px;
+  background: var(--color-bg-hover);
+  border-radius: var(--g-radius-sm);
+}
+
+.valueCell {
+  max-width: 320px;
+}
+
+.jsonPre {
+  margin: 0;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.actionCell {
+  width: 100px;
+  text-align: right;
+}
+
+/* ── Out-of-sync row highlight ───────────────────────────────────── */
+
+.outOfSyncRow {
+  background: color-mix(in srgb, var(--color-warning) 6%, transparent);
+}
+
+.outOfSyncRow:hover {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent) !important;
+}
+
+.outOfSyncRow .keyCell code {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────── */
+
+.emptyText {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .infoGrid {
+    grid-template-columns: 1fr;
+  }
+}

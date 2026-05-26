@@ -1,0 +1,114 @@
+.root {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.inputWrapper {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px var(--shadow-md);
+}
+
+.inputWithClear {
+  padding-right: 36px;
+}
+
+.clearButton {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  color: var(--color-info);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--g-font-sans);
+}
+
+.clearButton:hover {
+  background: var(--color-muted);
+}
+
+.dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 50;
+}
+
+.statusMessage {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.option:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.optionSelected {
+  background: var(--color-muted);
+}
+
+.optionHighlighted {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.optionHighlighted.optionSelected {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}

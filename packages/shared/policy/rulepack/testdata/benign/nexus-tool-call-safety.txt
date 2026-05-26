@@ -1,0 +1,10 @@
+rm -rf ./build to clean the artifacts directory
+the CI uses curl to fetch the latest release tarball
+kubectl delete pod my-pod-abc123 for stuck pod cleanup
+localhost is only accessible from within the container
+pickle files are used in the data science pipeline
+the backup script writes to /var/backups/db nightly
+shell completion is configured in ~/.zshrc
+run the expression through the safe math parser only
+the traversal protection blocks ../ sequences
+the query contains order by and group by clauses

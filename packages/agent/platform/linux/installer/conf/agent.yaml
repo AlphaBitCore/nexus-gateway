@@ -1,0 +1,54 @@
+# Nexus Agent — Linux configuration template.
+#
+# This file is installed at /etc/nexus-agent/agent.yaml by the deb /
+# rpm package. It is a TEMPLATE — the operator who builds the
+# package is expected to stamp their organisation's Nexus Hub URLs
+# below before invoking nfpm, so end-users get a pre-configured
+# install they just run `nexus-agent enroll-sso` against (no need
+# to ask the user their Hub URL).
+#
+# Operator-side workflow:
+#   1. Edit hubURL + hubHTTPURL below to point at your Hub
+#   2. (Optional) Edit other fields, e.g. updaterEnabled, defaultAction
+#   3. Run `bash packages/agent/platform/linux/scripts/build.sh && \
+#                bash packages/agent/platform/linux/scripts/package.sh`
+#   4. Ship the .deb / .rpm to your fleet
+#
+# End-user workflow on a pre-stamped deb:
+#   sudo apt install ./nexus-agent_*.deb
+#   nexus-agent enroll-sso         # picks hubHTTPURL up from this file
+#
+# Filesystem path defaults (overridable below):
+#   state  → /var/lib/nexus-agent/   (audit DB, certs, device CA)
+#   logs   → /var/log/nexus-agent/
+log:
+  level: "info"
+  format: "json"
+  stackOnError: true
+
+# OPERATOR: replace these with your Hub URLs before packaging.
+# Leaving them empty makes the daemon fail at startup with
+# `hubHTTPURL is required`.
+hubURL: ""
+hubHTTPURL: ""
+
+platformBridgeAddress: "127.0.0.1:19080"
+
+heartbeatIntervalSec: 60
+auditDrainIntervalSec: 30
+auditBatchSize: 200
+auditRetentionDays: 30
+configRefreshSec: 300
+
+defaultAction: "passthrough"
+policyRules: []
+
+updaterEnabled: true
+updaterCheckSec: 3600
+
+# Server-managed; leave false unless the operator policy enables it.
+quitAllowed: false
+
+exemptionEnabled: true
+exemptionFailureThreshold: 3
+exemptionWindowSec: 3600

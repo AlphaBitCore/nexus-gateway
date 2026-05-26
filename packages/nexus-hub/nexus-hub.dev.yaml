@@ -1,0 +1,141 @@
+# Local dev overrides for nexus-hub.
+# Differs from nexus-hub.config.yaml only where dev values are needed.
+
+# Externally-reachable base URL. Reported as staticInfo.publicURL so the
+# CP admin API + UI render real-environment URLs instead of hardcoding
+# hostnames. Dev uses localhost:<port>; prod uses the public domain.
+publicURL: "http://localhost:3060"
+
+server:
+  port: 3060
+
+database:
+  url: "postgres://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
+  maxConns: 20
+  minConns: 5
+
+redis:
+  # Local dev Redis runs on 6437 via docker-compose. See packages/shared/
+  # storage/redisfactory + docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6437"]
+  username: ""
+  password: ""
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+consumers:
+  enabled: true
+  batchSize: 100
+  flushInterval: 5s
+
+scheduler:
+  enabled: true
+  driftCheckInterval: 60s
+  identityEnrichInterval: 5m
+  alertEval:
+    engineTickSec: 5
+  # enableAgentRollup gates ThingRollup5mJob on source=agent rows. Defaults to
+  # false; agents compute their own rollups locally. Flip to true only on
+  # small / forensics-heavy deployments where centralised per-agent series is
+  # worth the row-count cost. compliance-proxy and ai-gateway are always
+  # rolled up centrally regardless of this flag.
+  enableAgentRollup: false
+  # excludeInternalOpsFromBilledCost controls whether L2 embedding +
+  # ai-guard classifier costs are EXCLUDED from MetricBilledCostUSD
+  # (the quota-bearing total). Default false (zero-value): include —
+  # 都是钱, internal-ops costs roll into the customer's billed total
+  # by default. Flip true when the operator absorbs those costs and
+  # doesn't want them tightening customer quotas. Internal-ops costs
+  # are ALSO emitted on dedicated MetricEmbeddingCostUSD /
+  # MetricAIGuardCostUSD series regardless, so ops dashboards see the
+  # breakdown either way. 2026-05-21.
+  excludeInternalOpsFromBilledCost: false
+
+auth:
+  # Hub does not consume ADMIN_KEY_HMAC_SECRET for VK hashing.
+  # internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN) per the
+  # "Secrets are env-only" binding in CLAUDE.md. See .env / .env.example
+  # at repo root.
+
+# Shared OAuth/OIDC auth server. CP runs the issuer side; Hub runs the
+# verifier side. Env overrides: AUTH_SERVER_URL, AUTH_SERVER_JWKS_URL,
+# AUTH_SERVER_ISSUER (the last one is [MUST MATCH] with the CP side).
+authServer:
+  # url is the auth server base URL served by
+  # GET /api/public/agent-bootstrap so agents discover it at SSO time
+  # instead of hard-coding it per-device.
+  url: "http://127.0.0.1:3001"
+  # jwksURL is required when device auth mode is "enterprise-login".
+  jwksURL: "http://localhost:3001/.well-known/jwks.json"
+  # issuer must match cfg.AuthServer.Issuer on the CP side. Hub pins
+  # this via jwt.WithIssuer so a stranger that lands a key on the JWKS
+  # endpoint cannot mint Hub-acceptable enrollment JWTs.
+  issuer: "http://127.0.0.1:3001"
+
+agentCA:
+  dir: ".agent-ca"
+
+hub:
+  id: "hub-dev"
+  advertiseAddr: "127.0.0.1:3060"
+  allowedOrigins:
+    - "http://localhost:3000"
+
+log:
+  # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
+  # boot default only. The Hub selfshadow manager (E42 PR1) consumes its own
+  # thing row via LISTEN/NOTIFY and calls logging.SetLevel live on every
+  # admin push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1 + §5.3.
+  level: "debug"
+  format: "text"
+  file: "logs/nexus-hub.log"
+  stackOnError: true
+
+# OTEL exporter for Hub itself. Empty `endpoint` keeps tracing inert.
+# Shadow-overridable via Hub admin UI (config_key: observability); YAML
+# is the boot default only. selfshadow.Manager.observability handler
+# (E42 PR1) calls tp.Reconfigure live on shadow push (no restart).
+# See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1 + §5.3.
+otel:
+  enabled: false
+  endpoint: ""
+
+# E34-S? — out-of-band body storage. Bodies whose captured size meets/exceeds
+# inline on traffic_event_payload. All 4 services (Hub, ai-gateway,
+# compliance-proxy, control-plane) point at the SAME backend root so the
+# control-plane read path can resolve refs produced anywhere.
+spill:
+  enabled: true
+  backend: localfs
+  localfs:
+    root: /tmp/nexus-spill
+    perObjectCap: 268435456      # 256 MiB
+    totalSizeCap: 5368709120     # 5 GiB
+    retentionDays: 7

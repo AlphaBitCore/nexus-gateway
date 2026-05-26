@@ -1,0 +1,268 @@
+/* ── ConfigurationTab ────────────────────────────────────────────── */
+/*
+ * Renders the merged 4-column view (Template / Override / Applied) per
+ * config_key, plus toolbar (counters + Force resync all + Add override)
+ * and an optional killswitch-bypass banner. Companion to
+ * ConfigurationTab.tsx.
+ */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+  margin-bottom: var(--g-space-3);
+}
+
+.counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.counters strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.counterDot {
+  display: inline-block;
+  margin: 0 var(--g-space-2);
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+}
+
+/* ── Killswitch bypass banner ─────────────────────────────────────── */
+
+.killswitchBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-3);
+  margin-bottom: var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  background: var(--color-danger);
+  color: var(--color-surface);
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+}
+
+.killswitchIcon {
+  font-size: 1.1em;
+}
+
+/* ── Table ────────────────────────────────────────────────────────── */
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  display: grid;
+  grid-template-columns: 1.2fr 1.5fr 1.5fr 1.5fr auto;
+  width: 100%;
+  font-size: var(--g-font-size-sm);
+}
+
+.headerRow {
+  display: contents;
+}
+
+.headerCell {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  background: var(--color-bg);
+}
+
+.row {
+  display: contents;
+}
+
+.cell {
+  padding: var(--g-space-2) var(--g-space-3);
+  vertical-align: top;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.row.overrideRow > .cell {
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  border-left: none;
+}
+
+/* The leftmost cell on an override row carries the purple stripe. */
+.row.overrideRow > .cell:first-child {
+  border-left: 3px solid var(--color-accent);
+}
+
+.row.blacklistRow > .cell {
+  opacity: 0.65;
+}
+
+/* Active apply error wins over override striping — a node currently
+   failing to apply this key is the top fix-now signal, so we tint the
+   row with the danger colour and switch the leftmost stripe accordingly. */
+.row.applyErrorRow > .cell {
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+  border-left: none;
+}
+
+.row.applyErrorRow > .cell:first-child {
+  border-left: 3px solid var(--color-danger);
+}
+
+/* ── Cell content ─────────────────────────────────────────────────── */
+
+.keyCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.keyHeading {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  flex-wrap: wrap;
+}
+
+.keyCode {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  padding: 2px 8px;
+  background: var(--color-bg-hover);
+  border-radius: var(--g-radius-sm);
+}
+
+.keyMeta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.jsonCell {
+  margin: 0;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--color-bg-hover);
+  padding: var(--g-space-2);
+  border-radius: var(--g-radius-sm);
+  max-height: 8em;
+  overflow: auto;
+}
+
+.equalsHint {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.dash {
+  color: var(--color-text-muted);
+}
+
+.actions {
+  display: flex;
+  gap: var(--g-space-1);
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ── Badges ───────────────────────────────────────────────────────── */
+
+.applyErrorPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-danger);
+  color: var(--color-surface);
+  border-radius: var(--g-radius-sm);
+  cursor: help;
+}
+
+.applyErrorIcon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.staleBadge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+  border-radius: var(--g-radius-sm);
+}
+
+.overrideBadge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  border-radius: var(--g-radius-sm);
+}
+
+.globalOnlyBadge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  border-radius: var(--g-radius-sm);
+}
+
+/* ── Empty state ──────────────────────────────────────────────────── */
+
+.emptyText {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .table {
+    grid-template-columns: 1fr;
+  }
+
+  .headerCell {
+    display: none;
+  }
+
+  .cell {
+    padding: var(--g-space-2) var(--g-space-3);
+  }
+}

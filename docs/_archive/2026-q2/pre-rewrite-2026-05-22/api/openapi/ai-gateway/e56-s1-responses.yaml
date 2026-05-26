@@ -1,0 +1,570 @@
+openapi: 3.1.0
+info:
+  title: Nexus AI Gateway — E56 OpenAI Responses-API ingress
+  version: "1.0.0"
+  description: |
+    Adds `POST /v1/responses` to the AI Gateway as a new ingress format
+    alongside the existing `/v1/chat/completions`, `/v1/embeddings`,
+    `/v1/models`, `/v1/completions`, and Anthropic `/v1/messages` routes.
+
+    The endpoint accepts the OpenAI Responses-API request shape and
+    returns the OpenAI Responses-API response shape (non-stream JSON or
+    SSE stream). When the routing rule resolves to a target provider
+    whose adapter manifest includes `responses-api` in `RequestShapes`
+    (today: spec_openai), the body is forwarded verbatim — stateful
+    fields and OpenAI-native built-in tools ride through. When the
+    target does NOT support `responses-api` (today: every other adapter),
+    Nexus canonicalizes the request to chat-completions for routing /
+    hooks / quota and re-encodes the canonical response back into
+    Responses shape on egress; stateful fields and built-in tools are
+    rejected pre-flight with a structured 400.
+
+    Companion documents:
+      - docs/developers/specs/e56/e56-responses-api.md
+      - docs/developers/specs/e56-s1..s11-*.md
+      - docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md §3a (canonical rules)
+
+servers:
+  - url: https://gateway.example.com
+    description: Customer-facing AI Gateway
+
+tags:
+  - name: AI Gateway
+    description: Data-plane traffic endpoints (virtual-key authenticated)
+
+security:
+  - BearerVK: []
+
+paths:
+  /v1/responses:
+    post:
+      tags: [AI Gateway]
+      operationId: createResponse
+      summary: Create a response (OpenAI Responses-API ingress)
+      description: |
+        Create a model response. Mirrors OpenAI's `POST /v1/responses`
+        request/response shape exactly. Nexus routes the request per the
+        admin-configured routing rules and applies hooks + quota +
+        compliance pipeline before forwarding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResponseRequest"
+            examples:
+              text-non-stream:
+                summary: Text-only non-streaming request
+                value:
+                  model: gpt-5.2
+                  input: "Write a haiku about Go programming."
+              text-streaming:
+                summary: Text streaming
+                value:
+                  model: gpt-5.2
+                  input: "Count to five slowly."
+                  stream: true
+              with-instructions:
+                summary: With system-level instructions
+                value:
+                  model: gpt-5.2
+                  instructions: "Always reply in two sentences or fewer."
+                  input: "Tell me about TypeScript."
+              function-tool:
+                summary: With function-calling tool
+                value:
+                  model: gpt-5.2
+                  input: "What is the weather in Tokyo?"
+                  tools:
+                    - type: function
+                      function:
+                        name: get_weather
+                        description: Get current weather for a city.
+                        parameters:
+                          type: object
+                          properties:
+                            city: { type: string }
+                          required: [city]
+              reasoning-effort:
+                summary: With reasoning effort
+                value:
+                  model: gpt-5.2
+                  input: "Prove that sqrt(2) is irrational."
+                  reasoning:
+                    effort: high
+              structured-output:
+                summary: With JSON schema structured output
+                value:
+                  model: gpt-5.2
+                  input: "Extract the city and date from: 'Meeting in Tokyo on March 5'"
+                  text:
+                    format:
+                      type: json_schema
+                      json_schema:
+                        name: meeting_extract
+                        schema:
+                          type: object
+                          properties:
+                            city: { type: string }
+                            date: { type: string }
+                          required: [city, date]
+      responses:
+        "200":
+          description: Success — non-streaming JSON response OR streaming SSE event sequence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+              examples:
+                text-completed:
+                  value:
+                    id: resp_abc123
+                    object: response
+                    created_at: 1747353600
+                    status: completed
+                    model: gpt-5.2
+                    output:
+                      - type: message
+                        id: msg_001
+                        role: assistant
+                        content:
+                          - type: output_text
+                            text: "Loops, channels, joy;\nGoroutines weave through the code—\nGopher dreams in Go."
+                    usage:
+                      input_tokens: 12
+                      output_tokens: 23
+                      total_tokens: 35
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ResponseStream"
+              examples:
+                streaming:
+                  summary: SSE event sequence
+                  value: |
+                    event: response.created
+                    data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_abc123","object":"response","status":"in_progress","model":"gpt-5.2"}}
+
+                    event: response.output_item.added
+                    data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"message","id":"msg_001","role":"assistant","status":"in_progress"}}
+
+                    event: response.content_part.added
+                    data: {"type":"response.content_part.added","sequence_number":2,"output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}
+
+                    event: response.output_text.delta
+                    data: {"type":"response.output_text.delta","sequence_number":3,"output_index":0,"content_index":0,"delta":"Hello"}
+
+                    event: response.output_text.delta
+                    data: {"type":"response.output_text.delta","sequence_number":4,"output_index":0,"content_index":0,"delta":" world."}
+
+                    event: response.completed
+                    data: {"type":"response.completed","sequence_number":5,"response":{"id":"resp_abc123","object":"response","status":"completed","model":"gpt-5.2","output":[{"type":"message","id":"msg_001","role":"assistant","content":[{"type":"output_text","text":"Hello world."}]}],"usage":{"input_tokens":12,"output_tokens":2,"total_tokens":14}}}
+          headers:
+            x-nexus-request-id:
+              $ref: "#/components/headers/XNexusRequestId"
+            X-Nexus-Routed-To:
+              $ref: "#/components/headers/XNexusRoutedTo"
+            X-Nexus-Cache:
+              $ref: "#/components/headers/XNexusCache"
+        "400":
+          description: |
+            Request rejected by Nexus pre-flight validation. Most common
+            reasons: malformed JSON, missing required field, cross-format
+            request with a stateful field or built-in tool (E56-S6).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponsesError"
+              examples:
+                feature-unsupported:
+                  summary: previous_response_id with non-OpenAI target
+                  value:
+                    error:
+                      message: |
+                        Field 'previous_response_id' requires routing to a
+                        target that natively supports the Responses API.
+                      type: unsupported_feature
+                      param: previous_response_id
+                      code: feature_requires_native_responses_target
+                invalid-json:
+                  value:
+                    error:
+                      message: Request body is not valid JSON.
+                      type: invalid_request_error
+                      code: invalid_json
+        "401":
+          description: Missing or invalid virtual key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponsesError"
+        "429":
+          description: Quota exceeded or rate-limited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponsesError"
+        "500":
+          description: Upstream provider 5xx or Nexus internal error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponsesError"
+        "501":
+          description: |
+            Unsupported sub-endpoint (E56 ships POST /v1/responses only;
+            GET /{id}, DELETE /{id}, POST .../cancel, GET .../input_items
+            are not implemented and return a structured 501).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponsesError"
+
+  /v1/responses/{response_id}:
+    get:
+      tags: [AI Gateway]
+      operationId: getResponse
+      summary: NOT IMPLEMENTED — returns 501
+      description: |
+        Server-side response retrieval requires Nexus-side state, which
+        is out of scope for E56 (per requirements e56-responses-api.md
+        MoSCoW Won't). Returns a structured 501.
+      parameters:
+        - in: path
+          name: response_id
+          required: true
+          schema: { type: string }
+      responses:
+        "501":
+          description: Not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponsesError"
+
+components:
+  securitySchemes:
+    BearerVK:
+      type: http
+      scheme: bearer
+      bearerFormat: virtual-key
+
+  headers:
+    XNexusRequestId:
+      schema: { type: string }
+      description: Unique request ID, also surfaces in traffic_event.
+    XNexusRoutedTo:
+      schema: { type: string }
+      description: Provider/model the routing rule selected (e.g. `openai/gpt-5.2`).
+    XNexusCache:
+      schema: { type: string, enum: [hit, miss, bypass] }
+      description: Response cache outcome.
+
+  schemas:
+
+    ResponseRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Target model ID. Routing rules may remap.
+        input:
+          oneOf:
+            - type: string
+              description: Shorthand for `[{role:"user", content:[{type:"input_text", text:"..."}]}]`.
+            - type: array
+              items: { $ref: "#/components/schemas/InputItem" }
+          description: Either a string shortcut or an array of input items (messages + tool outputs).
+        instructions:
+          type: string
+          description: |
+            High-level system-style guidance. Nexus prepends this as a
+            `{role:"system"}` message in the canonical payload when the
+            request is canonicalized for cross-format routing.
+        max_output_tokens:
+          type: integer
+          minimum: 1
+          description: Renamed to `max_completion_tokens` in canonical chat-completions.
+        reasoning:
+          type: object
+          properties:
+            effort:
+              type: string
+              enum: [minimal, low, medium, high]
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        parallel_tool_calls:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        stream:
+          type: boolean
+          default: false
+          description: When true, response is SSE.
+        text:
+          type: object
+          description: Output format hints (json_schema / json_object).
+          properties:
+            format:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [text, json_schema, json_object]
+                json_schema:
+                  type: object
+        truncation:
+          type: string
+          enum: [auto, disabled]
+          default: disabled
+          description: |
+            Truncation strategy. Cross-format routing requires
+            `"disabled"`; other values trigger a 400 per E56-S6.
+        include:
+          type: array
+          items: { type: string }
+          description: |
+            Optional list of additional response fields to include
+            (e.g. `["reasoning.summary"]`). Same-shape passthrough only.
+        previous_response_id:
+          type: string
+          description: |
+            Server-side conversation chain pointer. Same-shape OpenAI
+            passthrough only; cross-format routing returns 400.
+        store:
+          type: boolean
+          default: false
+          description: |
+            Whether OpenAI should store this response for later retrieval.
+            Same-shape OpenAI passthrough only; `true` on cross-format
+            returns 400.
+        tools:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/FunctionTool"
+              - $ref: "#/components/schemas/BuiltinTool"
+        tool_choice:
+          oneOf:
+            - type: string
+              enum: [auto, none, required]
+            - type: object
+              properties:
+                type: { type: string, enum: [function] }
+                function:
+                  type: object
+                  properties:
+                    name: { type: string }
+
+    InputItem:
+      oneOf:
+        - $ref: "#/components/schemas/InputMessage"
+        - $ref: "#/components/schemas/FunctionCallOutputItem"
+
+    InputMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system, developer]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items: { $ref: "#/components/schemas/InputContentPart" }
+
+    InputContentPart:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [input_text, input_image, input_audio, input_file]
+        text: { type: string }
+        image_url: { type: string }
+        # plus type-specific fields per OpenAI Responses API
+
+    FunctionCallOutputItem:
+      type: object
+      required: [type, call_id, output]
+      properties:
+        type: { type: string, enum: [function_call_output] }
+        call_id: { type: string }
+        output: { type: string }
+
+    FunctionTool:
+      type: object
+      required: [type, function]
+      properties:
+        type: { type: string, enum: [function] }
+        function:
+          type: object
+          required: [name]
+          properties:
+            name: { type: string }
+            description: { type: string }
+            parameters: { type: object }
+
+    BuiltinTool:
+      type: object
+      required: [type]
+      description: |
+        OpenAI-native built-in tools. Allowed ONLY on same-shape
+        OpenAI passthrough; cross-format routing rejects with 400.
+      properties:
+        type:
+          type: string
+          enum:
+            - web_search
+            - web_search_preview
+            - file_search
+            - computer_use_preview
+            - image_generation
+            - mcp
+            - code_interpreter
+            - custom
+            - apply_patch
+            - tool_search
+            - function_shell
+
+    Response:
+      type: object
+      required: [id, object, created_at, status, model, output]
+      properties:
+        id:
+          type: string
+          description: Identifier — `resp_<...>` from OpenAI on passthrough; `resp_<request_id>` synthesized by Nexus on cross-format.
+        object:
+          type: string
+          enum: [response]
+        created_at:
+          type: integer
+        status:
+          type: string
+          enum: [completed, incomplete, failed, in_progress, queued]
+        model:
+          type: string
+        output:
+          type: array
+          items: { $ref: "#/components/schemas/OutputItem" }
+        incomplete_details:
+          type: object
+          properties:
+            reason:
+              type: string
+              enum: [max_output_tokens, content_filter]
+        usage:
+          $ref: "#/components/schemas/Usage"
+        metadata: { type: object }
+
+    OutputItem:
+      oneOf:
+        - $ref: "#/components/schemas/OutputMessageItem"
+        - $ref: "#/components/schemas/FunctionCallItem"
+        - $ref: "#/components/schemas/ReasoningItem"
+
+    OutputMessageItem:
+      type: object
+      required: [type, role, content]
+      properties:
+        type: { type: string, enum: [message] }
+        id: { type: string }
+        role: { type: string, enum: [assistant] }
+        status: { type: string }
+        content:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [output_text, refusal] }
+              text: { type: string }
+              annotations:
+                type: array
+                items: { type: object }
+
+    FunctionCallItem:
+      type: object
+      required: [type, name, arguments, call_id]
+      properties:
+        type: { type: string, enum: [function_call] }
+        id: { type: string }
+        call_id: { type: string }
+        name: { type: string }
+        arguments: { type: string }
+
+    ReasoningItem:
+      type: object
+      required: [type, summary]
+      properties:
+        type: { type: string, enum: [reasoning] }
+        id: { type: string }
+        summary:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [summary_text] }
+              text: { type: string }
+
+    Usage:
+      type: object
+      required: [input_tokens, output_tokens, total_tokens]
+      properties:
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        total_tokens: { type: integer }
+        input_tokens_details:
+          type: object
+          properties:
+            cached_tokens: { type: integer }
+        output_tokens_details:
+          type: object
+          properties:
+            reasoning_tokens: { type: integer }
+
+    ResponseStream:
+      type: object
+      description: |
+        Server-Sent Events. Each event is `event: <type>\n` followed by
+        `data: <json>\n\n`. `sequence_number` is monotonic across the
+        whole stream. Event types covered by E56-S4:
+        response.created, response.in_progress, response.queued,
+        response.output_item.added, response.output_item.done,
+        response.content_part.added, response.content_part.done,
+        response.output_text.delta, response.output_text.done,
+        response.function_call_arguments.delta,
+        response.function_call_arguments.done,
+        response.reasoning_summary_text.delta,
+        response.reasoning_summary_text.done,
+        response.reasoning_summary_part.added,
+        response.refusal.delta, response.refusal.done,
+        response.completed, response.failed, response.incomplete.
+
+    ResponsesError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message: { type: string }
+            type:
+              type: string
+              enum:
+                - invalid_request_error
+                - authentication_error
+                - permission_error
+                - rate_limit_error
+                - server_error
+                - api_error
+                - unsupported_feature
+            param: { type: string }
+            code: { type: string }

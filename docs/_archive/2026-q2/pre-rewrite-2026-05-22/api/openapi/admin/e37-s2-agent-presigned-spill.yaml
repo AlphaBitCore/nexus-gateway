@@ -1,0 +1,287 @@
+openapi: "3.1.0"
+info:
+  title: Nexus Hub — Agent Spill Upload (Pre-signed URL flow)
+  description: |
+    Internal endpoints used by the Agent to upload payload-capture spill
+    bodies without involving the Hub's audit pipeline as a producer.
+
+    **Mint** (`POST /api/internal/things/spill-uploads`) issues a one-shot
+    upload URL plus an opaque `key` and the chosen `backend`. The URL
+    points at S3 directly when `backend == "s3"`, or at Hub's own blob
+    endpoint when `backend == "localfs"` (dev / single-node deployments).
+
+    **Blob** (`PUT /api/internal/spill/blob/{token}`) is registered only
+    when `spill.backend == "localfs"`. It accepts a single PUT, validates
+    the HMAC token + Content-Length + streamed SHA-256, and writes the
+    body into the local backend at the Hub-chosen key. Replays are
+    rejected via Redis dedup.
+
+    Hub never decides inline-vs-spill on the audit ingestion path; the
+    agent uploads the body itself and ships only the resulting `SpillRef`
+    in the audit envelope.
+
+    **Authorisation.** Mint requires the existing thing mTLS identity
+    (any enrolled agent). Blob is token-only; the Hub-issued HMAC is the
+    sole authorisation.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: https://hub.local
+    description: Local Nexus Hub (dev — localfs backend)
+  - url: https://hub.prod.example
+    description: Production Nexus Hub (S3 backend)
+
+tags:
+  - name: Spill
+    description: Agent → Hub → backend spill upload flow.
+
+paths:
+  /api/internal/things/spill-uploads:
+    post:
+      tags: [Spill]
+      operationId: mintSpillUpload
+      summary: Mint a one-shot upload URL for a spill body
+      description: |
+        Validates the request and returns an HMAC-signed one-shot URL the
+        agent can PUT a spill body to. The URL points at the configured
+        backend: an AWS S3 pre-signed URL when `backend == "s3"`, or this
+        Hub's `/api/internal/spill/blob/{token}` endpoint when
+        `backend == "localfs"`.
+
+        The Hub-chosen `key` is signed into the token; the agent cannot
+        substitute another key. The token also pins `sizeBytes` and
+        `sha256` so the upload step can verify the body matches what the
+        agent registered.
+
+        Token TTL is bounded by the server-side `maxTTL` (currently 5
+        minutes); requested expiries longer than that are clamped.
+      security:
+        - mtlsThing: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpillUploadMintRequest'
+            examples:
+              request_body:
+                summary: A request-side body upload
+                value:
+                  eventId: 8e9f3c1a-7d4b-4a8c-92ab-3a8f0a7b2c11
+                  direction: request
+                  sizeBytes: 1572864
+                  contentType: application/json
+                  sha256: 5b4e0c8a3e2f1c7d0a6b9d5f4e3c2b1a0d9e8f7c6b5a4e3d2c1b0a9f8e7d6c5b
+      responses:
+        '200':
+          description: URL minted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpillUploadMintResponse'
+              examples:
+                localfs:
+                  summary: Dev / localfs backend
+                  value:
+                    uploadUrl: https://hub.local/api/internal/spill/blob/eyJraWQ...
+                    key: agent/2026-05-06/8e9f3c1a-request
+                    backend: localfs
+                    expiresAt: 2026-05-06T12:34:56Z
+                s3:
+                  summary: Prod / S3 backend
+                  value:
+                    uploadUrl: https://nexus-spill.s3.us-east-1.amazonaws.com/agent/2026-05-06/8e9f3c1a-request?X-Amz-Algorithm=...
+                    key: agent/2026-05-06/8e9f3c1a-request
+                    backend: s3
+                    expiresAt: 2026-05-06T12:34:56Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: |
+            `sizeBytes` exceeds `spill.perObjectCap`. The agent must fall
+            back to inline-truncated capture or drop the upload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: |
+            Mint cannot proceed (e.g. signing secret unavailable, Redis
+            for token bookkeeping unreachable). Agent falls back to
+            inline-truncated capture per Requirements N8.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/internal/spill/blob/{token}:
+    put:
+      tags: [Spill]
+      operationId: putSpillBlobLocalfs
+      summary: Upload a spill body (dev / localfs only)
+      description: |
+        Streams a single body into the localfs spill backend at the
+        Hub-chosen key encoded inside `token`. Registered only when
+        `spill.backend == "localfs"`. In prod the upload URL points at
+        S3 directly; this endpoint is not registered.
+
+        The handler:
+
+        1. Decodes `token` and verifies the HMAC against any non-expired
+           secret in the rotation map.
+        2. Performs SETNX dedup in Redis with TTL `2 × maxTTL`. A
+           previously-used token returns `409`.
+        3. Rejects if `Content-Length != token.sz`.
+        4. Streams the body into localfs, computing a running SHA-256.
+           On hash mismatch the partial file is removed and `400` is
+           returned.
+        5. Returns `204 No Content` on success.
+
+        Token-only authorisation. mTLS is not required because the
+        agent has already authenticated to mint the token.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+            description: |
+              Compact base64url HMAC token issued by the mint endpoint.
+              Encodes eventId, direction, key, sizeBytes, sha256, expiry,
+              and signing-secret epoch.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '204':
+          description: Upload accepted; the SpillRef the agent received from mint can now be embedded in the audit envelope.
+        '400':
+          description: |
+            Token decode failure, expired token, signature mismatch,
+            or streamed SHA-256 differs from the token's signed `h`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Token signature invalid (unknown signing-secret epoch or HMAC mismatch).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            Token already consumed (replay protection). Agents that get
+            this response must NOT retry the same upload — they should
+            assume the original PUT succeeded and proceed with the
+            audit envelope they already built.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '411':
+          description: Missing `Content-Length` header (streaming uploads not supported).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: |
+            `Content-Length` exceeds `spill.perObjectCap`, or `Content-Length`
+            differs from the size signed into the token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  securitySchemes:
+    mtlsThing:
+      type: mutualTLS
+      description: |
+        The agent's enrollment certificate authenticates the Thing
+        identity used by the mint endpoint.
+
+  schemas:
+    SpillUploadMintRequest:
+      type: object
+      required: [eventId, direction, sizeBytes, contentType, sha256]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: |
+            Traffic-event id the spilled body belongs to. Embedded into
+            the storage key and signed into the token.
+        direction:
+          type: string
+          enum: [request, response]
+          description: Audit direction the body belongs to.
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Exact size of the body in bytes. Must match the
+            Content-Length the agent will PUT.
+        contentType:
+          type: string
+          description: |
+            MIME type of the body (`application/json`,
+            `text/event-stream`, `application/octet-stream`, …).
+            Stamped onto the SpillRef so the read path can choose
+            the right rendering.
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: |
+            Lowercase-hex SHA-256 of the body. The Hub blob endpoint
+            (or the S3 backend) verifies the upload against this hash.
+
+    SpillUploadMintResponse:
+      type: object
+      required: [uploadUrl, key, backend, expiresAt]
+      properties:
+        uploadUrl:
+          type: string
+          format: uri
+          description: |
+            One-shot URL the agent must PUT the body to. For S3 this is a
+            pre-signed AWS URL; for localfs it is this Hub's
+            `/api/internal/spill/blob/{token}` endpoint.
+        key:
+          type: string
+          description: |
+            Storage key the body will live under inside the backend.
+            Echoed back so the agent can stamp it onto the SpillRef
+            embedded in the audit envelope.
+        backend:
+          type: string
+          enum: [localfs, s3]
+          description: Which SpillStore backend the URL writes to.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Expiry timestamp; ≤5 minutes after mint.
+
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Request body fails validation (size, direction, sha256 format, eventId UUID, ...).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: mTLS thing identity missing or unrecognised.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

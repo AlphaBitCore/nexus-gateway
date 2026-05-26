@@ -1,0 +1,33 @@
+/* ─── Tooltip content ────────────────────────────────────────────────────── */
+
+.content {
+  background: var(--color-text);
+  color: var(--color-text-inverse);
+  padding: var(--g-space-1-5) var(--g-space-2-5);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-xs);
+  max-width: 320px;
+  z-index: 600;
+  animation: fadeIn var(--g-transition-fast);
+}
+
+/* ─── Arrow ──────────────────────────────────────────────────────────────── */
+
+.arrow {
+  fill: var(--color-text);
+}
+
+/* ─── Animation ──────────────────────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .content { animation: none; }
+}

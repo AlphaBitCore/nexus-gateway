@@ -1,0 +1,137 @@
+{
+  "name": "bedrock",
+  "displayName": "AWS Bedrock",
+  "description": "AWS Bedrock \u2014 multi-model envelope serving Anthropic Claude, Meta Llama, Mistral, Cohere Command, and Amazon Titan models. Region-specific host (bedrock-runtime.<region>.amazonaws.com) and SigV4 auth. Model availability varies by region; admin should verify against https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html before customer-facing use.",
+  "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+  "adapterType": "bedrock",
+  "models": [
+    {
+      "code": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "name": "Claude 3.5 Sonnet v2 (Bedrock)",
+      "description": "Anthropic Claude 3.5 Sonnet v2 served via Bedrock \u2014 same model as direct Anthropic API but with AWS auth + region locality.",
+      "providerModelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 200000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "anthropic.claude-3-5-haiku-20241022-v1:0",
+      "name": "Claude 3.5 Haiku (Bedrock)",
+      "description": "Faster, cheaper Claude 3.5 Haiku via Bedrock.",
+      "providerModelId": "anthropic.claude-3-5-haiku-20241022-v1:0",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 200000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "anthropic.claude-3-opus-20240229-v1:0",
+      "name": "Claude 3 Opus (Bedrock)",
+      "description": "Claude 3 Opus \u2014 Anthropic's largest legacy model, available on Bedrock for enterprise on-prem use.",
+      "providerModelId": "anthropic.claude-3-opus-20240229-v1:0",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 200000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "anthropic.claude-3-haiku-20240307-v1:0",
+      "name": "Claude 3 Haiku (Bedrock)",
+      "description": "Original Claude 3 Haiku via Bedrock \u2014 small/cheap.",
+      "providerModelId": "anthropic.claude-3-haiku-20240307-v1:0",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 200000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "meta.llama3-3-70b-instruct-v1:0",
+      "name": "Llama 3.3 70B Instruct (Bedrock)",
+      "description": "Meta's Llama 3.3 70B Instruct served via Bedrock.",
+      "providerModelId": "meta.llama3-3-70b-instruct-v1:0",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "meta.llama3-1-70b-instruct-v1:0",
+      "name": "Llama 3.1 70B Instruct (Bedrock)",
+      "description": "Meta Llama 3.1 70B Instruct via Bedrock.",
+      "providerModelId": "meta.llama3-1-70b-instruct-v1:0",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "mistral.mistral-large-2407-v1:0",
+      "name": "Mistral Large (Bedrock)",
+      "description": "Mistral Large 2 (2407) served via Bedrock.",
+      "providerModelId": "mistral.mistral-large-2407-v1:0",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "cohere.command-r-plus-v1:0",
+      "name": "Cohere Command R+ (Bedrock)",
+      "description": "Cohere's flagship Command R+ served via Bedrock \u2014 RAG and tool use.",
+      "providerModelId": "cohere.command-r-plus-v1:0",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 128000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "amazon.titan-text-premier-v1:0",
+      "name": "Amazon Titan Text Premier",
+      "description": "Amazon's first-party Titan Text Premier model.",
+      "providerModelId": "amazon.titan-text-premier-v1:0",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 32768,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

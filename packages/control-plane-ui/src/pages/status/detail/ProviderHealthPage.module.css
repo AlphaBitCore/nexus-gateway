@@ -1,0 +1,58 @@
+.metricLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 2px;
+}
+
+.metricValue {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--g-radius-full);
+  display: inline-block;
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  padding: var(--g-space-1) var(--g-space-2);
+  border-radius: var(--g-radius-full);
+}
+
+.emptyState {
+  padding: var(--g-space-12);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-4);
+}
+
+.providerName {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}

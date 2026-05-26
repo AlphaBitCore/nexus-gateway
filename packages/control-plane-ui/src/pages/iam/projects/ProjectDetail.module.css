@@ -1,0 +1,100 @@
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.kvLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.widgetTitle {
+  font-size: var(--g-font-size-md);
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--color-text);
+  margin-bottom: var(--g-space-4);
+}
+
+.linkStyle {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.tip {
+  position: fixed;
+  transform: translateY(-100%);
+  z-index: 9999;
+  background: var(--color-text);
+  color: var(--color-text-inverse);
+  padding: var(--g-space-1-5) var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 280px;
+  box-shadow: 0 4px 12px var(--shadow-md);
+  pointer-events: none;
+}
+
+.editGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* ── ProjectDetail inline-style extractions ──────────────────────────── */
+
+.monoCode {
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+}
+
+.tooltipHelpIcon {
+  cursor: help;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.badgeOffset {
+  margin-top: 2px;
+}
+
+.textMuted {
+  color: var(--color-text-muted);
+}
+
+.gridFullSpan {
+  grid-column: 1 / -1;
+}
+
+.disabledDelete {
+  opacity: 0.4;
+  cursor: help;
+}
+
+.emptySection {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}

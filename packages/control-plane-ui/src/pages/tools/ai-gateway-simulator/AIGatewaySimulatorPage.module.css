@@ -1,0 +1,299 @@
+/*
+ * Chat-first layout. Vertical stack of:
+ *   1) PageHeader (provided by the global component)
+ *   2) Toolbar (provider + model selectors on the left, Clear/Settings on the right)
+ *   3) Optional ErrorBanners
+ *   4) Chat timeline (scrollable, takes remaining height)
+ *   5) Composer (textarea + stream toggle + send/stop)
+ *   6) Compact usage strip
+ *
+ * URL/VK/temperature/max_tokens/load-models live in a Settings dialog so
+ * the main view stays focused on conversation.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---- Toolbar -------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.toolbarSelect {
+  min-width: 200px;
+  flex: 1 1 220px;
+}
+
+/* ---- Chat timeline -------------------------------------------------- */
+
+.chatTimeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 16px;
+  /* Fixed-ish height keeps the composer + usage strip pinned at the
+     bottom of the page on tall screens; small screens scroll within
+     the timeline rather than the page. */
+  min-height: 360px;
+  max-height: calc(100vh - 360px);
+  overflow-y: auto;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 6px;
+  padding: 48px 16px;
+  color: var(--color-text-muted);
+}
+
+.emptyTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.emptyHint {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* ---- Message bubbles ------------------------------------------------ */
+
+.bubbleRow {
+  display: flex;
+  width: 100%;
+}
+
+.bubbleRowUser {
+  justify-content: flex-end;
+}
+
+.bubbleRowAssistant {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 78%;
+  border-radius: 12px;
+  padding: 10px 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.bubbleUser {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-bottom-right-radius: 4px;
+}
+
+.bubbleAssistant {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-bottom-left-radius: 4px;
+}
+
+.bubbleRole {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.bubbleContent {
+  font-family: var(--g-font-sans);
+}
+
+/* ---- Composer ------------------------------------------------------- */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.composerTextarea {
+  resize: vertical;
+  min-height: 64px;
+  width: 100%;
+  font-family: var(--g-font-sans);
+  font-size: 14px;
+}
+
+.composerActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.streamLabel {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* ---- Usage strip ---------------------------------------------------- */
+
+.usageStrip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.usageBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.usageLabel {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.usageValue {
+  color: var(--color-text);
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Settings dialog grid ------------------------------------------- */
+
+.settingsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* ---- Params popover ------------------------------------------------- */
+
+.paramsPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 480px;
+  max-width: 90vw;
+}
+
+.paramsSectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.paramRow {
+  display: grid;
+  grid-template-columns: 24px 1fr 1.5fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.paramRow input[type='text'],
+.paramRow input[type='number'] {
+  width: 100%;
+}
+
+.paramLabel {
+  font-size: 13px;
+  color: var(--color-text);
+  font-family: var(--g-font-mono);
+}
+
+.customParamRow {
+  display: grid;
+  grid-template-columns: 24px 1fr 1.6fr 28px;
+  gap: 8px;
+  align-items: center;
+}
+
+.deleteCustomParam {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 4px;
+}
+.deleteCustomParam:hover {
+  background: var(--color-surface-2);
+  color: var(--color-danger);
+}
+
+.paramsHint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.paramsFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+@media (max-width: 600px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toolbarSelect {
+    flex: 1 1 auto;
+  }
+  .composerActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .usageStrip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .settingsGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,910 @@
+openapi: 3.1.0
+info:
+  title: Nexus AI Gateway API
+  version: 1.0.0
+  description: >
+    OpenAI-compatible AI traffic proxy with compliance hooks, quota enforcement,
+    smart routing, and response caching. Authenticates via Virtual Key (VK).
+
+servers:
+  - url: http://localhost:3050
+    description: Local development
+
+security:
+  - VirtualKeyAuth: []
+  - BearerAuth: []
+
+paths:
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Create a chat completion
+      description: >
+        Proxies an OpenAI-compatible chat completion request to the resolved
+        upstream provider. Supports streaming via `stream: true`. The special
+        model value `"auto"` triggers smart routing based on message content.
+      tags: [Chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+            example:
+              model: gpt-4o
+              messages:
+                - role: system
+                  content: You are a helpful assistant.
+                - role: user
+                  content: Explain quantum computing in simple terms.
+              temperature: 0.7
+              max_tokens: 1024
+      responses:
+        '200':
+          description: Successful non-streaming completion
+          headers:
+            x-nexus-aigw-request-id:
+              $ref: '#/components/headers/x-nexus-aigw-request-id'
+            x-nexus-aigw-provider:
+              $ref: '#/components/headers/x-nexus-aigw-provider'
+            x-nexus-aigw-model:
+              $ref: '#/components/headers/x-nexus-aigw-model'
+            x-nexus-aigw-latency-ms:
+              $ref: '#/components/headers/x-nexus-aigw-latency-ms'
+            x-nexus-aigw-routing-rule:
+              $ref: '#/components/headers/x-nexus-aigw-routing-rule'
+            x-nexus-quota-warning:
+              $ref: '#/components/headers/x-nexus-quota-warning'
+            x-nexus-cache:
+              $ref: '#/components/headers/x-nexus-cache'
+            x-nexus-attempts:
+              $ref: '#/components/headers/x-nexus-attempts'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+              example:
+                id: chatcmpl-abc123
+                object: chat.completion
+                created: 1714000000
+                model: gpt-4o
+                choices:
+                  - index: 0
+                    message:
+                      role: assistant
+                      content: Quantum computing uses qubits that can be 0, 1, or both at once...
+                    finish_reason: stop
+                usage:
+                  prompt_tokens: 32
+                  completion_tokens: 128
+                  total_tokens: 160
+            text/event-stream:
+              schema:
+                description: >
+                  SSE stream of `data: {json}\n\n` lines. Each payload is a
+                  ChatCompletionChunk. The final event is `data: [DONE]\n\n`.
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /v1/embeddings:
+    post:
+      operationId: createEmbedding
+      summary: Create embeddings
+      description: >
+        Proxies an OpenAI-compatible embeddings request to the resolved upstream
+        provider. The model `"auto"` is not supported for this endpoint.
+      tags: [Embeddings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+            example:
+              model: text-embedding-3-small
+              input: The quick brown fox jumps over the lazy dog.
+      responses:
+        '200':
+          description: Successful embeddings response
+          headers:
+            x-nexus-aigw-request-id:
+              $ref: '#/components/headers/x-nexus-aigw-request-id'
+            x-nexus-aigw-provider:
+              $ref: '#/components/headers/x-nexus-aigw-provider'
+            x-nexus-aigw-model:
+              $ref: '#/components/headers/x-nexus-aigw-model'
+            x-nexus-aigw-latency-ms:
+              $ref: '#/components/headers/x-nexus-aigw-latency-ms'
+            x-nexus-cache:
+              $ref: '#/components/headers/x-nexus-cache'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+              example:
+                object: list
+                data:
+                  - object: embedding
+                    index: 0
+                    embedding: [0.0023, -0.0091, 0.0152]
+                model: text-embedding-3-small
+                usage:
+                  prompt_tokens: 10
+                  total_tokens: 10
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: List enabled models
+      description: >
+        Returns all enabled models in the gateway in an OpenAI-compatible list
+        format. Does not require VK authentication.
+      tags: [Models]
+      security: []
+      responses:
+        '200':
+          description: Successful model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelListResponse'
+              example:
+                object: list
+                data:
+                  - id: clx1abc000001
+                    object: model
+                    created: 1714000000
+                    owned_by: openai
+                    owner_display_name: OpenAI
+                  - id: clx1abc000002
+                    object: model
+                    created: 1714000000
+                    owned_by: anthropic
+                    owner_display_name: Anthropic
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/models/{model}:
+    get:
+      operationId: getModel
+      summary: Get a single model
+      description: >
+        Returns details of a single enabled model by ID or name.
+        Does not require VK authentication.
+      tags: [Models]
+      security: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          description: Model ID or model name
+          schema:
+            type: string
+          example: gpt-4o
+      responses:
+        '200':
+          description: Successful model detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelObject'
+              example:
+                id: clx1abc000001
+                object: model
+                created: 1714000000
+                owned_by: openai
+                owner_display_name: OpenAI
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: "model not found: gpt-99"
+                  type: proxy_error
+                  code: 404
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/usage:
+    get:
+      operationId: getUsageSummary
+      summary: Current-period usage summary with quota status
+      description: >
+        Returns real-time usage totals for the current billing period plus
+        quota status (budget limit, remaining, enforcement mode, rate limit).
+        Data sourced from Redis usage cache and in-memory policy cache for
+        sub-5ms latency.
+      tags: [Usage]
+      responses:
+        '200':
+          description: Current-period usage summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageSummaryResponse'
+              example:
+                virtualKeyId: clx1vk000001
+                period: "2026-04"
+                periodType: monthly
+                usage:
+                  totalRequests: 1542
+                  promptTokens: 482000
+                  completionTokens: 196000
+                  totalTokens: 678000
+                  estimatedCostUsd: 12.34
+                quota:
+                  limitUsd: 100.00
+                  usedUsd: 12.34
+                  remainingUsd: 87.66
+                  enforcementMode: reject
+                  rateLimitRpm: 60
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/usage/daily:
+    get:
+      operationId: getUsageDaily
+      summary: Daily usage time-series with model/provider breakdowns
+      description: >
+        Returns daily usage aggregated by model and provider for the
+        authenticated virtual key. Useful for trend analysis, billing
+        reconciliation, and dashboard charts. Maximum range is 90 days.
+      tags: [Usage]
+      parameters:
+        - name: startDate
+          in: query
+          description: Inclusive start date (default 30 days ago)
+          schema:
+            type: string
+            format: date
+            example: "2026-03-18"
+        - name: endDate
+          in: query
+          description: Inclusive end date (default today)
+          schema:
+            type: string
+            format: date
+            example: "2026-04-17"
+      responses:
+        '200':
+          description: Daily usage breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageDailyResponse'
+        '400':
+          description: Invalid date range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                range_too_large:
+                  value:
+                    error:
+                      message: "requested range of 120 days exceeds maximum of 90"
+                      type: proxy_error
+                      code: USAGE_RANGE_TOO_LARGE
+                invalid_date:
+                  value:
+                    error:
+                      message: "invalid startDate: not-a-date"
+                      type: proxy_error
+                      code: USAGE_INVALID_DATE
+                      hint: "Use YYYY-MM-DD format"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    VirtualKeyAuth:
+      type: apiKey
+      in: header
+      name: x-nexus-virtual-key
+      description: >
+        Nexus Virtual Key slug or API key (prefixed `nvk_`). Priority auth
+        method — checked before Authorization header.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Alternative auth via `Authorization: Bearer <virtual-key>`. Used when
+        `x-nexus-virtual-key` header is absent.
+
+  headers:
+    x-nexus-aigw-request-id:
+      description: Unique request ID assigned by the gateway (UUID v4)
+      schema:
+        type: string
+        format: uuid
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    x-nexus-aigw-provider:
+      description: Upstream provider name that served the request
+      schema:
+        type: string
+      example: openai
+    x-nexus-aigw-model:
+      description: Model ID used for the upstream request
+      schema:
+        type: string
+      example: gpt-4o
+    x-nexus-aigw-latency-ms:
+      description: Total gateway latency in milliseconds
+      schema:
+        type: string
+      example: "342"
+    x-nexus-aigw-routing-rule:
+      description: Name of the routing rule applied (if any)
+      schema:
+        type: string
+      example: cost-optimized
+    x-nexus-quota-warning:
+      description: Quota warning message when usage is near the limit
+      schema:
+        type: string
+      example: "Organization quota at 90%"
+    x-nexus-cache:
+      description: Response cache indicator — `HIT` or `MISS`
+      schema:
+        type: string
+        enum: [HIT, MISS]
+      example: MISS
+    x-nexus-attempts:
+      description: Total number of upstream attempts for this request (1 = first attempt succeeded; 2+ means at least one L2 retry or L3 failover happened). Always present on proxied responses.
+      schema:
+        type: string
+      example: "1"
+
+  schemas:
+    # ── Chat Completions ─────────────────────────────────────────────
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: >
+            Model ID to use. Use `"auto"` for smart routing (chat only).
+          example: gpt-4o
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          example: 0.7
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          example: 1
+        max_tokens:
+          type: integer
+          minimum: 1
+          description: Defaults to 4096 if omitted (used for quota estimation).
+          example: 1024
+        stream:
+          type: boolean
+          default: false
+          description: If true, responses are streamed as SSE events.
+        n:
+          type: integer
+          minimum: 1
+          default: 1
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        presence_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        frequency_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        user:
+          type: string
+          description: End-user identifier for abuse tracking.
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+        name:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            type: object
+        tool_call_id:
+          type: string
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          example: chatcmpl-abc123
+        object:
+          type: string
+          const: chat.completion
+        created:
+          type: integer
+          description: Unix timestamp
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatChoice'
+        usage:
+          $ref: '#/components/schemas/CompletionUsage'
+
+    ChatChoice:
+      type: object
+      properties:
+        index:
+          type: integer
+        message:
+          $ref: '#/components/schemas/ChatMessage'
+        finish_reason:
+          type: string
+          enum: [stop, length, tool_calls, content_filter]
+
+    ChatCompletionChunk:
+      type: object
+      description: A single SSE chunk in a streaming chat completion.
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: chat.completion.chunk
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              delta:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: string
+              finish_reason:
+                type: string
+                nullable: true
+
+    CompletionUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+          example: 32
+        completion_tokens:
+          type: integer
+          example: 128
+        total_tokens:
+          type: integer
+          example: 160
+
+    # ── Embeddings ───────────────────────────────────────────────────
+    EmbeddingRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          description: Embedding model ID. `"auto"` is not supported for embeddings.
+          example: text-embedding-3-small
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Text or array of texts to embed.
+        encoding_format:
+          type: string
+          enum: [float, base64]
+          default: float
+        dimensions:
+          type: integer
+          minimum: 1
+          description: Output dimensionality (model-dependent).
+
+    EmbeddingResponse:
+      type: object
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmbeddingObject'
+        model:
+          type: string
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+
+    EmbeddingObject:
+      type: object
+      properties:
+        object:
+          type: string
+          const: embedding
+        index:
+          type: integer
+        embedding:
+          type: array
+          items:
+            type: number
+
+    # ── Models ───────────────────────────────────────────────────────
+    ModelListResponse:
+      type: object
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelObject'
+
+    ModelObject:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Model ID (database primary key)
+        object:
+          type: string
+          const: model
+        created:
+          type: integer
+          description: Unix timestamp (server time at response)
+        owned_by:
+          type: string
+          description: Provider ID that owns the model
+        owner_display_name:
+          type: string
+          nullable: true
+          description: Optional provider display name for user-friendly UI rendering
+
+    # ── Usage ────────────────────────────────────────────────────────
+    UsageSummaryResponse:
+      type: object
+      required: [virtualKeyId, period, periodType, usage]
+      properties:
+        virtualKeyId:
+          type: string
+        period:
+          type: string
+          description: Current billing period key (e.g. "2026-04")
+          example: "2026-04"
+        periodType:
+          type: string
+          enum: [monthly]
+        usage:
+          $ref: '#/components/schemas/UsageBlock'
+        quota:
+          $ref: '#/components/schemas/QuotaBlock'
+          nullable: true
+          description: "null when no budget policy applies"
+
+    UsageBlock:
+      type: object
+      properties:
+        totalRequests:
+          type: integer
+          format: int64
+        promptTokens:
+          type: integer
+          format: int64
+        completionTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        estimatedCostUsd:
+          type: number
+          format: double
+
+    QuotaBlock:
+      type: object
+      properties:
+        limitUsd:
+          type: number
+          format: double
+        usedUsd:
+          type: number
+          format: double
+        remainingUsd:
+          type: number
+          format: double
+        enforcementMode:
+          type: string
+          enum: [reject, downgrade, notify-and-proceed, track-only, none]
+        rateLimitRpm:
+          type: integer
+          nullable: true
+
+    UsageDailyResponse:
+      type: object
+      required: [virtualKeyId, startDate, endDate, daily, totals]
+      properties:
+        virtualKeyId:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        daily:
+          type: array
+          items:
+            $ref: '#/components/schemas/DayEntry'
+        totals:
+          $ref: '#/components/schemas/TotalBlock'
+
+    DayEntry:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        requests:
+          type: integer
+          format: int64
+        promptTokens:
+          type: integer
+          format: int64
+        completionTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        costUsd:
+          type: number
+          format: double
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelBreakdown'
+
+    ModelBreakdown:
+      type: object
+      properties:
+        model:
+          type: string
+        provider:
+          type: string
+        requests:
+          type: integer
+          format: int64
+        promptTokens:
+          type: integer
+          format: int64
+        completionTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        costUsd:
+          type: number
+          format: double
+
+    TotalBlock:
+      type: object
+      properties:
+        requests:
+          type: integer
+          format: int64
+        promptTokens:
+          type: integer
+          format: int64
+        completionTokens:
+          type: integer
+          format: int64
+        totalTokens:
+          type: integer
+          format: int64
+        costUsd:
+          type: number
+          format: double
+
+    # ── Errors ───────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message:
+              type: string
+              description: Human-readable error description
+              example: "VIRTUAL_KEY_MISSING: vkauth: virtual key missing"
+            type:
+              type: string
+              description: Error category
+              example: proxy_error
+            code:
+              type: integer
+              description: HTTP status code
+              example: 401
+
+  responses:
+    BadRequest:
+      description: Invalid request (missing model, bad JSON, etc.)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              message: model is required
+              type: proxy_error
+              code: 400
+
+    Unauthorized:
+      description: Virtual key missing, invalid, disabled, or expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing:
+              summary: No VK provided
+              value:
+                error:
+                  message: "VIRTUAL_KEY_MISSING: vkauth: virtual key missing"
+                  type: proxy_error
+                  code: 401
+            invalid:
+              summary: VK not found
+              value:
+                error:
+                  message: "VIRTUAL_KEY_INVALID: vkauth: virtual key invalid"
+                  type: proxy_error
+                  code: 401
+            disabled:
+              summary: VK has been revoked
+              value:
+                error:
+                  message: "VIRTUAL_KEY_DISABLED: vkauth: virtual key disabled"
+                  type: proxy_error
+                  code: 401
+            expired:
+              summary: VK past its expiry date
+              value:
+                error:
+                  message: "VIRTUAL_KEY_EXPIRED: vkauth: virtual key expired"
+                  type: proxy_error
+                  code: 401
+
+    Forbidden:
+      description: Request blocked by compliance hooks
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              message: Content violates organization compliance policy
+              type: proxy_error
+              code: 403
+
+    TooManyRequests:
+      description: Rate limit or quota exceeded
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying (rate limit only)
+          schema:
+            type: integer
+          example: 12
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            rate_limit:
+              summary: Per-key RPM exceeded
+              value:
+                error:
+                  message: rate limit exceeded
+                  type: proxy_error
+                  code: 429
+            quota:
+              summary: Budget or token quota exhausted
+              value:
+                error:
+                  message: Virtual key budget limit exceeded
+                  type: proxy_error
+                  code: 429
+
+    BadGateway:
+      description: All upstream providers failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              message: all upstream providers failed
+              type: proxy_error
+              code: 502
+
+    InternalError:
+      description: Internal gateway error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              message: failed to list models
+              type: proxy_error
+              code: 500

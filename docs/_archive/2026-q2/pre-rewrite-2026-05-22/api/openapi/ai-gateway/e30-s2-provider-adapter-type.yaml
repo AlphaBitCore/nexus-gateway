@@ -1,0 +1,301 @@
+openapi: "3.1.0"
+info:
+  title: Nexus — Provider Adapter Type (E30 / Story 2)
+  description: |
+    Admin CRUD delta for the `Provider` resource introduced by E30. The
+    operator-facing wire adapter is now an explicit required field
+    `adapterType` on create and an optional mutable field on update. The
+    legacy `type` field (`builtin` / `openai-compatible`) is removed in
+    the same release per the project's no-backward-compatibility policy
+    (see `CLAUDE.md`).
+
+    Validation lives in the Control Plane handler and is mirrored in
+    this spec; there is no SQL CHECK constraint on `adapter_type`.
+    The nine canonical values match `providers.Format` in the AI Gateway
+    and `shared/traffic/adapters` non-fallback IDs; the sibling
+    `InterceptionDomain.adapterId` column uses the same nine plus the
+    traffic-only `generic-jsonpath` ID — but they are separate columns
+    with no FK between them.
+
+    Authentication: all routes require a valid admin session cookie,
+    established via `POST /api/admin/auth/login`.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane instance
+
+tags:
+  - name: Providers
+    description: Admin CRUD for providers (post-E30 adapterType shape)
+
+paths:
+  /api/admin/providers:
+    post:
+      tags: [Providers]
+      operationId: adminCreateProvider
+      summary: Create a provider
+      description: |
+        Creates a new provider. `adapterType` is **required** and must be
+        one of the nine canonical values. The legacy `type` field is no
+        longer accepted — requests that include it have the field ignored
+        by Echo's binder (unknown fields are silently dropped by Go's
+        default decoder).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProviderRequest"
+      responses:
+        "201":
+          description: Provider created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        "400":
+          description: Validation error (missing / invalid `adapterType`, missing `baseUrl`, etc.).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid admin session.
+        "409":
+          description: Provider name or `pathPrefix` already exists.
+
+    get:
+      tags: [Providers]
+      operationId: adminListProviders
+      summary: List providers
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: enabled
+          schema: { type: string, enum: ["true", "false"] }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Page of providers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProviderListItem"
+                  total:
+                    type: integer
+
+  /api/admin/providers/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+
+    get:
+      tags: [Providers]
+      operationId: adminGetProvider
+      summary: Get a provider by ID
+      responses:
+        "200":
+          description: Provider record with inline models.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        "404":
+          description: Provider not found.
+
+    put:
+      tags: [Providers]
+      operationId: adminUpdateProvider
+      summary: Update a provider
+      description: |
+        Partially updates a provider. Omitted fields leave the column
+        unchanged. When `adapterType` is present it is validated against
+        the canonical enum; an invalid value returns `400`. Changing
+        `adapterType` on a live provider does **not** cascade to
+        credentials, models, or routing rules — operators are
+        responsible for coordinating dependent configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProviderRequest"
+      responses:
+        "200":
+          description: Provider updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        "400":
+          description: Validation error (invalid `adapterType`, etc.).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Provider not found.
+
+components:
+  schemas:
+    AdapterType:
+      type: string
+      description: |
+        Canonical wire adapter for this provider. Matches `providers.Format`
+        in the AI Gateway. The `generic-jsonpath` traffic adapter is not a
+        valid value here — it is a host-pattern fallback only.
+      enum:
+        - openai
+        - anthropic
+        - gemini
+        - glm
+        - deepseek
+        - azure-openai
+        - minimax
+        - bedrock
+        - vertex
+
+    CreateProviderRequest:
+      type: object
+      required: [name, baseUrl, adapterType]
+      properties:
+        name:
+          type: string
+          description: Stable slug used for routing targets and display defaults.
+        displayName:
+          type: string
+        description:
+          type: string
+        baseUrl:
+          type: string
+          description: Upstream base URL; no trailing slash.
+        adapterType:
+          $ref: "#/components/schemas/AdapterType"
+        region:
+          type: string
+          description: |
+            Authoritative deployment region (e.g. `us-east-1`). Consumed
+            by the data-residency hook; optional.
+        enabled:
+          type: boolean
+          default: true
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreateProviderInlineModel"
+        credential:
+          $ref: "#/components/schemas/CreateProviderInlineCredential"
+
+    CreateProviderInlineModel:
+      type: object
+      required: [providerModelId, name, type]
+      properties:
+        providerModelId: { type: string }
+        name:            { type: string }
+        description:     { type: string }
+        type:            { type: string, description: "Model kind (chat / embedding / image / audio). Unrelated to Provider.adapterType." }
+        features:        { type: array, items: { type: string } }
+        inputPricePerMillion:  { type: number, nullable: true }
+        outputPricePerMillion: { type: number, nullable: true }
+        maxContextTokens:      { type: integer, nullable: true }
+        maxOutputTokens:       { type: integer, nullable: true }
+        aliases:               { type: array, items: { type: string } }
+
+    CreateProviderInlineCredential:
+      type: object
+      required: [name, apiKey]
+      properties:
+        name:          { type: string }
+        apiKey:        { type: string }
+        rotationState: { type: string }
+
+    UpdateProviderRequest:
+      type: object
+      description: |
+        Partial update. Any field omitted is left unchanged. `adapterType`,
+        when present, is re-validated against the canonical enum.
+      properties:
+        displayName: { type: string }
+        description: { type: string, nullable: true }
+        baseUrl:     { type: string }
+        adapterType:
+          $ref: "#/components/schemas/AdapterType"
+        region:      { type: string, nullable: true }
+        enabled:     { type: boolean }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+
+    ProviderListItem:
+      type: object
+      required: [id, name, adapterType, baseUrl, enabled, createdAt]
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        displayName: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        adapterType:
+          $ref: "#/components/schemas/AdapterType"
+        baseUrl:     { type: string }
+        region:      { type: string, nullable: true }
+        enabled:     { type: boolean }
+        modelCount:  { type: integer, nullable: true }
+        createdAt:   { type: string, format: date-time }
+
+    Provider:
+      type: object
+      required: [id, name, adapterType, baseUrl, enabled, createdAt, updatedAt]
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        displayName: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        adapterType:
+          $ref: "#/components/schemas/AdapterType"
+        baseUrl:     { type: string }
+        pathPrefix:  { type: string }
+        apiVersion:  { type: string, nullable: true }
+        region:      { type: string, nullable: true }
+        enabled:     { type: boolean }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        models:
+          type: array
+          items:
+            type: object
+        createdAt:   { type: string, format: date-time }
+        updatedAt:   { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:    { type: string, example: validation_error }
+            message: { type: string }
+            details: { type: string, nullable: true }

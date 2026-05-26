@@ -1,0 +1,613 @@
+{
+  "nav": {
+    "overview": "概览",
+    "activity": "活动",
+    "traffic": "Traffic Events",
+    "policies": "策略",
+    "stats": "统计",
+    "identity": "身份",
+    "diagnostics": "诊断",
+    "settings": "设置"
+  },
+  "updateBanner": {
+    "message": "Nexus Agent 有新版本可用。立即安装以同步最新策略与修复。",
+    "install": "立即安装",
+    "dismiss": "明天再提醒"
+  },
+  "policies": {
+    "title": "策略",
+    "subtitle": "管理员推送到本设备的配置——拦截什么、跑哪些 Hook、谁可豁免，以及当前同步状态。",
+    "loading": "加载中…",
+    "empty": "管理员尚未推送任何{{section}}。",
+    "refresh": {
+      "action": "强制刷新",
+      "refreshing": "刷新中…",
+      "failed": "刷新失败：{{error}}"
+    },
+    "breadcrumb": {
+      "root": "策略"
+    },
+    "viewAll": "查看全部 ({{n}}) →",
+    "notFound": "当前快照里没找到这一项。可能已被管理员删除。",
+    "noMatch": "没有匹配的条目。",
+    "toolbar": {
+      "count": "{{shown}} 显示 · {{filtered}} / {{total}}"
+    },
+    "paginator": {
+      "info": "第 {{page}} 页 / 共 {{total}} 页",
+      "prev": "上一页",
+      "next": "下一页"
+    },
+    "detail": {
+      "attributes": "属性"
+    },
+    "hero": {
+      "inSync": "配置已同步",
+      "inSyncMeta": "全部策略已生效，最近上报：{{at}}。",
+      "drifted": "配置未同步",
+      "driftedMeta": "落后 {{behind}} 个版本{{s}}，下次同步会自动追上。",
+      "killSwitchEngaged": "紧急停摆已启用",
+      "killSwitchMeta": "管理员已暂停拦截。原因：{{reason}}。",
+      "diagActive": "诊断模式已开启",
+      "diagActiveMeta": "详细诊断至 {{until}}。",
+      "desired": "目标"
+    },
+    "kpi": {
+      "domains": "域名",
+      "hooks": "Hook",
+      "exemptions": "豁免",
+      "rulePacks": "规则包",
+      "killSwitch": "紧急停摆",
+      "diagMode": "诊断模式",
+      "on": "开",
+      "off": "关"
+    },
+    "columns": {
+      "enforcement": "拦截与执法",
+      "deviceControls": "设备控制"
+    },
+    "section": {
+      "count": "{{count}} 项"
+    },
+    "sync": {
+      "title": "同步状态",
+      "desired": "目标版本",
+      "reported": "已上报版本",
+      "inSync": "已同步",
+      "drifted": "未同步（落后 {{behind}} 个版本{{s}}）",
+      "lastReportedAt": "最近上报"
+    },
+    "interceptionDomains": {
+      "title": "拦截域名",
+      "subtitle": "本 Agent 检查的主机名规则。",
+      "empty": "未下发任何域名。",
+      "searchPlaceholder": "按域名、名称或 Adapter 搜索…",
+      "cols": {
+        "name": "名称",
+        "pattern": "域名规则",
+        "matchType": "匹配方式",
+        "priority": "优先级",
+        "defaultAction": "默认动作",
+        "action": "动作",
+        "status": "状态",
+        "enabled": "已启用",
+        "disabled": "已禁用"
+      },
+      "detail": {
+        "adapter": "Adapter",
+        "onAdapterError": "Adapter 错误处理",
+        "networkZone": "网络区",
+        "paths": "路径覆盖",
+        "pathPattern": "路径规则",
+        "noPaths": "没有路径级覆盖 — 所有请求按上面的默认动作处理。"
+      }
+    },
+    "hooks": {
+      "title": "生效 Hook",
+      "subtitle": "按优先级顺序对拦截流量执行的合规 Hook。",
+      "empty": "未配置任何 Hook。",
+      "searchPlaceholder": "按名称、实现或阶段搜索…",
+      "cols": {
+        "priority": "优先级",
+        "name": "名称",
+        "stage": "阶段",
+        "implementation": "实现",
+        "failBehavior": "失败处理",
+        "status": "状态",
+        "enabled": "已启用",
+        "disabled": "已禁用"
+      },
+      "detail": {
+        "timeout": "超时",
+        "applicableIngress": "适用于",
+        "config": "Hook 配置",
+        "noConfig": "未配置自定义参数；Hook 以实现默认值运行。"
+      },
+      "pipeline": {
+        "title": "执行管线概览",
+        "summary": "{{enabled}}/{{total}} 已启用，共 {{stages}} 个阶段 — 点击展开",
+        "empty": "没有任何 Hook。",
+        "stageCount": "{{count}} 个 Hook"
+      }
+    },
+    "exemptions": {
+      "title": "合规豁免",
+      "subtitle": "授权放行某些 Hook 的主机或用户。",
+      "empty": "未授予任何豁免。",
+      "searchPlaceholder": "按主机、用户或原因搜索…",
+      "cols": {
+        "hostUser": "主机 / 用户",
+        "reason": "原因"
+      }
+    },
+    "deviceDefaults": {
+      "title": "设备默认配置",
+      "subtitle": "管理员为本设备配置的策略。",
+      "empty": "使用内建默认值。",
+      "quitAllowed": "允许退出",
+      "heartbeat": "心跳间隔",
+      "auditDrain": "审计上传间隔",
+      "configSync": "配置同步间隔",
+      "auditBatch": "审计批量大小",
+      "shutdownWarning": "退出警告",
+      "autoUpdate": "自动更新",
+      "logLevel": "日志级别",
+      "seconds": "{{value}} 秒",
+      "rows": "{{value}} 条",
+      "enabled": "启用",
+      "disabled": "禁用"
+    },
+    "killSwitch": {
+      "title": "紧急停摆",
+      "subtitle": "管理员可以从 CP UI 启用的紧急停止开关。",
+      "status": "状态",
+      "engaged": "已启用",
+      "disengaged": "未启用",
+      "reason": "原因"
+    },
+    "quicFallback": {
+      "title": "QUIC 回退应用",
+      "desc": "其 UDP 流量将被 agent 关闭以强制 HTTP/3 (QUIC) 降级到 HTTP/2 的浏览器与 Electron 应用 bundle ID —— 否则 agent 的 TLS bump 路径无法看到这些请求。该清单由管理员在控制台维护。",
+      "empty": "未配置任何应用 —— agent 不会关闭任何 UDP 流量。"
+    },
+    "rulePacks": {
+      "title": "规则包",
+      "subtitle": "管理员安装到 Hook 中的合规规则包。",
+      "empty": "未安装任何规则包。",
+      "searchPlaceholder": "按规则包名、维护者或 Hook 搜索…",
+      "cols": {
+        "name": "名称",
+        "version": "版本",
+        "maintainer": "维护者",
+        "boundHook": "绑定 Hook",
+        "rules": "规则数",
+        "status": "状态",
+        "enabled": "已启用",
+        "disabled": "已禁用"
+      },
+      "detail": {
+        "packId": "Pack ID",
+        "installedAt": "安装时间",
+        "installId": "Install ID",
+        "rules": "规则",
+        "noRules": "该规则包没有任何规则。",
+        "ruleCols": {
+          "ruleId": "规则 ID",
+          "category": "类别",
+          "severity": "严重度",
+          "pattern": "匹配规则",
+          "description": "说明"
+        }
+      }
+    },
+    "deviceGroup": {
+      "title": "设备组",
+      "subtitle": "本设备所属的舰队组。",
+      "empty": "未分配到任何组。",
+      "id": "ID",
+      "name": "名称"
+    },
+    "diagMode": {
+      "title": "诊断模式",
+      "subtitle": "详细诊断时间窗。",
+      "active": "已开启，至 {{until}}",
+      "inactive": "未开启。",
+      "until": "开启至"
+    }
+  },
+  "traffic": {
+    "title": "Traffic Events",
+    "subtitle": "本设备上 Agent 拦截到的出站网络连接——进程、主机/IP、状态与延迟。数据从本地审计日志读取，不会离开本机。",
+    "loading": "加载中…",
+    "empty": "暂未捕获任何流量。",
+    "emptyAi": "暂未捕获 AI 流量。",
+    "searchPlaceholder": "按主机、IP 或进程搜索…",
+    "aiOnly": "仅 AI",
+    "pageSize": "每页行数",
+    "previous": "上一页",
+    "next": "下一页",
+    "pageInfo": "{{from}}–{{to}} / 共 {{total}}",
+    "filter": {
+      "label": "显示",
+      "all": "全部",
+      "ai": "仅 AI",
+      "blocked": "仅被拦截",
+      "processed": "仅已处理"
+    },
+    "refresh": {
+      "label": "自动刷新",
+      "tooltip": "按当前搜索和筛选自动重新拉取数据。选择「关闭」可冻结当前视图。",
+      "off": "关闭",
+      "5s": "每 5 秒",
+      "15s": "每 15 秒",
+      "30s": "每 30 秒",
+      "1m": "每 1 分钟",
+      "5m": "每 5 分钟"
+    },
+    "col": {
+      "time": "时间",
+      "app": "应用",
+      "site": "站点",
+      "process": "进程",
+      "target": "目标",
+      "provider": "Provider",
+      "model": "模型",
+      "tokens": "Token（prompt+completion）",
+      "latency": "延迟",
+      "action": "动作",
+      "status": "状态",
+      "tags": "标签",
+      "compliance": "Hook"
+    },
+    "detail": {
+      "title": "事件详情",
+      "close": "关闭",
+      "fieldId": "事件",
+      "fieldProcess": "进程",
+      "fieldTarget": "目标",
+      "fieldStatus": "状态",
+      "hooksTitle": "Hook 流水线",
+      "hookId": "Hook",
+      "hookStage": "阶段",
+      "hookDecision": "决定",
+      "hookLatency": "耗时",
+      "hooksEmpty": "此事件未执行任何 hook。",
+      "hooksParseError": "Hook 流水线数据无法解析。",
+      "waterfall": {
+        "title": "阶段分解"
+      }
+    },
+    "waterfall": {
+      "reqHooks": "请求 Hooks",
+      "ourOther": "我方开销",
+      "upstreamTtfb": "上游 TTFB",
+      "upstreamBody": "上游 Body",
+      "respHooks": "响应 Hooks",
+      "noData": "此事件无阶段数据"
+    },
+    "since": {
+      "label": "时间范围",
+      "1h": "最近 1 小时",
+      "24h": "最近 24 小时",
+      "7d": "最近 7 天",
+      "30d": "最近 30 天",
+      "all": "全部时间"
+    }
+  },
+  "agentNotRunning": {
+    "title": "Nexus Agent 未运行",
+    "body": "Dashboard 无法连接到本地 Agent。请确认 Nexus Agent 服务已启动，然后重试。",
+    "retry": "重试连接",
+    "troubleshootHint": "如果 Agent 一直无法启动，可能是 launchd 已卸载它。可以在终端运行下面这条命令重启（需要管理员密码）：",
+    "troubleshootCommand": "sudo launchctl kickstart system/com.nexus-gateway.agent",
+    "copyCommand": "复制命令",
+    "copyCommandSuccess": "已复制"
+  },
+  "overview": {
+    "title": "概览",
+    "subtitle": "来自您设备的实时状态。",
+    "today": "今日",
+    "todayHeader": "今日防护",
+    "inspected": "已检查",
+    "passthrough": "已放行",
+    "denied": "已拒绝",
+    "recentActivity": "最近活动",
+    "recentTopN": "最近 {{n}} 条",
+    "col": {
+      "time": "时间",
+      "process": "进程",
+      "dest": "目标",
+      "action": "动作"
+    },
+    "hero": {
+      "activeTitle": "正在保护此设备",
+      "activeMeta": "Agent {{device}} 已激活并应用最新策略。",
+      "pausedTitle": "防护已暂停",
+      "pausedUntil": "将于 {{until}} 恢复。",
+      "pausedIndefinite": "无限期暂停——准备好后从菜单恢复。",
+      "errorTitle": "Agent 异常",
+      "errorMeta": "{{reason}}",
+      "degradedTitle": "功能受限运行中",
+      "degradedMeta": "{{reason}}",
+      "updateTitle": "有可用更新",
+      "updateMeta": "安装新构建以保持策略与修复的最新状态。",
+      "noSso": "未登录",
+      "identity": "身份",
+      "version": "构建"
+    },
+    "tile": {
+      "hub": "Hub",
+      "heartbeat": "心跳",
+      "queue": "审计队列",
+      "cert": "证书",
+      "update": "更新",
+      "connected": "已连接",
+      "disconnected": "已断开",
+      "available": "可用",
+      "current": "已最新",
+      "certDays": "{{days}} 天后过期",
+      "latency": "延迟"
+    },
+    "age": {
+      "justNow": "刚刚",
+      "minutes": "{{n}} 分钟前",
+      "hours": "{{n}} 小时前",
+      "days": "{{n}} 天前"
+    }
+  },
+  "activity": {
+    "title": "活动",
+    "subtitle": "本设备 Agent 生命周期事件——何时启动、暂停、登录或退出。",
+    "empty": "暂无生命周期事件。",
+    "col": {
+      "time": "时间",
+      "action": "事件",
+      "details": "详情"
+    },
+    "action": {
+      "agentStartup": "已启动",
+      "agentShutdown": "已退出",
+      "agentPaused": "已暂停",
+      "agentResumed": "已恢复",
+      "agentSsoLogin": "已登录",
+      "agentSsoLogout": "已退出登录"
+    }
+  },
+  "stats": {
+    "title": "统计",
+    "subtitle": "本机流量的本地汇总，从审计日志计算而来。数据不会离开本机。",
+    "loading": "加载汇总中…",
+    "range": "时间范围",
+    "range1h": "最近 1 小时",
+    "range6h": "最近 6 小时",
+    "range24h": "最近 24 小时",
+    "range7d": "最近 7 天",
+    "range30d": "最近 30 天",
+    "granulePrefix": "粒度",
+    "cohort": {
+      "label": "范围",
+      "all": "全部流量",
+      "ai": "仅 AI"
+    },
+    "trendTitle": "请求趋势",
+    "breakdownTitle": "按维度排名",
+    "breakdownDimension": "分维度",
+    "breakdownEmpty": "当前窗口内该维度暂无数据。",
+    "requestsColumn": "请求数",
+    "kpi": {
+      "requests": "请求数",
+      "successRate": "成功率",
+      "avgLatency": "平均延迟",
+      "avgUs": "我方平均",
+      "avgUpstream": "上游平均",
+      "bytesIn": "入站字节",
+      "bytesOut": "出站字节",
+      "inspectRate": "拦截率",
+      "hookAllowRate": "Hook 放行率",
+      "bumpSuccessRate": "TLS Bump 成功率",
+      "naLabel": "暂无",
+      "naWhy": "为什么?",
+      "emptyHint": {
+        "successRate": "窗口内无流量 —— 一旦有请求落地,成功率即可用。",
+        "avgUs": "暂无 agent 本机开销样本 —— 任何流量完成本地 pipeline 后即可用。",
+        "avgUpstream": "暂无上游总耗时样本 —— 来自完成上游转发的 inspect 流量。",
+        "inspectRate": "暂无流量 —— inspect/passthrough/deny 比例至少需要一条决策。",
+        "hookAllowRate": "暂无 hook 决策 —— 至少需要一条流量跑过 compliance pipeline。",
+        "bumpSuccessRate": "暂无 bump 事件 —— 至少需要一条 inspect 流量完成 TLS 握手。"
+      }
+    },
+    "dim": {
+      "target_host": "目标主机",
+      "source_process": "源进程",
+      "action": "动作"
+    },
+    "trendMetric": "趋势指标",
+    "metric": {
+      "requests": "请求数",
+      "our": "我方开销",
+      "upstream": "上游"
+    },
+    "col": {
+      "avgUs": "我方均值（ms）",
+      "avgUpstream": "上游均值（ms）"
+    }
+  },
+  "identity": {
+    "title": "身份",
+    "subtitle": "本设备在 Gateway 上的注册信息。",
+    "deviceID": "设备 ID",
+    "trustLevel": "信任等级",
+    "ssoEmail": "登录账号",
+    "certExpiresAt": "证书过期时间",
+    "deviceAuthMode": "认证模式",
+    "user": {
+      "displayName": "姓名",
+      "email": "邮箱",
+      "status": "账号状态"
+    },
+    "org": {
+      "title": "组织",
+      "subtitle": "你所在的组织在公司层级中的位置。",
+      "name": "名称",
+      "code": "代号",
+      "timezone": "时区",
+      "description": "描述",
+      "hierarchyAria": "组织层级"
+    }
+  },
+  "diagnostics": {
+    "title": "诊断",
+    "subtitle": "检查 Agent 与 Gateway 连接的工具。",
+    "hubReachable": "Gateway 可达",
+    "logTail": "最近日志",
+    "certPath": "证书文件",
+    "interceptionMode": {
+      "label": "拦截模式",
+      "fallbackWarning": "WinDivert 内核驱动未加载，正在使用系统代理回退模式。某些忽略系统代理的应用可能绕过过滤。请联系技术支持。"
+    },
+    "actions": {
+      "title": "恢复操作",
+      "subtitle": "仅在排查问题时使用。正常情况下守护进程会保持运行。"
+    },
+    "restartDaemon": {
+      "button": "重启守护进程",
+      "confirm": "确定要重启 Nexus Agent 守护进程吗？流量监控会暂停约 10 秒，等待 launchd 重新拉起。",
+      "inflight": "正在重启守护进程……",
+      "success": "守护进程重启请求已发送，约 10 秒后恢复。",
+      "blocked": "重启被拒绝：{{error}}",
+      "failed": "重启失败：{{error}}"
+    },
+    "copyBundle": {
+      "button": "复制支持包",
+      "success": "支持包（{{size}} 字符）已复制到剪贴板。",
+      "failed": "无法复制到剪贴板。"
+    },
+    "copyLogPath": {
+      "button": "复制日志路径",
+      "success": "日志路径已复制。可粘贴到 Finder 或终端中。",
+      "failed": "无法复制到剪贴板。"
+    }
+  },
+  "settings": {
+    "title": "设置",
+    "subtitle": "本设备的个性化偏好。",
+    "accountTitle": "账户",
+    "accountSubtitle": "本设备在 Gateway 上的注册信息。",
+    "groupAccount": "账户",
+    "groupPreferences": "偏好",
+    "groupProtection": "保护",
+    "groupDanger": "危险操作",
+    "aboutConnected": "已连接",
+    "aboutDisconnected": "未连接",
+    "aboutTitle": "关于",
+    "aboutVersion": "版本",
+    "aboutDeviceID": "设备 ID",
+    "aboutGateway": "Gateway",
+    "pause": "暂停保护",
+    "resume": "恢复保护",
+    "pausedUntil": "将在 {{time}} 恢复",
+    "pauseDuration": {
+      "15min": "15 分钟",
+      "1hour": "1 小时",
+      "8hours": "8 小时",
+      "indefinite": "我手动恢复前一直暂停"
+    },
+    "themeTitle": "主题",
+    "themeDesc": "选择 Dashboard 的明暗外观。",
+    "themeLight": "浅色",
+    "themeDark": "深色",
+    "themeSystem": "跟随系统",
+    "languageTitle": "语言",
+    "languageDesc": "切换界面语言。",
+    "signOutTitle": "登出",
+    "signOutDesc": "在本设备上登出当前账号。Agent 将退出注册状态，下次启动会引导您重新登录。",
+    "signOutAction": "登出",
+    "signOutConfirmTitle": "确定要登出吗？",
+    "signOutConfirmBody": "本机将清除已注册的设备凭据和登录状态。流量监控会停止，直到您下次登录。",
+    "signOutConfirmCancel": "取消",
+    "signOutConfirmAction": "确认登出",
+    "signOutInProgress": "正在登出…",
+    "signOutFailed": "登出失败：{{error}}",
+    "updates": {
+      "title": "软件更新",
+      "desc": "检查您的网关上是否有更新的 Nexus Agent 构建。自动更新行为由管理员控制（参见 策略 → 设备默认配置）。",
+      "checkNow": "立即检查",
+      "upToDate": "已经是最新构建。",
+      "foundNew": "有可用更新：{{version}}。Agent 将在下一个空闲窗口自动安装。"
+    }
+  },
+  "onboarding": {
+    "welcomeTitle": "欢迎使用 Nexus Agent",
+    "welcomeSubtitle": "您的设备需要先在公司网关注册，保护才能启动。",
+    "ssoTitle": "使用公司 SSO 登录",
+    "ssoBody": "我们会为您打开浏览器进行登录。设备会自动完成注册。",
+    "tokenTitle": "粘贴注册令牌",
+    "tokenBody": "请向 IT 管理员申请一次性的注册令牌，然后粘贴到下方。",
+    "tokenPlaceholder": "注册令牌",
+    "tokenSubmit": "注册",
+    "tokenRunning": "注册中——只需几秒钟……",
+    "tokenSuccess": "注册成功——正在重启 Agent",
+    "tokenFailure": "注册失败",
+    "discoveringTitle": "正在联络网关…",
+    "discoveringHint": "正在查询本设备的登录方式。通常只需几秒钟即可完成。",
+    "errorUnknown": "未知错误"
+  },
+  "reconnecting": {
+    "title": "正在完成设置",
+    "body": "代理正在使用您的新设备证书重新启动。通常需要几秒钟。"
+  },
+  "normalized": {
+    "tabs": {
+      "normalized": "规范化",
+      "raw": "原始"
+    },
+    "tier": {
+      "tier1": "Tier 1",
+      "tier2": "Tier 2",
+      "hint": "哪一层 normalizer 处理了这条数据：Tier 1 = 精确的 per-host 解析；Tier 2 = 多 spec 模式探测；无徽章 = Tier 3 原文兜底。"
+    },
+    "modelLabel": "模型",
+    "finishReason": "结束原因",
+    "role": {
+      "system": "系统",
+      "user": "用户",
+      "assistant": "助手",
+      "tool": "工具"
+    },
+    "usage": {
+      "prompt": "提示",
+      "completion": "补全",
+      "total": "总计",
+      "cacheRead": "缓存命中",
+      "cacheCreate": "缓存写入"
+    },
+    "banner": {
+      "failedTitle": "该方向的规范化失败。",
+      "failedHint": "切换到\"原始\"标签查看原始字节。",
+      "partialTitle": "部分规范化 — 某些字段可能缺失。",
+      "empty": "此方向没有规范化负载。",
+      "unsupported": "不支持的 kind。切换到\"原始\"标签查看。"
+    },
+    "dropped": {
+      "title": "内容已按存储策略丢弃。",
+      "hint": "匹配该 hook 的操作员设置了 storageAction=drop-content。审计日志仅保留决策和元数据。",
+      "ruleIds": "触发规则"
+    },
+    "binary": {
+      "title": "二进制内容",
+      "size": "大小",
+      "contentType": "内容类型",
+      "metadataOnly": "仅元数据(未捕获字节)。"
+    },
+    "embedding": {
+      "inputsLabel": "嵌入输入",
+      "binaryInputNotStored": "二进制 token 数组输入 — 按审计策略不予存储。",
+      "vectorsNotStored": "嵌入向量按审计策略不予存储。",
+      "noInputs": "未捕获到输入。"
+    }
+  },
+  "trafficDetail": {
+    "tabRaw": "原始",
+    "tabNormalized": "规范化"
+  }
+}

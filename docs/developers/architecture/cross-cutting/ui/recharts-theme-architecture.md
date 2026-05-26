@@ -1,0 +1,1 @@
+# Recharts theme architecture

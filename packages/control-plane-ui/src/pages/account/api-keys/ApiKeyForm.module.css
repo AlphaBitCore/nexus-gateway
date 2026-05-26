@@ -1,0 +1,14 @@
+.warningText {
+  font-weight: 600;
+}
+
+.rawKeyBlock {
+  display: block;
+  padding: var(--g-space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-sm);
+  word-break: break-all;
+}

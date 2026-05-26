@@ -1,0 +1,75 @@
+{
+  "name": "perplexity",
+  "displayName": "Perplexity Sonar",
+  "description": "Perplexity Sonar API \u2014 search-grounded chat with Chain-of-Thought reasoning options. OpenAI-compatible wire format.",
+  "baseUrl": "https://api.perplexity.ai",
+  "adapterType": "perplexity",
+  "models": [
+    {
+      "code": "sonar",
+      "name": "Sonar",
+      "description": "Lightweight cost-effective search model with grounding. Quick factual queries and topic summaries.",
+      "providerModelId": "sonar",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "search"
+      ],
+      "inputPricePerMillion": 1.0,
+      "outputPricePerMillion": 1.0,
+      "maxContextTokens": 127072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "sonar-pro",
+      "name": "Sonar Pro",
+      "description": "Advanced search with grounding \u2014 supports complex queries and follow-ups.",
+      "providerModelId": "sonar-pro",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "search"
+      ],
+      "inputPricePerMillion": 3.0,
+      "outputPricePerMillion": 15.0,
+      "maxContextTokens": 200000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "sonar-reasoning-pro",
+      "name": "Sonar Reasoning Pro",
+      "description": "Precise reasoning with Chain-of-Thought; deeper logical problem-solving and multi-step analysis.",
+      "providerModelId": "sonar-reasoning-pro",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "search",
+        "thinking"
+      ],
+      "inputPricePerMillion": 2.0,
+      "outputPricePerMillion": 8.0,
+      "maxContextTokens": 127072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "sonar-deep-research",
+      "name": "Sonar Deep Research",
+      "description": "Expert-level research model conducting exhaustive searches and producing comprehensive reports.",
+      "providerModelId": "sonar-deep-research",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "search",
+        "thinking"
+      ],
+      "inputPricePerMillion": 2.0,
+      "outputPricePerMillion": 8.0,
+      "maxContextTokens": 127072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

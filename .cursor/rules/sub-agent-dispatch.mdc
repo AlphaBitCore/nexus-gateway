@@ -1,0 +1,31 @@
+---
+description: Discipline for dispatching sub-agents (Agent tool) — what to delegate, what not to, and required prompt shape
+alwaysApply: true
+---
+
+# Sub-agent dispatch discipline (binding)
+
+Sub-agents have **zero session context**. Terse prompts produce shallow work. Use them only where the gain is real and the prompt is complete.
+
+## OK to delegate
+
+- (a) **Mechanical multi-file work** that doesn't need main-context reasoning — test stub renames, doc cross-rewrites, codemod-style edits.
+- (b) **Parallel-safe independent research lookups** — `Explore` agent for code search, "find me where X is referenced."
+- (c) **Bounded scope** where the agent's report-back is enough — small audits, well-defined formatting passes.
+
+## DO NOT delegate
+
+1. **Understanding a new problem** — the main agent must keep the model.
+2. **Decisions that change scope or contract** — those need user-in-the-loop, not a sub-agent.
+3. **`git commit` / `git push` / force-pushes / destructive ops on shared history** — never via sub-agent.
+
+## Required prompt shape
+
+Every dispatched prompt MUST include:
+
+- (i) **Goal + non-goals** in the first 3 lines.
+- (ii) **Which worktree** the agent is operating in if non-default.
+- (iii) **Demand a 2-round self-audit** before report-back.
+- (iv) **Ask for a per-file list of touched paths + verification command outputs** in the response.
+
+Skipping this rule requires **explicit user approval** in chat.

@@ -1,0 +1,106 @@
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.stepCircle {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.sectionContent {
+  flex: 1;
+}
+
+.sectionTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sectionDescription {
+  margin-top: 2px;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.sectionBody {
+  padding-left: 44px;
+}
+
+.savingText {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.lastPushedText {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.manualInstallTitle {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin: 0 0 4px;
+}
+
+.manualInstallSubtitle {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 12px;
+}
+
+.stepList {
+  padding-left: 1.25rem;
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  line-height: 1.6;
+}
+
+.codeBlock {
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+  white-space: pre;
+  overflow-x: auto;
+  margin: 6px 0 10px;
+  display: block;
+}
+
+.manualProxyValues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0 0 12px;
+}
+
+.manualProxyValues code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8125rem;
+}

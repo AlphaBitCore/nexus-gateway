@@ -1,0 +1,232 @@
+/* NormalizedPayloadView styles — used by trafficAuditDrawer Payloads tab. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-4);
+}
+
+.sectionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 4px;
+}
+
+.banner {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  padding: var(--g-space-2) var(--g-space-4);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+.bannerError {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+
+.chatBubble {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--g-space-2) var(--g-space-4);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.chatBubbleSystem {
+  background: color-mix(in srgb, var(--color-text-muted) 8%, var(--color-bg));
+  border-style: dashed;
+}
+
+.chatBubbleUser {
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg));
+}
+
+.chatBubbleAssistant {
+  background: color-mix(in srgb, var(--color-success) 6%, var(--color-bg));
+}
+
+.chatBubbleTool {
+  background: color-mix(in srgb, var(--color-warning) 6%, var(--color-bg));
+}
+
+.roleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+}
+
+.roleChip {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  color: var(--color-bg);
+}
+
+.roleChipUser {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.roleChipAssistant {
+  background: var(--color-success);
+  color: var(--g-gray-50);
+}
+
+.roleChipSystem {
+  background: var(--color-text-muted);
+  color: var(--color-bg);
+}
+
+.roleChipTool {
+  background: var(--color-warning);
+  color: var(--g-gray-50);
+}
+
+.finishReason {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+
+.contentText {
+  font-size: var(--g-font-size-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.contentReasoning {
+  composes: contentText;
+  font-style: italic;
+  color: var(--color-text-muted);
+  border-left: 2px solid var(--color-border);
+  padding-left: var(--g-space-2);
+  margin-top: 4px;
+}
+
+.contentToolUse {
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+  background: var(--color-bg);
+  border-left: 3px solid var(--color-warning);
+  padding: 4px var(--g-space-2);
+}
+
+.redactBadge {
+  display: inline-block;
+  font-family: var(--g-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border-radius: var(--g-radius-sm);
+  background: color-mix(in srgb, var(--color-danger) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+  color: var(--color-text);
+  vertical-align: baseline;
+}
+
+.usageRow {
+  display: flex;
+  gap: var(--g-space-4);
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: var(--g-space-2) var(--g-space-4);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+}
+
+.usageItem strong {
+  color: var(--color-text);
+  margin-right: 4px;
+}
+
+.jsonTree {
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+  background: var(--color-bg);
+  padding: var(--g-space-2);
+  border-radius: var(--g-radius-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.binaryCard {
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-4);
+  font-size: var(--g-font-size-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.binaryCard code {
+  font-family: var(--g-font-mono);
+  font-size: 11px;
+  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
+  padding: 1px 4px;
+  border-radius: var(--g-radius-sm);
+}
+
+.placeholder {
+  font-style: italic;
+  color: var(--color-text-muted);
+  padding: var(--g-space-4);
+}
+
+/* ── E62-S6 Embedding inputs ── */
+
+.embeddingInputList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.embeddingInputItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: var(--g-font-size-sm);
+}
+
+.embeddingInputIndex {
+  flex-shrink: 0;
+  min-width: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--g-font-mono);
+  color: var(--color-text-muted);
+  padding-top: 2px;
+}
+
+.embeddingInputText {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}

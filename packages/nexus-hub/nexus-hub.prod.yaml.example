@@ -1,0 +1,129 @@
+# Production config for nexus-hub.
+# Deploy: go run ./cmd/nexus-hub/ -config nexus-hub.prod.yaml
+#
+# Secrets are env-only per CLAUDE.md "Secrets are env-only" binding:
+# they NEVER appear in yaml. Provision them via systemd EnvironmentFile=,
+# Kubernetes Secrets → env, docker --env-file, or a repo-root .env in dev.
+# See `.env.example` at repo root for the full env-var contract; the
+# values marked [MUST MATCH] in `.env.example` MUST be identical across
+# all four services.
+
+# Externally-reachable base URL for this service. Reported as
+# staticInfo.publicURL so the CP admin API + UI render real
+# environment URLs in agent install instructions, IdP redirect copy,
+# etc. without hardcoding hostnames.
+publicURL: "https://hub.example.com"
+
+server:
+  port: 3060
+
+database:
+  # Provided via env DATABASE_URL
+  url: ""
+  maxConns: 50
+  minConns: 10
+
+redis:
+  # Universal Redis configuration. Replace yaml password / tls cert paths
+  # with real values per environment (or set env REDIS_PASSWORD /
+  # REDIS_TLS_*). See packages/shared/storage/redisfactory +
+  # docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6379"]
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 20
+  minIdleConns: 5
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+consumers:
+  enabled: true
+  batchSize: 200
+  flushInterval: 5s
+
+scheduler:
+  enabled: true
+  driftCheckInterval: 60s
+  identityEnrichInterval: 5m
+  alertEval:
+    engineTickSec: 10
+  # Per-Thing rollup of source=agent rows. Defaults to false; agents roll up
+  # locally. Enable only when admin per-agent series matter more than the
+  # central row-count cost (forensics-heavy or sub-1K-agent deployments).
+  enableAgentRollup: false
+
+auth:
+  # internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN). [MUST MATCH]
+  # across all four services — see .env.example.
+
+# Shared OAuth/OIDC auth server. CP runs the issuer side; Hub runs the
+# verifier side. Env overrides: AUTH_SERVER_URL, AUTH_SERVER_JWKS_URL,
+# AUTH_SERVER_ISSUER (the last one is [MUST MATCH CP <-> Hub]).
+authServer:
+  # Auth server base URL returned by GET /api/public/agent-bootstrap so
+  # pre-enrollment agents discover where to POST /api/agent/sso-enroll.
+  # Required for the bootstrap route to register — empty value means the
+  # route is silently omitted at startup and agents stall on "Contacting
+  # the gateway".
+  url: "https://nexus.example.com"
+  # Required when device_auth_mode is "enterprise-login". Hub verifies
+  # auth-server-issued enrollment JWTs against this JWKS URL.
+  jwksURL: "https://nexus.example.com/.well-known/jwks.json"
+  # Must match cfg.AuthServer.Issuer on the CP side. Hub pins this via
+  # jwt.WithIssuer so a third-party signer that lands a key on jwksURL
+  # cannot impersonate the auth server.
+  issuer: "https://nexus.example.com"
+
+agentCA:
+  dir: "/var/lib/nexus/agent-ca"
+
+hub:
+  id: "hub-prod"
+  # Internal loopback — nginx handles TLS termination for external traffic on hub.example.com
+  advertiseAddr: "127.0.0.1:3060"
+  allowedOrigins:
+    - "https://nexus.example.com"
+
+log:
+  level: "info"
+  format: "json"
+  file: "/var/log/nexus/nexus-hub.log"
+  stackOnError: true
+
+spill:
+  enabled: true
+  backend: s3
+  s3:
+    # [MUST MATCH] same bucket / region / prefix across all 4 server services.
+    # AuthN: EC2 instance IAM role (AWS SDK default credential chain).
+    bucket: nexus-payload-capture-bucket
+    region: us-east-1
+    prefix: prod/
+    perObjectCap: 268435456      # 256 MiB per object
+    totalSizeCap: 0              # unlimited; rely on retention + bucket lifecycle
+    retentionDays: 30

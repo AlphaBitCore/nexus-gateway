@@ -1,0 +1,1 @@
+# Agent windows platform architecture

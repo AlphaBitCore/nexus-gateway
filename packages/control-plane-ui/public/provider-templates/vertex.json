@@ -1,0 +1,81 @@
+{
+  "name": "vertex",
+  "displayName": "Google Vertex AI",
+  "description": "Google Vertex AI \u2014 managed Gemini family + partner models on Google Cloud, with project-scoped IAM and regional hosts. Adapter is Vertex multi-model; admin must verify per-region availability against https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models before customer-facing use.",
+  "baseUrl": "https://us-central1-aiplatform.googleapis.com",
+  "adapterType": "vertex",
+  "models": [
+    {
+      "code": "gemini-2.5-pro",
+      "name": "Gemini 2.5 Pro (Vertex)",
+      "description": "Google's flagship reasoning model on Vertex AI.",
+      "providerModelId": "gemini-2.5-pro",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 2097152,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gemini-2.5-flash",
+      "name": "Gemini 2.5 Flash (Vertex)",
+      "description": "Fast, cost-efficient Gemini 2.5 on Vertex AI.",
+      "providerModelId": "gemini-2.5-flash",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 1048576,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gemini-2.0-flash",
+      "name": "Gemini 2.0 Flash (Vertex)",
+      "description": "Gemini 2.0 Flash on Vertex AI.",
+      "providerModelId": "gemini-2.0-flash",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 1048576,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gemini-1.5-pro",
+      "name": "Gemini 1.5 Pro (Vertex)",
+      "description": "Long-context Gemini 1.5 Pro on Vertex AI (kept for legacy deployments).",
+      "providerModelId": "gemini-1.5-pro",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 2097152,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gemini-1.5-flash",
+      "name": "Gemini 1.5 Flash (Vertex)",
+      "description": "Cheaper, faster Gemini 1.5 Flash on Vertex AI.",
+      "providerModelId": "gemini-1.5-flash",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 1048576,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

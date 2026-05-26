@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!--
+  Distribution.xml — passed to productbuild via package.sh so the macOS
+  Installer.app dialog shows a proper product title (instead of empty
+  quotes), a friendly welcome message, and the macOS 11+ minimum-OS
+  requirement. Without this file, productbuild emits a default
+  distribution that derives the title from CFBundleName of the embedded
+  pkg's payload — which is empty for our daemon binary, hence the bug.
+
+  Format ref: https://developer.apple.com/library/archive/documentation/DeveloperTools/Reference/DistributionDefinitionRef/
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>Nexus Agent</title>
+    <organization>com.nexus-gateway</organization>
+    <domains enable_localSystem="true"/>
+    <options
+        customize="never"
+        require-scripts="true"
+        rootVolumeOnly="true"
+        hostArchitectures="arm64,x86_64"/>
+
+    <!--
+      Minimum macOS version. NETransparentProxyProvider system extensions
+      require macOS 11.0+ (Big Sur). macOS 10.15 (Catalina) and older
+      reject the .systemextension bundle at activation time.
+    -->
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="11.0"/>
+        </allowed-os-versions>
+    </volume-check>
+
+    <welcome    file="welcome.html"    mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.nexus-gateway.agent.pkg"/>
+        </line>
+    </choices-outline>
+
+    <choice id="default"/>
+    <choice id="com.nexus-gateway.agent.pkg" visible="false">
+        <pkg-ref id="com.nexus-gateway.agent.pkg"/>
+    </choice>
+
+    <pkg-ref id="com.nexus-gateway.agent.pkg" version="0" auth="root">component.pkg</pkg-ref>
+</installer-gui-script>

@@ -1,0 +1,107 @@
+/* Stats page — local rollup dashboard.
+ *
+ *   [ Range select + granule indicator ]
+ *   [ KPI cards grid ]
+ *   [ Single trend chart (requests over time) ]
+ *   [ Breakdown selector + top-N table ]
+ *
+ * Recharts is intentionally NOT a dep here — the bundle ships inside a
+ * Wails WebView and we want it small. A 50-line inline SVG line chart
+ * covers the one trend chart on this page.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-4);
+  padding: var(--g-space-4);
+}
+
+.title {
+  font-size: var(--g-font-size-xl);
+  font-weight: 600;
+  margin: 0;
+}
+
+.subtitle {
+  color: var(--color-text-muted);
+  margin: 0 0 var(--g-space-3) 0;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  flex-wrap: wrap;
+}
+
+.granuleBadge {
+  margin-left: auto;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.kpiCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3) var(--g-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.kpiLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.kpiValue {
+  font-size: var(--g-font-size-xl);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: var(--g-space-2) 0;
+}
+
+.chartCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3);
+}
+
+.breakdownTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.breakdownTable th,
+.breakdownTable td {
+  text-align: left;
+  padding: var(--g-space-2) var(--g-space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.breakdownTable th:last-child,
+.breakdownTable td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  color: var(--color-text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: var(--g-space-4);
+}

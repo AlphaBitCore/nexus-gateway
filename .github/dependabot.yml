@@ -1,0 +1,53 @@
+version: 2
+# Grouping policy: bundle minor/patch upgrades into a single PR per
+# ecosystem; let majors get their own PR so they can be reviewed in
+# isolation (a single 8-major atomic merge is essentially impossible
+# to review safely — see the 2026-05-21 chore-PR-review session).
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      production-deps:
+        patterns: ["*"]
+        exclude-patterns: ["@types/*", "eslint*", "vitest*", "typescript"]
+        update-types: ["minor", "patch"]
+      dev-deps:
+        dependency-type: development
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Single gomod ecosystem covering all 6 service modules via
+  # `directories:` (plural). Combined with the `go-deps` group, a
+  # shared dep upgrade (pgx / echo / aws-sdk family / …) fans out as
+  # ONE grouped PR instead of N (one per service). Mirrors the
+  # go.work workspace topology where packages/shared is the dep
+  # frontier and the other services inherit via the sibling replace
+  # directives.
+  - package-ecosystem: gomod
+    directories:
+      - /packages/shared
+      - /packages/nexus-hub
+      - /packages/control-plane
+      - /packages/ai-gateway
+      - /packages/compliance-proxy
+      - /packages/agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      gha-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

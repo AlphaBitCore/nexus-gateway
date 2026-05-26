@@ -1,0 +1,288 @@
+# Local dev overrides for ai-gateway.
+
+# Externally-reachable base URL. Reported as staticInfo.publicURL.
+# Dev uses localhost:<port>; prod uses the public domain.
+publicURL: "http://localhost:3050"
+
+server:
+  port: 3050
+  # Host portion of the URL Hub uses to reach /metrics + /debug/runtime
+  # (registered as `metricsUrl` in the thing registry). Defaults to
+  # 127.0.0.1 if empty; set to a routable host when Hub runs on a
+  # different machine than this binary.
+  advertiseHost: "127.0.0.1"
+  # Caps reading the request body. Upper bound on prompt upload time.
+  readTimeout: "30s"
+  # Caps writing the response. Streaming (SSE) requests override this
+  # per-response to upstream.timeoutSec + 30s (see proxy.go SetWriteDeadline),
+  # so this only really binds non-streaming responses — bump it if a
+  # non-streaming upstream + headers takes longer than this.
+  writeTimeout: "360s"
+
+database:
+  url: "postgresql://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
+
+redis:
+  # Local dev Redis runs on 6437 via docker-compose. See packages/shared/
+  # storage/redisfactory + docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6437"]
+  username: ""
+  password: ""
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+# auth.* fields are env-only per the "Secrets are env-only" binding in
+# CLAUDE.md. Set values in repo-root .env (or systemd EnvironmentFile in
+# prod). See .env.example for the full contract.
+#   hmacSecret           → ADMIN_KEY_HMAC_SECRET
+#   credentialMasterKey  → CREDENTIAL_ENCRYPTION_KEY
+#   credentialKeyMap     → CREDENTIAL_KEY_MAP
+#   internalServiceToken → INTERNAL_SERVICE_TOKEN
+# The AI Gateway runtime-API token is also env-only:
+#   AI_GATEWAY_API_TOKEN
+
+log:
+  # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
+  # boot default only. Edits in the UI propagate live via thingclient.OnConfigChanged
+  # → logging.SetLevel (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  level: "debug"
+  format: "text"
+  # Relative to cwd (packages/ai-gateway when using VS Code launch).
+  file: "logs/ai-gateway.log"
+  stackOnError: true
+
+registry:
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+cors:
+  enabled: true
+  allowedOrigins:
+    - "http://localhost:3000"
+  allowedMethods: ["GET", "POST", "OPTIONS"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  maxAgeSec: 600
+
+cache:
+  # Response cache stores non-stream upstream JSON keyed by SHA-256 of
+  # (provider, model, post-hook body bytes). Override TTL via env
+  # AI_GATEWAY_CACHE_TTL (any time.ParseDuration value). Streaming and
+  # requests carrying x-nexus-aigw-no-cache always bypass.
+  #
+  # Shadow-overridable via Hub admin UI (config_key: prompt_cache) — the
+  # response-cache normaliser config (rule enable/disable, TTL strategy)
+  # is live-tunable; the raw YAML enabled/ttl/prefix values here remain
+  # the boot defaults. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  enabled: true
+  ttl: 5m
+  prefix: "ai-gw:"
+  # In-flight same-key dedupe broker (E35-S1). When true (default),
+  # concurrent MISS callers with the SAME cache key share one upstream
+  # session — saves cost and writes one cache entry. With the 2026-05-19
+  # pendingBroker fix in registry, DIFFERENT-key callers always run
+  # concurrently regardless of this flag, so high-concurrency tests
+  # with distinct prompts get full parallelism either way. Flip to
+  # false ONLY when the workload has heavy same-key concurrency AND
+  # the perf benefit of bypassing dedupe outweighs the cache-fill loss
+  # (broker is the only cache-write path on MISS).
+  broker: true
+
+otel:
+  # Shadow-overridable via Hub admin UI (config_key: observability); YAML
+  # is the boot default only. ai-gateway's OnConfigChanged calls
+  # tp.Reconfigure with the new endpoint/sampling on every shadow push.
+  # See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  endpoint: ""
+  serviceName: "nexus-ai-gateway"
+
+# Per-request instrumentation knobs. Yaml-only — redeploy to flip.
+observability:
+  # latencyDetail: when true, the per-request `latency_breakdown` JSONB
+  # on traffic_event includes sub-millisecond phases (auth_ms,
+  # quota_ms, routing_ms, …) floored to 1ms instead of being dropped.
+  # Default-on locally so the smoke-gateway script can verify every
+  # expected phase ran. Flip OFF in steady-state prod to keep rows
+  # compact; flip ON for a perf-investigation window.
+  latencyDetail: true
+
+# Upstream HTTP client tuning. Applied to every provider adapter
+# (OpenAI, Anthropic, Gemini, Bedrock, ZhipuAI, ...). When a slow
+# provider exceeds `timeoutSec`, ai-gateway maps the context-deadline
+# error to 504 Gateway Timeout (or to 503 backend_unavailable when the
+# call originates from /v1/ai-guard/classify).
+#
+# Defaults match the values that used to be hardcoded inside the
+# package — omitting the whole block keeps previous behaviour.
+#
+# YAML is the source of truth — changes require redeploy (SRE concern,
+# not admin business policy). specutil.Configure is called once at boot
+# from this block; there is no runtime override path.
+upstream:
+  # Per-call budget. The underlying http.Client.Timeout is set to
+  # timeoutSec + 5s so the per-request context deadline fires first
+  # and surfaces a clean error path.
+  timeoutSec: 300
+  # TCP connect budget per Dial.
+  dialTimeoutSec: 15
+  # TLS handshake budget per Dial.
+  tlsHandshakeTimeoutSec: 10
+  # TCP keep-alive interval on dialed connections.
+  keepAliveSec: 30
+  # How long an idle pooled connection survives before being closed.
+  # Pumped from 90 → 300 (2026-05-19) so warm TLS connections stay
+  # available longer under bursty-but-spaced perf-test workloads;
+  # avoids paying the ~300ms OpenAI TLS handshake on every burst.
+  idleConnTimeoutSec: 300
+  # Global pool cap. Bumped 200 → 2000 (2026-05-19) for high-concurrency
+  # perf testing: a single OpenAI account can sustain hundreds of
+  # in-flight HTTP/1.1 streams; the prior 200 cap silently throttled
+  # the upstream client into opening fresh dials at the edge of the
+  # pool, adding hundreds of ms per request. 2000 is comfortably above
+  # any realistic burst and costs nothing when idle.
+  maxIdleConns: 2000
+  # Per-host pool cap. Bumped 50 → 500 (2026-05-19). OpenAI is the
+  # dominant target, so 50 was the effective ceiling for parallel
+  # OpenAI calls; 500 matches typical Go transport advice for
+  # high-concurrency single-host workloads.
+  maxIdleConnsPerHost: 500
+
+# Named HTTP clients ai-gateway constructs at startup that are NOT the
+# per-provider upstream client (which is configured under `upstream`).
+httpClients:
+  # Shared client for the webhook-forward hook. Per-hook config in the
+  # admin UI may override this timeout per call via HookConfig.TimeoutMs.
+  webhook:
+    timeoutSec: 10
+    maxIdleConns: 20
+    maxIdleConnsPerHost: 5
+    idleConnTimeoutSec: 90
+  # Used by /v1/ai-guard/classify when AI Guard's BackendMode is
+  # "external_url" (operator-provided classifier endpoint). Has no effect
+  # in the default "configured_provider" mode, which routes through the
+  # provider adapter and inherits `upstream`.
+  external:
+    timeoutSec: 30
+
+# Platform-wide routing defaults. Per-rule RetryPolicy on a RoutingRule
+# field-merges over these values at evaluation time, so an admin can
+# leave a knob unset on a rule and inherit the platform default.
+# MaxAttemptsPerTarget is clamped to [1,5] at load.
+routing:
+  defaultRetryPolicy:
+    maxAttemptsPerTarget: 1
+    retryOn: ["network", "timeout", "429", "5xx"]
+    backoffInitial: 250ms
+    backoffMax: 5s
+    backoffJitter: 0.2
+
+# E34-S? — out-of-band body storage. Bodies whose captured size meets/exceeds
+# inline on traffic_event_payload. All 4 services (Hub, ai-gateway,
+# compliance-proxy, control-plane) point at the SAME backend root so the
+# control-plane read path can resolve refs produced anywhere.
+spill:
+  enabled: true
+  backend: localfs
+  localfs:
+    root: /tmp/nexus-spill
+    perObjectCap: 268435456      # 256 MiB
+    totalSizeCap: 5368709120     # 5 GiB
+    retentionDays: 7
+
+# E36 — Forward-header allowlist. Both directions (request → upstream
+# and upstream → client) are governed here. Omitting this whole block
+# falls back to embedded defaults that reproduce historical hard-coded
+# behavior for request and ship a small response-side opt-in covering
+# OpenAI / Anthropic request-id + token-rate visibility.
+#
+# Hard denylist headers (authorization, cookie, set-cookie, x-api-key,
+# x-goog-api-key, api-key, x-amz-*, proxy-authorization, x-forwarded-*,
+# x-real-ip, x-nexus-*, www-authenticate, strict-transport-security,
+# content-security-policy, x-frame-options, server, via, x-served-by,
+# cf-ray, access-control-*, content-length, transfer-encoding,
+# connection, accept-encoding) are rejected at config load with a fatal
+# error regardless of which list they appear in.
+#
+# perAdapterType keys must be members of providers.AllFormats() — a
+# typo (e.g. "open-ai") aborts startup. See
+# docs/developers/specs/e36/e36-s1-forward-header-yaml-request.md and
+# docs/developers/specs/e36/e36-s2-forward-header-yaml-response.md.
+# YAML is the source of truth — changes require redeploy (operator config,
+# not admin business policy). forwardheader.SetActive is called once at
+# boot from this block; there is no runtime override path.
+forwardHeaders:
+  request:
+    base:
+      - accept
+      - user-agent
+      - content-type
+    perAdapterType:
+      openai:
+        headers:
+          - openai-beta
+          - openai-organization
+          - openai-project
+      anthropic:
+        headers:
+          - anthropic-beta
+          - anthropic-version
+      gemini:
+        headers:
+          - x-goog-user-project
+      vertex:
+        headers:
+          - x-goog-user-project
+
+  response:
+    base:
+      static: []
+      perRequest: []
+    perAdapterType:
+      openai:
+        static:
+          - openai-version
+        perRequest:
+          - x-request-id
+          - openai-processing-ms
+          - x-ratelimit-limit-tokens
+          - x-ratelimit-remaining-tokens
+          - x-ratelimit-reset-tokens
+          - x-ratelimit-limit-requests
+          - x-ratelimit-remaining-requests
+          - x-ratelimit-reset-requests
+      anthropic:
+        static:
+          - anthropic-version
+        perRequest:
+          - request-id
+          - anthropic-ratelimit-input-tokens-remaining
+          - anthropic-ratelimit-input-tokens-reset
+          - anthropic-ratelimit-output-tokens-remaining
+          - anthropic-ratelimit-output-tokens-reset
+          - anthropic-ratelimit-requests-remaining
+          - anthropic-ratelimit-requests-reset

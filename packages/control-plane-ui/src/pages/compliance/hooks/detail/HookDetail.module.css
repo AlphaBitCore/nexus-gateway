@@ -1,0 +1,215 @@
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--g-space-4);
+  margin-top: var(--g-space-4);
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.kvLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.badge {
+  display: inline-block;
+  font-size: var(--g-font-size-xs);
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.badgesRow {
+  display: flex;
+  gap: var(--g-space-2);
+  margin-bottom: var(--g-space-6);
+  flex-wrap: wrap;
+}
+
+.configPre {
+  margin-top: var(--g-space-4);
+  padding: var(--g-space-4);
+  background: var(--color-muted);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-mono);
+  overflow: auto;
+  max-height: 300px;
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+.endpointCode {
+  display: block;
+  margin-top: var(--g-space-4);
+  padding: var(--g-space-3);
+  background: var(--color-muted);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-mono);
+}
+
+.configHintMuted {
+  margin: 0;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.configInfoCallout {
+  padding: var(--g-space-4);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-info);
+  background: var(--color-info-light);
+}
+
+.configInfoCalloutTitle {
+  margin: 0 0 var(--g-space-2);
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.configInfoCalloutBody {
+  margin: 0 0 var(--g-space-2);
+  font-size: var(--g-font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.configInfoCalloutBody:last-child {
+  margin-bottom: 0;
+}
+
+.emptyConfig {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: var(--g-space-6);
+}
+
+.pipelineText {
+  margin-top: var(--g-space-4);
+  font-size: var(--g-font-size-sm);
+}
+
+.testDescription {
+  margin-top: var(--g-space-2);
+  margin-bottom: var(--g-space-4);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+
+.testTextarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  resize: vertical;
+  background: var(--color-muted);
+  margin-bottom: var(--g-space-3);
+}
+
+.failBadge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+}
+
+.failClosed {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+.failOpen {
+  background: var(--color-muted);
+  color: var(--color-text-muted);
+}
+
+.widgetTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+/* ── HookDetail inline-style extractions ─────────────────────────────── */
+
+.tooltipHelpBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.codeInherit {
+  font-size: inherit;
+}
+
+/* ── Category badge variants ─────────────────────────────────────────── */
+
+.badgeCategoryCompliance {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.badgeCategoryTrafficControl {
+  background: var(--color-info-light);
+  color: var(--color-primary);
+}
+
+.badgeCategoryQuality {
+  background: var(--color-violet-light);
+  color: var(--color-info);
+}
+
+.badgeCategoryObservability {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.badgeCategoryDefault {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+}
+
+/* ── Stage badge variants ─────────────────────────────────────────────── */
+
+.badgeStageResponse {
+  background: var(--color-violet-light);
+  color: var(--color-info);
+}
+
+.badgeStageRequest {
+  background: var(--color-info-light);
+  color: var(--color-primary);
+}
+
+/* ── Pipeline text color variants ───────────────────────────────────── */
+
+.pipelineTextActive {
+  color: var(--color-text);
+}
+
+.pipelineTextMuted {
+  color: var(--color-text-muted);
+}

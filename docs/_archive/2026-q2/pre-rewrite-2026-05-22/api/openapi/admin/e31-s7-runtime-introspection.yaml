@@ -1,0 +1,205 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Runtime Introspection (E31-S7)
+  version: "1.0.0"
+  description: |
+    Diagnostic surface that exposes a service's live in-memory configuration
+    and cache state for operator debugging. Three layers:
+
+      1. Each service hosts `GET /debug/runtime` on its admin/metrics port,
+         gated by InternalServiceToken.
+      2. Hub exposes `GET /api/hub/things/{id}/runtime` which reverse-calls
+         the thing's `/debug/runtime` (using metrics_url from registration)
+         and wraps the response with Hub-side meta (desired/reported state
+         and version counters).
+      3. Control Plane exposes `GET /api/admin/nodes/{id}/runtime` as the
+         CP UI Nodes detail page calls. Pass-through to the Hub bridge.
+
+    Sources MUST redact secrets (API keys, OAuth tokens, mTLS private keys,
+    session cookies, raw JWT material) before returning their snapshot.
+
+    Agent introspection is NOT exposed here — agents sit behind NAT on user
+    machines. See e31-s12 for the agent-local UI path.
+
+paths:
+  /api/admin/nodes/{id}/runtime:
+    get:
+      summary: Runtime introspection snapshot for a node (CP admin)
+      description: |
+        Pass-through to Hub's `/api/hub/things/{id}/runtime`. Used by the
+        CP UI Nodes detail page → "Runtime State" tab.
+      tags: [infrastructure]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Thing/node id (e.g. `proxy-host01`, `gateway-1`, `hub-01`).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Snapshot envelope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeRuntimeResponse'
+        '400':
+          description: Missing id.
+        '401':
+          description: Not authenticated.
+        '403':
+          description: Missing `admin:ReadSettings` permission.
+        '404':
+          description: Thing not found.
+        '501':
+          description: Agent introspection not exposed via this surface (see e31-s12).
+        '502':
+          description: Hub or thing call failed.
+        '503':
+          description: Thing offline or has no metrics_url.
+
+  /api/hub/things/{id}/runtime:
+    get:
+      summary: Hub-side bridge to a thing's /debug/runtime
+      description: |
+        Looks up the thing in the registry, resolves its metrics_url,
+        reverse-HTTPs to `<metrics_url base>/debug/runtime`, wraps the
+        response with desired/reported meta. For thing_id == hub.ID, hub
+        short-circuits to its own localhost loopback.
+      tags: [internal]
+      security:
+        - serviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Snapshot envelope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeRuntimeResponse'
+
+  /debug/runtime:
+    get:
+      summary: Service-local introspection endpoint
+      description: |
+        Mounted on each service's admin/metrics port. Returns the service's
+        live snapshot. Token-gated; clients must present
+        `Authorization: Bearer <InternalServiceToken>`.
+
+        Hosts: compliance-proxy (metrics port), ai-gateway (api port),
+        nexus-hub (api port).
+      tags: [internal]
+      security:
+        - serviceToken: []
+      responses:
+        '200':
+          description: Snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceSnapshot'
+        '401':
+          description: Missing or invalid token.
+        '405':
+          description: Non-GET method.
+        '503':
+          description: Token not configured (endpoint disabled).
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nexus_session
+    serviceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+
+  schemas:
+    NodeRuntimeResponse:
+      type: object
+      required: [snapshot, meta]
+      properties:
+        snapshot:
+          $ref: '#/components/schemas/ServiceSnapshot'
+        meta:
+          $ref: '#/components/schemas/HubBridgeMeta'
+
+    ServiceSnapshot:
+      type: object
+      required: [meta, snapshot_taken_at, sources]
+      properties:
+        meta:
+          type: object
+          required: [service, thing_id, thing_version, process_started_at]
+          properties:
+            service:
+              type: string
+              example: compliance-proxy
+            thing_id:
+              type: string
+              example: proxy-host01
+            thing_version:
+              type: string
+              example: "0.1.0"
+            process_started_at:
+              type: string
+              format: date-time
+        snapshot_taken_at:
+          type: string
+          format: date-time
+        sources:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/SourceResult'
+
+    SourceResult:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        value:
+          description: Source-defined payload (only when ok=true).
+        error:
+          type: string
+          description: Failure reason (only when ok=false).
+
+    HubBridgeMeta:
+      type: object
+      required: [thing_id, thing_type, thing_status, desired_ver, reported_ver]
+      properties:
+        thing_id:
+          type: string
+        thing_type:
+          type: string
+          enum: [ai-gateway, compliance-proxy, nexus-hub, control-plane, agent]
+        thing_status:
+          type: string
+          enum: [enrolled, online, offline, drift, revoked]
+        desired_ver:
+          type: integer
+          format: int64
+        reported_ver:
+          type: integer
+          format: int64
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        desired:
+          type: object
+          additionalProperties: true
+          nullable: true
+        reported:
+          type: object
+          additionalProperties: true
+          nullable: true

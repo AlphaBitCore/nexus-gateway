@@ -1,0 +1,166 @@
+/* ── FreshnessRulesCard — design-token-strict ─────────────────────────────── */
+
+.applyToggleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  margin-bottom: var(--g-space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.applyToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.applyHelpIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: help;
+  user-select: none;
+}
+
+.applyHelpIcon:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+.cardHeading {
+  margin: 0 0 var(--g-space-1);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.cardSubtitle {
+  margin: 0 0 var(--g-space-3);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+/* ── Rules table ──────────────────────────────────────────────────────────── */
+
+.rulesTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.rulesTable thead th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.rulesTable tbody td {
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: top;
+}
+
+.colRuleId { width: auto; }
+.colQuestionMark { width: 130px; }
+.colEntity { width: 100px; }
+.colLanguages { width: 100px; }
+.colStatus { width: 90px; }
+.colActions { width: 140px; }
+
+.ruleKeywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.keywordBadge {
+  font-size: 0.75rem;
+}
+
+.empty {
+  padding: 16px 12px;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  text-align: center;
+}
+
+/* ── Test box ─────────────────────────────────────────────────────────────── */
+
+.testBox {
+  padding: var(--g-space-4);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.testBoxTitle {
+  margin: 0 0 var(--g-space-1);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.testInput {
+  flex: 1;
+  min-width: 280px;
+}
+
+.testResult {
+  margin-top: var(--g-space-2);
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+}
+
+/* ── Modal overlay ────────────────────────────────────────────────────────── */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay-bg, rgba(0,0,0,0.4));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--g-space-5) var(--g-space-6);
+  width: 520px;
+  max-width: 96vw;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modalTitle {
+  margin: 0 0 var(--g-space-4);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.fieldError {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-error-fg);
+}

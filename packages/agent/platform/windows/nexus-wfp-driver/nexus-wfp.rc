@@ -1,0 +1,29 @@
+// nexus-wfp.rc — version resource stamped into nexus-wfp.sys.
+//
+// Binding: FILEVERSION / PRODUCTVERSION MUST match the agent's
+// semantic version (MSI ProductVersion in Variables.wxi). The build
+// pipeline patches the four numeric fields at release-tag time.
+//
+// SDD: docs/developers/specs/e59-s1-driver-skeleton.md §T1
+
+#include <windows.h>
+#include <ntverp.h>
+
+#define VER_FILETYPE        VFT_DRV
+#define VER_FILESUBTYPE     VFT2_DRV_NETWORK
+#define VER_FILEDESCRIPTION_STR     "Nexus WFP Packet Capture Driver"
+#define VER_INTERNALNAME_STR        "nexus-wfp.sys"
+#define VER_ORIGINALFILENAME_STR    "nexus-wfp.sys"
+
+#define VER_COMPANYNAME_STR         "Nexus Gateway"
+#define VER_PRODUCTNAME_STR         "Nexus Agent"
+#define VER_LEGALCOPYRIGHT_YEARS    "2026"
+#define VER_LEGALCOPYRIGHT_STR      "Copyright (c) 2026 Nexus Gateway"
+
+// Patched at release-tag build time:
+#define VER_FILEVERSION             1,0,0,0
+#define VER_FILEVERSION_STR         "1.0.0.0"
+#define VER_PRODUCTVERSION          1,0,0,0
+#define VER_PRODUCTVERSION_STR      "1.0.0"
+
+#include <common.ver>

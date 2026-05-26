@@ -1,0 +1,261 @@
+/* ── Header shell ─────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 64px;
+  padding: 0 16px;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: none;
+  position: relative;
+  z-index: 50;
+  flex-shrink: 0;
+  transition:
+    background var(--g-transition-fast),
+    box-shadow var(--g-transition-fast),
+    backdrop-filter var(--g-transition-fast);
+}
+
+/* Frosted-glass elevation on scroll. The blur intensity is theme-driven so
+   themes can tune it per their visual personality; default ships blur(12px). */
+.headerScrolled {
+  background: color-mix(in srgb, var(--color-bg) 88%, var(--color-surface));
+  backdrop-filter: var(--g-effect-header-blur);
+  -webkit-backdrop-filter: var(--g-effect-header-blur);
+  box-shadow: var(--shadow-xs);
+}
+
+/* ── Left section ─────────────────────────────────────────────────────────── */
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── Mobile hamburger ─────────────────────────────────────────────────────── */
+
+.hamburger {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--g-transition-fast);
+}
+
+.hamburger:hover {
+  background: var(--color-muted);
+}
+
+.hamburger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}
+
+.hamburgerBar {
+  display: block;
+  width: 16px;
+  height: 1.5px;
+  background: var(--color-text);
+  border-radius: 1px;
+}
+
+/* ── Vertical separator ───────────────────────────────────────────────────── */
+
+.separator {
+  width: 1px;
+  height: 24px;
+  background: var(--color-border);
+}
+
+/* ── Brand name (hidden on mobile) ────────────────────────────────────────── */
+
+.brandName {
+  font-family: var(--g-font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: 0;
+}
+
+@media (max-width: 768px) {
+  .brandName {
+    display: none;
+  }
+}
+
+/* ── Right section ────────────────────────────────────────────────────────── */
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── Theme toggle ─────────────────────────────────────────────────────────── */
+
+.themeToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--color-text);
+  transition: background var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.themeToggle:hover {
+  background: var(--color-muted);
+}
+
+.themeToggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}
+
+/* ── User menu trigger ────────────────────────────────────────────────────── */
+
+.userMenuTrigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.userMenuTrigger:hover {
+  background: var(--color-muted);
+  border-color: var(--color-text-muted);
+}
+
+.chevron {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .chevron {
+    display: none;
+  }
+}
+
+.userMenuTrigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  /* Soft brand tint instead of full primary — keeps the avatar visible
+     without clashing with the surrounding muted header chrome. Themes
+     control via --color-accent / --color-accent-foreground. */
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ── User info ────────────────────────────────────────────────────────────── */
+
+.userInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.userName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+@media (max-width: 640px) {
+  .userName {
+    display: none;
+  }
+}
+
+.roleBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: var(--color-muted);
+  padding: 2px 8px;
+  border-radius: var(--g-radius-full);
+  text-transform: lowercase;
+}
+
+/* Live status dot — only shown when theme enables it */
+.roleBadge::before {
+  content: '';
+  display: var(--g-effect-live-dot);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 6px var(--color-success);
+  animation: livePulse 2s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roleBadge::before {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+/* ── Logout ───────────────────────────────────────────────────────────────── */
+
+.logout {
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--g-radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color var(--g-transition-fast), background var(--g-transition-fast);
+}
+
+.logout:hover {
+  background: var(--color-muted);
+  color: var(--color-danger);
+}
+
+.logout:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}

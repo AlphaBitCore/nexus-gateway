@@ -1,0 +1,1 @@
+# Otel span attributes architecture

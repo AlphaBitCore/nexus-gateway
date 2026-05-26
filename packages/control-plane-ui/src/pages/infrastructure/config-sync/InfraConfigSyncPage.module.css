@@ -1,0 +1,99 @@
+/* ── InfraConfigSyncPage ─────────────────────────────────────────── */
+
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  /* keep single-row layout; wrap only when the viewport can't fit both
+     fields at their preferred size so desktops always read as one line */
+  flex-wrap: wrap;
+}
+
+/* Each filter renders as `Label: [Select]` on one line */
+.filterField {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Extra horizontal gap requested specifically between the Type filter's
+   Select and the Config Key filter block. Overrides the default .filterBar
+   `gap` (var(--g-space-3)) with an explicit 100px when present. */
+.filterField--spaced {
+  margin-left: 100px;
+}
+
+/* Explicit width so the Select is wider than its content-sized default
+   (~230px) by 50px, as requested. */
+.filterSelect {
+  width: 280px;
+}
+
+.filterLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.outOfSyncCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--g-space-4);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+  gap: var(--g-space-3);
+  flex-wrap: wrap;
+}
+
+.outOfSyncInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.outOfSyncName {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.outOfSyncMeta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.outOfSyncKeys {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.outOfSyncActions {
+  display: flex;
+  gap: var(--g-space-2);
+  flex-shrink: 0;
+}
+
+.successBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-4);
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success);
+  border-radius: var(--g-radius-md);
+  color: var(--color-success);
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+}
+

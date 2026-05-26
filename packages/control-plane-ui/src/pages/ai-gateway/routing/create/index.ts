@@ -1,0 +1,1 @@
+export { RoutingRuleCreate } from './RoutingRuleCreatePage';

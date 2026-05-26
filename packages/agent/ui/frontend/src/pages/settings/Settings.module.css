@@ -1,0 +1,126 @@
+/* Settings page — theme picker, language picker, pause protection,
+ * sign-out. Matches CP UI's Card-based layout convention so users
+ * switching between the two surfaces find the same vocabulary.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-4);
+  padding: var(--g-space-4);
+}
+
+.title {
+  font-size: var(--g-font-size-xl);
+  font-weight: 600;
+  margin: 0;
+}
+
+.subtitle {
+  color: var(--color-text-muted);
+  margin: 0 0 var(--g-space-3) 0;
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.cardTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+.cardDesc {
+  color: var(--color-text-muted);
+  margin: 0;
+  font-size: var(--g-font-size-sm);
+}
+
+.segmentedRow {
+  display: flex;
+  gap: var(--g-space-2);
+  flex-wrap: wrap;
+}
+
+.pauseGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--g-space-2);
+}
+
+.pausedRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.dangerCard {
+  composes: card;
+  border-color: var(--color-danger);
+}
+
+/* Section-group header. Sits above the cluster of related cards
+   (Account / Preferences / Protection / Danger zone). Uppercased,
+   muted, smaller than cardTitle so it reads as a label, not a card. */
+.groupTitle {
+  margin: var(--g-space-3) 0 calc(var(--g-space-2) * -1);
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+}
+
+/* Key-value list used by AccountPanel. CSS Grid with auto-fit min
+   width gives a clean two-column "label : value" layout that wraps
+   nicely on narrow Dashboard widths. */
+.kvList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  margin: 0;
+}
+
+.kvRow {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: var(--g-space-3);
+  align-items: baseline;
+}
+
+.kvRow dt {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  margin: 0;
+}
+
+.kvRow dd {
+  margin: 0;
+  font-size: var(--g-font-size-sm);
+  word-break: break-all;
+}
+
+/* Single-line "Nexus Agent v0.1.2 · Connected" footer at the bottom
+   of Settings. Centered, muted, no card chrome — purely a footnote
+   so users have an unmissable version cue without it competing with
+   the actionable cards above. */
+.aboutFooter {
+  margin-top: var(--g-space-3);
+  padding: var(--g-space-2) 0;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+}

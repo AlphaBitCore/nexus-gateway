@@ -1,0 +1,354 @@
+.flexGrow2 {
+  flex: 2;
+}
+
+.fieldGroup {
+  margin-bottom: 0;
+}
+
+.labelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.fieldLabel {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.required {
+  color: var(--color-danger);
+  margin-left: 2px;
+}
+
+.helpBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.textInput {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+}
+
+.selectInput {
+  flex: 1;
+  padding: var(--g-space-2) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.selectInputFull {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.providerModelRow {
+  display: flex;
+  gap: var(--g-space-2);
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.miniLabel {
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.monoTextarea {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+}
+
+.threeColGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--g-space-4);
+}
+
+.entryRow {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+  margin-bottom: var(--g-space-2);
+}
+
+.weightInput {
+  width: 80px;
+  flex: none;
+  padding: var(--g-space-2) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+}
+
+.emptyHint {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  margin-bottom: var(--g-space-2);
+}
+
+.indexLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.warningBanner {
+  margin-top: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-4);
+  background: var(--color-warning-light);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.tagContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: var(--g-space-2) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  min-height: 40px;
+  align-items: center;
+  cursor: text;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-radius: 12px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+}
+
+.tagRemove {
+  background: none;
+  border: none;
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+/* ── RoutingRuleCreate inline-style extractions ──────────────────────── */
+
+.sectionTitleSpacing {
+  margin-bottom: var(--g-space-4);
+}
+
+.resizeVertical {
+  resize: vertical;
+}
+
+.entryHeaderRow {
+  margin-bottom: var(--g-space-1);
+  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.flexGrow2 {
+  flex: 2;
+}
+
+.colWidthWeight {
+  width: 80px;
+}
+
+.colWidthActions {
+  width: 70px;
+}
+
+.fallbackEntrySpacing {
+  margin-bottom: var(--g-space-1);
+}
+
+.actionsEnd {
+  justify-content: flex-end;
+}
+
+.tagContainerHidden {
+  display: none;
+}
+
+.tagContainerVisible {
+  margin-bottom: 8px;
+  min-height: 40px;
+}
+
+/* ── Wizard step indicator ──────────────────────────────────────────── */
+
+.wizardStepBar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0;
+  margin-bottom: var(--g-space-4);
+  padding: var(--g-space-2);
+  background: var(--color-surface);
+  border-radius: var(--g-radius-lg);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.wizardStepItem {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.wizardStepContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 120px;
+  margin: 0 auto;
+}
+
+.wizardStepCircle {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.wizardStepLabel {
+  font-size: 11px;
+  font-weight: 500;
+  margin-top: 6px;
+  text-align: center;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.wizardStepLabelActive {
+  composes: wizardStepLabel;
+  font-weight: 700;
+}
+
+.wizardStepConnector {
+  flex: 1;
+  height: 2px;
+  margin-top: 13px;
+  margin-left: -6px;
+  margin-right: -6px;
+  border-radius: 2px;
+  min-width: 8px;
+  transition: background 0.2s ease;
+}
+
+.wizardStepHidden {
+  display: none;
+}
+
+.wizardStepCircleActive {
+  background: var(--color-text);
+  color: var(--color-surface);
+  box-shadow: 0 2px 8px var(--shadow-sm);
+}
+
+.wizardStepCircleCompleted {
+  background: var(--color-success);
+  color: var(--color-surface);
+}
+
+.wizardStepCirclePending {
+  background: var(--color-muted);
+  color: var(--color-text-muted);
+}
+
+.wizardStepConnectorCompleted {
+  background: var(--color-success);
+}
+
+.wizardStepConnectorPending {
+  background: var(--color-border);
+}
+
+.wizardStepLabelMuted {
+  composes: wizardStepLabel;
+  color: var(--color-text-muted);
+}
+
+.wizardStepLabelCompleted {
+  composes: wizardStepLabel;
+  color: var(--color-success-dark);
+}
+
+.wizardStepLabelActiveColor {
+  composes: wizardStepLabelActive;
+  color: var(--color-text);
+}
+
+.wizardFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--g-space-4);
+  padding-top: var(--g-space-4);
+  border-top: 1px solid var(--color-border);
+}

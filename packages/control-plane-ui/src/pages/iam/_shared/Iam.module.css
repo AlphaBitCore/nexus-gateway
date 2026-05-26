@@ -1,0 +1,1142 @@
+/* ── Shared IAM page styles ────────────────────────────────────────────── */
+
+.filterSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Detail page KV grids ─────────────────────────────────────────────── */
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 4px;
+}
+
+.kvLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+/* ── Role badge ───────────────────────────────────────────────────────── */
+
+.roleBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  border-radius: var(--g-radius-md);
+  background: var(--color-muted);
+  color: var(--color-text-secondary);
+}
+
+.roleBadgeOverflow {
+  display: inline-block;
+  padding: 2px 7px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  border-radius: var(--g-radius-md);
+  background: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.roleBadgePrimary {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--g-radius-md);
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+.sourceDirectBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  border-radius: var(--g-radius-md);
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+}
+
+.linkStyle {
+  color: var(--color-primary-dark);
+  text-decoration: none;
+}
+.linkStyle:hover {
+  text-decoration: underline;
+}
+
+/* ── Inline form ──────────────────────────────────────────────────────── */
+
+.inlineForm {
+  display: flex;
+  gap: var(--g-space-3);
+  align-items: flex-end;
+  margin-bottom: var(--g-space-4);
+  padding: var(--g-space-4);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.formLabel {
+  display: block;
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--g-space-1);
+}
+
+/* ── Section headings ─────────────────────────────────────────────────── */
+
+.sectionHeading {
+  font-size: var(--g-font-size-md);
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--g-space-3);
+  margin-top: var(--g-space-8);
+}
+
+.sectionSubheading {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--g-space-3);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+/* ── Created-key success banner ───────────────────────────────────────── */
+
+.successBanner {
+  background: var(--color-success-light);
+  border: 1px solid var(--color-success);
+}
+
+.successTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--color-success-dark);
+}
+
+.keyBox {
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  word-break: break-all;
+}
+
+.keyWarning {
+  font-size: 12px;
+  color: var(--color-warning-dark);
+  margin-top: 12px;
+}
+
+/* ── Mono/code chip ───────────────────────────────────────────────────── */
+
+.mono {
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+}
+
+.codeChip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-mono);
+  font-weight: 500;
+  background: var(--color-muted);
+  color: var(--color-text);
+  margin-right: 4px;
+  margin-bottom: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.conditionChip {
+  composes: codeChip;
+  background: var(--color-violet-light);
+  border-color: var(--color-violet);
+  color: var(--color-info);
+}
+
+/* ── Statement card (policy detail) ───────────────────────────────────── */
+
+.statementCard {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-4);
+  margin-bottom: var(--g-space-3);
+}
+
+/* ── Type badge ───────────────────────────────────────────────────────── */
+
+.typeBadgeManaged {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-md);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--color-info-bg);
+  color: var(--color-info);
+}
+
+.typeBadgeCustom {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-md);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--color-muted-bg);
+  color: var(--color-text-secondary);
+}
+
+/* ── Effect badge ─────────────────────────────────────────────────────── */
+
+.effectAllow {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-md);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.effectDeny {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-md);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+}
+
+/* ── Back button ─────────────────────────────────────────────────────── */
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+  margin-bottom: var(--g-space-4);
+}
+
+.backBtn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+
+.tabBar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--color-border);
+  margin-bottom: var(--g-space-6);
+}
+
+.tab {
+  padding: 10px 20px;
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all var(--g-transition-fast);
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tabActive {
+  composes: tab;
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ── Policy editor ────────────────────────────────────────────────────── */
+
+.editorSection {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-xl);
+  padding: 24px;
+  margin-bottom: var(--g-space-4);
+}
+
+.editorSectionTitle {
+  font-size: 16px;
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  margin: 0;
+}
+
+.editorCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-4);
+  margin-bottom: var(--g-space-4);
+  background: var(--color-muted);
+}
+
+.editorCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-4);
+}
+
+.editorTextarea {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  resize: vertical;
+  min-height: 80px;
+}
+
+.editorFooter {
+  display: flex;
+  gap: var(--g-space-3);
+  justify-content: flex-end;
+  margin-top: var(--g-space-6);
+  padding-top: var(--g-space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.validationErrors {
+  margin-bottom: var(--g-space-4);
+  padding: var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  background: var(--color-danger-light);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger-dark);
+  font-size: var(--g-font-size-sm);
+}
+
+.actionShortcutSelect {
+  font-size: var(--g-font-size-xs);
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  cursor: pointer;
+  color: var(--color-primary);
+}
+
+/* ── View mode toggle ─────────────────────────────────────────────────── */
+
+.viewToggle {
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius: var(--g-radius-md);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.viewToggleActive {
+  composes: viewToggle;
+  border: none;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.viewToggleInactive {
+  composes: viewToggle;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+/* ── Simulation page ──────────────────────────────────────────────────── */
+
+.simGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--g-space-6);
+}
+
+.simResultDecision {
+  display: inline-block;
+  align-self: flex-start;
+  padding: var(--g-space-2) var(--g-space-4);
+  border-radius: var(--g-radius-md);
+  font-weight: 700;
+  font-size: var(--g-font-size-lg);
+}
+
+.simAllow {
+  composes: simResultDecision;
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.simDeny {
+  composes: simResultDecision;
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+}
+
+.simTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.simTh {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.simTd {
+  padding: var(--g-space-2) var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+/* ── Direct/Group badges (Principal Policies) ─────────────────────────── */
+
+.directBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: var(--g-radius-md);
+  font-weight: 500;
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+.groupBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: var(--g-radius-md);
+  font-weight: 500;
+  background: var(--color-muted-light);
+  color: var(--color-muted-dark);
+}
+
+/* ── Policy checkbox list (role form) ─────────────────────────────────── */
+
+.policyCheckboxList {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-2);
+  background: var(--color-bg);
+}
+
+.policyCheckboxItem {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-1) 0;
+  cursor: pointer;
+  font-size: var(--g-font-size-sm);
+}
+
+/* ── Fullspan (for grid item spanning all cols) ───────────────────────── */
+
+.fullSpan {
+  grid-column: 1 / -1;
+}
+
+/* ── IamPolicyDetail inline-style extractions ─────────────────────────── */
+
+.tooltipIcon {
+  cursor: help;
+  font-size: 12px;
+}
+
+.descriptionValue {
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.headerActions {
+  align-items: center;
+}
+
+.statementsPanel {
+  margin-top: var(--g-space-4);
+}
+
+.statementsEmpty {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+.stmtHeader {
+  align-items: center;
+  margin-bottom: var(--g-space-3);
+  flex-wrap: wrap;
+}
+
+.stmtSidMono {
+  color: var(--color-text-muted);
+}
+
+.stmtSection {
+  margin-bottom: var(--g-space-3);
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.conditionRow {
+  margin-bottom: 4px;
+}
+
+.conditionKeyValue {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-secondary);
+  margin-left: 8px;
+}
+
+.attachmentsIntro {
+  margin: 0 0 var(--g-space-4);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.attachmentSection {
+  margin-top: var(--g-space-4);
+}
+
+.attachmentSectionLarge {
+  margin-top: var(--g-space-5);
+}
+
+.emptyAttachment {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  padding: var(--g-space-3) 0;
+}
+
+.roleNameLink {
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--color-primary);
+}
+
+.gridFullSpan {
+  grid-column: 1 / -1;
+}
+
+.tooltipHelpParagraph {
+  margin: 0 0 var(--g-space-2) 0;
+}
+
+.tooltipHelpParagraphLast {
+  margin: 0;
+}
+
+/* ── IamPolicyEditorPage extracted styles ─────────────────────────────── */
+
+.formNarrow {
+  max-width: 480px;
+}
+
+/* ── E43 P5 Tier 1: Create/Edit IAM Policy redesigned layout ─────────── */
+
+/* Sticky top bar — breadcrumb/title on the left, Cancel/Save always
+   visible on the right so users on long multi-statement policies never
+   lose access to the action affordance. */
+.stickyActionBar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-bg);
+  padding: var(--g-space-4) 0;
+  margin: calc(-1 * var(--g-space-4)) 0 0 0;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--g-space-3);
+}
+
+.stickyActionBarLeft {
+  flex: 1;
+  min-width: 0;
+}
+
+.stickyActionBarRight {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Validation badge in the sticky bar. Pre-save real-time signal so
+   users know the document state without round-tripping through Save. */
+.validationBadgeOk {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-success);
+  font-weight: 500;
+  padding: 0 var(--g-space-2);
+}
+.validationBadgeError {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger);
+  font-weight: 500;
+  padding: 0 var(--g-space-2);
+}
+
+/* Metadata strip — Name + Document version packed horizontally, with
+   the optional enabled switch on the right (edit mode only). Replaces
+   the old formNarrow column that wasted the right half of the screen. */
+.metaStrip {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr);
+  gap: var(--g-space-4);
+  align-items: start;
+}
+.metaStripWithSwitch {
+  grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr) auto;
+}
+@media (max-width: 720px) {
+  .metaStrip,
+  .metaStripWithSwitch {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Description default-collapsed (Stripe / GitHub pattern: low-frequency
+   field as an opt-in expander, not a perpetually visible block). */
+.addDescriptionLink {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-link);
+  font-size: var(--g-font-size-sm);
+  cursor: pointer;
+  text-align: left;
+  align-self: flex-start;
+}
+.addDescriptionLink:hover {
+  text-decoration: underline;
+}
+
+/* Two-column policy body — form (60%) + live JSON preview (40%). The
+   preview is the AWS / Auth0 / Stripe pattern: edit on the left, see
+   the actual document being built on the right. */
+.policyTwoCol {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--g-space-4);
+  align-items: stretch;
+}
+@media (max-width: 1024px) {
+  .policyTwoCol {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Live JSON preview pane. Sticky so it stays in view while the user
+   scrolls a long form. Read-only — the [Edit JSON] toggle in the
+   editor toolbar swaps this preview for a full-width JSON textarea. */
+.jsonPreviewCard {
+  position: sticky;
+  top: calc(80px + var(--g-space-4));
+  max-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3);
+  overflow: hidden;
+}
+
+.jsonPreviewHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-2);
+  flex-shrink: 0;
+}
+
+.jsonPreviewTitle {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.jsonPreviewBody {
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--color-text);
+  margin: 0;
+  overflow: auto;
+  flex: 1;
+  background: transparent;
+  border: 0;
+  resize: none;
+  width: 100%;
+}
+
+/* ── E43 P5 Tier 3: collapsible statement cards ──────────────────────── */
+
+/* Header row is the click target for expand/collapse. Reads at a glance
+   as `[Allow|Deny] <action summary> on <resource summary>` plus the
+   reorder / duplicate / remove controls on the right. */
+.statementHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease;
+}
+.statementHeaderRow:hover {
+  background: var(--color-bg-subtle);
+}
+
+.statementChevron {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  width: 12px;
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+.statementChevronOpen {
+  composes: statementChevron;
+  transform: rotate(90deg);
+}
+
+.effectBadge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  flex-shrink: 0;
+}
+.effectBadgeAllow {
+  composes: effectBadge;
+  background: var(--color-success-light);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
+}
+.effectBadgeDeny {
+  composes: effectBadge;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+.statementSummary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  font-size: 13px;
+  color: var(--color-text);
+  font-family: var(--g-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.statementSummaryDim {
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+}
+.statementSummaryPlaceholder {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  font-family: inherit;
+}
+
+.statementHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.statementIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--g-radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.statementIconBtn:hover:not(:disabled) {
+  background: var(--color-bg);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.statementIconBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.statementIconBtnDanger {
+  composes: statementIconBtn;
+}
+.statementIconBtnDanger:hover:not(:disabled) {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.statementBody {
+  padding: var(--g-space-3) var(--g-space-3) var(--g-space-2);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Wildcard mode banner — shown when a statement's Action is admin:* or
+   *, to make it obvious the statement grants full administrator access. */
+.wildcardBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  padding: var(--g-space-3);
+  background: var(--color-danger-light);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+}
+.wildcardBanner code {
+  font-family: var(--g-font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-danger);
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: var(--g-radius-sm);
+}
+
+.editorToolbarBetween {
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-4);
+  flex-wrap: wrap;
+}
+
+.editorToolbarCenter {
+  align-items: center;
+}
+
+.editorToolbarWrap {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tooltipHelp {
+  cursor: help;
+  font-size: 12px;
+}
+
+.validationTitle {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.validationList {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.jsonLabelRow {
+  align-items: center;
+  margin-bottom: var(--g-space-1);
+}
+
+.jsonLabelText {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+}
+
+.jsonTextarea {
+  width: 100%;
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.statementHeading {
+  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+}
+
+.statementFieldsRow {
+  margin-bottom: var(--g-space-2);
+  flex-wrap: wrap;
+}
+
+.sidField {
+  flex: 1 1 200px;
+}
+
+.effectField {
+  flex: 1 1 160px;
+}
+
+.actionsEndRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.conditionTextarea {
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+}
+
+/* ── IamUserDetail extracted styles ───────────────────────────────────── */
+
+.editBtnRow {
+  margin-bottom: var(--g-space-4);
+}
+
+.badgeOffset {
+  margin-top: 2px;
+}
+
+.secretKeyLabel {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--color-text);
+}
+
+.secretKeyTooltip {
+  cursor: help;
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+.dismissRow {
+  margin-top: 12px;
+}
+
+.sectionTitleRow {
+  margin-bottom: var(--g-space-4);
+}
+
+.sectionTitleText {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+.keysHelpText {
+  margin-top: var(--g-space-3);
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.helpIconInline {
+  cursor: help;
+}
+
+.flexOne {
+  flex: 1;
+}
+
+.selectFull {
+  width: 100%;
+}
+
+.rolesSectionDesc {
+  margin: 0 0 var(--g-space-4) 0;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+/* ── IamRoleDetail extracted styles ───────────────────────────────────── */
+
+.memberBtnRow {
+  margin-bottom: var(--g-space-4);
+}
+
+.memberUsername {
+  font-weight: 500;
+}
+
+.memberEmail {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  margin-left: 8px;
+}
+
+.memberIdFallback {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.memberDate {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.flexOne {
+  flex: 1;
+}
+
+.selectFullWidth {
+  width: 100%;
+}
+
+/* ── IamPolicyDetail additional extracted styles ─────────────────────── */
+
+.policyHeaderActions {
+  align-items: center;
+}
+
+.stmtLastSection {
+  margin-bottom: 0;
+}
+
+/* ── IamUserDetail inline-style extractions (batch 2) ────────────────── */
+
+.badgeOffsetWrap {
+  margin-top: 2px;
+}
+
+.secretKeyLabelRow {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--color-text);
+}
+
+.secretKeyTooltipIcon {
+  cursor: help;
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+.dismissBtnRow {
+  margin-top: 12px;
+}
+
+.sectionHeaderRow {
+  margin-bottom: var(--g-space-4);
+}
+
+.sectionH3 {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+.keysFooterHint {
+  margin-top: var(--g-space-3);
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.helpCursorIcon {
+  cursor: help;
+}
+
+.inlineFormFieldFlex {
+  flex: 1;
+}
+
+.roleSelectFullWidth {
+  width: 100%;
+}
+
+.rolesDescription {
+  margin: 0 0 var(--g-space-4) 0;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.primaryLink {
+  color: var(--color-primary);
+}

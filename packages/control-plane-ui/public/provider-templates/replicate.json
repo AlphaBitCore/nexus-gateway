@@ -1,0 +1,48 @@
+{
+  "name": "replicate",
+  "displayName": "Replicate",
+  "description": "Replicate predictions API \u2014 open-weight LLMs hosted as versioned models. Each model is identified as `owner/name:version`; the Replicate codec wraps OpenAI-canonical chat into the prediction `{version, input}` envelope. Model list per 2026-04 vendor docs; admin should pin specific versions and verify availability against https://replicate.com/explore before customer-facing use.",
+  "baseUrl": "https://api.replicate.com",
+  "adapterType": "replicate",
+  "models": [
+    {
+      "code": "meta/meta-llama-3-70b-instruct",
+      "name": "Llama 3 70B Instruct",
+      "description": "Meta's Llama 3 70B Instruct on Replicate. Pin a specific version hash via the Provider config before promoting to production.",
+      "providerModelId": "meta/meta-llama-3-70b-instruct",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 8192,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "meta/meta-llama-3-8b-instruct",
+      "name": "Llama 3 8B Instruct",
+      "description": "Smaller Llama 3 8B Instruct for low-cost workloads.",
+      "providerModelId": "meta/meta-llama-3-8b-instruct",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 8192,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "mistralai/mixtral-8x7b-instruct-v0.1",
+      "name": "Mixtral 8x7B Instruct",
+      "description": "Mistral's 8x7B mixture-of-experts on Replicate.",
+      "providerModelId": "mistralai/mixtral-8x7b-instruct-v0.1",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "maxContextTokens": 32768,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

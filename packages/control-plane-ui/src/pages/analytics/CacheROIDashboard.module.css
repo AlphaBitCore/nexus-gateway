@@ -1,0 +1,252 @@
+/* ── Summary cards ────────────────────────────────────────── */
+.summaryCard {
+  min-width: 0;
+}
+
+.summaryInner {
+  min-height: 66px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.summaryLabel {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}
+
+.summaryValue {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+.summarySub {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+/* ── Hero strip (cross-layer KPIs) ────────────────────────── */
+.heroGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--g-space-4);
+}
+
+/* ── Layer section block ──────────────────────────────────── */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 6px 12px;
+  border-left: 3px solid var(--color-border);
+}
+
+.sectionTitle {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.sectionBadge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-family: var(--g-font-mono);
+  line-height: 1.6;
+  flex-shrink: 0;
+}
+
+.sectionDesc {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  margin-left: 4px;
+}
+
+/* 2-column grid — used for the Gateway Cache section (2 cards). */
+.sectionCards2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--g-space-4);
+}
+
+/* 4-column auto-fit grid — used for the Provider Prompt Cache section. */
+.sectionCards4 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--g-space-4);
+}
+
+/* ── Layer tag (tooltip-triggered info badge) ─────────────── */
+.layerTag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-family: var(--g-font-mono);
+  color: var(--color-text-secondary);
+  cursor: help;
+  vertical-align: middle;
+  margin-left: 4px;
+  user-select: none;
+}
+
+/* ── Inline "?" formula badge ─────────────────────────────── */
+.questionBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  cursor: help;
+  user-select: none;
+  margin-left: 4px;
+}
+
+/* ── Rollup not-ready banner ──────────────────────────────── */
+.rollupBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--color-warning-surface);
+  border: 1px solid var(--color-warning-border);
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.rollupBannerText {
+  flex: 1;
+  color: var(--color-text);
+}
+
+/* ── Card section heading ─────────────────────────────────── */
+.cardHeading {
+  margin: 0 0 16px 0;
+  font-size: 1rem;
+}
+
+/* ── Empty / no-data placeholder ─────────────────────────── */
+.noData {
+  padding: 32px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+/* ── Time range selector ──────────────────────────────────── */
+.rangeButtons {
+  display: inline-flex;
+  gap: var(--g-space-1);
+}
+
+/* ── Table structure ──────────────────────────────────────── */
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.tableRoot {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+/* Common td cell — right-aligned, monospace, standard padding */
+.tableCellMono {
+  padding: 8px;
+  text-align: right;
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+}
+
+/* Right-aligned plain cell (no mono font) */
+.tableCellRight {
+  padding: 8px;
+  text-align: right;
+}
+
+/* Left-aligned plain cell */
+.tableCell {
+  padding: 8px;
+}
+
+/* Colored group header for the two cache column groups (Gateway / Provider Prompt). */
+.tableThGroupAccent {
+  text-align: center;
+  padding: 6px 8px;
+  font-weight: 700;
+  font-size: 0.75rem;
+  border-bottom: 2px solid;
+}
+
+/* ── Table rows ───────────────────────────────────────────── */
+
+.tableHeaderRow {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tableBodyRow {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.tableThSecondary {
+  text-align: right;
+  padding: 4px 8px;
+  font-weight: 500;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.tableThSavingsRate {
+  text-align: right;
+  padding: 6px 8px;
+  font-weight: 600;
+  vertical-align: bottom;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ── Success text (triggered / rollup success state) ─────── */
+
+.successText {
+  color: var(--color-success);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tableThGroupLeft {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 600;
+  vertical-align: bottom;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tableThGroupSecondary {
+  text-align: center;
+  padding: 6px 8px;
+  font-weight: 700;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid var(--color-border);
+}

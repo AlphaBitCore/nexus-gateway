@@ -1,0 +1,262 @@
+/* ─── Layer 1: Global Tokens ─────────────────────────────────────────────── */
+/* Raw palette and constants. Never change between themes.                    */
+/* Components should NOT reference these directly (except spacing, radius,    */
+/* typography, shadows, transitions, z-index which are theme-independent).    */
+
+:root {
+  --g-white: #ffffff;
+
+  /* ── Gray Palette ──────────────────────────────────────────────────────── */
+  --g-gray-50:  #fafafa;
+  --g-gray-100: #f5f5f5;
+  --g-gray-200: #e5e5e5;
+  --g-gray-300: #d4d4d4;
+  --g-gray-400: #a3a3a3;
+  --g-gray-500: #737373;
+  --g-gray-600: #525252;
+  --g-gray-700: #404040;
+  --g-gray-800: #262626;
+  --g-gray-900: #171717;
+  --g-gray-950: #0a0a0a;
+
+  /* ── Blue Palette ──────────────────────────────────────────────────────── */
+  --g-blue-50:  #eff6ff;
+  --g-blue-100: #dbeafe;
+  --g-blue-200: #bfdbfe;
+  --g-blue-300: #93c5fd;
+  --g-blue-400: #60a5fa;
+  --g-blue-500: #3b82f6;
+  --g-blue-600: #2563eb;
+  --g-blue-700: #1d4ed8;
+  --g-blue-800: #1e40af;
+  --g-blue-900: #1e3a8a;
+
+  /* ── Green Palette ─────────────────────────────────────────────────────── */
+  --g-green-50:  #f0fdf4;
+  --g-green-100: #dcfce7;
+  --g-green-400: #4ade80;
+  --g-green-500: #22c55e;
+  --g-green-600: #16a34a;
+  --g-green-700: #15803d;
+
+  /* ── ABC first-level page accents ─────────────────────────────────────── */
+  --g-abc-blue-600:  #1156e6;
+  --g-abc-cyan-400:  #1ed9b5;
+  --g-abc-green-500: #5eae5d;
+  --g-abc-mint-300:  #64ffa3;
+
+  /* ── Red Palette ───────────────────────────────────────────────────────── */
+  --g-red-50:  #fef2f2;
+  --g-red-100: #fee2e2;
+  --g-red-200: #fecaca;
+  --g-red-300: #fca5a5;
+  --g-red-400: #f87171;
+  --g-red-500: #ef4444;
+  --g-red-600: #dc2626;
+  --g-red-700: #b91c1c;
+
+  /* ── Orange Palette ────────────────────────────────────────────────────── */
+  --g-orange-50:  #fff7ed;
+  --g-orange-100: #ffedd5;
+  --g-orange-200: #fed7aa;
+  --g-orange-300: #fdba74;
+  --g-orange-400: #fb923c;
+  --g-orange-500: #f97316;
+  --g-orange-600: #ea580c;
+  --g-orange-700: #c2410c;
+
+  /* ── Slate Palette (sidebar) ───────────────────────────────────────────── */
+  --g-slate-50:  #f8fafc;
+  --g-slate-100: #f1f5f9;
+  --g-slate-200: #e2e8f0;
+  --g-slate-300: #cbd5e1;
+  --g-slate-400: #94a3b8;
+  --g-slate-500: #64748b;
+  --g-slate-600: #475569;
+  --g-slate-700: #334155;
+  --g-slate-800: #1e293b;
+  --g-slate-900: #0f172a;
+  --g-slate-950: #020617;
+
+  /* ── Violet Palette (compliance / IAM accents) ─────────────────────────── */
+  --g-violet-50:  #f5f3ff;
+  --g-violet-100: #ede9fe;
+  --g-violet-400: #a78bfa;
+  --g-violet-500: #8b5cf6;
+  --g-violet-600: #7c3aed;
+  --g-violet-700: #6d28d9;
+
+  /* ── Spacing (4px base) ────────────────────────────────────────────────── */
+  --g-space-0:    0px;
+  --g-space-0-5:  2px;
+  --g-space-1:    4px;
+  --g-space-1-5:  6px;
+  --g-space-2:    8px;
+  --g-space-2-5:  10px;
+  --g-space-3:    12px;
+  --g-space-4:    16px;
+  --g-space-5:    20px;
+  --g-space-6:    24px;
+  --g-space-8:    32px;
+  --g-space-10:   40px;
+  --g-space-12:   48px;
+  --g-space-xs:   var(--g-space-1);
+  --g-space-md:   var(--g-space-4);
+
+  /* ── Typography ────────────────────────────────────────────────────────── */
+  --g-font-sans:    'Inter', system-ui, -apple-system, sans-serif;
+  --g-font-display: 'Manrope', 'Inter', system-ui, sans-serif;
+  --g-font-mono:    'JetBrains Mono', 'SF Mono', monospace;
+  --g-font-family-mono: var(--g-font-mono);
+
+  --g-font-size-xxs:  0.625rem;    /* 10px — badge labels (InfraNodes apply-error badge) */
+  --g-font-size-xs:   0.75rem;     /* 12px */
+  --g-font-size-sm:   0.8125rem;   /* 13px */
+  --g-font-size-base: 0.875rem;    /* 14px */
+  --g-font-size-md:   1rem;        /* 16px */
+  --g-font-size-lg:   1.125rem;    /* 18px */
+  --g-font-size-xl:   1.25rem;     /* 20px */
+  --g-font-size-2xl:  1.5rem;      /* 24px */
+  --g-font-size-3xl:  1.875rem;    /* 30px */
+  --font-size-sm: var(--g-font-size-sm);
+  --font-size-md: var(--g-font-size-md);
+
+  --g-font-weight-normal:   400;
+  --g-font-weight-medium:   500;
+  --g-font-weight-semibold: 600;
+  --g-font-weight-bold:     700;
+
+  --g-line-height-tight:   1.25;
+  --g-line-height-normal:  1.5;
+  --g-line-height-relaxed: 1.75;
+  --line-height-normal: var(--g-line-height-normal);
+
+  --g-letter-spacing-tight: 0;
+
+  /* ── Borders & Radius ──────────────────────────────────────────────────── */
+  --g-radius:      10px;
+  --g-radius-xs:   4px;
+  --g-radius-sm:   6px;
+  --g-radius-md:   8px;
+  --g-radius-lg:   10px;
+  --g-radius-xl:   14px;
+  --g-radius-full: 9999px;
+  --radius-full: var(--g-radius-full);
+  --radius-pill: var(--g-radius-full);
+
+  /* ── Button Primitives ─────────────────────────────────────────────────── */
+  --button-gap: var(--g-space-1-5);
+  --button-radius: 8px;
+  --button-radius-sm: 6px;
+  --button-height-sm: 28px;
+  --button-height-md: 38px;
+  --button-height-lg: 44px;
+  --button-padding-x-sm: var(--g-space-2-5);
+  --button-padding-x-md: var(--g-space-3);
+  --button-padding-x-lg: var(--g-space-4);
+  --button-font-size-sm: var(--g-font-size-xs);
+  --button-font-size-md: var(--g-font-size-md);
+  --button-font-size-lg: var(--g-font-size-md);
+  --button-line-height-sm: var(--g-line-height-normal);
+  --button-line-height-md: var(--g-line-height-normal);
+  --button-line-height-lg: var(--g-line-height-normal);
+  --button-icon-size: var(--g-space-4);
+
+  /* ── Shadows ───────────────────────────────────────────────────────────── */
+  --g-shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  --g-shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+  --g-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+  --g-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.03);
+  --g-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
+
+  /* ── Transitions ───────────────────────────────────────────────────────── */
+  --g-transition-fast:   150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --g-transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --g-transition-slow:   300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Effect tokens (themes override for visual personality) ──────────────
+   * Ten knobs themes can tune to differentiate visual character without
+   * touching colours. Default values are intentionally bland (none / 0 /
+   * ease-out) so the unstyled experience is calm; themes flip them in
+   * `layer1.effects` (mode-independent) or in `lightTokens/darkTokens`
+   * via `g-effect-*` keys for mode-specific atmosphere (e.g., default
+   * theme only renders ambient-gradient in dark mode). Wiring is enforced
+   * by check-effect-tokens.mjs — every token defined here MUST have at
+   * least one consumer somewhere in the codebase. */
+  --g-effect-glow-primary: none;         /* Button hover box-shadow glow */
+  --g-effect-glow-active: none;          /* Sidebar active item box-shadow glow */
+  --g-effect-card-hover-shadow: none;    /* Card :hover box-shadow lift */
+  --g-effect-card-edge-light: none;      /* Card top-edge inset highlight (overhead-light depth) */
+  --g-effect-accent-bar: 0;              /* Dashboard metric card top accent bar opacity (0 = hidden) */
+  --g-effect-accent-glow: 0;             /* Dashboard metric card accent glow opacity (0 = hidden) */
+  --g-effect-live-dot: none;             /* Header live status indicator display (none | block) */
+  --g-effect-toast-spring: ease-out;     /* Toast entrance easing — themes can use spring curves */
+  --g-effect-ambient-gradient: none;     /* Body background-image atmosphere (dark-mode signature) */
+  --g-effect-header-blur: none;          /* Header backdrop-filter blur on scroll (frosted glass) */
+
+  /* ── Z-Index ───────────────────────────────────────────────────────────── */
+  --g-z-sidebar:  10;
+  --g-z-header:   50;
+  --g-z-dropdown: 100;
+  --g-z-overlay:  300;
+  --g-z-modal:    400;
+  --g-z-toast:    500;
+  --g-z-tooltip:  600;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px var(--color-bg-input) inset;
+  -webkit-text-fill-color: var(--color-text);
+  caret-color: var(--color-text);
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Universal button interaction feedback.
+ *
+ * Element-level rules so every <button> in every app (CP-UI + agent-UI)
+ * gets visible hover / press / focus / disabled affordances without per-
+ * component CSS — the prior absence of these rules caused users to be
+ * unable to tell whether a click had registered (notably on the agent
+ * Dashboard Diagnostics page's Restart daemon / Copy bundle / Copy log
+ * path buttons). Component-level styles still win via specificity, so
+ * variants like .primary / .danger keep their colour treatments.
+ *
+ * Tokens used live in this file and theme files; transitions use the
+ * existing --g-transition-fast (150ms) to stay snappy without feeling
+ * jittery on touchpads. */
+button {
+  cursor: pointer;
+  transition:
+    background-color var(--g-transition-fast),
+    border-color var(--g-transition-fast),
+    transform var(--g-transition-fast),
+    box-shadow var(--g-transition-fast),
+    opacity var(--g-transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:hover:not(:disabled) {
+  background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.04));
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+  background-color: var(--color-bg-pressed, rgba(0, 0, 0, 0.08));
+}
+
+button:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary, #3b82f6));
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}

@@ -1,0 +1,735 @@
+/* ── Key-value grid ────────────────────────────── */
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 4px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.kvValueMono {
+  composes: kvValue;
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+}
+
+.kvSpanFull {
+  grid-column: 1 / -1;
+}
+
+/* ── Back button ──────────────────────────────── */
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+  margin-bottom: var(--g-space-4);
+}
+
+.backBtn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ── Tabs ─────────────────────────────────────── */
+
+.tabBar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--color-border);
+  margin-bottom: var(--g-space-6);
+}
+
+.tab {
+  padding: 10px 20px;
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all var(--g-transition-fast);
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tabActive {
+  composes: tab;
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ── Inline form ──────────────────────────────── */
+
+.inlineFormRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+  margin-bottom: var(--g-space-4);
+  padding: var(--g-space-4);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.inlineFormRowHighlight {
+  composes: inlineFormRow;
+  border-color: var(--color-primary);
+}
+
+.inlineLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.inlineInput {
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  background: transparent;
+  color: var(--color-text);
+}
+
+.inlineSelect {
+  composes: inlineInput;
+  height: 34px;
+}
+
+/* ── Table ────────────────────────────────────── */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.th {
+  padding: var(--g-space-2) var(--g-space-4);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.td {
+  padding: var(--g-space-3) var(--g-space-4);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tdMono {
+  composes: td;
+  font-family: var(--g-font-mono);
+}
+
+.tdBold {
+  composes: td;
+  font-weight: 600;
+}
+
+.tableRow {
+  cursor: pointer;
+  transition: background var(--g-transition-fast);
+}
+
+.tableRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.tableRow[aria-expanded="true"] {
+  background: var(--color-muted);
+}
+
+/* ── Health ────────────────────────────────────── */
+
+.healthMetric {
+  text-align: center;
+  padding: var(--g-space-4);
+}
+
+.healthValue {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: var(--g-line-height-tight);
+  letter-spacing: 0;
+}
+
+.healthLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-top: 4px;
+}
+
+/* ── Stats ────────────────────────────────────── */
+
+.statCard {
+  text-align: center;
+  padding: var(--g-space-4);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.statValue {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: var(--g-line-height-tight);
+  letter-spacing: 0;
+}
+
+.statLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-top: 4px;
+}
+
+/* ── Chart ────────────────────────────────────── */
+
+.chartBar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.chartBarContainer {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 160px;
+}
+
+.chartDateLabel {
+  font-size: 9px;
+  color: var(--color-text-muted);
+  transform: rotate(-45deg);
+  transform-origin: top left;
+  white-space: nowrap;
+  width: 0;
+}
+
+.chartLegend {
+  display: flex;
+  gap: var(--g-space-4);
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.legendDot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+/* ── Enable toggle (inline small button) ────── */
+
+.enableToggle {
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+  color: var(--color-text-muted);
+}
+
+.enableToggleEnabled {
+  composes: enableToggle;
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+/* ── Misc ─────────────────────────────────────── */
+
+.emptyState {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-lg);
+  font-family: var(--g-font-display);
+  font-weight: var(--g-font-weight-semibold);
+  letter-spacing: 0;
+  margin-bottom: var(--g-space-4);
+  color: var(--color-text);
+}
+
+.flexWrap {
+  display: flex;
+  gap: var(--g-space-3);
+  flex-wrap: wrap;
+}
+
+.failureReason {
+  font-size: 11px;
+  color: var(--color-danger);
+  margin-top: 2px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Layout utilities ────────────────────────── */
+
+.alignCenter {
+  align-items: center;
+}
+
+.justifyEnd {
+  justify-content: flex-end;
+}
+
+.toolbarEnd {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--g-space-4);
+}
+
+.overflowAuto {
+  overflow-x: auto;
+}
+
+.fullWidth {
+  width: 100%;
+  min-width: 0;
+}
+
+.mt2 {
+  margin-top: 2px;
+}
+
+.mb8 {
+  margin-bottom: 8px;
+}
+
+/* ── Flex field sizing ───────────────────────── */
+
+.flexField {
+  flex: 1 1 200px;
+}
+
+.flexFieldMd {
+  flex: 1 1 180px;
+}
+
+.flexFieldNarrow {
+  flex: 0 0 160px;
+}
+
+.flexFieldSm {
+  flex: 0 0 140px;
+}
+
+.flexFieldXs {
+  flex: 0 0 120px;
+}
+
+.flexFieldAuto {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+}
+
+/* ── Editing header ──────────────────────────── */
+
+.editingTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.modelIdHint {
+  font-weight: 400;
+  color: var(--color-text-muted);
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+}
+
+/* ── Connectivity section ────────────────────── */
+
+.connectivitySection {
+  margin-top: var(--g-space-5);
+  padding-top: var(--g-space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.kvLabelSmGap {
+  composes: kvLabel;
+  margin-bottom: var(--g-space-2);
+}
+
+/* ── Table cell variants ─────────────────────── */
+
+.tdMonoSm {
+  composes: tdMono;
+  font-size: 12px;
+}
+
+.tdFeatures {
+  composes: td;
+  font-size: 11px;
+  max-width: 120px;
+}
+
+.modelDesc {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.fontBold {
+  font-weight: 600;
+}
+
+.monoMuted {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-family: var(--g-font-mono);
+}
+
+.vkName {
+  font-weight: 600;
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+}
+
+/* ── Summary / health grids ──────────────────── */
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--g-space-3);
+  margin-bottom: var(--g-space-6);
+}
+
+.healthGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--g-space-4);
+}
+
+/* ── Chart area ──────────────────────────────── */
+
+.chartArea {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 180px;
+  padding: var(--g-space-4) var(--g-space-2);
+  background: var(--color-muted);
+  border-radius: var(--g-radius-md);
+  margin-bottom: var(--g-space-2);
+}
+
+.chartBarError {
+  width: 100%;
+  background: var(--color-danger);
+  border-radius: 2px 2px 0 0;
+  opacity: 0.7;
+}
+
+.chartBarRequest {
+  width: 100%;
+  background: var(--color-primary);
+  opacity: 0.8;
+}
+
+.chartBarRequestTop {
+  composes: chartBarRequest;
+  border-radius: 2px 2px 0 0;
+}
+
+.legendDotPrimary {
+  composes: legendDot;
+  background: var(--color-primary);
+  opacity: 0.8;
+}
+
+.legendDotDanger {
+  composes: legendDot;
+  background: var(--color-danger);
+  opacity: 0.7;
+}
+
+/* ── Status code cards ───────────────────────── */
+
+.statusCodeCard {
+  composes: statCard;
+  min-width: 80px;
+  flex: 0 0 auto;
+}
+
+.statValueSm {
+  composes: statValue;
+  font-size: 18px;
+}
+
+.statLabelMono {
+  composes: statLabel;
+  font-size: 13px;
+  font-family: var(--g-font-mono);
+}
+
+/* ── Model card grid ─────────────────────────── */
+
+.modelCardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.modelCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  padding: var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+  transition: border-color var(--g-transition-fast), box-shadow var(--g-transition-fast);
+}
+
+.modelCard:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.modelCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+}
+
+.modelCardName {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.modelCardModelId {
+  font-size: 11px;
+  font-family: var(--g-font-mono);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.modelCardDesc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.modelCardStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+  padding-top: var(--g-space-2);
+}
+
+.modelCardStat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.modelCardStatLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.modelCardStatValue {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--g-font-mono);
+  color: var(--color-text);
+}
+
+.modelCardFeatures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: var(--g-space-1);
+}
+
+.modelCardFeatureTag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--g-radius-sm);
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.modelCardActions {
+  display: flex;
+  gap: var(--g-space-2);
+  padding-top: var(--g-space-2);
+  border-top: 1px solid var(--color-border);
+  margin-top: auto;
+}
+
+/* ── Dynamic color helpers ───────────────────── */
+
+.colorDanger {
+  color: var(--color-danger);
+}
+
+.colorSuccess {
+  color: var(--color-success);
+}
+
+.colorMuted {
+  color: var(--color-text-muted);
+}
+
+/* ── Credentials tab: expandable row ───────────────────────────────────── */
+
+.thChevron,
+.tdChevron {
+  width: 28px;
+  padding: 0 4px;
+  text-align: center;
+}
+
+.chevronBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--g-radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.chevronBtn:hover {
+  background: var(--color-muted);
+  color: var(--color-text);
+}
+
+.chevronBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.expandedPanelRow {
+  background: var(--color-bg-subtle);
+}
+
+.expandedPanelCell {
+  padding: var(--g-space-4) var(--g-space-4) var(--g-space-4) calc(28px + var(--g-space-3));
+  border-bottom: 1px solid var(--color-border);
+}
+
+.expandedKvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--g-space-3) var(--g-space-5);
+}
+
+.expandedKv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.expandedKvLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.expandedKvValue {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+.expandedKvValueMono {
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-mono);
+  color: var(--color-text);
+}
+
+.expandedFooter {
+  margin-top: var(--g-space-3);
+  text-align: right;
+}
+
+.viewFullLink {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.viewFullLink:hover {
+  text-decoration: underline;
+}

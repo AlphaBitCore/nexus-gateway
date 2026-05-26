@@ -1,0 +1,105 @@
+# Nexus Control Plane — production config template.
+# Every field in internal/config/config.go.Config appears here.
+# Env var overrides (applied after YAML): CONTROL_PLANE_PORT,
+# DATABASE_URL, REDIS_* (see packages/shared/storage/redisfactory for
+# the full universal Redis env contract), LOG_LEVEL, COMPLIANCE_PROXY_URL,
+# AI_GATEWAY_URL, NEXUS_HUB_URL, CREDENTIAL_ENCRYPTION_KEY,
+# CREDENTIAL_ENCRYPTION_PASSPHRASE, CREDENTIAL_ENCRYPTION_SALT,
+# CREDENTIAL_KEY_MAP, CONTROL_PLANE_CRYPTO_PRODUCTION,
+# INTERNAL_SERVICE_TOKEN, AGENT_CA_DIR, COMPLIANCE_PROXY_RUNTIME_URL,
+# COMPLIANCE_PROXY_API_TOKEN, OTEL_ENDPOINT, OTEL_SERVICE_NAME,
+# SCHEDULER_ENABLED, RETENTION_*, MQ_DRIVER, NATS_URL,
+# AUTH_SERVER_ISSUER, AUTH_SERVER_KEYSTORE_DIR.
+
+server:
+  port: 3001
+  shutdownTimeout: "10s"
+
+database:
+  url: ""
+  maxConns: 25
+  minConns: 5
+  maxConnLifetime: "300s"
+
+redis:
+  # Universal Redis configuration. Empty addrs disables Redis — CP falls
+  # back to in-memory sessions + IAM cache. See packages/shared/storage/
+  # redisfactory + docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: []
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+log:
+  level: "info"
+  format: "json"
+
+# Back-end-for-frontend: URLs the CP proxies admin calls to.
+bff:
+  complianceProxyUrl: "http://127.0.0.1:3040"
+  aiGatewayUrl: "http://127.0.0.1:3050"
+  complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
+  complianceProxyApiToken: ""
+
+# Hub registration (thingclient). Symmetric with ai-gateway /
+# compliance-proxy. Env override: NEXUS_HUB_URL.
+registry:
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+auth:
+  # Internal service token used by thingclient (WebSocket to Hub)
+  # and hubclient (HTTP to Hub). Must match Hub auth.internalServiceToken.
+  internalServiceToken: ""
+
+crypto:
+  # Either encryptionKey (64-hex) or encryptionPassphrase + encryptionSalt
+  # must be set. credentialKeyMap overrides the single-key path when set.
+  encryptionKey: ""
+  encryptionPassphrase: ""
+  encryptionSalt: ""
+  credentialKeyMap: ""
+  production: true
+
+retention:
+  auditLogDays: 90
+  adminAuditLogDays: 365
+  metricRollupDays: 365
+  agentAuditDays: 90
+
+agent:
+  caDir: ".agent-ca"
+
+otel:
+  endpoint: ""
+  serviceName: "nexus-control-plane"
+
+scheduler:
+  enabled: true
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"

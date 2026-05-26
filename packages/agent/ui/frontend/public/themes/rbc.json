@@ -1,0 +1,132 @@
+{
+  "id": "rbc",
+  "displayName": "RBC AI Gateway",
+  "description": "RBC Royal Bank branded theme — royal blue, gold accent, dark navy sidebar, conservative financial aesthetic",
+
+  "brand": {
+    "productName": "RBC AI Gateway",
+    "tagline": "Royal Bank of Canada — Enterprise AI Traffic Governance"
+  },
+
+  "typography": {
+    "fontUrl": "https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Open+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap",
+    "fontSans": "'Noto Sans', 'Open Sans', system-ui, -apple-system, sans-serif",
+    "fontDisplay": "'Noto Sans', 'Open Sans', system-ui, -apple-system, sans-serif",
+    "fontMono": "'JetBrains Mono', 'SF Mono', monospace"
+  },
+
+  "layer1": {
+    "radii": {
+      "sm": "4px",
+      "md": "6px",
+      "lg": "8px",
+      "xl": "10px"
+    }
+  },
+
+  "lightTokens": {
+    "color-primary": "#003DA5",
+    "color-primary-foreground": "#ffffff",
+    "color-primary-hover": "#002D7A",
+
+    "color-success": "#008A00",
+    "color-success-light": "#E6F5E6",
+    "color-success-dark": "#006B00",
+    "color-warning": "#B85C00",
+    "color-warning-light": "#FFF3E0",
+    "color-warning-dark": "#8C4600",
+    "color-danger": "#CC0000",
+    "color-danger-light": "#FFECEC",
+    "color-danger-dark": "#990000",
+    "color-info": "#003DA5",
+    "color-info-light": "#E8F0FE",
+
+    "color-bg": "#F5F7FA",
+    "color-surface": "#ffffff",
+    "color-surface-hover": "#F0F3F7",
+    "color-surface-raised": "#ffffff",
+    "color-border": "#D1D5DB",
+    "color-border-light": "#E8ECF0",
+    "color-border-strong": "#B0B8C4",
+    "color-divider": "#D1D5DB",
+    "color-muted": "#F0F3F7",
+    "color-muted-foreground": "#5C5C5C",
+    "color-accent": "#FFF8E0",
+    "color-accent-foreground": "#8B6914",
+    "color-ring": "#003DA5",
+    "color-title-gradient": "linear-gradient(90deg, #003DA5 0%, #FFD100 100%)",
+    "page-shell-glow": "linear-gradient(90deg, #003DA5 0%, #FFD100 100%)",
+    "page-shell-glow-opacity": "0.12",
+
+    "color-text": "#1A1A1A",
+    "color-text-secondary": "#5C5C5C",
+    "color-text-muted": "#808080",
+    "color-text-inverse": "#ffffff",
+
+    "sidebar-bg": "#00205B",
+    "sidebar-surface": "#002870",
+    "sidebar-text": "#99B3D6",
+    "sidebar-text-active": "#ffffff",
+    "sidebar-hover": "#002870",
+    "sidebar-active-bg": "rgba(255, 209, 0, 0.12)",
+    "sidebar-active-border": "#FFD100",
+    "sidebar-accent": "#002870",
+    "sidebar-accent-foreground": "#ffffff",
+    "sidebar-border": "#003080",
+    "sidebar-section-label": "#C4D6EC",
+    "sidebar-shadow": "1px 0 0 rgba(0, 0, 0, 0.15)"
+  },
+
+  "darkTokens": {
+    "color-primary": "#5B9BF5",
+    "color-primary-foreground": "#00205B",
+    "color-primary-hover": "#7DB3FF",
+
+    "color-success": "#4ADE80",
+    "color-success-light": "rgba(0, 138, 0, 0.12)",
+    "color-success-dark": "#008A00",
+    "color-warning": "#FBBF24",
+    "color-warning-light": "rgba(184, 92, 0, 0.12)",
+    "color-warning-dark": "#B85C00",
+    "color-danger": "#F87171",
+    "color-danger-light": "rgba(204, 0, 0, 0.12)",
+    "color-danger-dark": "#CC0000",
+    "color-info": "#5B9BF5",
+    "color-info-light": "rgba(0, 61, 165, 0.12)",
+
+    "color-bg": "#0A0F1A",
+    "color-surface": "#111827",
+    "color-surface-hover": "#1F2937",
+    "color-surface-raised": "#1F2937",
+    "color-border": "#1F2937",
+    "color-border-light": "#111827",
+    "color-border-strong": "#374151",
+    "color-divider": "#1F2937",
+    "color-muted": "#1F2937",
+    "color-muted-foreground": "#9CA3AF",
+    "color-accent": "rgba(255, 209, 0, 0.1)",
+    "color-accent-foreground": "#FFD100",
+    "color-ring": "#5B9BF5",
+    "color-title-gradient": "linear-gradient(90deg, #5B9BF5 0%, #FFD100 100%)",
+    "page-shell-glow": "linear-gradient(90deg, #5B9BF5 0%, #FFD100 100%)",
+    "page-shell-glow-opacity": "0.1",
+
+    "color-text": "#F3F4F6",
+    "color-text-secondary": "#9CA3AF",
+    "color-text-muted": "#6B7280",
+    "color-text-inverse": "#0A0F1A",
+
+    "sidebar-bg": "#050A14",
+    "sidebar-surface": "#0A1020",
+    "sidebar-text": "#6B7280",
+    "sidebar-text-active": "#F3F4F6",
+    "sidebar-hover": "#0A1020",
+    "sidebar-active-bg": "rgba(255, 209, 0, 0.08)",
+    "sidebar-active-border": "#FFD100",
+    "sidebar-accent": "#0A1020",
+    "sidebar-accent-foreground": "#F3F4F6",
+    "sidebar-border": "#1F2937",
+    "sidebar-section-label": "#D1D5DB",
+    "sidebar-shadow": "1px 0 0 rgba(0, 0, 0, 0.3)"
+  }
+}

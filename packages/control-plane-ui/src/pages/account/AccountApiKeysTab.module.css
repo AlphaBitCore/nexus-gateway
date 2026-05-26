@@ -1,0 +1,7 @@
+/* ── AccountApiKeysTab ───────────────────────────────────────────────────── */
+
+.descriptionText {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  margin: 0;
+}

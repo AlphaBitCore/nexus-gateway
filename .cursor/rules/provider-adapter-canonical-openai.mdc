@@ -1,0 +1,119 @@
+---
+description: Canonical = OpenAI shape; each non-OpenAI adapter owns its bidirectional translation (6 binding rules from provider-adapter-architecture.md §3a)
+globs:
+  - packages/ai-gateway/internal/providers/**
+  - packages/shared/traffic/adapters/**
+  - packages/ai-gateway/internal/wireformat/**
+  - packages/ai-gateway/internal/execution/canonicalbridge/**
+  - packages/ai-gateway/internal/providers/canonicalext/**
+---
+
+# Provider adapter: canonical = OpenAI shape (binding)
+
+You are editing a provider adapter or its codec. The 6 binding rules below come from `docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md` §3a. **Apply to every adapter PR.**
+
+**Read `docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md` §3a BEFORE editing.**
+
+## Rule 1 — Canonical format is OpenAI chat-completions shape
+
+All internal flow (router input, cache key, hook input, audit envelope, request lineage) sees the **canonical form**, which is OpenAI's shape:
+
+```
+model · messages[] · max_tokens / max_completion_tokens · temperature · top_p · top_k ·
+stream · stop · response_format · tools[] · tool_choice · parallel_tool_calls ·
+metadata · stream_options
+```
+
+**New canonical fields require an architecture-doc PR** — adapters do not add canonical fields unilaterally.
+
+## Rule 2 — Each non-OpenAI adapter owns its full bidirectional translation
+
+When you add an Anthropic / Gemini / Bedrock / Cohere / Replicate codec:
+
+- `SchemaCodec.EncodeRequest` does **canonical → wire**.
+- `SchemaCodec.DecodeResponse` does **wire → canonical**.
+
+The **OpenAI side stays pure** (identity codec) — it never carries case-statements for "this came from Anthropic so do X". OpenAI shape is the bus; every other shape adapter wires itself into the bus.
+
+## Rule 3 — Per-model wire quirks belong in their own adapter
+
+HTTP-400-deprecations, parameter renames, mandatory clamping — they live in the adapter that talks to that wire. **Not** in cross-adapter case-statements in `spec_adapter.go`'s shared helpers.
+
+| Quirk | Lives in |
+|---|---|
+| claude-opus-4-7 deprecates temperature/top_p/top_k | `specs/anthropic/codec/codec.go::anthropicModelRejectsSamplingParams` |
+| claude-4.x rejects temperature + top_p together | `specs/anthropic/codec/codec.go::anthropicModelRejectsTempTopPTogether` |
+| gpt-5.x / o-series rename max_tokens → max_completion_tokens + strip temp/top_p | `specs/openai` (helper currently in `providers/dispatch/spec_adapter.go` for historical reasons — slated to move) |
+| kimi-k2.5/k2.6 require temperature=1 | Moonshot adapter (helper currently in `providers/dispatch/spec_adapter.go` for the same reason) |
+
+When a new family ships an HTTP-400-deprecation, find the adapter that owns its wire and add the prefix-rule there. Cross-adapter shared helpers create the wrong dependency direction.
+
+## Rule 4 — `nexus.ext.<provider>.<key>` is the canonical extension namespace
+
+Fields with no clean OpenAI mapping (Anthropic's `thinking`, Gemini's `thinkingConfig`, Anthropic's `cache_creation_input_tokens`, Bedrock's `anthropic_version`) ride along inside `nexus.ext.<provider>.<key>` on the canonical body.
+
+Package: `providers/canonicalext/`. Use:
+
+- `canonicalext.Get`
+- `canonicalext.Set`
+- `canonicalext.ScanUnsupported`
+- `canonicalext.WarnOnce` — adapters that observe an unsupported canonical field emit a one-shot WARN so operators see drift between the canonical surface and the codec.
+
+## Rule 5 — `SchemaCodec.EncodeRequest` contract: input is canonical, output is target wire
+
+Callers that have an **ingress-format body** (Anthropic `/v1/messages`, Gemini `:generateContent`) MUST canonicalize first via:
+
+```go
+canonical, err := canonicalbridge.IngressChatToCanonical(ingress, body, target)
+```
+
+…before invoking `adapter.PrepareBody` / `SchemaCodec.EncodeRequest`. Skipping canonicalization makes the OpenAI identity codec forward the ingress body verbatim, and the upstream returns 400 (or worse, parses partially and produces gibberish).
+
+`EncodeRequest` accepts canonical-or-codec-empty (passthrough); it does NOT accept "any old shape and we'll figure it out".
+
+## Rule 6 — Both streaming and non-streaming are in scope
+
+A codec rule that strips `temperature` from a non-streaming request **must also strip it from the streaming variant** — the upstream rejects both. The streaming session's pre-dispatch body construction goes through the same `PrepareBody` path, so this typically falls out for free.
+
+The gap usually appears on **error-frame construction** (response side) when the gateway hand-builds an SSE error and forgets the ingress format. The §9.5 SSE-error rule in the architecture doc covers this.
+
+## Rule 7 — Add empirical evidence to every prefix-list
+
+Every "model X rejects param Y" rule MUST be backed by an **observed 400** (logged trace_id or direct test call). Speculative rules cause silent flattening of caller intent — strip a param that the model actually accepts, and you've degraded behaviour without surfacing why.
+
+The comment above each prefix-list switch documents the observation (date + error message). Canonical example: `anthropicModelRejectsSamplingParams` in `specs/anthropic/codec/codec.go` carries the observed-400 evidence in its comment block.
+
+```go
+// Date: 2026-05-09. Observed via trace_id=abc... on claude-opus-4-7:
+//   { "type":"invalid_request_error", "message":"temperature is not allowed for this model" }
+// Verified again 2026-05-12 via direct curl. Confirmed: deprecation, not a transient.
+var anthropicModelRejectsSamplingParams = []string{
+    "claude-opus-4-7",
+    ...
+}
+```
+
+Without evidence:
+- Reviewers can't tell if the rule is correct or speculative.
+- Future contributors don't know when the upstream's deprecation could be lifted.
+- Drift goes unnoticed.
+
+## Pre-commit checks
+
+When you touch an adapter codec:
+
+```bash
+grep -nE 'spec_adapter\.go.*case' packages/ai-gateway/internal/providers/   # cross-adapter case-statements
+grep -nE 'nexus\.ext\.[a-z]+\.' packages/                                    # extension-namespace usage
+grep -nE 'IngressChatToCanonical' packages/                                  # canonicalize-before-encode
+```
+
+## Reference checklist for new adapter PRs
+
+Use `.claude/skills/add-provider-adapter/` for the full procedure.
+
+## Audit an existing adapter
+
+Use `.claude/skills/adapter-conformance-check/` to verify an existing codec against Rules 1-7. Catches per-adapter logic that leaked into the generic dispatcher, missing canonicalize-before-dispatch, error envelopes that bypass the helper, prefix-lists without empirical evidence, and missing `PassthroughRewrite` wiring.
+
+Skipping any of these 7 rules requires **explicit user approval** in chat.

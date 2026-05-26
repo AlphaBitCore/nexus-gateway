@@ -1,0 +1,119 @@
+.wrapper {
+  position: relative;
+}
+
+.chipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  align-items: center;
+  padding: var(--g-space-2);
+  min-height: 44px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  cursor: text;
+  transition: border-color 120ms ease;
+}
+
+.chipList:focus-within {
+  border-color: var(--color-primary);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  padding: 2px var(--g-space-2);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--g-font-mono);
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.chipInvalid {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  padding: 2px var(--g-space-2);
+  background: var(--color-danger-light);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--g-font-mono);
+  line-height: 1.4;
+}
+
+.chipText {
+  white-space: nowrap;
+}
+
+.chipRemove {
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  margin-left: 2px;
+  cursor: pointer;
+  font-size: 14px;
+  color: inherit;
+  opacity: 0.55;
+  line-height: 1;
+}
+.chipRemove:hover {
+  opacity: 1;
+}
+
+.field {
+  flex: 1;
+  min-width: 180px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  font-family: var(--g-font-mono);
+  padding: 4px 0;
+  color: var(--color-text);
+}
+
+.suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  box-shadow: 0 4px 16px var(--shadow-xs);
+  max-height: 260px;
+  overflow: auto;
+  z-index: 20;
+}
+
+.suggestion,
+.suggestionActive {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--g-font-mono);
+  color: var(--color-text);
+}
+
+.suggestionActive {
+  background: var(--color-bg-subtle);
+}
+
+.suggestion:hover {
+  background: var(--color-bg-subtle);
+}

@@ -1,0 +1,87 @@
+/* ── SettingsCacheTab ─────────────────────────────────────────────────────── */
+
+.subtitle {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.empty {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Shared table base: full width, fixed layout so column widths are
+   controlled by the first <colgroup>/<th> rather than the longest cell.
+   This is what was missing — without `border-collapse: collapse` and the
+   explicit alignments, <th>s defaulted to center while <td>s defaulted to
+   left, producing the misaligned header seen on prod. */
+.rulesTable,
+.overridesTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.rulesTable thead th,
+.overridesTable thead th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.rulesTable tbody td,
+.overridesTable tbody td {
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: top;
+}
+
+/* Section heading rows inside the rules table — one per adapter family. */
+.rulesTable tbody tr.adapterGroup td {
+  background: var(--color-bg-secondary);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ruleDescription {
+  margin-top: 4px;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  max-width: 520px;
+}
+
+/* Per-key diff list inside the Overrides table. */
+.diffList {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.diffInherited {
+  color: var(--color-text-secondary);
+  text-decoration: line-through;
+}
+
+/* Filter row above the rules table. */
+.rulesFilterBar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rulesFilterInput {
+  flex: 1;
+  min-width: 240px;
+}
+
+/* Constrain the rules table columns so the toggle column never balloons. */
+.colRuleId { width: auto; }
+.colKeySafe { width: 120px; }
+.colStatus { width: 100px; }

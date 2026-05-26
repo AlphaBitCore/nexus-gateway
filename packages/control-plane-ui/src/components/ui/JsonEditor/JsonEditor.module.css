@@ -1,0 +1,21 @@
+.textarea {
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+  resize: vertical;
+}
+
+.formatButton {
+  margin-top: var(--g-space-1);
+  padding: 2px 8px;
+  font-size: 13px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background var(--g-transition-fast);
+}
+
+.formatButton:hover {
+  background: var(--color-surface-hover);
+}

@@ -1,0 +1,64 @@
+---
+description: Thing-model IoT terminology is internal-only — user-facing surfaces use product terms (node / config sync / out of sync / target config / applied config)
+globs:
+  - packages/control-plane-ui/**
+  - packages/agent/ui/**
+  - packages/ui-shared/src/i18n/**
+  - packages/control-plane/internal/handler/**
+  - packages/nexus-hub/internal/handler/**
+  - docs/users/product/**
+  - docs/users/features/**
+---
+
+# IoT terminology boundary (binding)
+
+The Thing Model (`docs/developers/architecture/cross-cutting/foundation/thing-model.md`) is the gateway's internal architecture kernel for service / device coordination. Its vocabulary — "Thing", "Shadow", "desired", "reported", "drift" — is internal-only: code, DB column names, developer architecture docs.
+
+**User-facing surfaces** (admin API responses, UI strings, product docs, error messages, support runbooks) **MUST** use product terms instead.
+
+## Required mapping
+
+| Internal (kernel) | User-facing (product) | Notes |
+|---|---|---|
+| Thing | node / service / device | Pick the closest concrete noun for the context |
+| Shadow | config sync | Or "configuration" when ambient |
+| desired (state) | target config | What the admin set |
+| reported (state) | applied config | What the device is actually running |
+| drift | out of sync | "Drift" is too ML-y for product copy |
+| enrollment token | provisioning token | "Enrollment" is OK in admin UI; never in end-user docs |
+
+## Where each layer applies
+
+- **Internal-only (Thing/Shadow/desired/reported/drift)**
+  - Go code identifiers + comments under `packages/**`
+  - DB column names + Prisma schema
+  - `docs/developers/architecture/**` architecture documentation
+  - Slog field names (`shadowDesired`, `shadowReported`, etc.)
+  - MQ subject names + audit event types
+
+- **Product-facing (node / config sync / target / applied / out of sync)**
+  - i18n strings (`packages/{control-plane-ui,agent/ui,ui-shared}/src/i18n/locales/**`)
+  - JSX user-visible text
+  - Admin API response field names + error messages
+  - Documentation under `docs/users/product/**`, `docs/users/features/**`, `docs/operators/ops/runbooks/**`
+  - Commit-and-deploy notification copy
+
+## Why this boundary exists
+
+The Thing Model is borrowed wholesale from IoT vendor patterns (AWS IoT Core, Azure IoT Hub) to keep internal architecture compact and reusable. End-users — admins running Nexus, agent end-users on their laptops — don't share that vocabulary. Surfacing it leaks an implementation detail and creates a learnable-vocabulary gap that competitors don't have.
+
+The boundary is a soft-ish rule but the cost of a leak is real:
+- A leaked "shadow" in error message = support escalations.
+- A leaked "drift" in admin UI = users searching docs for it.
+- A leaked "thing" in product copy = brand inconsistency.
+
+Source: `docs/developers/architecture/cross-cutting/foundation/thing-model.md` §10 — Section 10 carries the canonical mapping table.
+
+## Enforcement
+
+No CI lint yet. Catch in code review by:
+- Grepping the i18n locale files for the forbidden tokens (`thing`, `shadow`, `drift`, `desired_state`).
+- Reading admin API handler JSON response shapes before merge.
+- Watching agent UI screenshots for any leaked term.
+
+Skipping this rule (e.g. shipping a UI string with "shadow" in it) requires **explicit user approval** in chat.

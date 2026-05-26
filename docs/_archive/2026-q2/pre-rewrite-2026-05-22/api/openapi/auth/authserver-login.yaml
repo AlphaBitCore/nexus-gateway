@@ -1,0 +1,200 @@
+openapi: "3.1.0"
+info:
+  title: Nexus Authserver — Interactive Login
+  description: |
+    JSON endpoints consumed by the Control Plane SPA to render the
+    method-picker login page. Both endpoints live on the same authserver
+    host that exposes `/oauth/authorize` and `/oauth/token`; they replace
+    the legacy server-rendered `/login` HTML flow.
+
+    Flow overview:
+      1. Browser hits `/oauth/authorize?...` — authserver mints an opaque
+         `authctx`, persists pending authorize state, and 302s to
+         `/login?authctx=<id>` (a path owned by the SPA).
+      2. SPA calls `GET /authserver/idps?authctx=<id>` to enumerate enabled
+         IdPs for the active authorize request.
+      3. For an external IdP the SPA navigates the browser to
+         `/idp/{id}/start?authctx=<id>` (handled by the IdP adapter).
+      4. For the local IdP the SPA POSTs `/authserver/password` with
+         `{ authctx, email, password }` and navigates to the returned
+         `redirectUri` on success.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane (hosts authserver routes)
+
+tags:
+  - name: Interactive Login
+    description: SPA-facing JSON APIs for the hosted login flow
+
+paths:
+  /authserver/idps:
+    get:
+      tags: [Interactive Login]
+      operationId: authserverListIdps
+      summary: List enabled identity providers for the active authorize request
+      description: |
+        Returns IdPs that can complete the authorize request bound to the
+        supplied `authctx`. The SPA renders one button per provider.
+        `authctx` must match a live pending authorize entry; stale or
+        unknown values return `authctx_expired`.
+      parameters:
+        - in: query
+          name: authctx
+          required: true
+          schema:
+            type: string
+          description: Opaque handle minted by `/oauth/authorize`.
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdpList"
+              example:
+                providers:
+                  - id: "00000000-0000-0000-0000-000000000001"
+                    type: local
+                    name: Nexus Local
+                  - id: "okta-prod"
+                    type: oidc
+                    name: Okta
+        "400":
+          description: authctx missing or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthserverError"
+              example:
+                error: authctx_expired
+        "500":
+          description: Backend failure (DB unreachable, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthserverError"
+
+  /authserver/password:
+    post:
+      tags: [Interactive Login]
+      operationId: authserverPasswordSubmit
+      summary: Submit username + password against the local IdP
+      description: |
+        Authenticates against the local IdP, mints an authorization code on
+        success, and returns the fully-formed redirect URI the SPA should
+        navigate to (`<redirect_uri>?code=...&state=...`). On any failure
+        the authserver returns a typed error code — the SPA renders the
+        matching inline message but leaves the authctx untouched so the
+        user can retry in the same page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordSubmitRequest"
+            example:
+              authctx: "cFv4...opaque"
+              email: admin@nexus.ai
+              password: "••••••"
+      responses:
+        "200":
+          description: Credentials accepted — navigate to `redirectUri`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordSubmitResponse"
+              example:
+                redirectUri: "http://localhost:3000/auth/callback?code=abc&state=xyz"
+        "400":
+          description: authctx unknown or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthserverError"
+              example:
+                error: authctx_expired
+        "401":
+          description: Credential failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthserverError"
+              examples:
+                invalid:
+                  value:
+                    error: invalid_credentials
+                disabled:
+                  value:
+                    error: user_disabled
+        "429":
+          description: Per-IP or per-email rate limit tripped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthserverError"
+              example:
+                error: rate_limited
+
+components:
+  schemas:
+    IdpList:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdpEntry"
+
+    IdpEntry:
+      type: object
+      required: [id, type, name]
+      properties:
+        id:
+          type: string
+          description: IdentityProvider row id (UUID for local, adapter-specific for external)
+        type:
+          type: string
+          enum: [local, oidc, saml]
+        name:
+          type: string
+          description: Human-readable label shown on the SPA button
+
+    PasswordSubmitRequest:
+      type: object
+      required: [authctx, email, password]
+      properties:
+        authctx:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    PasswordSubmitResponse:
+      type: object
+      required: [redirectUri]
+      properties:
+        redirectUri:
+          type: string
+          format: uri
+          description: "Absolute redirect URI registered for the OAuth client, with `code` and `state` appended."
+
+    AuthserverError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_credentials
+            - user_disabled
+            - authctx_expired
+            - rate_limited
+            - internal_error

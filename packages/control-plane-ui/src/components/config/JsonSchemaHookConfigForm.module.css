@@ -1,0 +1,72 @@
+.textarea {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  resize: vertical;
+  min-height: 72px;
+}
+
+.monoTextarea {
+  composes: textarea;
+  font-family: var(--g-font-mono);
+  min-height: 100px;
+}
+
+.inputRow {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+  margin-bottom: var(--g-space-2);
+}
+
+.kvInput {
+  composes: textarea;
+  min-height: 36px;
+  flex: 1;
+}
+
+.smallBtn {
+  padding: 4px 12px;
+  font-size: var(--g-font-size-xs);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  cursor: pointer;
+}
+
+.removeBtn {
+  composes: smallBtn;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.helpText {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--g-space-1);
+}
+
+.onMatchSection {
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3) var(--g-space-4);
+  margin-top: var(--g-space-3);
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+}
+
+.onMatchLegend {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  padding: 0 var(--g-space-2);
+  color: var(--color-text);
+}
+
+.onMatchHelp {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin: 0 0 var(--g-space-3) 0;
+  line-height: 1.5;
+}

@@ -1,0 +1,48 @@
+.sectionTitle {
+  margin: 0 0 var(--g-space-3);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--g-space-4);
+  row-gap: var(--g-space-2);
+  margin: 0;
+}
+
+.metaGrid dt {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.metaGrid dd {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-4);
+}
+
+.switchRow label {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.inlineCode {
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+  background: var(--color-surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.footerActions {
+  justify-content: flex-end;
+}

@@ -1,0 +1,187 @@
+name: Go CI
+
+on:
+  push:
+    branches: [main, worktree-chore-pr-review]
+    paths:
+      - 'packages/compliance-proxy/**'
+      - 'packages/agent/**'
+      - 'packages/ai-gateway/**'
+      - 'packages/control-plane/**'
+      - 'packages/shared/**'
+      - 'tools/db-migrate/schema.prisma'
+      - 'go.work'
+      - '.github/workflows/go-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/compliance-proxy/**'
+      - 'packages/agent/**'
+      - 'packages/ai-gateway/**'
+      - 'packages/control-plane/**'
+      - 'packages/shared/**'
+      - 'tools/db-migrate/schema.prisma'
+      - 'go.work'
+      - '.github/workflows/go-ci.yml'
+
+jobs:
+  detect-modules:
+    name: Detect affected Go modules
+    runs-on: ubuntu-latest
+    outputs:
+      # Test scope is broad: a shared/ or go.work change touches every
+      # module's API surface, so all modules are tested.
+      modules: ${{ steps.detect.outputs.modules }}
+      # Lint scope is narrow: only modules whose own packages/<m>/**
+      # actually changed. Linting unchanged modules surfaces base
+      # violations under only-new-issues=true (action's diff baseline
+      # can drift across merge commits), so we cap lint to the diff.
+      lint-modules: ${{ steps.detect.outputs.lint-modules }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE_SHA"
+          else
+            BASE="HEAD~1"
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE" HEAD 2>/dev/null || echo "")
+          ALL_MODULES='["shared","compliance-proxy","agent","ai-gateway","control-plane"]'
+
+          # Narrow set: only modules whose own packages/<m>/** changed.
+          LINT_MODULES="[]"
+          for m in compliance-proxy agent ai-gateway control-plane shared; do
+            if echo "$CHANGED" | grep -q "^packages/$m/"; then
+              LINT_MODULES=$(echo "$LINT_MODULES" | jq -c ". + [\"$m\"]")
+            fi
+          done
+          echo "lint-modules=$LINT_MODULES" >> "$GITHUB_OUTPUT"
+
+          # Test scope: broad. If shared or go.work changed, run all modules.
+          if echo "$CHANGED" | grep -qE '^(packages/shared/|go\.work$|\.github/workflows/go-ci\.yml$)'; then
+            echo "modules=$ALL_MODULES" >> "$GITHUB_OUTPUT"
+            echo "Shared-go or workspace changed — running test for all modules"
+            exit 0
+          fi
+
+          # Otherwise, test only the affected modules (same set as lint).
+          if [ "$LINT_MODULES" = "[]" ]; then
+            echo "No Go modules affected"
+          fi
+          echo "modules=$LINT_MODULES" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test — ${{ matrix.module }}
+    needs: detect-modules
+    if: needs.detect-modules.outputs.modules != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.detect-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache-dependency-path: |
+            packages/compliance-proxy/go.sum
+            packages/agent/go.sum
+            packages/ai-gateway/go.sum
+            packages/control-plane/go.sum
+            packages/shared/go.sum
+
+      - name: Install SQLCipher (agent only)
+        if: matrix.module == 'agent'
+        run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev
+
+      - name: go vet
+        run: cd packages/${{ matrix.module }} && go vet ./...
+
+      - name: go build (workspace mode)
+        run: cd packages/${{ matrix.module }} && go build ./...
+
+      - name: go test (workspace mode)
+        run: cd packages/${{ matrix.module }} && go test -race -count=1 -timeout 5m ./...
+
+      - name: go build (standalone — GOWORK=off)
+        if: matrix.module == 'shared'
+        env:
+          GOWORK: 'off'
+        run: cd packages/${{ matrix.module }} && go build ./...
+
+  lint:
+    name: Lint — ${{ matrix.module }}
+    needs: detect-modules
+    if: needs.detect-modules.outputs.lint-modules != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.detect-modules.outputs.lint-modules) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache-dependency-path: |
+            packages/compliance-proxy/go.sum
+            packages/agent/go.sum
+            packages/ai-gateway/go.sum
+            packages/control-plane/go.sum
+            packages/shared/go.sum
+
+      - name: Install SQLCipher (agent only)
+        if: matrix.module == 'agent'
+        run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          working-directory: packages/${{ matrix.module }}
+          # Base violations cleared in #82 (pass 1: 170→44) + this
+          # branch (44→0). only-new-issues stays off so the gate is
+          # "no violations period" rather than "no NEW violations."
+          # Flip back to true only if a future toolchain bump exposes
+          # a fresh batch too big to absorb in a single PR.
+          only-new-issues: false
+
+  workspace-verify:
+    name: Workspace integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      - name: go work sync (check for drift)
+        run: |
+          go work sync
+          if ! git diff --exit-code go.work; then
+            echo "::error::go.work is out of sync — run 'go work sync' locally and commit"
+            exit 1
+          fi
+
+      - name: Check for non-sibling replace directives in go.mod files
+        run: |
+          # CLAUDE.md "shared/ replace directives sibling-only contract":
+          # replace lines pointing at a relative sibling path (../<name>)
+          # are required so GOWORK=off builds resolve the same workspace
+          # tree. Anything else (remote modules, absolute paths) is
+          # forbidden — those silently pull stale GitHub snapshots.
+          bad=$(grep -rE '^replace' packages/*/go.mod 2>/dev/null | grep -vE '=> \.\./[a-zA-Z0-9_-]+( |$)' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Non-sibling replace directive in go.mod (only ../<sibling> allowed):"
+            echo "$bad"
+            exit 1
+          fi
+

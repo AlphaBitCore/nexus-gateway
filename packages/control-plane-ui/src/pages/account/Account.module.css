@@ -1,0 +1,199 @@
+/* ── My Account page styles ──────────────────────────────────────────── */
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 4px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-4);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+.editForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-4);
+  max-width: 28rem;
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.formLabel {
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.formInput {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.formInput:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.passwordPanel {
+  margin-top: var(--g-space-6);
+  padding: var(--g-space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  max-width: 28rem;
+}
+
+.passwordTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: 0 0 var(--g-space-3) 0;
+}
+
+.roleBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  border-radius: var(--g-radius-md);
+  background: var(--color-muted);
+  color: var(--color-text-secondary);
+}
+
+.errorText {
+  color: var(--color-danger);
+  font-size: var(--g-font-size-sm);
+}
+
+.successText {
+  color: var(--color-success);
+  font-size: var(--g-font-size-sm);
+}
+
+/* ── API Keys table ─────────────────────────────────────────────────── */
+
+.keysHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-4);
+}
+
+.tableOverflow {
+  overflow-x: auto;
+}
+
+.tableStyle {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.th {
+  text-align: left;
+  padding: var(--g-space-2) var(--g-space-3);
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.td {
+  padding: var(--g-space-2) var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tdMono {
+  composes: td;
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+}
+
+.emptyText {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+/* ── Activity tab ───────────────────────────────────────────────────── */
+
+.filterSelect {
+  height: 36px;
+  min-width: 148px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.dateInput {
+  flex: 1 1 200px;
+  min-width: 200px;
+  max-width: 260px;
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.intro {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin-top: 0;
+  margin-bottom: var(--g-space-4);
+  line-height: 1.5;
+}
+
+.mutedText {
+  color: var(--color-text-muted);
+}
+
+.retryBtn {
+  margin-left: 8px;
+}

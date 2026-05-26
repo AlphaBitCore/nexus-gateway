@@ -1,0 +1,59 @@
+/* ── Time range chrome ─────────────────────────────────────────── */
+
+.rangeBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+}
+
+.rangeLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.rangeButtons {
+  display: flex;
+  gap: var(--g-space-2);
+  flex-wrap: wrap;
+}
+
+/* ── Section heading ───────────────────────────────────────────── */
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--g-space-3);
+}
+
+/* ── Small-multiples grid ──────────────────────────────────────── */
+
+.smallMultiples {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.cell {
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  padding: var(--g-space-3);
+  background: var(--color-bg-elevated);
+}
+
+.cellTitle {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  margin: 0 0 var(--g-space-2);
+}
+
+/* ── Empty state ───────────────────────────────────────────────── */
+
+.emptyText {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}

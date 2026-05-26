@@ -1,0 +1,313 @@
+openapi: 3.1.0
+info:
+  title: Nexus Rule Packs Admin API — CRUD + Install Management (E29)
+  version: 1.0.0
+  description: |
+    Control Plane admin endpoints for creating, updating, and deleting
+    Rule Packs without YAML import, plus installation lifecycle
+    management (list installs by hook, uninstall, toggle-enabled).
+
+    This spec extends E27 `docs/users/api/openapi/admin/e27-s02-rule-packs.yaml` rather
+    than replacing it. Merge both into `docs/users/api/openapi/gateway-api.yaml`.
+
+    **Admin audit**: every successful mutation on this surface
+    (create, update, delete, install, patch-install, uninstall,
+    upsert-overrides) publishes one `nexus.event.admin-audit` message
+    to MQ so Hub can persist the change to `admin_audit_log`. Failure
+    paths (validation, not-found, conflict, store error) do not emit.
+    See `docs/developers/architecture/cross-cutting/observability/admin-audit-log-coverage.md` for the action/entity
+    naming convention.
+servers:
+  - url: http://localhost:3002
+    description: Local Control Plane instance
+tags:
+  - name: Rule Packs
+paths:
+  /api/admin/rule-packs:
+    post:
+      tags: [Rule Packs]
+      operationId: adminCreateRulePack
+      summary: Create a rule pack without YAML upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PackCreateBody' }
+      responses:
+        '201':
+          description: Pack created successfully.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pack' }
+        '400':
+          description: Validation failed (missing required fields or duplicate rule id).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '409':
+          description: A pack with the same `(name, version)` already exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-packs/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Rule Packs]
+      operationId: adminUpdateRulePack
+      summary: Update pack metadata and rules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PackUpdateBody' }
+      responses:
+        '200':
+          description: Pack updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pack' }
+        '400':
+          description: Validation failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Pack not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Rule Packs]
+      operationId: adminDeleteRulePack
+      summary: Delete a pack (fails if installs remain)
+      responses:
+        '204':
+          description: Pack deleted.
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Pack not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '409':
+          description: Pack still has active installs; uninstall first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/hooks/{hookId}/rule-packs:
+    parameters:
+      - in: path
+        name: hookId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Rule Packs]
+      operationId: adminListInstallsForHook
+      summary: List rule pack installs bound to a hook
+      responses:
+        '200':
+          description: Installs bound to the hook, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Install' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:ReadHooks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Hook not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-pack-installs/{installId}:
+    parameters:
+      - in: path
+        name: installId
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Rule Packs]
+      operationId: adminUpdateInstall
+      summary: Toggle an install's `enabled` flag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: Install updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Install' }
+        '400':
+          description: Missing `enabled` field.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateHooks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Install not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Rule Packs]
+      operationId: adminUninstallRulePack
+      summary: Uninstall a rule pack from its hook
+      responses:
+        '204':
+          description: Install removed.
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateHooks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Install not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+components:
+  schemas:
+    Pack:
+      type: object
+      required: [id, name, version, maintainer, createdAt, rules]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        version: { type: string }
+        maintainer: { type: string }
+        description: { type: string }
+        signature: { type: string }
+        createdAt: { type: string, format: date-time }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/Rule' }
+
+    Rule:
+      type: object
+      required: [ruleId, category, severity, pattern]
+      properties:
+        id: { type: string }
+        packId: { type: string }
+        ruleId: { type: string }
+        category: { type: string, enum: [safety, keyword, pii, custom] }
+        severity: { type: string, enum: [hard, soft, info] }
+        pattern: { type: string }
+        flags: { type: string }
+        description: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+
+    PackCreateBody:
+      type: object
+      required: [name, version, maintainer, rules]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        maintainer: { type: string }
+        description: { type: string }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/Rule' }
+
+    PackUpdateBody:
+      type: object
+      properties:
+        maintainer: { type: string }
+        description: { type: string }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/Rule' }
+
+    Install:
+      type: object
+      required: [id, packId, packName, pinVersion, boundHookId, enabled, installedAt]
+      properties:
+        id: { type: string }
+        packId: { type: string }
+        packName: { type: string }
+        pinVersion: { type: string }
+        boundHookId: { type: string }
+        enabled: { type: boolean }
+        installedAt: { type: string, format: date-time }
+
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          oneOf:
+            - type: string
+            - type: object
+              properties:
+                message: { type: string }
+                type: { type: string }
+                code:
+                  oneOf:
+                    - type: string
+                    - type: integer
+                hint: { type: string }

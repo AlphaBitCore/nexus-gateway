@@ -1,0 +1,301 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway Admin — Cache Pricing & Reasoning (E58-S1)
+  version: "1.0.0"
+  description: |
+    Admin endpoint diffs for the `Model` price fields (two new cache
+    price columns) and for the new reasoning-cost fields surfaced in
+    traffic detail and cost-summary responses. Documents the request
+    body additions, the response shape changes, and the IAM
+    requirements.
+
+    Source of truth: `docs/developers/specs/e58/e58-s1-cache-pricing-and-reasoning.md`.
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane dev server
+
+paths:
+  /api/admin/models:
+    post:
+      summary: Create a Model row (now accepts the four price fields)
+      description: |
+        Creates a new model under a Provider. E58-S1 extends the request
+        body with two new optional Decimal price fields:
+        `cachedInputReadPricePerMillion` and
+        `cachedInputWritePricePerMillion`. Both nullable; nil at runtime
+        falls back to `inputPricePerMillion`.
+
+        The legacy two-price calculation is removed; clients that omit
+        the two new fields get the fallback behavior. Use the helper
+        text in CP-UI for typical ratios per provider family.
+      operationId: createModel
+      tags: [Admin Models]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelCreateRequest'
+            examples:
+              anthropicClaudeSonnet:
+                summary: Anthropic Claude Sonnet 4.6 (full pricing)
+                value:
+                  providerId: "anthropic-direct-uuid"
+                  providerModelId: "claude-sonnet-4-6"
+                  code: "claude-sonnet-4-6"
+                  name: "Claude Sonnet 4.6"
+                  type: "chat"
+                  inputPricePerMillion: 3.00
+                  outputPricePerMillion: 15.00
+                  cachedInputReadPricePerMillion: 0.30
+                  cachedInputWritePricePerMillion: 3.75
+                  maxContextTokens: 1000000
+                  maxOutputTokens: 65536
+                  features: ["vision", "function_calling", "streaming", "thinking"]
+              openaiGpt5:
+                summary: OpenAI gpt-5 (no write surcharge; standard read discount)
+                value:
+                  providerId: "openai-direct-uuid"
+                  providerModelId: "gpt-5"
+                  code: "gpt-5"
+                  name: "GPT-5"
+                  type: "chat"
+                  inputPricePerMillion: 5.00
+                  outputPricePerMillion: 25.00
+                  cachedInputReadPricePerMillion: 2.50
+                  cachedInputWritePricePerMillion: null
+                  maxContextTokens: 1000000
+                  maxOutputTokens: 131072
+              selfHostedVLLM:
+                summary: Self-hosted vLLM (no cache discount, no surcharge)
+                value:
+                  providerId: "internal-vllm-uuid"
+                  providerModelId: "vllm/llama-3-70b"
+                  code: "llama-3-70b-internal"
+                  name: "Llama 3 70B Internal"
+                  type: "chat"
+                  inputPricePerMillion: 0.50
+                  outputPricePerMillion: 1.00
+                  cachedInputReadPricePerMillion: null
+                  cachedInputWritePricePerMillion: null
+      responses:
+        '201':
+          description: Model created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '400':
+          description: Validation error (e.g., negative price, missing required field)
+        '403':
+          description: IAM denied (requires `admin:models.write`)
+
+  /api/admin/models/{id}:
+    patch:
+      summary: Update a Model row (now accepts the four price fields)
+      operationId: updateModel
+      tags: [Admin Models]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPatchRequest'
+            examples:
+              addCachePricing:
+                summary: Add cache pricing to an existing model
+                value:
+                  cachedInputReadPricePerMillion: 0.30
+                  cachedInputWritePricePerMillion: 3.75
+      responses:
+        '200':
+          description: Model updated
+        '403':
+          description: IAM denied (requires `admin:models.write`)
+        '404':
+          description: Model not found
+
+  /api/admin/traffic/{id}:
+    get:
+      summary: Get traffic event detail (now includes reasoning + cost breakdown)
+      operationId: getTrafficDetail
+      tags: [Admin Traffic]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Traffic event with full usage + cost breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficDetail'
+              examples:
+                gpt5ReasoningRequest:
+                  summary: gpt-5 with reasoning_effort=high
+                  value:
+                    id: "evt-uuid"
+                    provider: "openai"
+                    model: "gpt-5"
+                    usage:
+                      promptTokens: 1234
+                      completionTokens: 3567
+                      totalTokens: 4801
+                      cachedTokens: 0
+                      cacheCreationTokens: 0
+                      reasoningTokens: 3000
+                    cost:
+                      totalUsd: 0.09017
+                      uncachedInputUsd: 0.00617
+                      cacheReadUsd: 0.0
+                      cacheWriteUsd: 0.0
+                      outputUsd: 0.08918
+                      reasoningCostUsd: 0.07500
+                    cacheSavings:
+                      gatewaySavingsUsd: 0.0
+                      providerPromptCacheNetSavingsUsd: 0.0
+
+  /api/admin/cost-summary:
+    get:
+      summary: Aggregate cost summary (now includes reasoning total + provider cache rename)
+      operationId: getCostSummary
+      tags: [Admin Analytics]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Aggregate summary across the time range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostSummary'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ModelCreateRequest:
+      type: object
+      required: [providerId, providerModelId, code, name, type]
+      properties:
+        providerId:                       { type: string, format: uuid }
+        providerModelId:                  { type: string, description: "ID sent to upstream" }
+        code:                             { type: string, description: "Customer-facing identifier" }
+        name:                             { type: string }
+        description:                      { type: string, nullable: true }
+        type:                             { type: string, enum: [chat, embedding, image, audio] }
+        features:                         { type: array, items: { type: string } }
+        inputPricePerMillion:             { type: number, nullable: true, minimum: 0 }
+        outputPricePerMillion:            { type: number, nullable: true, minimum: 0 }
+        cachedInputReadPricePerMillion:   { type: number, nullable: true, minimum: 0, description: "NEW (E58-S1) — typical 0.10× input for Anthropic, 0.50× for OpenAI, 0.25× for Gemini; nil = fall back to inputPricePerMillion" }
+        cachedInputWritePricePerMillion:  { type: number, nullable: true, minimum: 0, description: "NEW (E58-S1) — typical 1.25× input for Anthropic ephemeral cache; nil = fall back to inputPricePerMillion" }
+        maxContextTokens:                 { type: integer, nullable: true }
+        maxOutputTokens:                  { type: integer, nullable: true }
+
+    ModelPatchRequest:
+      type: object
+      description: All fields optional; only present fields are updated.
+      properties:
+        name:                             { type: string }
+        description:                      { type: string, nullable: true }
+        inputPricePerMillion:             { type: number, nullable: true }
+        outputPricePerMillion:            { type: number, nullable: true }
+        cachedInputReadPricePerMillion:   { type: number, nullable: true }
+        cachedInputWritePricePerMillion:  { type: number, nullable: true }
+        maxContextTokens:                 { type: integer, nullable: true }
+        maxOutputTokens:                  { type: integer, nullable: true }
+        status:                           { type: string, enum: [active, deprecated, disabled] }
+        enabled:                          { type: boolean }
+
+    Model:
+      type: object
+      description: Catalog row including all four pricing fields after E58-S1.
+      properties:
+        id: { type: string, format: uuid }
+        providerId: { type: string, format: uuid }
+        providerModelId: { type: string }
+        code: { type: string }
+        name: { type: string }
+        type: { type: string }
+        features: { type: array, items: { type: string } }
+        inputPricePerMillion: { type: number, nullable: true }
+        outputPricePerMillion: { type: number, nullable: true }
+        cachedInputReadPricePerMillion: { type: number, nullable: true }
+        cachedInputWritePricePerMillion: { type: number, nullable: true }
+        maxContextTokens: { type: integer, nullable: true }
+        maxOutputTokens: { type: integer, nullable: true }
+        status: { type: string }
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    TrafficUsage:
+      type: object
+      properties:
+        promptTokens: { type: integer, nullable: true }
+        completionTokens: { type: integer, nullable: true, description: "Includes reasoning tokens for billing" }
+        totalTokens: { type: integer, nullable: true }
+        cachedTokens: { type: integer, nullable: true, description: "Cache-read tokens" }
+        cacheCreationTokens: { type: integer, nullable: true, description: "Cache-write tokens (Anthropic only)" }
+        reasoningTokens: { type: integer, nullable: true, description: "NEW (E58-S1) — already in completionTokens; surfaced separately for transparency" }
+
+    TrafficCost:
+      type: object
+      properties:
+        totalUsd: { type: number, nullable: true }
+        uncachedInputUsd: { type: number, nullable: true, description: "NEW (E58-S1)" }
+        cacheReadUsd: { type: number, nullable: true, description: "NEW (E58-S1)" }
+        cacheWriteUsd: { type: number, nullable: true, description: "NEW (E58-S1)" }
+        outputUsd: { type: number, nullable: true, description: "NEW (E58-S1)" }
+        reasoningCostUsd: { type: number, nullable: true, description: "NEW (E58-S1) — derived: reasoningTokens × outputPricePerMillion / 1e6" }
+
+    TrafficCacheSavings:
+      type: object
+      properties:
+        gatewaySavingsUsd:               { type: number, nullable: true }
+        providerPromptCacheNetSavingsUsd: { type: number, nullable: true, description: "RENAMED (E58-S1 / E59-S1) — was l4CacheNetSavingsUsd" }
+
+    TrafficDetail:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string }
+        model: { type: string }
+        usage: { $ref: '#/components/schemas/TrafficUsage' }
+        cost: { $ref: '#/components/schemas/TrafficCost' }
+        cacheSavings: { $ref: '#/components/schemas/TrafficCacheSavings' }
+
+    CostSummary:
+      type: object
+      properties:
+        totalCostUsd: { type: number }
+        totalGatewayCacheSavingsUsd: { type: number }
+        totalProviderPromptCacheNetSavingsUsd: { type: number, description: "RENAMED from totalL4CacheNetSavingsUsd" }
+        totalReasoningCostUsd: { type: number, description: "NEW (E58-S1)" }
+        windowStart: { type: string, format: date-time }
+        windowEnd:   { type: string, format: date-time }

@@ -1,0 +1,1 @@
+# Shared go utilities architecture

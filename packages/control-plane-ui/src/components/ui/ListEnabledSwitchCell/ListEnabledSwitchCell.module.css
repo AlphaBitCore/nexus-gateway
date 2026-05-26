@@ -1,0 +1,15 @@
+.statusEnabled,
+.statusDisabled {
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: var(--g-line-height-tight);
+  white-space: nowrap;
+}
+
+.statusEnabled {
+  color: var(--color-success);
+}
+
+.statusDisabled {
+  color: var(--color-text-muted);
+}

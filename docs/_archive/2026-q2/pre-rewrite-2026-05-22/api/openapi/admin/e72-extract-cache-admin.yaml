@@ -1,0 +1,211 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway Admin — Extract Cache (L1) Fleet Config Endpoints (E72)
+  version: "1.0.1"
+  x-last-touched: "2026-05-21 — admin route registration moved into ExtractCache module owner (RegisterExtractCacheRoutes); contract unchanged (same paths, same schemas, same IAM gates)."
+  description: |
+    E72 promoted the L1 exact-match response cache from yaml-only to admin-
+    managed fleet config. Two endpoints back the new Extract cache card on
+    /ai-gateway/cache:
+
+    1. GET /api/admin/extract-cache/config — read singleton row
+    2. PUT /api/admin/extract-cache/config — save singleton + Hub-invalidate
+
+    The Hub broadcasts `response_cache.extract_config`; AI Gateway atomically
+    swaps its in-process cache.Config via SetConfig (no service restart).
+    The `applyFreshnessRules` field lives on this row but its effect spans
+    BOTH L1 and L2 — it gates the classifyCachePreLookup time-sensitive
+    skip behaviour.
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane dev server
+
+paths:
+  /api/admin/extract-cache/config:
+    get:
+      summary: Get fleet-wide L1 extract cache configuration
+      description: |
+        Returns the singleton row of `extract_cache_config`. When the row
+        does not exist (fresh DB where E72 seed was skipped), the handler
+        returns the schema defaults so callers never have to handle a
+        "no row" edge case.
+      operationId: getExtractCacheConfig
+      tags: [Admin / Cache]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current singleton configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtractCacheConfig'
+              examples:
+                enabled:
+                  value:
+                    id: "singleton"
+                    enabled: true
+                    ttlSeconds: 3600
+                    applyFreshnessRules: true
+                    updatedAt: "2026-05-20T15:00:00Z"
+                    updatedBy: "admin@nexus.ai"
+                disabled:
+                  value:
+                    id: "singleton"
+                    enabled: false
+                    ttlSeconds: 3600
+                    applyFreshnessRules: true
+                    updatedAt: "2026-05-20T15:00:00Z"
+                    updatedBy: "admin@nexus.ai"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      summary: Save fleet-wide L1 extract cache configuration
+      description: |
+        Upserts the singleton row, fires a Hub Category B invalidation so the
+        ai-gateway atomically swaps its in-process cache snapshot, and emits
+        an admin audit entry. TTL is clamped to [60, 604800] when enabled=true.
+      operationId: putExtractCacheConfig
+      tags: [Admin / Cache]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractCacheConfigUpdate'
+            examples:
+              disableCache:
+                summary: Emergency disable
+                value:
+                  enabled: false
+                  ttlSeconds: 3600
+                  applyFreshnessRules: true
+              tuneTTL:
+                summary: Raise TTL to 12h
+                value:
+                  enabled: true
+                  ttlSeconds: 43200
+                  applyFreshnessRules: true
+              dropFreshnessGate:
+                summary: Stop freshness rules from skipping cache
+                value:
+                  enabled: true
+                  ttlSeconds: 3600
+                  applyFreshnessRules: false
+      responses:
+        '200':
+          description: Saved configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtractCacheConfig'
+        '400':
+          description: ttlSeconds out of range, or malformed JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                ttlOutOfRange:
+                  value:
+                    error: "ttlSeconds must be in [60, 604800] when enabled=true"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  schemas:
+    ExtractCacheConfig:
+      type: object
+      required: [id, enabled, ttlSeconds, applyFreshnessRules, updatedAt]
+      properties:
+        id:
+          type: string
+          enum: [singleton]
+          description: Sentinel — always "singleton".
+        enabled:
+          type: boolean
+          description: |
+            Master switch. When false the L1 hot-path lookups
+            (LookupStream/LookupResponse) are bypassed and
+            traffic_event.gateway_cache_status='skipped' /
+            skip_reason='disabled'.
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 604800
+          description: Cache entry TTL in seconds. Range [60, 604800] (1 minute to 7 days).
+        applyFreshnessRules:
+          type: boolean
+          description: |
+            Gate that controls whether classifyCachePreLookup honours a
+            freshness-detector match by skipping BOTH L1 and L2 lookups.
+            Physically on this row, but applies fleet-wide across all gateway
+            cache layers — surfaced in the UI on the Freshness rules card.
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+          nullable: true
+
+    ExtractCacheConfigUpdate:
+      type: object
+      required: [enabled, ttlSeconds, applyFreshnessRules]
+      properties:
+        enabled:
+          type: boolean
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 604800
+        applyFreshnessRules:
+          type: boolean
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: |
+        Caller lacks the required IAM action — `admin:extract-cache.read`
+        for GET, `admin:extract-cache.update` for PUT.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,28 @@
+{
+  "_source": "Anthropic Messages API — Tool use with Claude (documentation snapshot, 2026-04-25). https://docs.anthropic.com/en/docs/build-with-claude/tool-use",
+  "model": "claude-3-5-sonnet-20241022",
+  "max_tokens": 256,
+  "temperature": 0.0,
+  "top_p": 0.95,
+  "top_k": 40,
+  "stop_sequences": ["END", "<|eot|>"],
+  "system": "You are a helpful weather assistant.",
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "What is the weather in San Francisco?"}]},
+    {"role": "assistant", "content": [
+      {"type": "tool_use", "id": "toolu_01ABC", "name": "get_weather", "input": {"location": "San Francisco"}}
+    ]},
+    {"role": "user", "content": [
+      {"type": "tool_result", "tool_use_id": "toolu_01ABC", "content": "{\"temp_f\":62}"}
+    ]},
+    {"role": "assistant", "content": [{"type": "text", "text": "It is 62°F in San Francisco."}]}
+  ],
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Look up current weather for a location",
+      "input_schema": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}
+    }
+  ],
+  "tool_choice": {"type": "auto"}
+}

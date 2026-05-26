@@ -1,0 +1,25 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"chatcompl_0134anf2m9FLKJNcJGK8UXEe","type":"message","role":"assistant","model":"claude-opus-4-7","parent_uuid":"019e5ab0-6e20-7729-9e9c-3bad66f49475","uuid":"019e5ab0-6e20-7668-9ff3-3eb9a8f1cedd","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"trace_id":"73e265fa6aa7947e4f8cc366d28488b5","request_id":"req_011CbMfPXtyQA96ziQfXSvXY"},"discarded_parent_message_uuid":null}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"start_timestamp":"2026-05-24T15:52:54.779752Z","stop_timestamp":null,"flags":null,"type":"text","text":"","citations":[]}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Hey"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! What can I help you with?"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0,"stop_timestamp":"2026-05-24T15:52:54.981468Z"}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null}}
+
+event: message_limit
+data: {"type":"message_limit","message_limit":{"type":"within_limit","resetsAt":null,"remaining":null,"perModelLimit":null,"representativeClaim":"five_hour","overageStatus":"within_limit","overageResetsAt":1780272000,"overageInUse":false,"windows":{"5h":{"status":"within_limit","resets_at":1779648000,"utilization":0.14},"7d":{"status":"within_limit","resets_at":1780034400,"utilization":0.24},"overage":{"status":"within_limit","resets_at":1780272000,"utilization":0.0}}}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+

@@ -1,0 +1,119 @@
+.filterSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.categoryBadge {
+  font-size: var(--g-font-size-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.stageBadge {
+  font-size: var(--g-font-size-xs);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.toolbarCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-4);
+  margin-bottom: var(--g-space-4);
+}
+
+.segmentedTabRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  align-items: center;
+  margin-bottom: var(--g-space-3);
+}
+
+.segmentedTab {
+  padding: 6px 14px;
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.segmentedTab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.segmentedTabActive {
+  composes: segmentedTab;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-color: var(--color-primary);
+}
+
+.segmentedTabActive:hover {
+  color: var(--color-primary-foreground);
+}
+
+.pipelineWrap {
+  margin-top: var(--g-space-3);
+}
+
+/* ── Category badge variants ─────────────────────────────────────────── */
+
+.badgeCategoryCompliance {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.badgeCategoryTrafficControl {
+  background: var(--color-info-light);
+  color: var(--color-primary);
+}
+
+.badgeCategoryQuality {
+  background: var(--color-violet-light);
+  color: var(--color-info);
+}
+
+.badgeCategoryObservability {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.badgeCategoryDefault {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+}
+
+/* ── Stage badge variants ─────────────────────────────────────────────── */
+
+.badgeStageResponse {
+  background: var(--color-violet-light);
+  color: var(--color-info);
+}
+
+.badgeStageRequest {
+  background: var(--color-info-light);
+  color: var(--color-primary);
+}

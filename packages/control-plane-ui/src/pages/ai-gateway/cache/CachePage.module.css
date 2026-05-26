@@ -1,0 +1,560 @@
+/* ── CachePage — design-token strict ──────────────────────────────────────── */
+/* All colors via semantic CSS variables. No hex/rgba/hsla literals.           */
+
+.cardHeading {
+  margin: var(--g-space-3) 0 var(--g-space-2);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.cardHeading:first-child {
+  margin-top: 0;
+}
+
+.subHeading {
+  margin: var(--g-space-3) 0 var(--g-space-2);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Settings grid (2026-05-21 redesign) ──────────────────────────────────
+   Four-column form layout on wide viewports (≥1024px): two label+control
+   pairs per row for higher density. Collapses to two columns (one pair per
+   row) below that breakpoint.
+     [label1] [ctrl1]    [label2] [ctrl2]
+   Sub-section headings + full-width controls span all four columns via
+   `.settingsRowSpan` / `.settingControlSpan` helpers. */
+.settingsGrid {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr) minmax(140px, max-content) minmax(0, 1fr);
+  column-gap: var(--g-space-4);
+  row-gap: var(--g-space-3);
+  align-items: center;
+}
+
+@media (max-width: 1024px) {
+  .settingsGrid {
+    grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+  }
+}
+
+/* Make a control span from col 2 to end of row (e.g. Probe button + chips). */
+.settingControlSpan {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--g-space-2);
+  min-width: 0;
+}
+
+.settingLabel {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  text-align: right;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--g-space-1);
+}
+
+.settingControl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--g-space-2);
+  min-width: 0;
+}
+
+.settingsDivider,
+.settingsRowSpan {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  margin: var(--g-space-2) 0 var(--g-space-1);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settingsDivider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-subtle);
+}
+
+.settingsDivider:first-child {
+  margin-top: 0;
+}
+
+.settingsActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--g-space-2);
+  margin-top: var(--g-space-4);
+  padding-top: var(--g-space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.headRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+}
+
+.headRow .cardHeading {
+  margin: 0;
+}
+
+/* ── Form layout ──────────────────────────────────────────────────────────── */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.labelRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-1);
+}
+
+.warningBanner {
+  border: 1px solid var(--color-warning-border);
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.switchWrapper {
+  display: inline-flex;
+}
+
+/* Constrain numeric / short inputs so they don't stretch full-width. */
+.shortField {
+  max-width: 12rem;
+}
+
+/* ── Inline label+control row (mirrors ExtractCacheCard) ───────────────────
+   Used for the Semantic cache form so label sits next to its control
+   instead of stacking above it. Items wrap to new line on narrow viewports. */
+.inlineRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--g-space-2) var(--g-space-5);
+  margin: var(--g-space-2) 0;
+}
+
+.inlineField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-2);
+}
+
+.inlineLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.helpIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: help;
+  user-select: none;
+}
+
+.helpIcon:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+.shortInput {
+  width: 6rem;
+}
+
+.mediumSelect {
+  min-width: 14rem;
+}
+
+/* ── Embedding chip (collapsed state) ─────────────────────────────────────── */
+
+.embeddingChip {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+}
+
+.embeddingChipText {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.linkButton {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-left: var(--g-space-2);
+  color: var(--color-link);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.linkButton:hover {
+  text-decoration: none;
+}
+
+/* Multi-line tooltip body for the embedding details "i" icon. */
+.detailsTooltip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  text-align: left;
+  min-width: 240px;
+}
+
+.detailsLabel {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.actionsInline {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Disclosure (Advanced + Show details) ─────────────────────────────────── */
+
+.disclosureButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  padding: var(--g-space-1) 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.disclosureButton:hover {
+  color: var(--color-text-primary);
+}
+
+.disclosureChevron {
+  display: inline-block;
+  font-size: 0.75rem;
+  width: 1rem;
+  text-align: center;
+}
+
+.advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+  padding-left: var(--g-space-3);
+  border-left: 2px solid var(--color-border);
+  margin-top: var(--g-space-1);
+}
+
+/* ── InfoTip (? icon) ─────────────────────────────────────────────────────── */
+
+.infoTip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: help;
+  user-select: none;
+}
+
+.infoTip:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+/* ── Probe section ────────────────────────────────────────────────────────── */
+
+.probeSection {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+}
+
+.probeResult {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--g-space-2);
+  font-size: 0.8125rem;
+}
+
+.probeDetail {
+  color: var(--color-text-secondary);
+}
+
+/* stylelint-disable-next-line selector-class-pattern */
+.probePill-fast {
+  display: inline-block;
+  background: var(--color-success-light);
+  color: var(--color-success-text);
+  border: 1px solid var(--color-success-border);
+  border-radius: 9999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: var(--g-font-weight-medium);
+}
+
+/* stylelint-disable-next-line selector-class-pattern */
+.probePill-acceptable {
+  display: inline-block;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
+  border: 1px solid var(--color-warning-border);
+  border-radius: 9999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: var(--g-font-weight-medium);
+}
+
+/* stylelint-disable-next-line selector-class-pattern */
+.probePill-slow {
+  display: inline-block;
+  background: var(--color-danger-light);
+  color: var(--color-danger-text);
+  border: 1px solid var(--color-danger-border);
+  border-radius: 9999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: var(--g-font-weight-medium);
+}
+
+.probeErrorBanner {
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-danger-light);
+  color: var(--color-danger-text);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+/* ── Status panel ─────────────────────────────────────────────────────────── */
+
+.statusPanel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--g-space-3);
+  background: var(--color-bg-secondary);
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content 1fr;
+  row-gap: var(--g-space-2);
+  column-gap: var(--g-space-3);
+}
+
+@media (max-width: 720px) {
+  .statusGrid {
+    grid-template-columns: max-content 1fr;
+  }
+}
+
+.statusLabel {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  align-self: center;
+}
+
+.statusValue {
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+  word-break: break-all;
+  align-self: center;
+}
+
+.monospace {
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+}
+
+/* ── Actions row ──────────────────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  gap: var(--g-space-2);
+  margin-top: var(--g-space-2);
+}
+
+/* ── Tab dirty indicator ──────────────────────────────────────────────────── */
+
+.dirtyDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: var(--g-space-2);
+  border-radius: 9999px;
+  background: var(--color-warning-border);
+}
+
+/* ── Pre-warm modal ───────────────────────────────────────────────────────── */
+
+.prewarmModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.prewarmTextarea {
+  width: 100%;
+  min-height: 200px;
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+  resize: vertical;
+}
+
+.prewarmFileRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.prewarmFileInput {
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.prewarmValidationErrors {
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-danger-light);
+  color: var(--color-danger-text);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.prewarmValidationList {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.8125rem;
+}
+
+.prewarmPreview {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--g-space-3);
+  background: var(--color-bg-secondary);
+}
+
+.prewarmPreviewTitle {
+  font-size: 0.8125rem;
+  font-weight: var(--g-font-weight-medium);
+  margin: 0 0 var(--g-space-2);
+  color: var(--color-text-primary);
+}
+
+.prewarmPreviewGrid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  row-gap: var(--g-space-1);
+  column-gap: var(--g-space-3);
+}
+
+.prewarmPreviewLabel {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.prewarmPreviewValue {
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+  font-weight: var(--g-font-weight-medium);
+}
+
+.prewarmProgressRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.prewarmProgressLabel {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.prewarmProgressBar {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.prewarmProgressFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-primary);
+  transition: width 0.2s ease;
+}
+
+.prewarmModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--g-space-2);
+  margin-top: var(--g-space-2);
+  padding-top: var(--g-space-3);
+  border-top: 1px solid var(--color-border);
+}

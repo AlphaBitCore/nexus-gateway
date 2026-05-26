@@ -1,0 +1,241 @@
+openapi: 3.1.0
+info:
+  title: E46 Unified Hook Config + Dry-Run API
+  version: "1.0.0"
+  description: |
+    Admin endpoints for managing hook configuration under the unified
+    onMatch shape. Replaces the per-hook action vocabularies (legacy
+    `action: block|warn|redact`, `severity: hard|soft`, `blockOnAnomaly`).
+    Adds a generic dry-run endpoint that works for every hook implementation,
+    including the re-platformed AI-Guard (S6).
+
+paths:
+  /api/admin/hooks:
+    get:
+      tags: [Hooks]
+      summary: List hook configurations
+      operationId: listHookConfigs
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/HookConfig" }
+    post:
+      tags: [Hooks]
+      summary: Create a hook configuration
+      operationId: createHookConfig
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HookConfigInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HookConfig" }
+        "400":
+          description: Validation error (e.g. invalid onMatch combination)
+        "403":
+          description: Caller lacks admin:hook.create
+
+  /api/admin/hooks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Hooks]
+      operationId: getHookConfig
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HookConfig" }
+        "404": { description: Not found }
+    put:
+      tags: [Hooks]
+      operationId: updateHookConfig
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HookConfigInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HookConfig" }
+        "400": { description: Validation error }
+        "404": { description: Not found }
+    delete:
+      tags: [Hooks]
+      operationId: deleteHookConfig
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+
+  /api/admin/hooks/{id}/dry-run:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Hooks]
+      summary: Dry-run a hook against a synthetic payload
+      description: |
+        Executes the hook against the provided NormalizedPayload without
+        side effects: no traffic_event written, no upstream call. Returns
+        the HookResult including decision, reason code, and redaction spans.
+        Replaces previous per-hook test endpoints.
+      operationId: dryRunHook
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stage, normalized]
+              properties:
+                stage:
+                  type: string
+                  enum: [request, response, connection]
+                normalized:
+                  $ref: "./e46-s1-foundation.yaml#/components/schemas/NormalizedPayload"
+                meta:
+                  type: object
+                  description: Optional context fields (model, sourceIp, etc.) overriding the synthetic defaults.
+                  additionalProperties: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HookResult" }
+        "400": { description: Invalid input }
+        "403": { description: Caller lacks admin:hook.probe }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    HookConfig:
+      allOf:
+        - $ref: "#/components/schemas/HookConfigInput"
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+
+    HookConfigInput:
+      type: object
+      required: [name, implementationId, stage]
+      properties:
+        name: { type: string }
+        implementationId:
+          type: string
+          description: |
+            Registered hook implementation key — e.g. pii-detector, keyword-filter,
+            content-safety, rulepack-engine, rate-limiter, request-size-validator,
+            ip-access-filter, data-residency, quality-checker, webhook-forward,
+            aiguard, noop.
+        stage:
+          type: string
+          enum: [request, response, connection]
+        priority:
+          type: integer
+          default: 0
+        enabled:
+          type: boolean
+          default: true
+        failBehavior:
+          type: string
+          enum: [fail-open, fail-closed]
+          default: fail-open
+        timeoutMs:
+          type: integer
+          default: 5000
+        applicableIngress:
+          type: array
+          items: { type: string }
+          default: [ALL]
+        applicableTrafficKinds:
+          type: array
+          items:
+            type: string
+            enum:
+              - ai
+              - ai-chat
+              - ai-completion
+              - ai-embedding
+              - ai-image
+              - http-json
+              - http-text
+              - http-form
+              - http-multipart
+              - http-binary
+          default: [ai]
+          description: |
+            Pipeline filters hooks by NormalizedPayload.kind. Default ["ai"]
+            applies to any ai-* kind; explicit kind strings narrow further.
+        config:
+          type: object
+          additionalProperties: true
+          description: |
+            Hook-implementation-specific configuration. Content-touching
+            hooks (pii-detector, keyword-filter, content-safety, rulepack-engine,
+            quality-checker, webhook-forward, aiguard) MUST include an
+            `onMatch` object.
+          properties:
+            onMatch: { $ref: "./e46-s1-foundation.yaml#/components/schemas/OnMatchConfig" }
+
+    HookResult:
+      type: object
+      required: [hookId, hookName, decision]
+      properties:
+        order: { type: integer }
+        hookId: { type: string, format: uuid }
+        implementationId: { type: string }
+        hookName: { type: string }
+        decision: { $ref: "./e46-s1-foundation.yaml#/components/schemas/HookDecision" }
+        reason: { type: string }
+        reasonCode: { $ref: "./e46-s1-foundation.yaml#/components/schemas/ReasonCode" }
+        latencyMs: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+        redactionSpans:
+          type: array
+          items: { $ref: "./e46-s1-foundation.yaml#/components/schemas/RedactionSpan" }
+        blockingRule:
+          type: object
+          properties:
+            pack: { type: string }
+            packVersion: { type: string }
+            ruleId: { type: string }
+            category: { type: string }
+            severity: { type: string }
+            labels:
+              type: array
+              items: { type: string }
+        error:
+          type: string

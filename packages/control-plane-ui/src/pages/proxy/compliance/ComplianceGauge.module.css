@@ -1,0 +1,69 @@
+/* ── Compliance Gauge ─────────────────────────────────────────────── */
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.percentText {
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.barTrack {
+  width: 100%;
+  height: 6px;
+  background: var(--color-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+/* ── Sizes ────────────────────────────────────────────────────────── */
+
+.sm {
+  max-width: 120px;
+}
+
+.sm .percentText {
+  font-size: 18px;
+}
+
+.sm .barTrack {
+  height: 4px;
+}
+
+.md {
+  max-width: 180px;
+}
+
+.md .percentText {
+  font-size: 24px;
+}
+
+.lg {
+  max-width: 240px;
+}
+
+.lg .percentText {
+  font-size: 32px;
+}
+
+.lg .barTrack {
+  height: 8px;
+}

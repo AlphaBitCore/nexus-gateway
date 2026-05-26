@@ -1,0 +1,82 @@
+---
+description: Agent runtime: paths abstraction, traffic-upload level, audit empty-string stamping
+globs:
+  - packages/agent/internal/**
+  - packages/agent/cmd/**
+  - packages/shared/audit/**
+---
+
+# Agent runtime invariants (binding)
+
+Three bindings on the agent runtime. Honour all three.
+
+---
+
+## 1. Platform paths abstraction
+
+All agent filesystem paths come from `platform.DefaultPaths()`. **Never hardcode** `/Library/`, `/var/`, `/etc/`, `/tmp/`, or `C:\...` strings.
+
+```go
+// ❌ wrong
+quitFlag := "/Library/Application Support/Nexus/.quit"
+
+// ✅ right
+quitFlag := platform.DefaultPaths().QuitFlagPath
+```
+
+Common path keys: `LogDir`, `ConfigDir`, `DataDir`, `CacheDir`, `KeystorePath`, `LocalQueuePath`, `QuitFlagPath`, `CertCAStore`.
+
+Memory anchor: [[feedback_agent_platform_paths_abstraction]].
+
+---
+
+## 2. Traffic-upload level filter happens at emit-time
+
+`agent_settings.trafficUploadLevel ∈ {all, processed, blocked}`, default `processed`.
+
+- **Filter at agent emit-time, NOT DB-side.** The agent decides per-event whether to publish to MQ / queue. DB-side filtering means the agent burned local cycles + queue capacity for nothing.
+- **`deny`, `block`, `error` outcomes always bypass the filter.** Those are auditable regardless of level.
+
+```go
+if !shouldUpload(event.Outcome, agent.settings.TrafficUploadLevel) {
+    return  // skip emit
+}
+```
+
+`shouldUpload` lives in `packages/agent/internal/audit/`; respect its decision.
+
+Memory anchor: [[feedback_agent_traffic_upload_level]].
+
+---
+
+## 3. Audit `auditEventToMap` empty-string stamping
+
+Agent's audit emitter sets all string fields, including `""`. Hub-side `AuditUpload` MUST either **stamp-unconditionally** or **strip-empty** for any CHECK-constrained column. Inconsistent handling stalls the audit pipeline silently.
+
+```go
+// Agent emit (always set, even empty):
+m["external_request_id"] = event.ExternalRequestID   // may be ""
+
+// Hub ingest (must handle both ways):
+if v, ok := m["external_request_id"].(string); ok && v != "" {
+    row.ExternalRequestID = sql.NullString{String: v, Valid: true}
+}
+```
+
+A handler that does `row.ExternalRequestID = m["external_request_id"].(string)` directly will pass `""` into a CHECK-constrained column and the insert fails. The failure is silent because audit-pipeline errors are caught at the batch level.
+
+Memory anchor: [[feedback_agent_audit_empty_string_stripping]].
+
+---
+
+## Pre-commit reminder
+
+When you touch agent code that fits one of these areas, run:
+
+```bash
+grep -nE '"/Library|"/var|"/etc|"/tmp|"C:' packages/agent/internal/  # paths
+grep -n 'trafficUploadLevel' packages/agent/                          # filter sites
+grep -n 'auditEventToMap\|AuditUpload' packages/agent/ packages/nexus-hub/  # empty-string
+```
+
+Skipping any of the three requires **explicit user approval** in chat.

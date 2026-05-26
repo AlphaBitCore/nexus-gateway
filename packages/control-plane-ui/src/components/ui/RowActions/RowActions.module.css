@@ -1,0 +1,140 @@
+/* Row Actions */
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-5);
+}
+
+.rowActionsText {
+  gap: calc(var(--g-space-3) + var(--g-space-0-5));
+}
+
+.iconButton {
+  width: var(--g-space-6);
+  height: var(--g-space-6);
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--button-radius);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--g-transition-fast),
+    border-color var(--g-transition-fast),
+    color var(--g-transition-fast),
+    box-shadow var(--g-transition-fast);
+}
+
+.iconButton:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.iconButtonDanger:hover {
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg));
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
+  color: var(--color-danger);
+}
+
+.iconButton:focus-visible,
+.textButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}
+
+.iconButton:disabled,
+.textButton:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
+}
+
+.iconButton svg {
+  width: calc(var(--g-space-3) + var(--g-space-0-5));
+  height: calc(var(--g-space-3) + var(--g-space-0-5));
+  display: block;
+}
+
+.tooltipTrigger {
+  display: inline-grid;
+  width: var(--g-space-6);
+  height: var(--g-space-6);
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.tooltipTrigger .iconButton {
+  width: 100%;
+  height: 100%;
+}
+
+.tooltipTrigger .iconButton:disabled {
+  pointer-events: none;
+}
+
+.textButton {
+  height: var(--button-height-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--g-space-1);
+  padding: 0 var(--button-padding-x-sm);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--button-radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-family: var(--g-font-sans);
+  font-size: var(--button-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: var(--button-line-height-sm);
+  transition:
+    background var(--g-transition-fast),
+    border-color var(--g-transition-fast),
+    color var(--g-transition-fast),
+    box-shadow var(--g-transition-fast);
+}
+
+.textButton:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: var(--g-line-height-tight);
+  text-decoration: none;
+}
+
+.linkButton:hover {
+  text-decoration: underline;
+}
+
+.linkButtonDanger {
+  color: var(--color-danger);
+}
+
+.linkButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}
+
+.terminal {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  font-style: italic;
+}

@@ -1,0 +1,230 @@
+openapi: 3.1.0
+info:
+  title: AI Gateway Client Simulator Contract
+  version: 1.0.0
+  description: >
+    Consumer contract for the Control Plane UI simulator page.
+    This story does not introduce new server endpoints. It documents the
+    existing AI Gateway client-facing routes the simulator must call directly.
+
+servers:
+  - url: http://localhost:3050
+    description: Local AI Gateway development endpoint
+
+security:
+  - BearerVirtualKey: []
+
+paths:
+  /v1/models:
+    get:
+      operationId: simulatorListModels
+      summary: List available models for simulator provider/model selector
+      description: >
+        Returns OpenAI-compatible model list. Simulator groups by `owned_by`
+        to build provider -> model cascading selectors.
+      security: []
+      tags: [Simulator, Models]
+      responses:
+        "200":
+          description: Model list returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelListResponse"
+
+  /v1/chat/completions:
+    post:
+      operationId: simulatorCreateChatCompletion
+      summary: Execute chat in non-SSE or SSE mode
+      description: >
+        Simulator sends OpenAI-compatible payloads. `stream=true` returns SSE
+        (`data: {...}` frames ending with `data: [DONE]`); otherwise JSON.
+      tags: [Simulator, Chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Chat completion (json or SSE)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream of chat completion chunks
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /v1/usage:
+    get:
+      operationId: simulatorGetUsageSummary
+      summary: Fetch usage summary for current VK
+      tags: [Simulator, Usage]
+      responses:
+        "200":
+          description: Current period usage summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageSummaryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    BearerVirtualKey:
+      type: http
+      scheme: bearer
+      description: Virtual key passed as Authorization Bearer token
+
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        stream:
+          type: boolean
+          default: false
+        temperature:
+          type: number
+        max_tokens:
+          type: integer
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          type: string
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: "#/components/schemas/ChatMessage"
+              finish_reason:
+                type: string
+                nullable: true
+        usage:
+          $ref: "#/components/schemas/CompletionUsage"
+
+    CompletionUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+
+    ModelListResponse:
+      type: object
+      properties:
+        object:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelObject"
+
+    ModelObject:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+        created:
+          type: integer
+        owned_by:
+          type: string
+        owner_display_name:
+          type: string
+          nullable: true
+
+    UsageSummaryResponse:
+      type: object
+      properties:
+        virtualKeyId:
+          type: string
+        period:
+          type: string
+        periodType:
+          type: string
+        usage:
+          type: object
+          properties:
+            totalRequests:
+              type: integer
+            promptTokens:
+              type: integer
+            completionTokens:
+              type: integer
+            totalTokens:
+              type: integer
+            estimatedCostUsd:
+              type: number
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            code:
+              oneOf:
+                - type: integer
+                - type: string
+
+  responses:
+    Unauthorized:
+      description: Invalid, missing, disabled, or expired VK
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TooManyRequests:
+      description: Rate limit or quota exceeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadGateway:
+      description: Upstream provider failure
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

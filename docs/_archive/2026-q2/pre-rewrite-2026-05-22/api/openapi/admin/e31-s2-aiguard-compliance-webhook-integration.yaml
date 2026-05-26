@@ -1,0 +1,86 @@
+openapi: 3.1.0
+info:
+  title: AI Guard Compliance Webhook Integration
+  version: 1.0.0
+  description: >
+    Documents the webhook-compatible AIGuard endpoint used by webhook-forward
+    hook rows. This endpoint is separate from /v1/ai-guard/classify and returns
+    webhook decision tokens.
+
+servers:
+  - url: http://localhost:3050
+    description: Local AI Gateway development endpoint
+
+paths:
+  /v1/ai-guard/compliance-webhook:
+    post:
+      operationId: aiGuardComplianceWebhook
+      summary: Evaluate webhook-forward payload with AIGuard
+      tags: [AIGuard, Hooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplianceWebhookRequest'
+      responses:
+        '200':
+          description: Webhook decision response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceWebhookResponse'
+        '400':
+          description: Malformed payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          description: AIGuard backend unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '500':
+          description: Internal failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+components:
+  schemas:
+    ComplianceWebhookRequest:
+      type: object
+      properties:
+        stage: { type: string }
+        method: { type: string }
+        path: { type: string }
+        targetHost: { type: string }
+        sourceIP: { type: string }
+        bodySize: { type: integer }
+        contentType: { type: string }
+        model: { type: string }
+        ingressType: { type: string }
+        normalizedContent:
+          type: array
+          items: { type: string }
+      additionalProperties: true
+
+    ComplianceWebhookResponse:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [APPROVE, REJECT_HARD, REJECT_SOFT, MODIFY, ABSTAIN]
+        reason: { type: string }
+        reasonCode: { type: string }
+
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        detail: { type: string }

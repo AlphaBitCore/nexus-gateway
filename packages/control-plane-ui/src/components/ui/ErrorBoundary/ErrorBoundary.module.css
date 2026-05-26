@@ -1,0 +1,164 @@
+/* ── App-level fallback (full screen) ─────────────────────────────────────── */
+
+.app {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  padding: var(--g-space-6);
+}
+
+/* ── Route-level fallback (within Shell content area) ────────────────────── */
+
+.route {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--g-space-12) var(--g-space-6);
+}
+
+/* ── Shared card ─────────────────────────────────────────────────────────── */
+
+.card {
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+}
+
+.icon {
+  color: var(--color-danger);
+  margin-bottom: var(--g-space-4);
+}
+
+.title {
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  font-family: var(--g-font-display);
+  color: var(--color-text);
+  margin: 0 0 var(--g-space-2);
+}
+
+.message {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--g-line-height-normal);
+  margin: 0 0 var(--g-space-6);
+}
+
+.details {
+  text-align: left;
+  margin-bottom: var(--g-space-4);
+}
+
+.detailsSummary {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  margin-bottom: var(--g-space-2);
+}
+
+.stack {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  color: var(--color-danger);
+  background: var(--color-muted);
+  padding: var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--g-space-3);
+}
+
+.retryBtn {
+  padding: var(--g-space-2) var(--g-space-5);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: none;
+  border-radius: var(--g-radius-md);
+  cursor: pointer;
+  transition: opacity var(--g-transition-fast);
+}
+
+.retryBtn:hover {
+  opacity: 0.9;
+}
+
+.retryBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.reloadBtn {
+  padding: var(--g-space-2) var(--g-space-5);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  cursor: pointer;
+  transition: background var(--g-transition-fast);
+}
+
+.reloadBtn:hover {
+  background: var(--color-surface-hover);
+}
+
+.reloadBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Widget-level fallback (inline, compact) ─────────────────────────────── */
+
+.widget {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--g-space-6);
+  min-height: 120px;
+  color: var(--color-text-muted);
+}
+
+.widgetText {
+  font-size: var(--g-font-size-sm);
+  margin: 0 0 var(--g-space-2);
+}
+
+.widgetRetry {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.widgetRetry:hover {
+  opacity: 0.8;
+}
+
+.widgetRetry:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .retryBtn,
+  .reloadBtn {
+    transition: none;
+  }
+}

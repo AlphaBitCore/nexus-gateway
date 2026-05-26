@@ -1,0 +1,133 @@
+/* ─── Layer 2: Dark Theme ────────────────────────────────────────────────── */
+/* Dark semantic bridge for the prime-aligned Nexus visual system. */
+
+[data-theme="dark"] {
+  /* ── Brand / Interactive ───────────────────────────────────────────────── */
+  --color-primary:            var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover:      var(--color-brand-hover);
+
+  /* ── Semantic Status ───────────────────────────────────────────────────── */
+  --color-success:       var(--g-green-400);
+  --color-success-light: rgba(34, 197, 94, 0.1);
+  --color-success-dark:  var(--g-green-500);
+  --color-warning:       var(--g-orange-400);
+  --color-warning-light: rgba(249, 115, 22, 0.1);
+  --color-warning-dark:  var(--g-orange-500);
+  --color-danger:        var(--g-red-400);
+  --color-danger-light:  rgba(239, 68, 68, 0.1);
+  --color-danger-dark:   var(--g-red-500);
+  --color-info:          var(--g-blue-400);
+  --color-info-light:    rgba(59, 130, 246, 0.1);
+  --color-info-dark:     var(--g-blue-500);
+  --color-violet:        var(--g-violet-400);
+  --color-violet-light:  rgba(139, 92, 246, 0.1);
+  --color-violet-dark:   var(--g-violet-500);
+  --color-info-bg:       var(--color-info-light);
+  --color-success-bg:    var(--color-success-light);
+  --color-warning-bg:    var(--color-warning-light);
+  --color-danger-bg:     var(--color-danger-light);
+  --color-violet-bg:     var(--color-violet-light);
+  --color-warning-surface: var(--color-warning-light);
+  --color-error:         var(--color-danger);
+  --color-error-bg:      var(--color-danger-bg);
+  --color-error-text:    var(--color-danger-text);
+  --color-success-text:  var(--color-success-dark);
+  --color-text-warning:  var(--color-warning-text);
+
+  --color-overlay:        rgba(0, 0, 0, 0.5);
+  --color-overlay-strong: rgba(0, 0, 0, 0.7);
+
+  /* ── Surfaces ──────────────────────────────────────────────────────────── */
+  --color-bg:               var(--background);
+  --color-surface:          var(--card);
+  --color-surface-2:        var(--muted);
+  --color-surface-secondary: var(--muted);
+  --color-surface-hover:    var(--accent);
+  --color-surface-raised:   var(--card);
+  --color-surface-overlay:  var(--popover);
+  --color-border:           var(--border);
+  --color-border-light:     var(--border);
+  --color-border-strong:    color-mix(in oklch, var(--border) 70%, white);
+  --color-divider:          var(--border);
+  --color-muted:            var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-surface-alt:      var(--color-surface-2);
+  --color-surface-muted:    var(--color-muted);
+  --color-surface-subtle:   var(--color-bg-subtle);
+  --color-surface-elevated: var(--color-bg-elevated);
+  --color-bg-subtle:        var(--color-muted);
+  --color-bg-primary:       var(--color-bg);
+  --color-bg-input:         var(--card);
+  --color-input-bg:         var(--color-bg-input);
+  --color-bg-elevated:      var(--card);
+  --color-bg-secondary:     var(--color-surface-2);
+  --color-bg-translucent:   rgba(15, 17, 21, 0.72);
+  --color-bg-hover:         var(--accent);
+  --color-border-subtle:    var(--color-border-light);
+  --border-subtle:          var(--color-border-subtle);
+  --color-border-muted:     var(--color-border-light);
+
+  --color-accent:           var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-bg:        var(--color-primary-light);
+  --color-accent-text:      var(--color-accent-foreground);
+
+  --color-ring:             var(--ring);
+  --color-focus:            var(--ring);
+  --color-link:             var(--primary);
+  --color-code-bg:          var(--muted);
+  --color-code-fg:          var(--foreground);
+  --color-title-gradient:   linear-gradient(90deg, var(--primary) 0%, var(--color-success) 100%);
+  --color-control-gradient: var(--color-title-gradient);
+  --sidebar-collapse-gradient: linear-gradient(135deg, var(--g-abc-cyan-400) 0%, var(--g-abc-blue-600) 100%);
+  --sidebar-collapse-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  --page-shell-glow:        linear-gradient(90deg, var(--primary) 0%, var(--color-success) 100%);
+  --page-shell-glow-opacity: 0.1;
+
+  /* ── Status (extended) ─────────────────────────────────────────────────── */
+  --color-success-soft:    var(--color-success-light);
+  --color-warning-soft:    var(--color-warning-light);
+  --color-warning-border:  var(--g-orange-700);
+  --color-warning-text:    var(--g-orange-300);
+  --color-warning-fg:      var(--g-orange-300);
+  --color-warning-contrast: var(--g-gray-50);
+  --color-status-warning:  var(--color-warning);
+  --color-danger-text:     var(--g-red-300);
+  --color-danger-border:   var(--g-red-700);
+  --color-danger-700:      var(--g-red-300);
+  --color-primary-light:   color-mix(in oklch, var(--primary) 18%, transparent);
+  --color-primary-dark:    var(--color-primary-hover);
+  --color-primary-500:     var(--color-primary);
+  --color-muted-bg:        var(--color-muted);
+  --color-muted-dark:      var(--g-gray-400);
+  --color-muted-light:     var(--g-gray-800);
+
+  /* ── Text ──────────────────────────────────────────────────────────────── */
+  --color-text:           var(--foreground);
+  --color-text-primary:   var(--foreground);
+  --color-text-secondary: var(--muted-foreground);
+  --color-text-tertiary:  color-mix(in srgb, var(--muted-foreground) 82%, var(--background));
+  --color-text-placeholder: color-mix(in srgb, var(--muted-foreground) 62%, var(--background));
+  --color-text-muted:     var(--color-text-tertiary);
+  --color-text-inverse:   var(--background);
+
+  --sidebar-width:             220px;
+  --sidebar-width-icon:        72px;
+  --sidebar-bg:                var(--sidebar);
+  --sidebar-surface:           var(--sidebar-accent);
+  --sidebar-text:              var(--sidebar-foreground);
+  --sidebar-text-active:       var(--sidebar-accent-foreground);
+  --sidebar-hover:             var(--sidebar-accent);
+  --sidebar-active-bg:         var(--sidebar-accent);
+  --sidebar-active-border:     transparent;
+  --sidebar-section-label:     var(--sidebar-foreground);
+  --sidebar-shadow:            1px 0 0 var(--sidebar-border);
+
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.25), 0 1px 2px -1px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.35), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+}

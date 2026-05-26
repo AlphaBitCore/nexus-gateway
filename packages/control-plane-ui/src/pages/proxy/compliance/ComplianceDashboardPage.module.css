@@ -1,0 +1,316 @@
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.filterField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.filterField input,
+.filterField select {
+  font-size: var(--g-font-size-sm);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-lg);
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.statRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  font-size: var(--g-font-size-sm);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.statLabel {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.statValue {
+  font-size: var(--g-font-size-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+}
+
+.table th,
+.table td {
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table th {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  text-transform: uppercase;
+}
+
+.tableRight {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.noData {
+  padding: 1rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.gridTwo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .gridTwo {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Trinity layer cards ─────────────────────────────────────────────── */
+
+.trinityGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .trinityGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.trinityCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.trinityLayerLabel {
+  font-size: var(--g-font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+}
+
+.trinityMetric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.trinityMetricLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.trinityMetricValue {
+  font-size: var(--g-font-size-2xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.trinityBlockRate {
+  color: var(--color-danger);
+}
+
+.trinityCoverage {
+  color: var(--color-success);
+}
+
+.trinityStatRow {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  font-size: var(--g-font-size-sm);
+}
+
+.trinityDecisionBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+}
+
+.trinityDecisionBadge.approve { background: var(--color-success-light); color: var(--color-success); }
+.trinityDecisionBadge.reject { background: var(--color-danger-light); color: var(--color-danger); }
+.trinityDecisionBadge.modify { background: var(--color-warning-light); color: var(--color-warning); }
+.trinityDecisionBadge.abstain { background: var(--color-muted); color: var(--color-text-muted); }
+.trinityDecisionBadge.none { background: var(--color-muted); color: var(--color-text-muted); }
+
+/* ── KPI row ─────────────────────────────────────────────────────────── */
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .kpiRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .kpiRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kpiCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 1.25rem;
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.kpiLabel {
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.kpiValue {
+  font-size: var(--g-font-size-3xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.kpiValueDanger { color: var(--color-danger); }
+.kpiValueSuccess { color: var(--color-success); }
+.kpiValueWarning { color: var(--color-warning); }
+
+.kpiSub {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* ── Top-blocked tab bar ─────────────────────────────────────────────── */
+
+.topBlockedTabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0.75rem;
+}
+
+.topBlockedTab {
+  padding: 0.4rem 1rem;
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.topBlockedTab:hover {
+  color: var(--color-text-primary);
+}
+
+.topBlockedTabActive {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+/* ── Hook health stat pills ─────────────────────────────────────────── */
+
+.hookStatRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.hookStat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 80px;
+}
+
+.hookStatLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.hookStatValue {
+  font-size: var(--g-font-size-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.hookLatencyRow {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.hookLatencyStat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.hookLatencyLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.hookLatencyValue {
+  font-size: var(--g-font-size-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,339 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Setup Guide APIs
+  description: |
+    Control Plane admin endpoints that power the CP-UI Setup section (E40).
+    All endpoints require a valid session with the minimum IAM permission noted per operation.
+    All GET endpoints are idempotent and safe to call repeatedly.
+  version: 1.0.0
+
+servers:
+  - url: /api/admin/setup
+
+tags:
+  - name: proxy-setup
+    description: Compliance Proxy deployment setup
+
+paths:
+
+  /proxy/{thingId}/ca-cert:
+    get:
+      operationId: getProxyCACert
+      summary: Download Proxy Sub-CA certificate
+      description: |
+        Fetches the compliance proxy's Sub-CA public certificate in PEM format.
+        Control Plane reads `managementURL` from the proxy Thing's shadow reported state
+        and relays `GET {managementURL}/management/ca-cert` to the live proxy instance.
+        The CA private key never traverses this path.
+      tags: [proxy-setup]
+      security:
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+      responses:
+        '200':
+          description: CA certificate PEM
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="nexus-proxy-ca.crt"'
+          content:
+            application/x-pem-file:
+              schema:
+                type: string
+                description: PEM-encoded X.509 CA certificate
+              example: |
+                -----BEGIN CERTIFICATE-----
+                MIIBxTCCAW...
+                -----END CERTIFICATE-----
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/ProxyUnreachable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /proxy/{thingId}/mdm-profile:
+    get:
+      operationId: getProxyMDMProfile
+      summary: Download MDM configuration profile with CA certificate
+      description: |
+        Generates an Apple MDM `.mobileconfig` profile with the proxy Sub-CA certificate
+        embedded as a `com.apple.security.root` Certificate payload.
+        The rendered profile can be uploaded directly to Jamf, Kandji, Mosyle, or Intune
+        to silently deploy CA trust to managed macOS devices.
+      tags: [proxy-setup]
+      security:
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+        - name: organization
+          in: query
+          required: false
+          description: Organization name embedded in the profile (defaults to "Nexus Gateway")
+          schema:
+            type: string
+            maxLength: 128
+            example: Acme Corp
+      responses:
+        '200':
+          description: Apple MDM configuration profile
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="nexus-proxy-ca.mobileconfig"'
+          content:
+            application/x-apple-aspen-config:
+              schema:
+                type: string
+                description: XML plist MDM profile
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/ProxyUnreachable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /proxy/{thingId}/pac-file:
+    get:
+      operationId: getProxyPACFile
+      summary: Generate Proxy Auto-Configuration (PAC) file
+      description: |
+        Generates a PAC file that routes all known AI-provider domains through the
+        specified compliance proxy while sending all other traffic direct.
+        The domain list is sourced from `interception_domain` rows with `type = 'ai_provider'`.
+      tags: [proxy-setup]
+      security:
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+        - name: proxyHost
+          in: query
+          required: true
+          description: Hostname or IP address of the compliance proxy
+          schema:
+            type: string
+            example: proxy.acme.internal
+        - name: proxyPort
+          in: query
+          required: true
+          description: TCP port of the compliance proxy
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 65535
+            example: 3128
+        - name: failOpen
+          in: query
+          required: false
+          description: |
+            When true, the PAC includes a DIRECT fallback after the proxy entry
+            (fail-open: traffic bypasses proxy if unreachable).
+            When false (default), no DIRECT fallback is included (fail-closed).
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: PAC file JavaScript
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="nexus-proxy.pac"'
+          content:
+            application/x-ns-proxy-autoconfig:
+              schema:
+                type: string
+                description: JavaScript PAC file
+              example: |
+                function FindProxyForURL(url, host) {
+                    if (dnsDomainIs(host, "api.openai.com") ||
+                        dnsDomainIs(host, "api.anthropic.com")) {
+                        return "PROXY proxy.acme.internal:3128";
+                    }
+                    return "DIRECT";
+                }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /proxy/{thingId}/onboarding:
+    patch:
+      operationId: patchProxyOnboarding
+      summary: Enable or disable proxy onboarding mode
+      description: |
+        Toggles onboarding mode on the compliance proxy by pushing `onboarding.enabled`
+        to the proxy Thing's Shadow desired state via the Hub API.
+        When enabled, the proxy responds to CONNECT requests for monitored AI-provider
+        domains with `407 Proxy Authentication Required` plus an HTML guide linking to
+        the CP-UI Setup page, before completing the TLS tunnel.
+        This fires before any TLS handshake, so it works regardless of client CA trust state.
+        Disable once all devices have the CA cert installed.
+      tags: [proxy-setup]
+      security:
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingPatchRequest'
+            examples:
+              enable:
+                summary: Enable onboarding mode
+                value:
+                  enabled: true
+              disable:
+                summary: Disable onboarding mode (resume normal MITM)
+                value:
+                  enabled: false
+      responses:
+        '200':
+          description: Onboarding mode updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingPatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+
+  securitySchemes:
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: nexus_session
+
+  parameters:
+    ThingId:
+      name: thingId
+      in: path
+      required: true
+      description: UUID of the compliance proxy Thing registered in Nexus Hub
+      schema:
+        type: string
+        format: uuid
+        example: 550e8400-e29b-41d4-a716-446655440000
+
+  schemas:
+
+    OnboardingPatchRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            true — proxy returns 407 + HTML guide for monitored domain CONNECTs.
+            false — proxy resumes normal TLS interception (MITM).
+      example:
+        enabled: true
+
+    OnboardingPatchResponse:
+      type: object
+      required: [thingId, enabled, pushedAt]
+      properties:
+        thingId:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        pushedAt:
+          type: string
+          format: date-time
+          description: ISO-8601 timestamp when the desired state was pushed to Hub
+      example:
+        thingId: 550e8400-e29b-41d4-a716-446655440000
+        enabled: true
+        pushedAt: "2026-05-09T10:30:00Z"
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error description
+      example:
+        error: thing_not_found
+        message: "No compliance proxy Thing with the given ID exists"
+
+  responses:
+
+    NotFound:
+      description: Thing not found or has no managementURL
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            thing_not_found:
+              value:
+                error: thing_not_found
+                message: No compliance proxy Thing with the given ID exists
+            no_management_url:
+              value:
+                error: no_management_url
+                message: The proxy Thing has not yet reported its managementURL
+
+    ProxyUnreachable:
+      description: Could not reach the compliance proxy management endpoint
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: proxy_unreachable
+            message: "Timeout connecting to proxy management endpoint"
+
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: invalid_params
+            message: "proxyHost and proxyPort are required"
+
+    Unauthorized:
+      description: No valid session
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: unauthorized
+            message: Authentication required
+
+    Forbidden:
+      description: Insufficient IAM permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: forbidden
+            message: "Requires admin:ReadSettings permission"

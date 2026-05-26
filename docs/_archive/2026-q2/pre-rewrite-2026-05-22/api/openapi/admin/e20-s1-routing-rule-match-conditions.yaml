@@ -1,0 +1,218 @@
+openapi: "3.1.0"
+info:
+  title: Nexus — Routing Rule Match Conditions (E20 / Story 1)
+  description: |
+    Renames the routing rule match-condition filter that is today mislabeled
+    `organizations` to its semantically correct name `projects`. The runtime
+    behavior in `packages/ai-gateway/internal/router` has always compared
+    the array against `VirtualKey.ProjectID`; only the field name is
+    changing here, along with admin-API validation and UI surfaces.
+
+    Per the dev-phase policy (no backwards compatibility, pre-GA), the
+    legacy `organizations` key is **rejected** by the admin write path — it
+    is not accepted silently, nor aliased. Callers must send `projects`.
+
+    This spec overrides the `matchConditions` schema previously embedded
+    in the routing rule CRUD endpoints. Every other field of the routing
+    rule resource is unchanged.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane instance
+
+tags:
+  - name: Routing Rules
+    description: Admin CRUD for routing rules (matchConditions schema update)
+
+paths:
+  # ============================================================
+  # POST /api/admin/routing-rules  (create)
+  # ============================================================
+  /api/admin/routing-rules:
+    post:
+      tags: [Routing Rules]
+      operationId: adminCreateRoutingRule
+      summary: Create a routing rule (matchConditions uses `projects`)
+      description: |
+        Creates a new routing rule. The request body's
+        `matchConditions` block MUST use the `projects` field when
+        filtering by caller project. The legacy field name
+        `organizations` is rejected with HTTP 422.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoutingRuleWritePayload"
+            examples:
+              withProjects:
+                summary: Match requests from a specific project
+                value:
+                  name: "EU GPT-4o routing"
+                  priority: 100
+                  enabled: true
+                  pipelineStage: 1
+                  strategyType: single
+                  config:
+                    type: single
+                    providerId: "p-openai"
+                    modelId: "gpt-4o"
+                  matchConditions:
+                    models: ["gpt-4o"]
+                    providers: ["p-openai"]
+                    projects: ["proj-eu-prod"]
+      responses:
+        "201":
+          description: Routing rule created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRule"
+        "422":
+          description: |
+            Validation error. Returned when `matchConditions.organizations`
+            is present (legacy key not supported) or when any matchConditions
+            array contains a non-string element.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+              examples:
+                legacyOrganizations:
+                  summary: Legacy field rejected
+                  value:
+                    error: "matchConditions.organizations has been renamed to matchConditions.projects"
+                    code: MATCH_CONDITIONS_LEGACY_FIELD
+
+  # ============================================================
+  # PUT /api/admin/routing-rules/{id}  (update)
+  # ============================================================
+  /api/admin/routing-rules/{id}:
+    put:
+      tags: [Routing Rules]
+      operationId: adminUpdateRoutingRule
+      summary: Update a routing rule (matchConditions uses `projects`)
+      description: |
+        Updates an existing routing rule. Same matchConditions contract as
+        the create endpoint: `projects` is the accepted field; `organizations`
+        is rejected with HTTP 422.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoutingRuleWritePayload"
+      responses:
+        "200":
+          description: Routing rule updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRule"
+        "404":
+          description: Routing rule not found.
+        "422":
+          description: Validation error (see create endpoint).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+components:
+  schemas:
+    MatchConditions:
+      type: object
+      additionalProperties: false
+      description: |
+        Filter block that decides whether a routing rule applies to an
+        incoming request. All fields are optional; empty/omitted fields
+        mean "no filter on this dimension".
+
+        **Breaking rename:** the previously-accepted `organizations` field
+        has been renamed to `projects`. The old name is rejected.
+      properties:
+        models:
+          type: array
+          description: Match only requests targeting one of these model ids.
+          items:
+            type: string
+        providers:
+          type: array
+          description: Match only requests whose resolved route targets one of these provider ids.
+          items:
+            type: string
+            format: uuid
+        projects:
+          type: array
+          description: |
+            Match only requests whose virtual key belongs to one of these
+            project ids. Compared against `VirtualKey.ProjectID` at request
+            time.
+          items:
+            type: string
+            format: uuid
+
+    RoutingRuleWritePayload:
+      type: object
+      required: [name, priority, enabled, pipelineStage, strategyType, config]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+        pipelineStage:
+          type: integer
+          enum: [0, 1]
+        strategyType:
+          type: string
+          enum: [single, fallback, loadbalance, ab_split, conditional, smart, policy]
+        config:
+          type: object
+          description: Strategy-specific payload; schema varies by strategyType. Out of scope for this spec.
+        fallbackChain:
+          type: array
+          nullable: true
+          items:
+            type: object
+        matchConditions:
+          $ref: "#/components/schemas/MatchConditions"
+
+    RoutingRule:
+      allOf:
+        - $ref: "#/components/schemas/RoutingRuleWritePayload"
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id:
+              type: string
+              format: uuid
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    ValidationError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string

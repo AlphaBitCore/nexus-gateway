@@ -1,0 +1,204 @@
+/* ── ServiceDetailPage ─────────────────────────────────────────────── */
+
+.backLink {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.backLink:hover {
+  color: var(--color-primary);
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.headerRow .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.serviceName {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.instanceBadge {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  background: var(--color-bg-hover);
+  padding: 2px 8px;
+  border-radius: var(--g-radius-sm);
+}
+
+/* ── Metrics grid (full-width) ────────────────────────────────────── */
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.metricItem {
+  text-align: center;
+  padding: var(--g-space-3);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.metricValue {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.metricLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-top: 2px;
+}
+
+/* ── Breakdown section ────────────────────────────────────────────── */
+
+.breakdownSection {
+  margin-top: var(--g-space-2);
+}
+
+.breakdownHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--g-space-3);
+}
+
+.breakdownTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.breakdownSelect {
+  font-size: var(--g-font-size-sm);
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.breakdownTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+}
+
+.breakdownTable th,
+.breakdownTable td {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.breakdownTable th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.breakdownTable tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+/* ── Section titles ───────────────────────────────────────────────── */
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--g-space-2);
+}
+
+/* ── Runtime grid ─────────────────────────────────────────────────── */
+
+.runtimeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--g-space-2);
+}
+
+/* ── Instance table ───────────────────────────────────────────────── */
+
+.instanceTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+}
+
+.instanceTable th,
+.instanceTable td {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.instanceTable th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.instanceTable tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+/* ── Remove button ────────────────────────────────────────────────── */
+
+.removeBtn {
+  font-size: var(--g-font-size-xs);
+  padding: 2px 8px;
+  border: 1px solid var(--color-danger);
+  background: transparent;
+  color: var(--color-danger);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.removeBtn:hover {
+  background: var(--color-danger);
+  color: var(--color-surface);
+}
+
+.removeBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.emptyText {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}

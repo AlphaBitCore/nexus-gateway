@@ -1,0 +1,124 @@
+# Nexus Hub — production config template.
+# Every field in internal/config/config.go.HubConfig appears here.
+# Env var overrides: NEXUS_HUB_PORT, DATABASE_URL, REDIS_* (see
+# packages/shared/storage/redisfactory for the full universal Redis env
+# contract), MQ_DRIVER, NATS_URL, NEXUS_HUB_SCHEDULER_ENABLED,
+# INTERNAL_SERVICE_TOKEN, LOG_LEVEL, LOG_FORMAT, NEXUS_HUB_ID,
+# NEXUS_HUB_ADVERTISE_ADDR, NEXUS_HUB_ALLOWED_ORIGINS,
+# AUTH_SERVER_URL, AUTH_SERVER_JWKS_URL, AUTH_SERVER_ISSUER,
+# AGENT_CA_CERT_FILE, AGENT_CA_KEY_FILE, AGENT_CA_DIR.
+
+server:
+  port: 3060
+  readTimeout: 30s
+  writeTimeout: 30s
+  shutdownTimeout: 15s
+
+database:
+  url: "postgres://postgres:postgres@localhost:5432/nexus_gateway?sslmode=disable"
+  maxConns: 20
+  minConns: 5
+
+redis:
+  # Universal Redis configuration consumed by every Nexus Gateway service.
+  # See packages/shared/storage/redisfactory + docs/developers/architecture/
+  # configuration-architecture.md §9 for the full contract.
+  mode: standalone
+  addrs: ["localhost:6379"]
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+# MQ consumers (traffic-event-writer, admin-audit-writer,
+# metrics-aggregator, optional siem-forwarder).
+consumers:
+  enabled: true
+  batchSize: 100
+  flushInterval: 5s
+  siem:
+    enabled: false
+    url: ""
+    headers: {}
+    format: "json"
+    batchSize: 200
+    flushInterval: 5s
+    eventTypes: []
+
+# Scheduled jobs (drift detector, identity enricher, enrollment
+# cleanup, stale-thing reaper).
+scheduler:
+  enabled: true
+  driftCheckInterval: 60s
+  identityEnrichInterval: 5m
+  # Per-Thing rollup of source=agent rows. Defaults to false; agents roll up
+  # locally. Enable only on small or forensics-heavy deployments.
+  enableAgentRollup: false
+
+auth:
+  # REQUIRED. Set via env INTERNAL_SERVICE_TOKEN in production.
+  internalServiceToken: ""
+
+# Shared OAuth/OIDC auth server (mounted by Control Plane). Env
+# overrides: AUTH_SERVER_URL, AUTH_SERVER_JWKS_URL, AUTH_SERVER_ISSUER
+# (the last one is [MUST MATCH] with CP's auth-server issuer).
+authServer:
+  # Base URL of the auth server (e.g. "https://nexus.example.com")
+  # returned by GET /api/public/agent-bootstrap.
+  url: ""
+  # JWKS endpoint used to verify enrollment JWTs in enterprise-login mode.
+  jwksURL: ""
+  # Issuer string Hub pins via jwt.WithIssuer. Must match CP's auth-server
+  # issuer; mismatch ⇒ enrollment JWTs fail verification.
+  issuer: ""
+
+# Agent CA: prefer pre-minted cert+key paths; otherwise the Hub
+# generates one at `dir` on first boot.
+agentCA:
+  certFile: ""
+  keyFile: ""
+  dir: ""
+
+otel:
+  enabled: false
+  endpoint: ""
+
+log:
+  level: "info"
+  format: "json"
+
+hub:
+  # REQUIRED. Unique instance id surfaced in the thing registry.
+  id: ""
+  # Bind address advertised to other services via self-registration.
+  advertiseAddr: ""
+  # Production origin allowlist for the WebSocket endpoint.
+  # Localhost is always allowed; this list is additive for
+  # non-loopback origins.
+  allowedOrigins: []

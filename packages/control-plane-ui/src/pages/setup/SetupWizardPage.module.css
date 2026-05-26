@@ -1,0 +1,249 @@
+/* src/pages/setup/SetupWizardPage.module.css */
+
+/* -- Wizard Root --------------------------------------------------- */
+.wizardRoot {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.wizardTitle {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+  color: var(--color-text);
+}
+
+.wizardSubtitle {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin: 0 0 1.5rem;
+}
+
+/* -- Step Bar ------------------------------------------------------ */
+.stepBar {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.stepBarItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 70px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--g-radius-md);
+  transition: background 0.15s;
+}
+
+.stepBarItem:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.stepBarItemCurrent {
+  background: var(--color-muted);
+}
+
+.stepBarItemDone .stepBarCircle {
+  background: var(--color-success);
+  color: var(--g-gray-50);
+}
+
+.stepBarItemDisabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stepBarCircle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--color-border);
+  color: var(--color-text);
+  flex-shrink: 0;
+}
+
+.stepBarItemCurrent .stepBarCircle {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.stepBarLabel {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-align: center;
+  line-height: 1.2;
+}
+
+.stepBarItemCurrent .stepBarLabel {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* -- Step Panel ---------------------------------------------------- */
+.stepPanel {
+  min-height: 300px;
+}
+
+.stepContent {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.stepTitle {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.stepDesc {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* -- Detected Data / Summary --------------------------------------- */
+.detectedLabel {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-success);
+  margin: 0 0 0.5rem;
+}
+
+.summaryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.875rem;
+}
+
+.summaryCode {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.moreText {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* -- Forms --------------------------------------------------------- */
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.formLabel {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.formInput {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.formInput:focus {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px var(--shadow-md);
+}
+
+.formSelect {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  outline: none;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.formSelect:focus {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px var(--shadow-md);
+}
+
+.hintText {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* -- Status -------------------------------------------------------- */
+.loadingText {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  padding: 1rem 0;
+}
+
+.errorText {
+  font-size: 0.875rem;
+  color: var(--color-danger);
+  margin: 0;
+}
+
+.retryBtn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: 4px 12px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.retryBtn:hover {
+  background: var(--color-surface-hover);
+}
+
+/* -- Navigation ---------------------------------------------------- */
+.navBar {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.complianceActions {
+  margin-top: 1rem;
+}
+
+.summaryActions {
+  margin-top: 1.5rem;
+}

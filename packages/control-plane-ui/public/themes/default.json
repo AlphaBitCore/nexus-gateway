@@ -1,0 +1,150 @@
+{
+  "id": "default",
+  "displayName": "AlphaBitCore",
+  "description": "Prime-console-aligned operations console with AlphaBitCore brand assets, navy navigation, institutional blue accents, dense tables, and true light/dark surfaces",
+
+  "brand": {
+    "productName": "AlphaBitCore",
+    "tagline": "Innovate. Invest. Thrive",
+    "logoMark": "/brand/prime-console/logo-mark.svg",
+    "logoFull": "/brand/prime-console/logo-wordmark.svg",
+    "logoTagline": "/brand/prime-console/logo-tagline.svg",
+    "favicon": "/brand/prime-console/logo-mark.svg"
+  },
+
+  "typography": {
+    "fontSans": "'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "fontDisplay": "'Inter', ui-sans-serif, system-ui, sans-serif",
+    "fontMono": "'JetBrains Mono', 'SF Mono', ui-monospace, monospace"
+  },
+
+  "layer1": {
+    "radii": {
+      "sm": "4px",
+      "md": "6px",
+      "lg": "8px",
+      "xl": "10px"
+    },
+    "effects": {
+      "glow-active": "0 0 12px -4px var(--sidebar-active-border)",
+      "card-hover-shadow": "0 0 0 1px var(--color-border-strong)",
+      "header-blur": "blur(12px)"
+    }
+  },
+
+  "lightTokens": {
+    "color-primary": "#3b518a",
+    "color-primary-foreground": "#ffffff",
+    "color-primary-hover": "#324570",
+
+    "color-success": "#16a34a",
+    "color-success-light": "#f0fdf4",
+    "color-success-dark": "#15803d",
+    "color-warning": "#d97706",
+    "color-warning-light": "#fffbeb",
+    "color-warning-dark": "#b45309",
+    "color-danger": "#dc2626",
+    "color-danger-light": "#fef2f2",
+    "color-danger-dark": "#b91c1c",
+    "color-info": "#1156e6",
+    "color-info-light": "#eff6ff",
+
+    "color-bg": "#ffffff",
+    "color-surface": "#f8f9fb",
+    "color-surface-hover": "#f7f8f8",
+    "color-surface-raised": "#ffffff",
+    "color-border": "#e6e9f4",
+    "color-border-light": "#eef1f7",
+    "color-border-strong": "#d7dde7",
+    "color-divider": "#e6e9f4",
+    "color-muted": "#f7f8f8",
+    "color-muted-foreground": "#6e768c",
+    "color-accent": "#f1f2f4",
+    "color-accent-foreground": "#3b518a",
+    "color-ring": "#3b518a",
+    "color-title-gradient": "linear-gradient(90deg, #1156e6 0%, #5eae5d 100%)",
+    "page-shell-glow": "linear-gradient(90deg, #1166dc 0%, #64ffa3 100%)",
+    "page-shell-glow-opacity": "0.12",
+
+    "color-text": "#000000",
+    "color-text-primary": "#000000",
+    "color-text-secondary": "#5a607f",
+    "color-text-tertiary": "#6e768c",
+    "color-text-placeholder": "#9ba1ae",
+    "color-text-muted": "#6e768c",
+    "color-text-inverse": "#ffffff",
+
+    "sidebar-bg": "#192033",
+    "sidebar-surface": "rgba(255, 255, 255, 0.08)",
+    "sidebar-text": "#8a93ad",
+    "sidebar-text-active": "#ffffff",
+    "sidebar-hover": "rgba(255, 255, 255, 0.05)",
+    "sidebar-active-bg": "rgba(255, 255, 255, 0.08)",
+    "sidebar-active-border": "transparent",
+    "sidebar-accent": "rgba(255, 255, 255, 0.08)",
+    "sidebar-accent-foreground": "#ffffff",
+    "sidebar-border": "rgba(90, 96, 127, 0.24)",
+    "sidebar-section-label": "#c8cedf",
+    "sidebar-shadow": "1px 0 0 rgba(90, 96, 127, 0.24)"
+  },
+
+  "darkTokens": {
+    "color-primary": "#3b518a",
+    "color-primary-foreground": "#ffffff",
+    "color-primary-hover": "#324570",
+
+    "color-success": "#22c55e",
+    "color-success-light": "rgba(34, 197, 94, 0.10)",
+    "color-success-dark": "#16a34a",
+    "color-warning": "#f59e0b",
+    "color-warning-light": "rgba(245, 158, 11, 0.10)",
+    "color-warning-dark": "#d97706",
+    "color-danger": "#ef4444",
+    "color-danger-light": "rgba(239, 68, 68, 0.10)",
+    "color-danger-dark": "#dc2626",
+    "color-info": "#a3a3a3",
+    "color-info-light": "rgba(163, 163, 163, 0.10)",
+
+    "color-bg": "#0f1422",
+    "color-bg-translucent": "rgba(15, 20, 34, 0.72)",
+    "color-surface": "#141b2b",
+    "color-surface-hover": "#1b2438",
+    "color-surface-raised": "#182238",
+    "color-border": "rgba(142, 164, 218, 0.16)",
+    "color-border-light": "rgba(142, 164, 218, 0.1)",
+    "color-border-strong": "rgba(142, 164, 218, 0.28)",
+    "color-divider": "rgba(142, 164, 218, 0.16)",
+    "color-muted": "#1b2438",
+    "color-muted-foreground": "#8a93ad",
+    "color-accent": "#1b2438",
+    "color-accent-foreground": "#c8cedf",
+    "color-ring": "#8ea4da",
+    "color-title-gradient": "linear-gradient(90deg, #8ea4da 0%, #22c55e 100%)",
+    "page-shell-glow": "linear-gradient(90deg, #8ea4da 0%, #22c55e 100%)",
+    "page-shell-glow-opacity": "0.1",
+
+    "color-text": "#f4f7fb",
+    "color-text-primary": "#f4f7fb",
+    "color-text-secondary": "#c8cedf",
+    "color-text-tertiary": "#8a93ad",
+    "color-text-placeholder": "#6e768c",
+    "color-text-muted": "#8a93ad",
+    "color-text-inverse": "#0f1422",
+
+    "sidebar-bg": "#192033",
+    "sidebar-surface": "rgba(255, 255, 255, 0.08)",
+    "sidebar-text": "#8a93ad",
+    "sidebar-text-active": "#ffffff",
+    "sidebar-hover": "rgba(255, 255, 255, 0.05)",
+    "sidebar-active-bg": "rgba(255, 255, 255, 0.08)",
+    "sidebar-active-border": "transparent",
+    "sidebar-accent": "rgba(255, 255, 255, 0.08)",
+    "sidebar-accent-foreground": "#ffffff",
+    "sidebar-border": "rgba(90, 96, 127, 0.24)",
+    "sidebar-section-label": "#c8cedf",
+    "sidebar-shadow": "1px 0 0 rgba(90, 96, 127, 0.24)",
+
+    "g-effect-ambient-gradient": "none",
+    "g-effect-card-edge-light": "inset 0 1px 0 0 rgba(255, 255, 255, 0.04)"
+  }
+}

@@ -1,0 +1,117 @@
+.wrapper {
+  position: relative;
+}
+
+.expandBtn {
+  position: absolute;
+  top: var(--g-space-2);
+  right: var(--g-space-2);
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--g-font-size-xs);
+  line-height: 1;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity var(--g-transition-fast), background var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.wrapper:hover .expandBtn {
+  opacity: 1;
+}
+
+.expandBtn:hover {
+  background: var(--color-muted);
+  color: var(--color-text);
+}
+
+.expandBtn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--color-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--g-space-6);
+  animation: fadeIn var(--g-transition-fast) ease-out;
+}
+
+.fullScreenCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-xl);
+  box-shadow: var(--g-shadow-lg);
+  width: 100%;
+  max-width: 1200px;
+  max-height: 90vh;
+  overflow: auto;
+  position: relative;
+  animation: scaleIn var(--g-transition-normal) ease-out;
+}
+
+.fullScreenContent {
+  padding: var(--g-space-6);
+}
+
+.closeBtn {
+  position: absolute;
+  top: var(--g-space-3);
+  right: var(--g-space-3);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--g-font-size-sm);
+  line-height: 1;
+  z-index: 2;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.closeBtn:hover {
+  background: var(--color-muted);
+  color: var(--color-text);
+}
+
+.closeBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .fullScreenCard {
+    animation: none;
+  }
+}

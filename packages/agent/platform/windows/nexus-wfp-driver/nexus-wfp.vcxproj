@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  nexus-wfp.vcxproj — WDK KMDF driver project.
+  Authoritative design: docs/developers/architecture/agent-windows-wfp-driver.md
+  SDD: docs/developers/specs/e59-s1-driver-skeleton.md (amd64 only),
+       docs/developers/specs/e59-s4-cross-arch-build.md (arm64 added).
+-->
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E59A5800-1234-4D7B-9B4C-1A5F2E2D8B00}</ProjectGuid>
+    <TemplateGuid>{497e31cb-056b-4f31-abb8-447fd55ee5a5}</TemplateGuid>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>NexusWFP</RootNamespace>
+    <ProjectName>nexus-wfp</ProjectName>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <SpectreMitigation>Spectre</SpectreMitigation>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <SpectreMitigation>Spectre</SpectreMitigation>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <PropertyGroup>
+    <OutDir>bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>obj\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <PreprocessorDefinitions>NEXUS_WFP_DRIVER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <DriverSign>
+      <FileDigestAlgorithm>SHA256</FileDigestAlgorithm>
+    </DriverSign>
+    <Inf>
+      <TimeStamp>$(DriverVer)</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="Driver.c" />
+    <ClCompile Include="Callouts.c" />
+    <ClCompile Include="Ioctl.c" />
+    <ClCompile Include="Filter.c" />
+    <ClCompile Include="PolicyState.c" />
+    <ClCompile Include="FlowTable.c" />
+    <ClCompile Include="AuditQueue.c" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="Common.h" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Inf Include="nexus-wfp.inf" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

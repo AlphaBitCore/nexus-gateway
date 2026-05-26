@@ -1,0 +1,237 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "menu.about" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "About Nexus Agent" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关于 Nexus Agent" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Acerca de Nexus Agent" } }
+      }
+    },
+    "menu.downloadUpdate" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Download update" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "下载更新" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Descargar actualización" } }
+      }
+    },
+    "menu.openDashboard" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Dashboard" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开仪表盘" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir el panel" } }
+      }
+    },
+    "menu.diagnostics" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Diagnostics…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "诊断…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Diagnóstico…" } }
+      }
+    },
+    "menu.updateAvailable" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Update available — install" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "有可用更新——立即安装" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Actualización disponible — instalar" } }
+      }
+    },
+    "menu.switchIdentity" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Switch identity…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "切换身份…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cambiar de identidad…" } }
+      }
+    },
+    "menu.signOut" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign Out" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出登录" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cerrar sesión" } }
+      }
+    },
+    "menu.openSetup" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Setup…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开设置…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir configuración…" } }
+      }
+    },
+    "menu.pauseProtection" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pause Protection" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂停保护" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Pausar protección" } }
+      }
+    },
+    "menu.pauseDuration.15min" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "For 15 minutes" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "15 分钟" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "15 minutos" } }
+      }
+    },
+    "menu.pauseDuration.1hour" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "For 1 hour" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "1 小时" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "1 hora" } }
+      }
+    },
+    "menu.pauseDuration.8hours" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "For 8 hours" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "8 小时" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "8 horas" } }
+      }
+    },
+    "menu.pauseDuration.indefinite" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Until I resume" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "直到手动恢复" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Hasta reanudar manualmente" } }
+      }
+    },
+    "menu.quitAgent" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Quit Nexus Agent" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出 Nexus Agent" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Salir de Nexus Agent" } }
+      }
+    },
+    "quit.confirmTitle" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Quit Nexus Agent?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出 Nexus Agent？" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Salir de Nexus Agent?" } }
+      }
+    },
+    "quit.confirmAction" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Quit" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Salir" } }
+      }
+    },
+    "quit.cancelAction" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cancelar" } }
+      }
+    },
+    "quit.fallbackWarning" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This will stop the Nexus Agent daemon entirely. Your device will no longer be protected by company policies until you re-launch the app. To switch accounts, use Sign Out instead." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这会完全停止 Nexus Agent 守护进程。在你重新打开 App 之前，本设备不再受公司策略保护。如果只是想换账号，请改用「退出登录」。" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Esto detendrá por completo el daemon de Nexus Agent. Hasta que vuelva a abrir la app, este dispositivo dejará de estar protegido por las políticas de la empresa. Para cambiar de cuenta, use Cerrar sesión." } }
+      }
+    },
+    "menu.restartAgent" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restart Agent" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重启 Agent" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reiniciar Agent" } }
+      }
+    },
+    "menu.restartApp" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restart App" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重启 App" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reiniciar la app" } }
+      }
+    },
+    "menu.restartApp.started" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Relaunching Nexus Agent…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在重启 Nexus Agent…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reiniciando Nexus Agent…" } }
+      }
+    },
+    "menu.reinstallNetworkExtension" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reinstall Network Extension" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新安装网络扩展" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reinstalar extensión de red" } }
+      }
+    },
+    "menu.reinstallNetworkExtension.started" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reinstalling Network Extension…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在重新安装网络扩展…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reinstalando la extensión de red…" } }
+      }
+    },
+    "menu.reinstallNetworkExtension.done" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Network Extension reinstall complete" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网络扩展已重新安装" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Extensión de red reinstalada" } }
+      }
+    },
+    "menu.version" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Nexus Agent {{version}}" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Nexus Agent {{version}}" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Nexus Agent {{version}}" } }
+      }
+    },
+    "menu.resumeProtection" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Resume Protection" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复保护" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reanudar protección" } }
+      }
+    },
+    "menu.settings" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设置…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Configuración…" } }
+      }
+    },
+    "menu.status.active" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Protection Active" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保护已启用" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Protección activa" } }
+      }
+    },
+    "menu.status.degraded" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Attention Needed" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要注意" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Atención necesaria" } }
+      }
+    },
+    "menu.status.error" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Protection Stopped" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保护已停止" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Protección detenida" } }
+      }
+    },
+    "menu.status.paused" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Protection Paused" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保护已暂停" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Protección pausada" } }
+      }
+    },
+    "menu.status.resumesAt" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "resumes at {{time}}" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "{{time}} 自动恢复" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "reanuda a las {{time}}" } }
+      }
+    },
+    "menu.status.pendingEnrollment" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Setup Required" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要完成设置" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Configuración requerida" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

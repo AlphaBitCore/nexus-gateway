@@ -1,0 +1,191 @@
+/* ── CopyJsonButton ───────────────────────────────────────── */
+
+.copyBtn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: all 0.15s ease;
+}
+
+.copyBtnCopied {
+  composes: copyBtn;
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+/* ── JsonStateBlock ──────────────────────────────────────── */
+
+.preBlock {
+  background: var(--color-bg);
+  padding: var(--g-space-2);
+  border-radius: var(--g-radius-md);
+  overflow: auto;
+  max-height: min(42vh, 360px);
+  font-size: var(--g-font-size-sm);
+  line-height: 1.5;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stateBlockWrapper {
+  margin-top: var(--g-space-6);
+}
+
+.stateBlockHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.stateBlockLabel {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+}
+
+/* ── Drawer overlay ──────────────────────────────────────── */
+
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--g-z-overlay);
+  background: var(--color-overlay);
+}
+
+/* ── Drawer aside ────────────────────────────────────────── */
+
+.drawerAside {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  max-height: 100dvh;
+  z-index: var(--g-z-modal);
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  box-shadow: -12px 0 40px var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.drawerHeader {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--g-space-4) var(--g-space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.drawerTitle {
+  margin: 0;
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  font-size: var(--g-font-size-md);
+}
+
+.drawerCloseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--g-radius-md);
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.drawerCloseBtn:hover {
+  background: var(--color-muted);
+  color: var(--color-text);
+}
+
+.drawerBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--g-space-5);
+  -webkit-overflow-scrolling: touch;
+}
+
+.drawerGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--g-space-4);
+}
+
+/* ── Detail field label / value ──────────────────────────── */
+
+.fieldLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 4px;
+}
+
+.fieldValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.fieldValueMono {
+  composes: fieldValue;
+  font-family: var(--g-font-mono);
+  word-break: break-all;
+}
+
+.fieldValuePlain {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+}
+
+.entityTypeMuted {
+  color: var(--color-text-muted);
+}
+
+.entitySeparator {
+  color: var(--color-text-muted);
+}
+
+.entityIdMono {
+  font-family: var(--g-font-mono);
+  word-break: break-all;
+}
+
+/* ── Extracted from inline cellStyle objects ──────────────────────────── */
+
+.longIdCell {
+  white-space: normal;
+  word-break: break-all;
+  font-family: var(--g-font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  vertical-align: top;
+  max-width: min(32vw, 280px);
+}
+
+.actorLabelCell {
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: top;
+  max-width: min(36vw, 220px);
+}
+
+.normalCell {
+  white-space: normal;
+  vertical-align: top;
+}

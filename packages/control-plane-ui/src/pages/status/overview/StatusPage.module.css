@@ -1,0 +1,463 @@
+.statCard {
+  text-align: center;
+  padding: var(--g-space-4);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.statValue {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: 0;
+}
+
+.statLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-top: 4px;
+}
+
+.statLabelFlex {
+  composes: statLabel;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.kvLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.kvValueFlex {
+  composes: kvValue;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.infraTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cacheTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Inline note below the IAM cache stat — explains why operators see
+   one tile instead of the rich response-cache dashboard. Muted enough
+   not to dominate, large enough to read on mobile. */
+.iamCacheNote {
+  margin-top: var(--g-space-3);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.runtimeTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--g-space-2);
+}
+
+.runtimeDesc {
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--g-space-4) 0;
+  font-size: var(--g-font-size-sm);
+  line-height: var(--g-line-height-relaxed);
+}
+
+.emptyText {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--g-space-6);
+  font-size: var(--g-font-size-sm);
+}
+
+.providerCard {
+  composes: statCard;
+  text-align: left;
+  padding: 24px;
+}
+
+.providerHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-3);
+}
+
+.providerName {
+  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+}
+
+.providerStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+}
+
+.providerMetrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--g-space-2);
+}
+
+/* ── StatusPage inline-style extractions ─────────────────────────────── */
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.infraGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.infraHeaderRow {
+  margin-bottom: var(--g-space-4);
+}
+
+.cacheHeaderRow {
+  margin-bottom: var(--g-space-4);
+}
+
+.providerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.helpIconBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: help;
+  font-size: inherit;
+  color: var(--color-text-muted);
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.helpIconBtn:hover {
+  color: var(--color-text-secondary);
+}
+
+.helpIconBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--g-radius-sm);
+}
+
+.helperText {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+}
+
+.table th,
+.table td {
+  padding: var(--g-space-2) var(--g-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.table tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+/* ── Jobs tab ──────────────────────────────────────────────────────────── */
+
+.jobStatusCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spinningDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid;
+  display: inline-block;
+  flex-shrink: 0;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.errorHint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: var(--color-surface);
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+  cursor: help;
+  flex-shrink: 0;
+}
+
+/* ── Service Metrics cards ───────────────────────────────────────────── */
+
+.metricsSection {
+  margin-top: var(--g-space-2);
+}
+
+.metricsSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--g-space-4);
+}
+
+.metricsSectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.metricsCardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.metricsCard {
+  background: var(--color-bg);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+  padding: var(--g-space-4);
+}
+
+.metricsCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--g-space-3);
+  padding-bottom: var(--g-space-2);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.metricsCardService {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+}
+
+.metricsCardInstances {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: var(--g-space-2);
+  margin-bottom: var(--g-space-3);
+}
+
+.metricItem {
+  text-align: center;
+}
+
+.metricValue {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.metricLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-top: 2px;
+}
+
+.runtimeHeader {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: var(--g-space-2);
+  padding-top: var(--g-space-2);
+  border-top: 1px solid var(--color-border-light);
+}
+
+.runtimeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--g-space-2);
+}
+
+.fetchWarning {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-warning);
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-warning-bg);
+  border-radius: var(--g-radius-sm);
+  margin-bottom: var(--g-space-3);
+}
+
+.removeBtn {
+  font-size: var(--g-font-size-xs);
+  padding: 2px 8px;
+  border: 1px solid var(--color-danger);
+  background: transparent;
+  color: var(--color-danger);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.removeBtn:hover {
+  background: var(--color-danger);
+  color: var(--color-surface);
+}
+
+.removeBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* De-emphasized stats row */
+.statsGridCompact {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: var(--g-space-2);
+  margin-bottom: var(--g-space-3);
+}
+
+.statCardCompact {
+  text-align: center;
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-bg);
+  border-radius: var(--g-radius-sm);
+  border: 1px solid var(--color-border-light);
+}
+
+.statValueCompact {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.statLabelCompact {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-top: 2px;
+}
+
+/* Compact infrastructure bar */
+.infraBar {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-4);
+  padding: var(--g-space-2) 0;
+  margin-bottom: var(--g-space-3);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.infraItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.infraDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Scope hint pointing operators at /infrastructure/nodes for cross-
+   service health. Sits above the infra bar so the page boundary is
+   obvious before the user reads any individual metric. */
+.scopeHint {
+  margin: 0 0 var(--g-space-2) 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.scopeLink {
+  color: var(--color-link);
+  text-decoration: none;
+}
+
+.scopeLink:hover {
+  text-decoration: underline;
+}

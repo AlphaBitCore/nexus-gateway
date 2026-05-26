@@ -1,0 +1,2453 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Phase 1 Active Models ────────────────────────────────────────────────────
+
+model Provider {
+  id                      String   @id @default(uuid())
+  name                    String   @unique
+  displayName             String?
+  description             String?
+  /// Canonical wire adapter for this provider — one of the nine
+  /// providers.Format values (openai, anthropic, gemini, glm, deepseek,
+  /// azure-openai, minimax, bedrock, vertex). Required and mutable:
+  /// operators pick the adapter explicitly on create and may change it
+  /// later. Enum validation is enforced in the Control Plane handler
+  /// and the OpenAPI spec; no SQL CHECK so the value set can evolve
+  /// without a migration. Replaces the previous name-based
+  /// FormatOfProvider lookup in the AI Gateway.
+  adapterType             String   @map("adapter_type")
+  baseUrl                 String
+  pathPrefix              String   @unique
+  apiVersion              String?
+  /// Authoritative deployment region for this provider (e.g. "us-east-1",
+  /// "eu-west-1"). Consumed by the data-residency hook at request time
+  /// without relying on IP geolocation. Nullable: legacy providers keep
+  /// behaviour until an operator fills in a value.
+  region                  String?
+  enabled                 Boolean  @default(true)
+  headers                 Json?
+  /// E33 per-provider StreamingPolicy override columns. NULL on any
+  /// column means "inherit from system_metadata['streaming_compliance.config']
+  /// global default". The shared resolver merges these with the global
+  /// default at request time; see packages/shared/streaming/policy.
+  streamingMode           String?  @map("streaming_mode")
+  streamingChunkBytes     Int?     @map("streaming_chunk_bytes")
+  streamingHookTimeoutMs  Int?     @map("streaming_hook_timeout_ms")
+  streamingMaxBufferBytes Int?     @map("streaming_max_buffer_bytes")
+  streamingFailBehavior   String?  @map("streaming_fail_behavior")
+  captureRequestBody      Boolean? @map("capture_request_body")
+  captureResponseBody     Boolean? @map("capture_response_body")
+  rawBodySpillEnabled     Boolean? @map("raw_body_spill_enabled")
+  createdAt               DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime @updatedAt @db.Timestamptz(3)
+
+  credentials         Credential[]
+  models              Model[]
+  cacheProviderConfig CacheProviderConfig?
+  passthroughConfig   GatewayPassthroughConfigProvider?
+  // E61-S2: this provider may be the fleet-wide embedding provider for the
+  // semantic cache singleton. Modeled as a list back-relation (one-to-many on
+  // the schema side) because Prisma's one-to-one mode requires the FK column
+  // to be @unique. In practice the SemanticCacheConfig table has exactly one
+  // row (id='singleton'), so the list always has at most one element.
+  semanticCacheConfig SemanticCacheConfig[]             @relation("EmbeddingProviderOnSemanticCache")
+}
+
+model HookConfig {
+  id                String   @id @default(uuid())
+  name              String   @unique
+  type              String // builtin | webhook | script
+  /// Registered built-in / webhook implementation key (e.g. pii-detector, webhook.forward). Source of truth for dispatch.
+  implementationId  String   @default("noop")
+  stage             String   @default("request") // request | response
+  /// Optional UI/ops override; when null, category is derived from built-in implementation registry.
+  category          String?
+  endpoint          String? // URL for webhook type
+  script            String? // code for script type
+  config            Json? // additional hook configuration
+  priority          Int      @default(0)
+  timeoutMs         Int      @default(5000)
+  failBehavior      String   @default("fail-open") // fail-open | fail-closed
+  enabled           Boolean  @default(true)
+  applicableIngress String[] @default(["ALL"])
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+}
+
+/// Built-in / third-party rule pack (e.g. OWASP LLM Top-10, CN PII regex set).
+/// Versioned, signable unit installed into a hook instance via RulePackInstall.
+model RulePack {
+  id          String   @id @default(uuid())
+  name        String
+  version     String
+  maintainer  String
+  description String?
+  signature   String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  rules         Rule[]
+  installations RulePackInstall[]
+
+  @@unique([name, version])
+  @@map("rule_pack")
+}
+
+/// A single matching rule inside a RulePack (regex / pattern + category + severity).
+model Rule {
+  id          String   @id @default(uuid())
+  packId      String
+  pack        RulePack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  ruleId      String
+  category    String
+  severity    String
+  pattern     String
+  flags       String?
+  description String?
+  labels      String[]
+
+  @@unique([packId, ruleId])
+  @@map("rule")
+}
+
+/// Binding of a specific RulePack version to a hook instance.
+/// A hook references its installed packs; overrides live in RuleOverride.
+model RulePackInstall {
+  id          String   @id @default(uuid())
+  packId      String
+  pack        RulePack @relation(fields: [packId], references: [id])
+  pinVersion  String
+  boundHookId String
+  enabled     Boolean  @default(true)
+  installedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  overrides RuleOverride[]
+
+  @@map("rule_pack_install")
+}
+
+/// Per-install override for individual rules (disable, severity bump/downgrade).
+model RuleOverride {
+  id               String          @id @default(uuid())
+  installId        String
+  install          RulePackInstall @relation(fields: [installId], references: [id], onDelete: Cascade)
+  ruleLocalId      String
+  disabled         Boolean         @default(false)
+  severityOverride String?
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(3)
+
+  @@unique([installId, ruleLocalId])
+  @@map("rule_override")
+}
+
+/// Time-bucketed aggregates for dashboard metrics (low-cardinality dimensions only).
+model MetricRollup {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  metricName   String
+  dimensionKey String   @default("")
+  dimensions   Json     @default("{}")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([bucketStart, metricName, dimensionKey])
+  @@index([metricName, bucketStart])
+}
+
+model AdminApiKey {
+  id          String     @id @default(uuid())
+  name        String
+  keyHash     String     @unique
+  keyPrefix   String
+  createdBy   String
+  enabled     Boolean    @default(true)
+  /// Lifecycle state — orthogonal to the `enabled` quick-toggle.
+  /// active     accepted by auth middleware (steady state)
+  /// rotating   superseded but still accepted during the rotation window
+  /// expired    natural sunset (past expiresAt or operator-retired)
+  /// unavailable explicitly revoked (compromise, withdrawal); rejected
+  /// CHECK constraint enforced by 20260610000000_admin_api_key_rotation.
+  status      String     @default("active")
+  lastUsedAt  DateTime?  @db.Timestamptz(3)
+  expiresAt   DateTime?  @db.Timestamptz(3)
+  /// Stamp of the moment status transitioned active → rotating.
+  rotatedAt   DateTime?  @db.Timestamptz(3)
+  /// Predecessor row: set on the newly-minted key during a rotate operation.
+  /// FK ON DELETE SET NULL keeps the successor row valid if the predecessor
+  /// is later purged.
+  rotatedFromId String?
+  rotatedFrom   AdminApiKey?  @relation("AdminApiKeyRotation", fields: [rotatedFromId], references: [id], onDelete: SetNull)
+  rotationSuccessors AdminApiKey[] @relation("AdminApiKeyRotation")
+  /// Optional owning dashboard user: programmatic admin calls use their IAM identity and audit attribution.
+  ownerUserId String?
+  ownerUser   NexusUser? @relation("AdminApiKeyOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @db.Timestamptz(3)
+
+  @@index([keyHash])
+  @@index([ownerUserId])
+}
+
+/// Unified identity model. Supports local password auth,
+/// OIDC SSO, and OS-identity-based enrollment from the desktop agent.
+model NexusUser {
+  id                    String    @id @default(uuid())
+  organizationId        String    @default("default")
+  displayName           String
+  email                 String?
+  status                String    @default("active") // active | suspended | deactivated
+  canAccessControlPlane Boolean   @default(false)
+  /// Provisioning source: 'local' (manual), 'oidc' (JIT via SSO), 'scim' (IdP push).
+  source                String    @default("local")
+  osUsername            String?
+  osDomain              String?
+  passwordHash          String?
+  passwordUpdatedAt     DateTime? @db.Timestamptz(3)
+  /// IANA timezone name for display preference (e.g. "Asia/Shanghai").
+  /// Null = use the browser's detected TZ at display time. E32-S1.
+  preferredTimezone     String?
+  breakGlass            Boolean   @default(false)
+  disabledReason        String?
+  disabledAt            DateTime? @db.Timestamptz(3)
+  lastLoginAt           DateTime? @db.Timestamptz(3)
+  createdBy             String?
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+
+  organization            Organization               @relation(fields: [organizationId], references: [id])
+  ownedAdminApiKeys       AdminApiKey[]              @relation("AdminApiKeyOwner")
+  ownedVirtualKeys        VirtualKey[]               @relation("VirtualKeyOwner")
+  deviceAssignments       DeviceAssignment[]
+  federatedIdentities     UserFederatedIdentity[]
+  refreshTokens           RefreshToken[]
+  diagModeWindowsSet      ThingDiagModeWindow[]      @relation("ThingDiagModeWindowSetBy")
+  retentionConfigsUpdated MetricOpsRetentionConfig[] @relation("MetricOpsRetentionConfigUpdatedBy")
+  scimTokensCreated       ScimToken[]                @relation("ScimTokenCreatedBy")
+
+  @@unique([organizationId, email])
+  @@unique([organizationId, osUsername, osDomain])
+  @@index([organizationId, status])
+}
+
+/// Tracks the history of user-device assignments (who owned a device and when).
+/// Used by the agent for identity attribution on heartbeat, login, and compliance events.
+model DeviceAssignment {
+  id          String    @id @default(uuid())
+  deviceId    String
+  userId      String?
+  assignedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  releasedAt  DateTime? @db.Timestamptz(3)
+  source      String    @default("heartbeat") // heartbeat | manual | enrollment | login
+  /// Login method that created this assignment: local | oidc | saml | device_only
+  loginMethod String?   @map("login_method")
+  /// OAuth access token JTI linked to this assignment (for revocation tracing).
+  tokenJti    String?   @map("token_jti")
+  /// Client IP address at assignment time (used by compliance-proxy for attribution).
+  ipAddress   String?   @map("ip_address")
+
+  device Thing      @relation(fields: [deviceId], references: [id])
+  user   NexusUser? @relation(fields: [userId], references: [id])
+
+  @@index([deviceId, releasedAt])
+  @@index([userId])
+  @@index([ipAddress, assignedAt])
+}
+
+model AdminAuditLog {
+  id              String   @id @default(uuid())
+  sequenceNumber  Int      @default(autoincrement())
+  timestamp       DateTime @default(now()) @db.Timestamptz(3)
+  actorId         String
+  actorLabel      String
+  actorRole       String?
+  sourceIp        String?
+  action          String // create | update | delete | flush | export | rollback | simulate | reset
+  entityType      String // policy | hook | provider | credential | virtualKey | routingRule | config | apiKey
+  entityId        String?
+  beforeState     Json?
+  afterState      Json?
+  /// Gateway-generated id for this admin HTTP request (matches access logs / response `x-nexus-request-id`)
+  nexusRequestId  String?
+  /// Legacy / unused for new writes; audit does not trust client request ids
+  clientRequestId String?
+  /// Mirrors resolved admin API key id (same as actorId); not from client headers
+  clientUserId    String?
+  clientSessionId String?
+  /// Tamper-evident hash chain (F3). Genesis row has previousHash = NULL;
+  /// every subsequent row stores the prior row's integrityHash. integrityHash
+  /// is NOT NULL — see packages/nexus-hub/internal/traffic/chain/chain.go for
+  /// the canonical payload + hash recipe. Both writer paths (CP→MQ consumer
+  /// and Hub direct in-tx) call chain.NextHash to populate these columns under
+  /// a pg_advisory_xact_lock so concurrent inserts cannot produce a fork.
+  previousHash    String?
+  integrityHash   String
+  /// Exact bytes that were SHA-256'd to produce integrityHash (canonical
+  /// JSON payload from audit.canonicalizePayload). Stored verbatim so
+  /// VerifyChain can recompute the hash without depending on jsonb
+  /// roundtrip stability — JSONB normalises key order and whitespace,
+  /// which would otherwise break the chain on every row that has a
+  /// non-null beforeState/afterState. The jsonb columns above are now
+  /// display copies only; this column is the cryptographic source of
+  /// truth.
+  hashInput       Bytes
+
+  @@index([timestamp])
+  @@index([actorId])
+  @@index([entityType])
+  @@index([nexusRequestId])
+  @@index([clientRequestId])
+  @@index([sequenceNumber])
+}
+
+// ─── Phase 1 Simplified Models (full implementation in later phases) ──────────
+
+model Organization {
+  id              String         @id @default(uuid())
+  name            String
+  code            String         @unique
+  parentId        String?
+  parent          Organization?  @relation("OrgTree", fields: [parentId], references: [id])
+  children        Organization[] @relation("OrgTree")
+  /// Materialized path for efficient subtree queries. Root orgs: /{id}/. Children: {parent.path}{id}/.
+  /// Enables LIKE '/{ancestor}/.../%' subtree scans without recursive CTEs. E39.
+  path            String         @unique
+  description     String?
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  enabled         Boolean        @default(true)
+  /// IANA timezone name. Drives business-rule semantics like
+  /// daily-quota reset boundaries, "yesterday" analytics windows,
+  /// and business-hours rules. Default UTC = no special handling.
+  /// Distinct from User.preferredTimezone (display only). E32-S1.
+  timezone        String         @default("UTC")
+  /// Provisioning source: 'local' (manual) or 'idp' (synced from IdP via SCIM/manual mapping).
+  source          String         @default("local")
+  /// External IdP group ID that maps to this org (set during SCIM group provisioning).
+  externalGroupId String?
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(3)
+
+  users    NexusUser[]
+  projects Project[]
+
+  @@index([parentId])
+}
+
+model Project {
+  id             String       @id @default(uuid())
+  name           String
+  code           String       @unique
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  description    String?
+  contactName    String?
+  contactEmail   String?
+  status         String       @default("active")
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  virtualKeys VirtualKey[]
+
+  @@index([organizationId])
+}
+
+model VirtualKey {
+  id                          String     @id @default(uuid())
+  name                        String // human-readable label, e.g., "engineering-openai"
+  keyHash                     String?    @unique // HMAC-SHA256 hash of the real API key
+  keyPrefix                   String? // First 12 chars for display (e.g., "nvk_a1b2c3d4")
+  projectId                   String?
+  project                     Project?   @relation(fields: [projectId], references: [id])
+  sourceApp                   String?
+  enabled                     Boolean    @default(true)
+  expiresAt                   DateTime?  @db.Timestamptz(3)
+  rateLimitRpm                Int?
+  // E58-S4 T6.3: per-VK /v1/estimate compare-endpoint RPM cap (default
+  // 30/min in code). Compare requests dispatch N internally so they
+  // warrant their own rate bucket.
+  compareEndpointRateLimitRpm Int?
+  /// JSON array of { providerId, modelId }; modelId supports globs (same as legacy allowlist). Empty = all models.
+  allowedModels               Json       @default("[]")
+  ownerId                     String?
+  owner                       NexusUser? @relation("VirtualKeyOwner", fields: [ownerId], references: [id])
+  createdBy                   String?
+  createdAt                   DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime   @updatedAt @db.Timestamptz(3)
+
+  vkType       String    @default("personal") // "personal" | "application"
+  vkStatus     String    @default("active") // "pending" | "active" | "expired" | "rejected" | "revoked"
+  approvedBy   String?
+  approvedAt   DateTime? @db.Timestamptz(3)
+  rejectedBy   String?
+  rejectedAt   DateTime? @db.Timestamptz(3)
+  rejectReason String?
+
+  @@index([name])
+  @@index([keyHash])
+  @@index([projectId])
+  @@index([ownerId])
+  @@index([vkType])
+  @@index([vkStatus])
+}
+
+model Credential {
+  id                    String    @id @default(uuid())
+  name                  String    @unique
+  providerId            String
+  provider              Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  encryptedKey          String
+  encryptionIv          String
+  encryptionTag         String
+  encryptionKeyId       String    @default("v1") @map("encryption_key_id")
+  enabled               Boolean   @default(true)
+  rotationState         String?   @default("none") // none | pending_rotation | validating | rotated | completed
+  lastRotatedAt         DateTime? @db.Timestamptz(3)
+  rotationStartedAt     DateTime? @db.Timestamptz(3)
+  lastUsedAt            DateTime? @db.Timestamptz(3)
+  lastSuccessAt         DateTime? @db.Timestamptz(3)
+  lastFailureAt         DateTime? @db.Timestamptz(3)
+  lastFailureReason     String?
+  totalUsageCount       Int       @default(0)
+  expiresAt             DateTime? @db.Timestamptz(3)
+  // Pool management fields (L1-L3)
+  selectionWeight       Int       @default(100) // 0 = excluded; higher = more traffic
+  status                String    @default("active") // active | retiring | retired
+  retireAt              DateTime? @db.Timestamptz(3) // auto-delete after this date (retired only)
+  // Circuit breaker durable state (E41). Live counters (auth_fails current value)
+  // stay in Redis cred:circuit:{id}; admin views merge live + durable.
+  // Flushed by Hub credential-circuit-flush job (default 30s) only on transitions.
+  circuitState          String    @default("closed") // closed | open | half_open
+  circuitReason         String? // auth_fail | rate_limit | null
+  circuitOpenedAt       DateTime? @db.Timestamptz(3)
+  circuitNextProbeAt    DateTime? @db.Timestamptz(3) // rate_limit cooldown end
+  // Health classification (E41 v2 — multi-window). Rolled up from traffic_event
+  // by Hub credential-health-rollup. Two windows: 5m drives the current
+  // classification, 1h feeds the trend (improving / stable / degrading).
+  // healthStatusChangedAt drives the credential.health_degraded_sustained alert.
+  healthStatus          String    @default("unknown") // healthy | degraded | unavailable | unknown | collecting
+  healthSuccessRate5m   Decimal?  @db.Decimal(5, 4)
+  healthSuccessRate1h   Decimal?  @db.Decimal(5, 4)
+  healthSamplesObserved Int       @default(0)
+  healthDominantError   String? // none | auth_fail | rate_limit | upstream_5xx | timeout | client_error | mixed
+  healthTrend           String? // improving | stable | degrading
+  healthStatusChangedAt DateTime? @db.Timestamptz(3)
+  healthCheckedAt       DateTime? @db.Timestamptz(3)
+  // Per-credential reliability threshold overrides (E41 v2). Optional JSONB:
+  // any subset of { authFailThreshold, rateLimitCooldownSeconds,
+  // healthyThresholdPct, degradedThresholdPct, healthMinSamples,
+  // healthWindowSeconds, healthSustainedDegradedSeconds }. Missing fields fall
+  // back to Hub-shadow globals then packages/shared/credstate.DefaultThresholds.
+  reliabilityOverrides  Json?     @db.JsonB
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([providerId])
+  @@index([expiresAt])
+  @@index([status])
+  @@index([circuitState])
+  @@index([healthStatus])
+}
+
+model Model {
+  /// UUID primary key; every internal FK reference (traffic_event.model_id,
+  /// AIGuardConfig.model_id, VirtualKey.allowedModels[].modelId) holds this.
+  id                              String    @id @default(uuid())
+  /// Customer-facing identifier. The string clients send in
+  /// `{"model": "..."}` requests resolves to a UUID via this column.
+  /// Stable across renames of `name` (the display label). Distinct
+  /// from `providerModelId`, which is the upstream vendor's identifier.
+  /// E.g. code="gpt-4o", providerModelId="gpt-4o" usually match but
+  /// don't have to. Unique across the catalog.
+  code                            String    @unique
+  name                            String // "Claude 3.5 Sonnet" (display)
+  description                     String? // "Best for complex reasoning"
+  providerId                      String
+  provider                        Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  providerModelId                 String // actual ID sent to provider API
+  type                            String // chat | embedding | image | audio
+  features                        String[] // vision, function_calling, streaming, json_mode, thinking
+  inputPricePerMillion            Decimal?
+  outputPricePerMillion           Decimal?
+  /// E58-S1: cached input token READ price (Anthropic cache_read_input_tokens
+  /// discount ~0.1×; OpenAI prompt_tokens_details.cached_tokens discount 0.5×;
+  /// Gemini cachedContentTokenCount discount 0.25×). NULL = no discount; cost
+  /// calculation falls back to inputPricePerMillion.
+  cachedInputReadPricePerMillion  Decimal?
+  /// E58-S1: cached input token WRITE surcharge (Anthropic cache_creation_input_tokens
+  /// ~1.25×). NULL = no surcharge; cost calculation falls back to inputPricePerMillion.
+  cachedInputWritePricePerMillion Decimal?
+  maxContextTokens                Int?
+  maxOutputTokens                 Int?
+  status                          String    @default("active") // active | deprecated | disabled
+  deprecationDate                 DateTime? @db.Timestamptz(3)
+  replacedBy                      String?
+  aliases                         String[]
+  enabled                         Boolean   @default(true)
+  /// E62: ordered list of input modalities this model accepts.
+  /// Default ["text"] covers all chat + embedding models that only accept text input.
+  /// Additional values: "image", "audio", "video". Array preserves declaration order.
+  inputModalities                 String[]  @default(["text"])
+  /// E62: ordered list of output modalities this model produces.
+  /// Embedding models set ["embedding"]; chat models default to ["text"].
+  /// Additional values: "image", "audio", "video".
+  outputModalities                String[]  @default(["text"])
+  /// E62: model lifecycle stage. ga | preview | deprecated.
+  /// Complements `status`; status=active + lifecycle=preview means the model is
+  /// callable but not yet generally available.
+  lifecycle                       String    @default("ga")
+  /// E62: provider-specific capability descriptor for non-chat endpoints.
+  /// For embedding models: {"embeddings":{"max_input_tokens":…,"supported_dimensions":…,…}}.
+  /// For chat models: null (capability implied by `features` array).
+  capabilityJson                  Json?
+  createdAt                       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt                       DateTime  @updatedAt @db.Timestamptz(3)
+
+  // E61-S2 back-relations: this Model row may be the embedding model for
+  // the fleet-wide semantic-cache singleton OR for individual traffic events.
+  // Modeled as a list because the SemanticCacheConfig FK column is nullable;
+  // Prisma's one-to-one mode requires the FK to be @unique. In practice the
+  // semantic-cache table has exactly one row.
+  semanticCacheConfig    SemanticCacheConfig[] @relation("EmbeddingModelOnSemanticCache")
+  embeddingTrafficEvents traffic_event[]       @relation("EmbeddingModelOnTraffic")
+
+  @@unique([providerId, providerModelId])
+  @@index([providerId])
+  @@index([type])
+  @@index([status])
+}
+
+// ─── Phase 4: Model Pricing ──────────────────────────────────────────────────
+
+model ModelPricing {
+  id                    String   @id @default(uuid())
+  modelId               String   @unique
+  inputPricePerMillion  Decimal
+  outputPricePerMillion Decimal
+  effectiveDate         DateTime @default(now()) @db.Timestamptz(3)
+  updatedBy             String?
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([modelId])
+}
+
+// ─── Phase 4: Model Routing ──────────────────────────────────────────────────
+
+model RoutingRule {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String?
+  strategyType    String // single | fallback | loadbalance | conditional | ab_split | smart | policy
+  config          Json // StrategyNode tree
+  matchConditions Json? // MatchConditions — sole rule-matching truth source (see docs/developers/specs/e20/e20-s2-routing-rule-modelid-removal.md).
+  priority        Int      @default(0)
+  /// 0 = policy narrowing (allow/deny); 1 = route decision (single winning rule among stage-1 matches).
+  pipelineStage   Int      @default(1)
+  /// Inline fallback chain: [{ providerId, modelId }] tried in order when primary targets fail.
+  fallbackChain   Json?
+  retryPolicy     Json? // RetryPolicy override; null = use ai-gateway YAML default
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([priority])
+  @@index([enabled])
+  @@index([enabled, pipelineStage, priority])
+}
+
+model QuotaPolicy {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  scope           String // "user" | "vk" | "project" | "organization"
+  organizationId  String?
+  vkType          String? // "personal" | "application" | null
+  periodType      String // "daily" | "weekly" | "monthly"
+  costLimitUsd    Decimal? @db.Decimal(24, 6)
+  tokenLimit      BigInt?
+  enforcementMode String   @default("reject")
+  alertThresholds Json     @default("[80, 90]")
+  priority        Int      @default(0)
+  enabled         Boolean  @default(true)
+  createdBy       String?
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([scope])
+  @@index([enabled])
+}
+
+model QuotaOverride {
+  id              String   @id @default(uuid())
+  targetType      String // "user" | "vk" | "project" | "organization"
+  targetId        String
+  reason          String?
+  costLimitUsd    Decimal? @db.Decimal(24, 6)
+  tokenLimit      BigInt?
+  enforcementMode String?
+  periodType      String?
+  createdBy       String?
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([targetType, targetId])
+  @@index([targetType])
+}
+
+model ProviderHealth {
+  id               String    @id @default(uuid())
+  providerId       String    @unique
+  provider         String
+  status           String    @default("healthy") // healthy | degraded | unavailable | recovering
+  rollingErrorRate Float     @default(0)
+  avgLatencyMs     Int       @default(0)
+  lastRequestAt    DateTime? @db.Timestamptz(3)
+  lastErrorAt      DateTime? @db.Timestamptz(3)
+  windowStart      DateTime  @default(now()) @db.Timestamptz(3)
+  sampleCount      Int       @default(0)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+}
+
+// ─── Unified Alerting ───────────────────────────────────────────────────────
+
+enum AlertSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum AlertState {
+  FIRING
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model AlertRule {
+  id              String        @id // e.g. "quota.threshold"
+  displayName     String
+  sourceType      String // quota | proxy | thing | provider | auth | system
+  defaultSeverity AlertSeverity
+  requiresAck     Boolean       @default(false)
+  enabled         Boolean       @default(true)
+  params          Json
+  paramsSchema    Json
+  cooldownSec     Int           @default(300)
+  /// E52-S12 optional per-group filter. When non-NULL the rule only
+  /// fires for events whose target (device) is a member of this
+  /// DeviceGroup. NULL = fleet-wide (today's behaviour).
+  group_id_filter String?       @map("group_id_filter")
+  groupFilter     DeviceGroup?  @relation("AlertRuleGroupFilter", fields: [group_id_filter], references: [id], onDelete: SetNull)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(3)
+
+  alerts Alert[]
+
+  @@index([sourceType, enabled])
+  @@index([group_id_filter], map: "alert_rule_group_filter_idx")
+}
+
+model Alert {
+  id             String        @id @default(uuid())
+  ruleId         String
+  rule           AlertRule     @relation(fields: [ruleId], references: [id])
+  sourceType     String
+  targetKey      String
+  targetLabel    String
+  severity       AlertSeverity
+  state          AlertState    @default(FIRING)
+  message        String
+  details        Json
+  firedAt        DateTime      @db.Timestamptz(3)
+  lastSeenAt     DateTime      @db.Timestamptz(3)
+  duplicateCount Int           @default(1)
+  acknowledgedBy String?
+  acknowledgedAt DateTime?     @db.Timestamptz(3)
+  resolvedAt     DateTime?     @db.Timestamptz(3)
+  resolvedBy     String?
+  resolvedReason String?
+
+  dispatches AlertDispatch[]
+
+  @@index([state, sourceType, firedAt])
+  @@index([ruleId, targetKey, state])
+  @@index([firedAt])
+}
+
+model AlertChannel {
+  id          String   @id @default(uuid())
+  name        String
+  type        String // webhook | slack | email | pagerduty
+  enabled     Boolean  @default(true)
+  severities  String[]
+  sourceTypes String[]
+  config      Json
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model AlertDispatch {
+  id          String   @id @default(uuid())
+  alertId     String
+  alert       Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  channelId   String
+  channelName String
+  success     Boolean
+  statusCode  Int?
+  errorMsg    String?
+  attemptedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([alertId])
+  @@index([attemptedAt])
+}
+
+// ─── E9: IAM Policy System ──────────────────────────────────────────────────
+
+model IamPolicy {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  type        String   @default("custom") // managed | custom
+  document    Json // { Version, Statement[] } — the policy document
+  enabled     Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  principalAttachments IamPolicyAttachment[]
+  groupAttachments     IamGroupPolicyAttachment[]
+
+  @@index([type])
+}
+
+model IamGroup {
+  id                 String   @id @default(uuid())
+  name               String   @unique
+  description        String?
+  /// IdP group name for auto-sync (e.g. OIDC/SAML group claim value).
+  idpGroupName       String?  @map("idp_group_name")
+  /// Provenance of this group: 'local' (admin-created in Nexus) or 'scim'
+  /// (auto-created when an external IdP pushed a group via SCIM). SCIM-
+  /// managed groups are read-only in the admin UI; their membership comes
+  /// exclusively from SCIM Group push.
+  source             String   @default("local") @map("source")
+  /// External IdP that pushed this group via SCIM. Required when
+  /// `source = 'scim'`; null for local groups. References `IdentityProvider.id`.
+  identityProviderId String?  @map("identity_provider_id") @db.Uuid
+  createdBy          String?
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+
+  members           IamGroupMembership[]
+  policyAttachments IamGroupPolicyAttachment[]
+  idpGroupMappings  IdpGroupMapping[]
+  identityProvider  IdentityProvider?          @relation("ScimManagedGroups", fields: [identityProviderId], references: [id], onDelete: SetNull)
+
+  @@index([source, identityProviderId])
+}
+
+model IamGroupMembership {
+  id            String   @id @default(uuid())
+  groupId       String
+  group         IamGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  principalType String // admin_user
+  principalId   String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([groupId, principalType, principalId])
+  @@index([principalType, principalId])
+}
+
+model IamGroupPolicyAttachment {
+  id        String    @id @default(uuid())
+  groupId   String
+  group     IamGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  policyId  String
+  policy    IamPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@unique([groupId, policyId])
+}
+
+model IamPolicyAttachment {
+  id            String    @id @default(uuid())
+  principalType String // api_key | virtual_key | admin_user
+  principalId   String
+  policyId      String
+  policy        IamPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  /// E52-S15 optional attachment expiry. NULL = permanent. Non-NULL =
+  /// break-glass / time-bounded grant; Engine.loadPolicies filters
+  /// `expires_at <= NOW()` so the policy effectively vanishes from
+  /// the principal's effective set at the deadline.
+  expires_at    DateTime? @map("expires_at") @db.Timestamptz(3)
+
+  @@unique([principalType, principalId, policyId])
+  @@index([principalType, principalId])
+  @@index([expires_at], map: "iam_policy_attachment_expires_idx")
+}
+
+// ─── Data Subject Access Requests (S42, M5-9) ────────────────────────────────
+//
+// Tracks the lifecycle of GDPR/CCPA data subject rights requests through
+// the dashboard. A request identifies a subject (by userId for VK traffic
+// or subjectId for compliance-proxy traffic) and either asks for an access
+// export (what data does the system hold on me?) or an erasure
+// (anonymise me from the audit logs).
+//
+// Erasure here means **anonymisation**, not row deletion: we null out the
+// subject identifier columns rather than dropping rows entirely so the
+// audit integrity is preserved (Article 17(3)(e) carve-out for legal
+// claims). The original aggregate counts remain valid for compliance
+// reporting; only the linkage to a real person is removed.
+
+enum DSARRequestStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+enum DSARRequestType {
+  ACCESS
+  ERASURE
+}
+
+model DSARRequest {
+  id          String            @id @default(uuid())
+  /// Free-text identifier matching traffic_event.user_id or traffic_event.subject_id.
+  /// The BFF runs the query / update against traffic_event.
+  subjectId   String            @map("subject_id")
+  /// Optional human contact (email / ticket id) so the compliance officer can
+  /// reach back out — never used for matching, only for the audit trail.
+  contact     String?
+  type        DSARRequestType
+  status      DSARRequestStatus @default(PENDING)
+  /// Free-text reason / justification, recorded for the compliance trail.
+  notes       String?
+  /// Set when the request reaches a terminal status (COMPLETED or REJECTED).
+  completedAt DateTime?         @map("completed_at") @db.Timestamptz(3)
+  /// JSON snapshot of the fulfilment outcome — for ACCESS, the row count
+  /// returned; for ERASURE, the row count anonymised.
+  outcome     Json?
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  createdBy   String            @map("created_by")
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
+  updatedBy   String?           @map("updated_by")
+
+  @@index([status, createdAt])
+  @@index([subjectId])
+  @@map("dsar_request")
+}
+
+// ─── Exemption approval workflow (S48) ───────────────────────────────────────
+//
+// Tracks employee-filed exemption requests through a PENDING → APPROVED |
+// REJECTED lifecycle. An approved request auto-creates a temporary exemption
+// (S16 store) via the Go runtime API through the BFF. The request itself is
+// a gateway-side Prisma record so compliance officers have a reviewable queue.
+
+enum ExemptionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ExemptionRequest {
+  id              String                 @id @default(uuid())
+  /// The transactionId from the reject page so the admin can correlate
+  /// with the matrix audit event that triggered the request.
+  transactionId   String                 @map("transaction_id")
+  sourceIp        String                 @map("source_ip")
+  targetHost      String                 @map("target_host")
+  reason          String
+  status          ExemptionRequestStatus @default(PENDING)
+  /// Duration in minutes the exemption should last if approved.
+  durationMinutes Int                    @default(240) @map("duration_minutes")
+  reviewedBy      String?                @map("reviewed_by")
+  reviewNote      String?                @map("review_note")
+  reviewedAt      DateTime?              @map("reviewed_at") @db.Timestamptz(3)
+  createdAt       DateTime               @default(now()) @db.Timestamptz(3)
+  requestedBy     String                 @map("requested_by")
+
+  grants ComplianceExemptionGrant[]
+
+  @@index([status, createdAt])
+  @@map("exemption_request")
+}
+
+/// Approved compliance-hook exemption (E27). Source of truth for history;
+/// Hub `active_exemptions` is a materialized projection of eligible rows.
+model ComplianceExemptionGrant {
+  id                 String    @id @default(uuid())
+  exemptionRequestId String?   @map("exemption_request_id")
+  sourceIp           String    @map("source_ip")
+  targetHost         String    @map("target_host")
+  reason             String
+  durationMinutes    Int       @map("duration_minutes")
+  effectiveFrom      DateTime  @map("effective_from") @db.Timestamptz(3)
+  expiresAt          DateTime  @map("expires_at") @db.Timestamptz(3)
+  requestedBy        String?   @map("requested_by")
+  approvedBy         String    @map("approved_by")
+  inactive           Boolean   @default(false)
+  /// Set once when the grant first becomes eligible for the live Hub snapshot.
+  activatedAt        DateTime? @map("activated_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  exemptionRequest ExemptionRequest? @relation(fields: [exemptionRequestId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([expiresAt(sort: Desc)])
+  @@index([effectiveFrom, expiresAt])
+  @@index([exemptionRequestId])
+  @@map("compliance_exemption_grant")
+}
+
+// ─── System Metadata (S30 — generic key/value store) ──────────────────────────
+//
+// Small global key/value table used for cross-process state that is too small
+// to deserve its own model: setup-wizard completion flag, one-shot migration
+// markers, future feature toggles, etc. Values are JSONB so callers can store
+// structured payloads without further migrations.
+model SystemMetadata {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?  @map("updated_by")
+
+  @@map("system_metadata")
+}
+
+/// Singleton row (id = "singleton") holding the AI Guard backend
+/// configuration consumed by /v1/ai-guard/classify. The external_credential_id
+/// column references a Credential row for external-URL API keys; null in
+/// configured_provider mode.
+model AIGuardConfig {
+  id                     String   @id @default("singleton")
+  backend_mode           String   @default("configured_provider") @map("backend_mode")
+  provider_id            String?  @map("provider_id")
+  model_id               String?  @map("model_id")
+  external_url           String?  @map("external_url")
+  external_credential_id String?  @map("external_credential_id")
+  custom_headers         Json?    @map("custom_headers")
+  prompt_template        String   @map("prompt_template") @db.Text
+  timeout_ms             Int      @default(30000) @map("timeout_ms")
+  cache_ttl_seconds      Int      @default(600) @map("cache_ttl_seconds")
+  backend_fingerprint    String   @default("") @map("backend_fingerprint")
+  /// E61-FR-4.4 — inputstaging strategy applied to the classify input
+  /// conversation before the prompt is rendered. One of the five
+  /// inputstaging.Strategy constants (last_user, system_plus_last_user,
+  /// recent_turns, head_plus_tail, full_truncated). Defaults to
+  /// "system_plus_last_user" which keeps all system messages + the last
+  /// user message — preserving any guard-system-prompt context.
+  input_strategy         String   @default("system_plus_last_user") @map("input_strategy")
+  /// model_context_limit is the judge model's context window in tokens.
+  /// Used together with input_strategy by inputstaging.Plan to decide
+  /// which messages to keep. 0 means "unknown / not configured"; when
+  /// zero the classify pipeline uses a conservative fallback of 8192.
+  model_context_limit    Int      @default(0) @map("model_context_limit")
+  updated_at             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("ai_guard_config")
+}
+
+/// E61-S2 — Fleet-wide semantic-cache embedding singleton.
+/// One row (id='singleton') per cluster; mirrors ai_guard_config exactly.
+///
+/// L1 stores the embedding provider + model choice. This is a fleet-wide
+/// decision because all routes share one Redis Vector index whose DIM is
+/// fixed at FT.CREATE time — per-route embedding choice would require one
+/// index per (model, dim) tuple, an operational nightmare.
+///
+/// Fingerprint = sha256(provider_id || ':' || model_id || ':' || dimension).
+/// L1 ConfigCache compares on reload; a non-empty mismatch emits a one-shot
+/// semantic_cache.invalidate_all job → versioned index blue/green swap (see
+/// response-cache-architecture.md §3.5). Mirrors ai_guard_config.backend_fingerprint.
+///
+/// enabled = fleet-wide kill switch. Flip false to disable semantic cache
+/// everywhere instantly without touching any routing rule.
+///
+/// Single-tenant by design: there is no `org_id` column or per-tenant
+/// variation. Nexus ships as a single-tenant on-prem product.
+///
+/// See docs/dev/architecture/response-cache-architecture.md §5.1 and
+/// docs/requirements/e61-smart-response-cache.md §FR-8.
+model SemanticCacheConfig {
+  /// Sentinel row identifier — always "singleton".
+  id                       String    @id @default("singleton")
+  /// FK to the Provider that hosts the embedding endpoint. Nullable until
+  /// first admin configuration on the Cache Embedding Settings page (E61-S6c).
+  embedding_provider_id    String?   @map("embedding_provider_id")
+  embeddingProvider        Provider? @relation("EmbeddingProviderOnSemanticCache", fields: [embedding_provider_id], references: [id], onDelete: SetNull)
+  /// FK to the Model used for embedding. Nullable until configured.
+  embedding_model_id       String?   @map("embedding_model_id")
+  embeddingModel           Model?    @relation("EmbeddingModelOnSemanticCache", fields: [embedding_model_id], references: [id], onDelete: SetNull)
+  /// Cached dimension for fast index creation (avoids extra FK lookup at
+  /// FT.CREATE time). Set by SemanticCacheStore.Save alongside the FK fields.
+  embedding_dimension      Int?      @map("embedding_dimension")
+  /// Fingerprint = sha256(provider_id || ':' || model_id || ':' || dimension).
+  embedding_fingerprint    String    @default("") @map("embedding_fingerprint")
+  /// Versioned Redis Vector index name. Bumped from v1 → v2 → v3 on
+  /// (provider, model) changes.
+  redis_index_name         String    @default("nexus:semantic-cache:v1") @map("redis_index_name")
+  enabled                  Boolean   @default(false)
+  /// Cosine similarity gate for L2 hits. Range [0.0, 1.0]; default 0.96.
+  /// Tuned fleet-wide because workloads differ (RAG/factual needs ~0.98,
+  /// creative writing tolerates ~0.92).
+  threshold                Float     @default(0.96)
+  /// Cache isolation scope. Enum: none | user | vk | org. Default "vk"
+  /// matches single-tenant deployments; multi-tenant deployments typically
+  /// flip to "org" or "user" to prevent cross-tenant leakage.
+  vary_by                  String    @default("vk") @map("vary_by")
+  /// Embedding input shaping strategy. Enum: last_user | system_plus_last_user |
+  /// recent_turns | head_plus_tail | full_truncated. Default
+  /// "system_plus_last_user". Single-turn Q&A workloads benefit from
+  /// "last_user"; multi-turn agent dialogs from "recent_turns".
+  embed_strategy           String    @default("system_plus_last_user") @map("embed_strategy")
+  /// When true, an L2 lookup may return an entry cached against a different
+  /// upstream model than the one currently being routed to. Default false
+  /// (model-specific isolation). Useful with smart-routing where the same
+  /// prompt can resolve to different upstream models — flipping true lets
+  /// cache follow the prompt instead of the model.
+  allow_cross_model        Boolean   @default(false) @map("allow_cross_model")
+  updated_at               DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updated_by               String?   @map("updated_by")
+  /// Admin-edited time-sensitive freshness rule overrides. Default empty rules
+  /// blob; GET merges seed rules with these (DB overrides win per ID).
+  /// Shape: {"rules": [{id, keywords, requireQuestionMark, requireEntity,
+  ///          languages, enabled}]}.
+  time_sensitive_overrides Json      @default("{\"rules\":[]}") @map("time_sensitive_overrides") @db.JsonB
+
+  @@map("semantic_cache_config")
+}
+
+/// E72: Extract (L1 exact-match) response-cache fleet-wide config.
+///
+/// Singleton row (id = "singleton") promoted from yaml-only to admin-managed
+/// 2026-05-20 so that:
+///   1. extract cache can be toggled at runtime without a service restart
+///   2. the freshness-rules-skip gate has a non-orphan home (per-route
+///      response_cache_policy.skip_time_sensitive was retired earlier; this
+///      field's apply_freshness_rules takes over the role for both L1 + L2)
+///
+/// Hub shadow key: response_cache.extract_config.
+/// AI Gateway atomically swaps cache.Cache config on every push.
+model ExtractCacheConfig {
+  /// Sentinel row identifier — always "singleton".
+  id                    String   @id @default("singleton")
+  /// Master switch. When false the L1 hot-path lookups (LookupStream /
+  /// LookupResponse) are bypassed and traffic_event.gateway_cache_status =
+  /// "skipped" / skip_reason = "disabled".
+  enabled               Boolean  @default(true)
+  /// Cache entry TTL in seconds. Range [60, 604800] (1 minute to 7 days).
+  /// Default 3600 matches the original yaml default.
+  ttl_seconds           Int      @default(3600) @map("ttl_seconds")
+  /// When true, a freshness-rules detector match returns (Skipped,
+  /// time_sensitive) from classifyCachePreLookup, skipping BOTH L1 (extract)
+  /// AND L2 (semantic) lookups for that request. This field is physically
+  /// stored on extract_cache_config but its effect is fleet-wide across all
+  /// gateway cache layers — surfaced in the UI on the Freshness rules card
+  /// where it lives in the admin's mental model.
+  apply_freshness_rules Boolean  @default(true) @map("apply_freshness_rules")
+  updated_at            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updated_by            String?  @map("updated_by")
+
+  @@map("extract_cache_config")
+}
+
+// ─── Terminal Agent (E17) ───────────────────────────────────────────────────
+
+// AgentDevice model removed — merged into Thing + ThingAgent extension table.
+// See docs/developers/architecture/cross-cutting/foundation/thing-model.md for the migration strategy.
+
+// E19: Device Groups (targeting only — no policy/config cascade).
+// E52-S2: `membership_query` flips a group to smart-mode (predicate-driven
+// membership materialized into device_group_membership_cache); NULL keeps
+// the group static (manual `DeviceGroupMembership` rows).
+// Groups exist purely to *select* a set of devices (bulk force-refresh /
+// rotate-cert, alert-rule scoping, exemption attachment). They do NOT
+// carry per-key config payloads — config flows are
+// `thing_config_template` (fleet default) + `thing_config_override`
+// (per-Thing).
+model DeviceGroup {
+  id               String   @id @default(uuid())
+  name             String   @unique
+  description      String?
+  /// E52-S2 smart-group predicate (JSON over closed attribute set;
+  /// reuses the routing-rule matchConditions matcher). NULL = static
+  /// group, manual membership rows. Non-NULL = smart group, members
+  /// computed from this predicate and materialized in
+  /// device_group_membership_cache.
+  membership_query Json?    @map("membership_query")
+  /// Group rank. Retained as a vestigial column for the membership-cache
+  /// dedupe path; not consulted by any policy/config cascade (none exists).
+  priority         Int      @default(100)
+  createdBy        String?
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  memberships DeviceGroupMembership[]
+  alertRules  AlertRule[]             @relation("AlertRuleGroupFilter")
+}
+
+/// E52-S2: materialized membership rows for smart groups. Recomputed on
+/// every device heartbeat that mutates relevant attributes plus a 60s
+/// Hub safety-net job. Read by GroupsOfDevice (IAM scope enforcement),
+/// ResolveConfig (S1 config cascade), and the device-list filter
+/// projection.
+model DeviceGroupMembershipCache {
+  group_id    String   @map("group_id")
+  device_id   String   @map("device_id")
+  computed_at DateTime @default(now()) @map("computed_at") @db.Timestamptz(3)
+
+  @@id([group_id, device_id])
+  @@index([device_id], map: "device_group_membership_cache_device_idx")
+  @@map("device_group_membership_cache")
+}
+
+model DeviceGroupMembership {
+  id         String    @id @default(uuid())
+  groupId    String
+  deviceId   String
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  /// E52-S14 optional membership expiry. NULL = permanent.
+  /// Non-NULL = filtered out by GroupsOfDevice / MembersOfGroup
+  /// once `expires_at <= NOW()`, and physically deleted on the next
+  /// SmartGroupRecompute tick via EvictExpiredMemberships.
+  expires_at DateTime? @map("expires_at") @db.Timestamptz(3)
+
+  group  DeviceGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  device Thing       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, deviceId])
+  @@index([deviceId])
+  @@index([expires_at], map: "device_group_membership_expires_idx")
+}
+
+// PendingEnrollment model removed — replaced by EnrollmentToken (Hub-owned).
+// See docs/developers/architecture/cross-cutting/foundation/thing-model.md for the migration strategy.
+
+// ─── V2: Interception Domain + Path (§2.9.2) ──────────────────────────────
+
+enum HostMatchType {
+  EXACT
+  PREFIX
+  GLOB
+  REGEX
+}
+
+enum DefaultPathAction {
+  PROCESS
+  PASSTHROUGH
+  BLOCK
+}
+
+enum PathMatchType {
+  EXACT
+  PREFIX
+  GLOB
+  REGEX
+}
+
+enum PathAction {
+  PROCESS
+  PASSTHROUGH
+  BLOCK
+}
+
+enum FailureAction {
+  FAIL_OPEN
+  FAIL_CLOSED
+}
+
+enum NetworkZone {
+  PUBLIC
+  INTERNAL
+}
+
+model InterceptionDomain {
+  id                      String             @id @default(uuid())
+  name                    String             @unique
+  description             String?
+  hostPattern             String             @map("host_pattern")
+  hostMatchType           HostMatchType      @default(EXACT) @map("host_match_type")
+  adapterId               String             @map("adapter_id")
+  adapterConfig           Json?              @map("adapter_config")
+  enabled                 Boolean            @default(true)
+  priority                Int                @default(0)
+  defaultPathAction       DefaultPathAction  @default(PROCESS) @map("default_path_action")
+  onAdapterError          FailureAction      @default(FAIL_OPEN) @map("on_adapter_error")
+  networkZone             NetworkZone        @default(PUBLIC) @map("network_zone")
+  source                  String             @default("admin")
+  /// E33 per-host StreamingPolicy override columns (read by
+  /// compliance-proxy and agent). NULL on any column means "inherit
+  /// from system_metadata['streaming_compliance.config'] global default".
+  /// See packages/shared/streaming/policy.
+  streamingMode           String?            @map("streaming_mode")
+  streamingChunkBytes     Int?               @map("streaming_chunk_bytes")
+  streamingHookTimeoutMs  Int?               @map("streaming_hook_timeout_ms")
+  streamingMaxBufferBytes Int?               @map("streaming_max_buffer_bytes")
+  streamingFailBehavior   String?            @map("streaming_fail_behavior")
+  captureRequestBody      Boolean?           @map("capture_request_body")
+  captureResponseBody     Boolean?           @map("capture_response_body")
+  rawBodySpillEnabled     Boolean?           @map("raw_body_spill_enabled")
+  /// E62-S6 FR-9.6: when non-empty, CP only applies this domain rule to
+  /// traffic whose classified EndpointType is in the list. Empty list
+  /// (the default) means "all endpoints" — fully backward compatible.
+  applicableEndpoints     String[]           @default([]) @map("applicable_endpoints")
+  createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy               String?            @map("created_by")
+  paths                   InterceptionPath[]
+
+  @@index([enabled, priority])
+  @@map("interception_domain")
+}
+
+model InterceptionPath {
+  id          String             @id @default(uuid())
+  domainId    String             @map("domain_id")
+  domain      InterceptionDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  pathPattern String[]           @map("path_pattern")
+  matchType   PathMatchType      @default(PREFIX) @map("match_type")
+  action      PathAction
+  priority    Int                @default(0)
+  description String?
+  enabled     Boolean            @default(true)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([domainId, enabled, priority])
+  @@map("interception_path")
+}
+
+/// Unified traffic event table — single table for data-plane flow events only.
+/// Replaces AuditLog, matrix_audit_event, and AgentAuditEvent.
+/// Source discriminator indicates origin binary: ai-gateway | compliance-proxy | agent.
+/// Admin actions live in AdminAuditLog; Thing lifecycle events get a dedicated thing_event table.
+/// A CHECK constraint (see migration 2026-04-21-traffic-event-source-check) pins the allowed set.
+model traffic_event {
+  id                        String                    @id @default(uuid())
+  source                    String // ai-gateway | compliance-proxy | agent
+  timestamp                 DateTime                  @default(now()) @db.Timestamptz(3)
+  // Common fields
+  source_ip                 String?                   @map("source_ip")
+  target_host               String?                   @map("target_host")
+  /// E58/E41: incoming HTTP method as observed at the ingress (what the
+  /// client called). For AI gateway: `/v1/chat/completions`, `/v1/messages`,
+  /// `/v1/responses`, `:generateContent` — the surface the client hit.
+  /// For compliance proxy + agent: same as the captured upstream call.
+  method                    String?
+  path                      String?
+  /// E58-S1/E41: HTTP method actually sent to the upstream provider.
+  /// For AI gateway: may differ from `method` (e.g. E57 routes a chat-
+  /// completions request to OpenAI Responses API via POST /v1/responses).
+  /// For compliance-proxy + agent: same as `method`.
+  target_method             String?                   @map("target_method")
+  /// E58-S1/E41: HTTP path actually sent to the upstream provider.
+  /// For AI gateway: differs from `path` when the client's surface differs
+  /// from the upstream's surface (Anthropic /v1/messages vs OpenAI /v1/chat/completions
+  /// vs Gemini :generateContent vs OpenAI Responses /v1/responses).
+  /// For compliance-proxy + agent: same as `path` (transparent forwarding).
+  target_path               String?                   @map("target_path")
+  status_code               Int?                      @map("status_code")
+  latency_ms                Int?                      @map("latency_ms")
+  // E50 latency phase breakdown. All nullable; producers omit when not
+  // measured. See docs/users/product/architecture.md "Latency Phase Taxonomy (E50)".
+  /// TTFB observed by the producer service from its forward destination.
+  /// For streaming responses: first SSE chunk arrival.
+  upstream_ttfb_ms          Int?                      @map("upstream_ttfb_ms")
+  /// Full upstream round-trip duration: header + body for non-stream, last
+  /// chunk + connection close for stream.
+  upstream_total_ms         Int?                      @map("upstream_total_ms")
+  /// Aggregate of per-hook latency on the request side
+  /// (SUM(request_hooks_pipeline[*].latencyMs)).
+  request_hooks_ms          Int?                      @map("request_hooks_ms")
+  /// Aggregate of per-hook latency on the response side.
+  response_hooks_ms         Int?                      @map("response_hooks_ms")
+  /// Long-tail per-source phase durations (ms). Closed key set per `source`:
+  ///   ai-gateway       → auth_ms / quota_ms / routing_ms / cache_lookup_ms /
+  ///                       req_adapter_ms / resp_adapter_ms
+  ///   compliance-proxy → conn_setup_ms / tls_handshake_ms
+  ///   agent            → intercept_ms
+  /// Keys omitted when the phase did not run or measured zero.
+  latency_breakdown         Json?                     @map("latency_breakdown")
+  created_at                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // Request tracing
+  trace_id                  String?                   @map("trace_id")
+  external_request_id       String?                   @map("external_request_id")
+  // Entity attribution (who/what originated this traffic)
+  entity_type               String?                   @map("entity_type") // "user" | "project" | "unknown"
+  entity_id                 String?                   @map("entity_id")
+  entity_name               String?                   @map("entity_name")
+  org_id                    String?                   @map("org_id")
+  org_name                  String?                   @map("org_name")
+  // Structured identity snapshot (JSONB: {status, method, user, device, credential, project})
+  identity                  Json?                     @map("identity")
+  // AI/Provider (ID + denormalized name)
+  provider_id               String?                   @map("provider_id")
+  provider_name             String?                   @map("provider_name")
+  model_id                  String?                   @map("model_id")
+  model_name                String?                   @map("model_name")
+  prompt_tokens             Int?                      @map("prompt_tokens")
+  completion_tokens         Int?                      @map("completion_tokens")
+  total_tokens              Int?                      @map("total_tokens")
+  /// E53-s4: per-request reasoning / chain-of-thought tokens reported by
+  /// providers in `usage.completion_tokens_details.reasoning_tokens`
+  /// (OpenAI / DeepSeek / Moonshot / Kimi), `usage.thoughtsTokenCount`
+  /// (Gemini), and `usage.thinking_tokens` (Anthropic). NULL when the
+  /// upstream doesn't report it. No backfill — historical rows stay NULL.
+  reasoning_tokens          Int?                      @map("reasoning_tokens")
+  /// E58-S1: cost in USD attributable to reasoning_tokens. Computed as
+  /// ReasoningTokens × outputPricePerMillion / 1e6 (reasoning is billed
+  /// at the output rate by all three frontier providers). Already counted
+  /// inside cost_usd; surfaced separately for the Cost dashboard's
+  /// "reasoning ratio" widget. NULL when reasoning_tokens is NULL.
+  reasoning_cost_usd        Decimal?                  @map("reasoning_cost_usd") @db.Decimal(12, 8)
+  estimated_cost_usd        Decimal?                  @map("estimated_cost_usd") @db.Decimal(12, 6)
+  // E59-S1: cache outcome — unified rollup (HIT | MISS) plus four detail columns.
+  // cache_status is derived at write time from gateway_cache_status + provider_cache_status
+  // per cost-estimation-architecture.md § 6.4. UI filters bind only to cache_status;
+  // the four detail columns surface in the audit drawer via the three layouts in § 6.4.
+  cache_status              String?                   @map("cache_status")
+  gateway_cache_status      String?                   @map("gateway_cache_status")
+  gateway_cache_skip_reason String?                   @map("gateway_cache_skip_reason")
+  gateway_cache_kind        String?                   @map("gateway_cache_kind")
+  /// 2026-05-21 E68 bug fix: Redis HASH key of the L2 semantic-cache entry
+  /// that served this row. Stamped only when gateway_cache_kind='semantic'.
+  /// Format: "<redis_index_name>:<sha256(EmbeddingInput)[:16]>". Surfaced to
+  /// the audit drawer's "Mark as bad cache hit" thumbs-down so the admin
+  /// poison-list POST carries the actual key the Reader's IsPoisoned check
+  /// will match against; before this column the UI posted traffic_event.id
+  /// which never matched, making the action a silent no-op in production.
+  gateway_cache_l2_entry_key String?                  @map("gateway_cache_l2_entry_key")
+  provider_cache_status     String?                   @map("provider_cache_status")
+  routed_provider_id        String?                   @map("routed_provider_id")
+  routed_provider_name      String?                   @map("routed_provider_name")
+  routed_model_id           String?                   @map("routed_model_id")
+  routed_model_name         String?                   @map("routed_model_name")
+  routing_rule_id           String?                   @map("routing_rule_id")
+  routing_rule_name         String?                   @map("routing_rule_name")
+  // Compliance — dual pipeline (E33). Request and response stages each
+  // record their own decision, reason, reason_code, hooks_pipeline, and
+  // blocking_rule. Analytics that want a "single overall decision"
+  // derive worst_of(request_hook_decision, response_hook_decision).
+  request_hook_decision     String?                   @map("request_hook_decision")
+  request_hook_reason       String?                   @map("request_hook_reason")
+  request_hook_reason_code  String?                   @map("request_hook_reason_code")
+  request_blocking_rule     Json?                     @map("request_blocking_rule")
+  response_hook_decision    String?                   @map("response_hook_decision")
+  response_hook_reason      String?                   @map("response_hook_reason")
+  response_hook_reason_code String?                   @map("response_hook_reason_code")
+  response_blocking_rule    Json?                     @map("response_blocking_rule")
+  compliance_tags           String[]                  @default([]) @map("compliance_tags")
+  bump_status               String?                   @map("bump_status")
+  // E60 agent attestation passthrough. Populated by compliance-proxy when
+  // an incoming CONNECT carried a verified X-Nexus-Attestation header and
+  // CP transparently tunneled the connection (skipping its own MITM + hook
+  // pipeline). attestation_verified=true ↔ attestation_agent_id is set to
+  // the agent's Thing UUID that produced the signature. Both NULL on
+  // regular MITM rows so analytics can filter "attested traffic" without
+  // a JOIN. See docs/developers/architecture/services/agent/agent-attestation-architecture.md
+  // § 5 — the BumpStatus column carries "BUMP_DISABLED_ATTESTATION" on
+  // the same rows for dashboards that don't yet read these columns.
+  attestation_verified      Boolean?                  @map("attestation_verified")
+  attestation_agent_id      String?                   @map("attestation_agent_id")
+  // LLM signal extraction (E18)
+  /// Provider-identifying prefix fragment of the caller's API key (e.g. "sk-ant-", "nvk_", "AIza", "aws-sigv4").
+  api_key_class             String?                   @map("api_key_class")
+  /// SHA256(key)[:8] hex. Non-reversible; stable per-key. Semantics depend on `source`:
+  /// ai-gateway → caller's virtual key (internal attribution);
+  /// compliance-proxy/agent → caller's real provider key (external attribution).
+  api_key_fingerprint       String?                   @map("api_key_fingerprint")
+  /// Extraction tier: ok | streaming_reported | streaming_estimated |
+  /// streaming_unavailable | parse_failed | no_body | non_llm. CHECK constraint
+  /// enforced via raw SQL migration (see migration file).
+  usage_extraction_status   String?                   @map("usage_extraction_status")
+  /// Structured failure-reason classification (E34-S3). Any producer that
+  /// classifies a non-2xx outcome may populate this with its own enum
+  /// vocabulary. ai-gateway uses RATE_LIMITED / QUOTA_EXCEEDED /
+  /// ROUTING_NO_MATCH / AUTH_INVALID / AUTH_KEY_EXPIRED / USAGE_QUERY_FAILED
+  /// (sourced from writeDetailedErr's `code` arg). compliance-proxy may use
+  /// codes for hook reject / bump failure / inspection block; agent may use
+  /// codes for local interception decisions. NULL on success AND on
+  /// failures the producer chose not to classify (e.g. raw upstream
+  /// 5xx propagated unchanged — leave NULL so upstream-error alerts can
+  /// distinguish them from Nexus-classified failures).
+  error_code                String?                   @map("error_code")
+  /// Human-readable failure description paired with error_code. For ops to
+  /// skim without looking up the code dictionary (the `message` arg to
+  /// writeDetailedError on the ai-gateway side). NULL when error_code is NULL.
+  error_reason              String?                   @map("error_reason")
+  // Agent-specific
+  source_process            String?                   @map("source_process")
+  action                    String?
+  internal_purpose          String?                   @map("internal_purpose") // "ai-guard" | null; filter in analytics
+  /// IANA timezone of the event's owning org at the time of capture
+  /// (e.g. "Asia/Shanghai"). The `timestamp` column is always a UTC
+  /// instant; this field tells compliance / regulatory readers what
+  /// the local civil time was at the place where the event was
+  /// generated, so reports can render in jurisdiction-local time
+  /// without ambiguity. Empty/null for system rows that don't bind
+  /// to a tenant. E32-S1.
+  origin_tz                 String?                   @map("origin_tz")
+  // JSONB
+  request_hooks_pipeline    Json?                     @map("request_hooks_pipeline")
+  response_hooks_pipeline   Json?                     @map("response_hooks_pipeline")
+  routing_trace             Json?                     @map("routing_trace")
+  details                   Json?
+  // Prompt cache metrics (E38). All nullable; absent when provider did not report cache usage.
+  /// Tokens written to upstream provider prompt cache this request (Anthropic: cache_creation_input_tokens).
+  cache_creation_tokens     Int?                      @map("cache_creation_tokens")
+  /// Tokens served from upstream provider prompt cache this request (Anthropic: cache_read_input_tokens; OpenAI: prompt_tokens_details.cached_tokens).
+  cache_read_tokens         Int?                      @map("cache_read_tokens")
+  /// Number of normaliser rule matches that removed bytes from the upstream request body (E38-S3).
+  normalized_strip_count    Int?                      @map("normalized_strip_count")
+  /// Total bytes removed by normaliser rules from the upstream request body.
+  normalized_strip_bytes    Int?                      @map("normalized_strip_bytes")
+  /// Number of cache_control markers injected by L4 injection (0–4).
+  cache_marker_injected     Int?                      @map("cache_marker_injected")
+  /// Cost of writing to provider prompt cache this request (USD), computed from provider_pricing.
+  cache_write_cost_usd      Decimal?                  @map("cache_write_cost_usd") @db.Decimal(12, 8)
+  /// Savings from reading from provider prompt cache this request (USD).
+  cache_read_savings_usd    Decimal?                  @map("cache_read_savings_usd") @db.Decimal(12, 8)
+  /// Net cache savings = cache_read_savings_usd - cache_write_cost_usd. Negative on first turn (write cost), positive on subsequent turns.
+  cache_net_savings_usd     Decimal?                  @map("cache_net_savings_usd") @db.Decimal(12, 8)
+  /// Full cost that would have been charged if the L1/L2/L3 response cache had missed (USD). Zero or null for cache misses.
+  gateway_cache_savings_usd Decimal?                  @map("gateway_cache_savings_usd") @db.Decimal(12, 8)
+  /// E61-S2: cost in USD of the embedding call on the L1-miss path (DECIMAL(20,10)
+  /// for high-precision accounting at sub-cent granularity). NULL on rows where
+  /// no embedding was produced (L1 hit, semantic disabled, or pre-E61). Used by
+  /// Cache ROI: net_savings = gateway_cache_savings_usd - SUM(embedding_cost_usd).
+  embedding_cost_usd        Decimal?                  @map("embedding_cost_usd") @db.Decimal(20, 10)
+  /// E61-S2: which embedding model produced the embedding for this request.
+  /// Nullable FK with SET NULL on provider/model removal so historical rows stay
+  /// intact. Records model attribution for per-model ROI breakdown after admin
+  /// swaps the L1 embedding model. Disambiguated from the upstream routing model
+  /// (model_id) via a named relation.
+  embedding_model_id        String?                   @map("embedding_model_id")
+  embeddingModel            Model?                    @relation("EmbeddingModelOnTraffic", fields: [embedding_model_id], references: [id], onDelete: SetNull)
+  /// 2026-05-21 internal-ops cost accounting: ai-guard classifier call
+  /// cost (when an admin-enabled ai-guard hook ran an LLM-backed classifier).
+  /// Same per-token formula as the primary cost. NULL when no ai-guard
+  /// hook fired on this request.
+  ai_guard_cost_usd         Decimal?                  @map("ai_guard_cost_usd") @db.Decimal(20, 10)
+  /// 2026-05-21 catch-all for future hook-type internal model calls
+  /// (prompt-shield, custom hooks invoking an LLM). Shape:
+  ///   [{type, model, prompt_tokens, completion_tokens, cost_usd, latency_ms}]
+  /// Reserved for cost types we don't yet have a dedicated column for; on
+  /// promotion to a known type a follow-up migration adds the column.
+  internal_ops_breakdown    Json?                     @map("internal_ops_breakdown")
+  // Thing attribution (E39 follow-up). Identifies the Thing instance that
+  // emitted this traffic_event. Semantic depends on `source`:
+  //   source='agent'            → originating agent device (Hub fills from
+  //                               mTLS-resolved Thing context on /agent-audit).
+  //   source='ai-gateway'       → the gateway instance that processed the
+  //                               request (producer fills from its own cfg).
+  //   source='compliance-proxy' → the proxy instance that processed the
+  //                               request (producer fills from its own cfg).
+  // NULL on rows written before this wire-up landed.
+  /// Thing ID of the Thing instance that emitted this traffic_event.
+  thing_id                  String?                   @map("thing_id")
+  /// Denormalized thing.name SNAPSHOT at emit time — NOT auto-updated when the
+  /// thing is later renamed. Treat as the historical label; JOIN thing on
+  /// thing_id for the live name. Kept top-level so analytics can group/display
+  /// without forcing a JOIN.
+  thing_name                String?                   @map("thing_name")
+  // Provider credential attribution (E41). Top-level for windowed group-by in the
+  // credential-health-rollup job. Also available via identity->'apiCredential'->>'id'.
+  credential_id             String?                   @map("credential_id")
+  // E48 emergency-passthrough audit fan-out. Empty / NULL when no bypass
+  // fired. passthrough_flags carries the canonical-order slice from
+  // passthrough.Config.Flags() — currently one or more of
+  // {bypassHooks, bypassCache, bypassNormalize}. passthrough_reason is
+  // the operator-supplied justification (≥20 chars per DB CHECK on
+  // gateway_passthrough_config_*). Partial index on
+  // (timestamp DESC) WHERE passthrough_flags IS NOT NULL optimises
+  // "show every request that bypassed compliance in the last 30 days".
+  passthrough_flags         String[]                  @map("passthrough_flags")
+  passthrough_reason        String?                   @map("passthrough_reason")
+  // Relations
+  payload                   traffic_event_payload?
+  /// E46 — canonical normalized representation of the captured request/response.
+  /// Populated at capture time by the shared/normalize layer; NULL when capture
+  /// was disabled, the body was unsupported, or normalize ran but failed
+  /// (the row itself records the failure with status='failed').
+  normalized                traffic_event_normalized?
+
+  @@index([source, timestamp])
+  @@index([timestamp])
+  @@index([entity_id, timestamp])
+  @@index([org_id, timestamp])
+  @@index([provider_name, timestamp])
+  @@index([provider_id, timestamp])
+  @@index([request_hook_decision, timestamp])
+  @@index([response_hook_decision, timestamp])
+  @@index([target_host, timestamp])
+  @@index([thing_id, timestamp])
+  // E59-S1: cache filter index. UI binds to cache_status (HIT|MISS); drawer
+  // reads the four detail columns without indexing (single-row lookup).
+  @@index([cache_status, timestamp])
+  // E41 v2: partial index optimised for the credential-health-rollup query
+  // (WHERE source='ai-gateway' AND credential_id IS NOT NULL AND timestamp >= …).
+  // Declared via raw SQL in the migration since Prisma doesn't yet model
+  // partial indexes (see migration 20260513*_e41_v2_credential_state_v2).
+  // The full-table secondary index used in v1 is replaced.
+  @@map("traffic_event")
+}
+
+/// 1:1 child of traffic_event for optional request/response body storage.
+/// Populated based on system_metadata "payload_capture.config" + per-resource
+/// override columns (interception_domain.capture_*, Provider.capture_*).
+///
+/// Body storage is two-tier (E33):
+///   inline_request_body  — JSONB inline copy when extracted size < 256 KiB
+///   request_spill_ref    — JSONB { backend, key, size, sha256, content_type }
+///                          when stored via shared/spillstore (large bodies)
+/// Exactly one of (inline_*, *_spill_ref) is set per direction; both NULL means
+/// capture was disabled for that scope.
+///
+/// `*_size_bytes` is the true extracted size before any inline truncation.
+/// `*_truncated` is true when the inline copy was capped at the threshold.
+model traffic_event_payload {
+  traffic_event_id      String   @id
+  inline_request_body   Json?    @map("inline_request_body")
+  inline_response_body  Json?    @map("inline_response_body")
+  request_spill_ref     Json?    @map("request_spill_ref")
+  response_spill_ref    Json?    @map("response_spill_ref")
+  request_size_bytes    BigInt?  @map("request_size_bytes")
+  response_size_bytes   BigInt?  @map("response_size_bytes")
+  request_truncated     Boolean  @default(false) @map("request_truncated")
+  response_truncated    Boolean  @default(false) @map("response_truncated")
+  request_content_type  String?  @map("request_content_type")
+  response_content_type String?  @map("response_content_type")
+  created_at            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  traffic_event traffic_event @relation(fields: [traffic_event_id], references: [id], onDelete: Cascade)
+
+  @@map("traffic_event_payload")
+}
+
+// ─── Metrics Rollup Tables (multi-granularity pre-aggregation) ──────────────
+
+/// 5-minute rollup bucket for pre-aggregated metrics.
+model MetricRollup5m {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, metricName, dimensionKey, subDimension])
+  @@index([metricName, bucketStart])
+  @@index([dimensionKey, bucketStart])
+  @@map("metric_rollup_5m")
+}
+
+/// 1-hour rollup bucket for pre-aggregated metrics.
+model MetricRollup1h {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, metricName, dimensionKey, subDimension])
+  @@index([metricName, bucketStart])
+  @@index([dimensionKey, bucketStart])
+  @@map("metric_rollup_1h")
+}
+
+/// 1-day rollup bucket for pre-aggregated metrics.
+model MetricRollup1d {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, metricName, dimensionKey, subDimension])
+  @@index([metricName, bucketStart])
+  @@index([dimensionKey, bucketStart])
+  @@map("metric_rollup_1d")
+}
+
+/// 1-month rollup bucket for pre-aggregated metrics.
+model MetricRollup1mo {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, metricName, dimensionKey, subDimension])
+  @@index([metricName, bucketStart])
+  @@index([dimensionKey, bucketStart])
+  @@map("metric_rollup_1mo")
+}
+
+/// 5-minute rollup bucket for per-Thing traffic metrics.
+///
+/// Sibling of MetricRollup5m, kept in a dedicated table so per-Thing access
+/// patterns (one Thing's dashboard) don't share row counts or indexes with
+/// fleet-wide queries. Populated only when the source traffic_event row has a
+/// non-null thing_id — i.e. data plane services (agent / compliance-proxy /
+/// ai-gateway). Fleet readers continue to use MetricRollup5m unchanged.
+model ThingMetricRollup5m {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  thingId      String   @map("thing_id")
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, thingId, metricName, dimensionKey, subDimension])
+  @@index([thingId, metricName, bucketStart])
+  @@index([thingId, bucketStart])
+  @@map("thing_metric_rollup_5m")
+}
+
+/// 1-hour per-Thing rollup. See ThingMetricRollup5m for semantics.
+model ThingMetricRollup1h {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  thingId      String   @map("thing_id")
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, thingId, metricName, dimensionKey, subDimension])
+  @@index([thingId, metricName, bucketStart])
+  @@index([thingId, bucketStart])
+  @@map("thing_metric_rollup_1h")
+}
+
+/// 1-day per-Thing rollup. See ThingMetricRollup5m for semantics.
+model ThingMetricRollup1d {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  thingId      String   @map("thing_id")
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, thingId, metricName, dimensionKey, subDimension])
+  @@index([thingId, metricName, bucketStart])
+  @@index([thingId, bucketStart])
+  @@map("thing_metric_rollup_1d")
+}
+
+/// 1-month per-Thing rollup. See ThingMetricRollup5m for semantics.
+model ThingMetricRollup1mo {
+  id           String   @id @default(uuid())
+  bucketStart  DateTime @db.Timestamptz(3)
+  thingId      String   @map("thing_id")
+  metricName   String
+  dimensionKey String   @default("")
+  subDimension String   @default("")
+  value        Decimal  @default(0) @db.Decimal(24, 6)
+  metadata     Json?
+  updatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([bucketStart, thingId, metricName, dimensionKey, subDimension])
+  @@index([thingId, metricName, bucketStart])
+  @@index([thingId, bucketStart])
+  @@map("thing_metric_rollup_1mo")
+}
+
+/// Tracks high-water mark for each rollup job to ensure exactly-once computation.
+model RollupWatermark {
+  jobName   String   @id
+  watermark DateTime @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("rollup_watermark")
+}
+
+// ─── V2: Thing Model (Hub-managed nodes) ─────────────────────────────────────
+// See docs/developers/architecture/cross-cutting/foundation/thing-model.md for full specification.
+
+/// Unified registry of all Hub-managed nodes. IoT-inspired core object with
+/// identity, lifecycle, shadow state, authentication, and connectivity.
+/// Type-specific fields live in extension tables (ThingService, ThingAgent).
+model Thing {
+  id                 String    @id // services: "{type}-{label}", agents: UUID
+  type               String // "ai-gateway" | "compliance-proxy" | "nexus-hub" | "control-plane" | "agent"
+  name               String? // human-readable label
+  version            String? // reported software binary version
+  address            String? // service: host:port (reachable); agent: last-known IP (informational)
+  enrolled_by        String?   @map("enrolled_by") // admin email | "self-register" | "system"
+  auth_type          String    @default("bearer") @map("auth_type") // "bearer" | "mtls" | "apikey"
+  conn_protocol      String    @default("http") @map("conn_protocol") // "http" | "websocket" | "mqtt"
+  status             String    @default("enrolled") // "enrolled" | "online" | "offline" | "drift" | "revoked"
+  enrolled_at        DateTime  @default(now()) @map("enrolled_at") @db.Timestamptz(3)
+  last_seen_at       DateTime? @map("last_seen_at") @db.Timestamptz(3)
+  updated_at         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// Full desired config snapshot pushed by Hub to this Thing via WebSocket.
+  desired            Json      @default("{}")
+  /// Full config snapshot last reported by the Thing as applied, plus dynamic heartbeat data.
+  reported           Json      @default("{}")
+  /// Per-config-key outcome ledger reported by the Thing: { key: { appliedAt, appliedVersion, applyError } }.
+  /// Carries the result of the latest OnConfigChanged dispatch — operators see active errors and last-good
+  /// versions on the Nodes page without crawling logs. Reset to {} on Thing process restart and repopulated
+  /// by the next successful apply; correlate with process_started_at to detect "fresh-process / no-apply-yet".
+  reported_outcomes  Json      @default("{}") @map("reported_outcomes")
+  /// Monotonic version counter for the desired state (incremented on every Hub push).
+  desired_ver        BigInt    @default(0) @map("desired_ver")
+  /// Version the Thing last reported as applied.
+  reported_ver       BigInt    @default(0) @map("reported_ver")
+  /// Wall-clock time the Thing's process started, captured by Hub on the offline→online transition.
+  /// Used to derive uptime on the Nodes page and to interpret reported_outcomes correctly across restarts.
+  process_started_at DateTime? @map("process_started_at") @db.Timestamptz(3)
+  /// OS hostname (agents: macOS hostname; services: container/EC2 hostname).
+  /// Promoted from `metadata.staticInfo.hostname` to a first-class column so
+  /// list/detail UIs render identity without digging into jsonb. Heartbeat
+  /// handler best-effort overwrites this every tick.
+  hostname           String?   @map("hostname")
+  /// Last-reported primary IP. Promoted from `metadata.staticInfo.primaryIp`
+  /// + indexed via `thing_primary_ip_idx` for the "filter by subnet" use case.
+  primary_ip         String?   @map("primary_ip")
+  /// OS family — `darwin` | `linux` | `windows`. Promoted from
+  /// `metadata.staticInfo.os`.
+  os                 String?   @map("os")
+  /// OS version label (e.g. `26.3.1` on macOS). Promoted from
+  /// `metadata.staticInfo.osVersion`.
+  os_version         String?   @map("os_version")
+  /// E52-S9 free-form tags. Ad-hoc string labels (`contractor`,
+  /// `byod`, `executive`) that compose into smart-group predicates
+  /// (`tags / contains` op) and UI filter chips. Backed by a GIN
+  /// index for fast membership queries.
+  tags               String[]  @default([])
+  /// Flexible labels, tags, and unstructured data.
+  metadata           Json?
+  /// Stable natural key for this Thing — content varies by `type`:
+  ///   - agent:           hardware fingerprint (32-hex sha256 of
+  ///                      IOPlatformUUID + serial + MAC + cpu brand)
+  ///                      computed by `shared/opsmetrics`.
+  ///   - server services: yaml-configured `id` from the service config,
+  ///                      or auto-derived `{hostname}-{type}-{port}`
+  ///                      when yaml left it blank (which today happens
+  ///                      to be what their `thing.id` already is).
+  /// Promoted out of `metadata.staticInfo.deviceFingerprint` (where the
+  /// agent variant used to live, buried in JSON) so the DB can enforce
+  /// `UNIQUE(type, physical_id)` and stop duplicate `thing` rows from
+  /// accumulating across re-enrollments. The constraint is partial,
+  /// gated on type='agent' AND non-NULL because:
+  ///   - agents need uniqueness enforcement (random thing.id; same Mac
+  ///     re-enrolls produce different IDs without this);
+  ///   - services don't (thing.id is already deterministic by yaml-id
+  ///     or hostname+type+port, so adding the partial UNIQUE here would
+  ///     be redundant with the PK and pointlessly constrain non-agent
+  ///     types that may legitimately leave it NULL).
+  /// Nullable because legacy / sandboxed agents that can't compute a
+  /// fingerprint still need a thing row.
+  physical_id        String?   @map("physical_id")
+
+  service           ThingService?
+  agent             ThingAgent?
+  enrollmentTokens  EnrollmentToken[]
+  groupMemberships  DeviceGroupMembership[]
+  deviceAssignments DeviceAssignment[]
+  metricOpsRaw      MetricOpsRaw[]
+  diagEvents        ThingDiagEvent[]
+  diagModeWindows   ThingDiagModeWindow[]
+  overrides         ThingConfigOverride[]
+
+  // Partial unique constraint `WHERE type='agent' AND physical_id IS NOT NULL`
+  // lives in migration 20260521000000_thing_physical_id_column (Prisma's
+  // @@unique can't express the WHERE clause). Server-side things use yaml-
+  // configured ids, NOT this column, so applying the constraint to them
+  // would force them to either NULL the column or collide.
+  // Partial index on primary_ip lives in migration 20260522000000_thing_identity_columns.
+  @@index([type, status])
+  @@index([status, last_seen_at])
+  @@map("thing")
+}
+
+/// Service-specific extension (1:1 with Thing). For ai-gateway, compliance-proxy,
+/// control-plane, nexus-hub Things.
+model ThingService {
+  thing_id       String  @id @map("thing_id")
+  role           String? @default("default") // api | scheduler | canary | worker
+  metrics_url    String? @map("metrics_url") // Prometheus scrape endpoint
+  management_url String? @map("management_url") // Management HTTP base URL (e.g. http://host:port)
+
+  thing Thing @relation(fields: [thing_id], references: [id], onDelete: Cascade)
+
+  @@map("thing_service")
+}
+
+/// Agent-specific extension (1:1 with Thing). For desktop agent Things.
+/// hostname / os / os_version live on the parent Thing table (promoted in Phase 1
+/// of the thing-identity refactor) so non-agent Things can also carry them.
+model ThingAgent {
+  thing_id              String    @id @map("thing_id")
+  cert_serial           String?   @unique @map("cert_serial")
+  cert_expires_at       DateTime? @map("cert_expires_at") @db.Timestamptz(3)
+  previous_cert_serial  String?   @map("previous_cert_serial")
+  cert_renewed_at       DateTime? @map("cert_renewed_at") @db.Timestamptz(3)
+  sysinfo               Json?
+  /// Trust level: 0=unknown, 1=enrolled, 2=identified (user linked), 3=compliant (cert valid + user linked)
+  trust_level           Int       @default(0) @map("trust_level")
+  /// Active DeviceAssignment.id for this agent (null when no user is assigned).
+  current_assignment_id String?   @map("current_assignment_id")
+
+  thing Thing @relation(fields: [thing_id], references: [id], onDelete: Cascade)
+
+  @@index([cert_expires_at])
+  @@map("thing_agent")
+}
+
+/// Hub-owned enrollment credentials. Each token is 1:1 with a Thing after enrollment.
+/// Replaces PendingEnrollment.
+model EnrollmentToken {
+  id         String    @id @default(uuid())
+  token_hash String    @unique @map("token_hash") // SHA-256 of raw token
+  thing_type String    @map("thing_type")
+  thing_id   String?   @map("thing_id")
+  label      String    @default("")
+  status     String    @default("pending") // "pending" | "used" | "expired" | "revoked"
+  expires_at DateTime  @map("expires_at") @db.Timestamptz(3)
+  used_at    DateTime? @map("used_at") @db.Timestamptz(3)
+  metadata   Json?
+  created_by String?   @map("created_by")
+  created_at DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  thing Thing? @relation(fields: [thing_id], references: [id], onDelete: SetNull)
+
+  @@map("enrollment_token")
+}
+
+/// Per-(type, config_key) desired state template used to initialize new Things
+/// and to record the canonical desired config for a given Thing type + key.
+model ThingConfigTemplate {
+  type       String // "ai-gateway" | "compliance-proxy" | etc.
+  config_key String   @map("config_key") // e.g. "killswitch", "hook_config", "quota"
+  /// Full desired state for this (type, config_key). Written by admin actions.
+  state      Json     @default("{}")
+  /// Monotonic version counter, incremented on every admin write.
+  version    BigInt   @default(1)
+  updated_at DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updated_by String?  @map("updated_by")
+
+  @@id([type, config_key])
+  @@index([type])
+  @@map("thing_config_template")
+}
+
+/// Per-Thing config override (whole-key JSON replacement). Sits above
+/// ThingConfigTemplate in the cascade: thing.desired = override[k] if
+/// present else template[type, k]. Source of truth for the override layer;
+/// thing.desired is the merged wire-format cache recomputed on every
+/// override write/clear. Blacklist (credentials, virtual_keys) enforced in
+/// CP admin handler via packages/shared/configtypes/override_policy.go.
+model ThingConfigOverride {
+  thing_id            String    @map("thing_id")
+  config_key          String    @map("config_key")
+  /// Full desired state for this Thing's (config_key) — replaces template.state for this Thing.
+  state               Json
+  /// thing_config_template.version snapshotted at override creation; staleness =
+  /// current template.version > template_ver_at_set.
+  template_ver_at_set BigInt    @map("template_ver_at_set")
+  /// Actor identifier (user id / email / "system:override-expiry-job").
+  set_by              String    @map("set_by")
+  set_at              DateTime  @default(now()) @map("set_at") @db.Timestamptz(3)
+  /// Human-readable rationale, max 500 chars (DB-level CHECK + handler-level validation).
+  reason              String?   @db.VarChar(500)
+  /// NULL = permanent. Non-NULL must satisfy expires_at > set_at (CHECK).
+  expires_at          DateTime? @map("expires_at") @db.Timestamptz(3)
+  /// True for break-glass writes (configKey == "killswitch" or reason starts with "break-glass:").
+  emergency_override  Boolean   @default(false) @map("emergency_override")
+
+  thing Thing @relation(fields: [thing_id], references: [id], onDelete: Cascade)
+
+  @@id([thing_id, config_key])
+  @@index([thing_id])
+  @@index([set_at(sort: Desc)])
+  @@map("thing_config_override")
+}
+
+/// Insert-only audit trail of admin-initiated config changes flowing through Hub.
+/// Written by Hub's config update handler when it receives a change from Control Plane.
+model ConfigChangeEvent {
+  id                 String   @id @default(uuid())
+  timestamp          DateTime @default(now()) @db.Timestamptz(3)
+  thing_type         String   @map("thing_type") // "ai-gateway" | "compliance-proxy" | etc.
+  config_key         String   @map("config_key") // e.g. "killswitch"
+  action             String // "enable" | "disable" | "update" | "force_close" | etc.
+  actor_id           String   @map("actor_id") // NexusUser id or admin API key id
+  actor_name         String   @map("actor_name")
+  new_state          Json     @map("new_state") // snapshot of the new desired state
+  new_version        BigInt   @map("new_version")
+  source_ip          String?  @map("source_ip")
+  /// True when the change bypassed the normal Control Plane path (local
+  /// break-glass on the data-plane service). Flags rows for audit review.
+  emergency_override Boolean  @default(false) @map("emergency_override")
+
+  @@index([thing_type, timestamp])
+  @@index([config_key, timestamp])
+  @@index([actor_id, timestamp])
+  @@map("config_change_event")
+}
+
+// ─── Unified Agent Auth (auth-server) ────────────────────────────────────────
+//
+// Schema kernel for the OAuth 2.0 + OIDC auth-server that serves both the
+// dashboard UI (confidential client) and desktop agent (public + PKCE). See
+// docs/_archive/2026-q2/brainstorms/plans/2026-04-19-unified-agent-auth-p1-3.md for the full
+// design. Federated identities (OIDC / SAML) are linked through the
+// IdentityProvider + UserFederatedIdentity pair, replacing the legacy
+// NexusUser.ssoSubject/ssoProvider/ssoLastAuthAt triple.
+
+/// Registered identity provider (local, OIDC, or SAML) the auth-server trusts
+/// for end-user login. One IdentityProvider row backs every federation link in
+/// UserFederatedIdentity.
+model IdentityProvider {
+  id          String   @id @default(uuid()) @db.Uuid
+  type        String // local | oidc | saml
+  name        String
+  enabled     Boolean  @default(true)
+  config      Json     @default("{}")
+  roleMapping Json     @default("[]")
+  defaultRole String   @default("developer")
+  jitEnabled  Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  federatedIdentities UserFederatedIdentity[]
+  scimTokens          ScimToken[]
+  idpGroupMappings    IdpGroupMapping[]
+  scimManagedGroups   IamGroup[]              @relation("ScimManagedGroups")
+
+  @@map("IdentityProvider")
+}
+
+/// Link row between a NexusUser and an external IdentityProvider subject.
+/// One NexusUser can be linked to multiple IdPs (e.g. SSO + break-glass local).
+model UserFederatedIdentity {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String
+  idpId           String    @db.Uuid
+  externalSubject String
+  externalEmail   String?
+  rawClaims       Json?
+  linkedAt        DateTime  @default(now()) @db.Timestamptz(3)
+  lastLoginAt     DateTime? @db.Timestamptz(3)
+
+  user NexusUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  idp  IdentityProvider @relation(fields: [idpId], references: [id])
+
+  @@unique([idpId, externalSubject])
+  @@index([userId])
+  @@map("UserFederatedIdentity")
+}
+
+/// OAuth 2.0 client registration. The desktop agent is a public client
+/// (requirePkce = true, no secret); the dashboard BFF is a confidential client
+/// (clientSecretHash populated).
+model OAuthClient {
+  id                String   @id
+  name              String
+  type              String // public | confidential
+  redirectUris      String[]
+  allowedScopes     String[]
+  requirePkce       Boolean  @default(true)
+  accessTtlSeconds  Int      @default(3600)
+  refreshTtlSeconds Int      @default(86400)
+  clientSecretHash  String?
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  refreshTokens RefreshToken[]
+
+  @@map("OAuthClient")
+}
+
+/// Refresh token record. Stored hashed (never raw) so reuse-detection can
+/// chain parent/child via parentJti. sessionId groups a chain of rotations
+/// for the same login session.
+model RefreshToken {
+  jti       String    @id @db.Uuid
+  sessionId String    @db.Uuid
+  parentJti String?   @db.Uuid
+  userId    String
+  clientId  String
+  deviceId  String?
+  tokenHash Bytes
+  usedAt    DateTime? @db.Timestamptz(3)
+  expiresAt DateTime  @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  user   NexusUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client OAuthClient @relation(fields: [clientId], references: [id])
+
+  @@index([sessionId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("RefreshToken")
+}
+
+/// Revocation ledger (structure only in Phase 1; wired into verifier in Phase 4).
+/// A single row can revoke a specific jti, all tokens for a user, a device, or
+/// a session. Rows expire naturally via expiresAt.
+model RevokedToken {
+  id              BigInt   @id @default(autoincrement())
+  scope           String // jti | user | device | session
+  targetJti       String?  @db.Uuid
+  targetUserId    String?
+  targetDeviceId  String?
+  targetSessionId String?  @db.Uuid
+  revokedAt       DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt       DateTime @db.Timestamptz(3)
+  reason          String
+  actor           String?
+
+  @@index([expiresAt])
+  @@index([targetUserId])
+  @@index([targetDeviceId])
+  @@index([targetSessionId])
+  @@map("RevokedToken")
+}
+
+// ─── Scheduler Jobs ──────────────────────────────────────────────────────────
+// Hub-managed scheduled jobs. The job table holds one row per registered job
+// (upserted on every Hub startup from code). job_run captures one row per
+// execution attempt, retained as a ring buffer (latest N per job) by the
+// job-retention job.
+
+/// Scheduler job definition. Upserted on Hub startup from code; source of
+/// truth for `enabled` toggles and human-readable metadata.
+model Job {
+  id          String   @id
+  name        String
+  description String
+  intervalSec Int
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  runs        JobRun[]
+
+  @@map("job")
+}
+
+/// One row per job execution attempt. Retention is enforced by the
+/// job-retention scheduled job, which keeps the latest N rows per jobId.
+model JobRun {
+  id         String    @id @default(uuid())
+  jobId      String
+  job        Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  startedAt  DateTime  @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+  durationMs Int?
+  status     String // running | success | error | skipped
+  error      String?
+  replicaId  String?
+
+  @@index([jobId, startedAt(sort: Desc)])
+  @@map("job_run")
+}
+
+// ─── Ops Metrics + Diagnostic Events ─────────────────────────────────────────
+// Hub-collected operational telemetry stack. See
+// docs/_archive/2026-q2/brainstorms/2026-04-27-ops-metrics-and-diag-architecture-design.md.
+
+/// Real-time ops metric samples reported by every Thing (services + agents).
+/// `value` is nullable because histograms put their data in `metadata.buckets`.
+model MetricOpsRaw {
+  id           String   @id @default(uuid()) @db.Uuid
+  sampledAt    DateTime @map("sampled_at") @db.Timestamptz(6)
+  thingId      String   @map("thing_id")
+  thingType    String   @map("thing_type")
+  metricName   String   @map("metric_name")
+  metricKind   String   @map("metric_kind")
+  dimensionKey String   @default("") @map("dimension_key")
+  value        Float?   @db.DoublePrecision
+  metadata     Json?
+
+  thing Thing @relation(fields: [thingId], references: [id], onDelete: Cascade)
+
+  @@unique([sampledAt, thingId, metricName, dimensionKey])
+  @@index([thingId, sampledAt(sort: Desc)])
+  @@index([metricName, sampledAt(sort: Desc)])
+  @@index([thingType, sampledAt(sort: Desc)])
+  @@map("metric_ops_raw")
+}
+
+/// 1-hour rollup. `thingId` is nullable: NULL means the row is a fleet aggregate.
+/// `id` is a synthetic primary key required only because Prisma cannot express
+/// the natural composite key (COALESCE(thing_id, sentinel) with NOT NULL
+/// semantics). The real uniqueness constraint is enforced by the
+/// `uq_ops_rollup_1h` partial-COALESCE UNIQUE INDEX added in raw SQL.
+model MetricOpsRollup1h {
+  id           String   @id @default(uuid()) @db.Uuid
+  bucketStart  DateTime @map("bucket_start") @db.Timestamptz(6)
+  thingId      String?  @map("thing_id")
+  thingType    String   @map("thing_type")
+  metricName   String   @map("metric_name")
+  metricKind   String   @map("metric_kind")
+  dimensionKey String   @default("") @map("dimension_key")
+  valueAvg     Float?   @map("value_avg") @db.DoublePrecision
+  valueSum     Float?   @map("value_sum") @db.DoublePrecision
+  valueMin     Float?   @map("value_min") @db.DoublePrecision
+  valueMax     Float?   @map("value_max") @db.DoublePrecision
+  sampleCount  Int      @map("sample_count")
+  metadata     Json?
+
+  @@index([metricName, bucketStart(sort: Desc)])
+  @@map("metric_ops_rollup_1h")
+}
+
+/// 1-day rollup. Same columns as MetricOpsRollup1h.
+model MetricOpsRollup1d {
+  id           String   @id @default(uuid()) @db.Uuid
+  bucketStart  DateTime @map("bucket_start") @db.Timestamptz(6)
+  thingId      String?  @map("thing_id")
+  thingType    String   @map("thing_type")
+  metricName   String   @map("metric_name")
+  metricKind   String   @map("metric_kind")
+  dimensionKey String   @default("") @map("dimension_key")
+  valueAvg     Float?   @map("value_avg") @db.DoublePrecision
+  valueSum     Float?   @map("value_sum") @db.DoublePrecision
+  valueMin     Float?   @map("value_min") @db.DoublePrecision
+  valueMax     Float?   @map("value_max") @db.DoublePrecision
+  sampleCount  Int      @map("sample_count")
+  metadata     Json?
+
+  @@index([metricName, bucketStart(sort: Desc)])
+  @@map("metric_ops_rollup_1d")
+}
+
+/// 1-month rollup. Same columns as MetricOpsRollup1h.
+model MetricOpsRollup1mo {
+  id           String   @id @default(uuid()) @db.Uuid
+  bucketStart  DateTime @map("bucket_start") @db.Timestamptz(6)
+  thingId      String?  @map("thing_id")
+  thingType    String   @map("thing_type")
+  metricName   String   @map("metric_name")
+  metricKind   String   @map("metric_kind")
+  dimensionKey String   @default("") @map("dimension_key")
+  valueAvg     Float?   @map("value_avg") @db.DoublePrecision
+  valueSum     Float?   @map("value_sum") @db.DoublePrecision
+  valueMin     Float?   @map("value_min") @db.DoublePrecision
+  valueMax     Float?   @map("value_max") @db.DoublePrecision
+  sampleCount  Int      @map("sample_count")
+  metadata     Json?
+
+  @@index([metricName, bucketStart(sort: Desc)])
+  @@map("metric_ops_rollup_1mo")
+}
+
+/// Agent / service diagnostic events (warn / error / fatal / crash). Used for
+/// crash-cohort analysis and on-demand troubleshooting via diag-mode windows.
+model ThingDiagEvent {
+  id           String   @id @default(uuid()) @db.Uuid
+  thingId      String   @map("thing_id")
+  thingType    String   @map("thing_type")
+  occurredAt   DateTime @map("occurred_at") @db.Timestamptz(6)
+  receivedAt   DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  level        String
+  eventType    String   @map("event_type")
+  source       String
+  message      String
+  messageHash  String   @map("message_hash")
+  /// Cross-service correlation id (X-Nexus-Request-Id). Populated by the
+  /// SlogSink auto-extract path on every new diag emit; NULL for legacy
+  /// rows written before the column existed.
+  traceId      String?  @map("trace_id")
+  attrs        Json?
+  stackTrace   String?  @map("stack_trace")
+  repeatCount  Int      @default(1) @map("repeat_count")
+  agentVersion String?  @map("agent_version")
+  osInfo       Json?    @map("os_info")
+
+  thing Thing @relation(fields: [thingId], references: [id], onDelete: Cascade)
+
+  @@index([thingId, occurredAt(sort: Desc)])
+  @@index([level, occurredAt(sort: Desc)])
+  @@index([eventType, occurredAt(sort: Desc)])
+  @@index([messageHash, occurredAt(sort: Desc)])
+  @@index([thingId, traceId, occurredAt(sort: Desc)])
+  @@map("thing_diag_event")
+}
+
+/// Diagnostic-mode time window for a Thing. Within the window the Thing emits
+/// at full diagnostic verbosity. The diag-mode-expiry job closes expired rows.
+model ThingDiagModeWindow {
+  id        String   @id @default(uuid()) @db.Uuid
+  thingId   String   @map("thing_id")
+  startedAt DateTime @map("started_at") @db.Timestamptz(6)
+  endedAt   DateTime @map("ended_at") @db.Timestamptz(6)
+  setBy     String?  @map("set_by")
+  reason    String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  thing     Thing      @relation(fields: [thingId], references: [id], onDelete: Cascade)
+  setByUser NexusUser? @relation("ThingDiagModeWindowSetBy", fields: [setBy], references: [id], onDelete: SetNull)
+
+  @@index([thingId, startedAt(sort: Desc)])
+  @@index([endedAt])
+  @@map("thing_diag_mode_window")
+}
+
+/// E49 — Silence registry for diag-event noise. A row matches a
+/// `(messageHash, level)` pair so the /infrastructure/errors page can
+/// collapse known-noise issues and keep triage focused on what's new.
+/// `expiresAt` NULL = permanent silence; otherwise auto-clears past
+/// the timestamp via the partial index.
+model DiagSilence {
+  id          String    @id @default(uuid()) @db.Uuid
+  messageHash String    @map("message_hash")
+  level       String
+  silencedBy  String    @map("silenced_by")
+  silencedAt  DateTime  @default(now()) @map("silenced_at") @db.Timestamptz(3)
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(3)
+  reason      String?
+
+  @@index([messageHash, level], map: "diag_silence_lookup_idx")
+  @@map("diag_silence")
+}
+
+/// Per-layer retention policy for ops metrics + diag events. Updated via the
+/// admin Control Plane API; consumed by the ops-retention scheduled job.
+model MetricOpsRetentionConfig {
+  layer         String   @id
+  retentionDays Int      @map("retention_days")
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  updatedBy     String?  @map("updated_by")
+
+  updatedByUser NexusUser? @relation("MetricOpsRetentionConfigUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("metric_ops_retention_config")
+}
+
+// 2026-05-21: model provider_pricing retired. All four prices
+// (input, output, cached_input_read, cached_input_write) now live on
+// the Model row as the single source of truth. See migration
+// 20260608000001_drop_provider_pricing_table for the DROP TABLE.
+
+// ─── Phase 3: SCIM 2.0 Provisioning ─────────────────────────────────────────
+
+/// SCIM bearer token for provisioner authentication (separate from admin OAuth tokens).
+/// The full token value is never stored — only the bcrypt hash. tokenPrefix is a
+/// display hint (e.g. "nxs_scim_abc123") shown in the UI after creation.
+model ScimToken {
+  id                 String    @id @default(uuid()) @db.Uuid
+  name               String
+  tokenHash          String    @unique
+  tokenPrefix        String
+  identityProviderId String?   @db.Uuid
+  createdBy          String
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  lastUsedAt         DateTime? @db.Timestamptz(3)
+  revokedAt          DateTime? @db.Timestamptz(3)
+
+  identityProvider IdentityProvider? @relation(fields: [identityProviderId], references: [id], onDelete: SetNull)
+  createdByUser    NexusUser         @relation("ScimTokenCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([identityProviderId])
+  @@map("ScimToken")
+}
+
+/// Maps an external IdP group to an internal IamGroup for SCIM Group provisioning.
+/// When the SCIM Groups endpoint receives a push for a group membership, this table
+/// resolves which IamGroup the user should be added to, which carries IAM policy attachments.
+model IdpGroupMapping {
+  id                 String   @id @default(uuid()) @db.Uuid
+  identityProviderId String   @db.Uuid
+  externalGroupId    String
+  externalGroupName  String?
+  iamGroupId         String
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+
+  identityProvider IdentityProvider @relation(fields: [identityProviderId], references: [id], onDelete: Cascade)
+  iamGroup         IamGroup         @relation(fields: [iamGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([identityProviderId, externalGroupId])
+  @@index([iamGroupId])
+  @@map("IdpGroupMapping")
+}
+
+/// E46 — 1:1 sidecar of traffic_event storing the canonical
+/// NormalizedPayload (provider-agnostic representation of the captured
+/// request and response). Splits storage so the wide traffic_event row
+/// stays stable, normalized JSON can be cold-tiered independently, and
+/// schema versioning is per-row.
+///
+/// `request_status` and `response_status` are one of `ok` / `partial` /
+/// `failed`. When `failed`, the corresponding *_normalized column is
+/// NULL and `*_error_reason` carries the reason. The parent traffic_event
+/// is unaffected by a normalize failure.
+///
+/// `*_redaction_spans` is the JSONB array of RedactionSpan records
+/// (rule_id, content_address, start, end, replacement) applied to the
+/// stored normalized copy. The same span set drove the inflight rewrite
+/// when the hook configured `onMatch.inflightAction = redact` and the
+/// adapter supported reverse-encoding.
+model traffic_event_normalized {
+  traffic_event_id         String   @id
+  request_normalized       Json?    @map("request_normalized")
+  response_normalized      Json?    @map("response_normalized")
+  request_status           String?  @map("request_status") // "ok" | "partial" | "failed"
+  response_status          String?  @map("response_status")
+  request_error_reason     String?  @map("request_error_reason")
+  response_error_reason    String?  @map("response_error_reason")
+  request_redaction_spans  Json?    @map("request_redaction_spans")
+  response_redaction_spans Json?    @map("response_redaction_spans")
+  normalize_version        String   @default("1") @map("normalize_version")
+  created_at               DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  traffic_event traffic_event @relation(fields: [traffic_event_id], references: [id], onDelete: Cascade)
+
+  @@index([request_status])
+  @@index([response_status])
+  @@map("traffic_event_normalized")
+}
+
+/// E38-S13 — Prompt Cache 3-Tier Config, Tier 1 (truly global, singleton).
+/// JSONB shape governed by Go struct `cacheconfig.GlobalConfig`
+/// in `packages/shared/cacheconfig/types.go`.
+/// Knobs: normaliser_enabled, cache_master_kill_switch.
+/// Adding a new global knob requires updating the Go struct only — no DB migration.
+model CacheGlobalConfig {
+  id        String   @id @default("singleton")
+  config    Json     @default("{}")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?  @map("updated_by")
+
+  @@map("cache_global_config")
+}
+
+/// E38-S13 — Prompt Cache 3-Tier Config, Tier 2 (per adapter_type).
+/// One row per adapter family. JSONB shape governed by Go struct
+/// `cacheconfig.AdapterConfig` — contains adapter-specific cache knobs
+/// (anthropic_marker_*, gemini_*) AND the rule override map nested under `rules`.
+/// Field set for each adapter is enforced by Go marshaling on read/write paths.
+model CacheAdapterConfig {
+  adapterType String   @id @map("adapter_type")
+  config      Json     @default("{}")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy   String?  @map("updated_by")
+
+  @@map("cache_adapter_config")
+}
+
+/// E38-S13 — Prompt Cache 3-Tier Config, Tier 3 (per provider override).
+/// One row per Provider that has at least one knob overridden. Empty/absent
+/// row = "fully inherits from Tier 2 + Tier 1". JSONB shape governed by Go
+/// struct `cacheconfig.ProviderConfig`, which is a strict subset of
+/// AdapterConfig (no `rules` — rules stay Tier 2 only per ADR-2).
+/// The CP handler validates on PUT that every key is appropriate for the
+/// Provider's adapter_type; DB-level CHECK cannot be expressed because it
+/// would require a cross-table reference.
+model CacheProviderConfig {
+  providerId String   @id @map("provider_id")
+  config     Json     @default("{}")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?  @map("updated_by")
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@map("cache_provider_config")
+}
+
+/// E48 — Emergency Passthrough 3-Tier Config, Tier 1 (singleton).
+/// Runtime kill-switch that degrades the gateway to a dumb pipe for matched
+/// traffic. Three independent bypass flags (bypassHooks / bypassCache /
+/// bypassNormalize) live inside `config` JSONB. CHECK constraints in the
+/// migration enforce: expires_at NOT NULL when enabled, expires_at <= NOW() + 8h,
+/// reason length >= 20 chars when enabled. Cross-toggle constraint
+/// (bypassNormalize=true requires bypassCache=true) is enforced at admin
+/// API + UI, not at DB level (would require query-time JSONB inspection).
+model GatewayPassthroughConfigGlobal {
+  id        String    @id @default("singleton")
+  enabled   Boolean   @default(false)
+  config    Json      @default("{\"bypassHooks\": false, \"bypassCache\": false, \"bypassNormalize\": false}")
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(3)
+  enabledBy String?   @map("enabled_by")
+  reason    String?
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("gateway_passthrough_config_global")
+}
+
+/// E48 — Emergency Passthrough 3-Tier Config, Tier 2 (per adapter_type).
+/// One row per adapter family in passthrough mode.
+model GatewayPassthroughConfigAdapter {
+  adapterType String    @id @map("adapter_type")
+  enabled     Boolean   @default(false)
+  config      Json      @default("{}")
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(3)
+  enabledBy   String?   @map("enabled_by")
+  reason      String?
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("gateway_passthrough_config_adapter")
+}
+
+/// E48 — Emergency Passthrough 3-Tier Config, Tier 3 (per Provider).
+/// FK CASCADE: deleting a Provider deletes its passthrough row.
+model GatewayPassthroughConfigProvider {
+  providerId String    @id @map("provider_id")
+  enabled    Boolean   @default(false)
+  config     Json      @default("{}")
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(3)
+  enabledBy  String?   @map("enabled_by")
+  reason     String?
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@map("gateway_passthrough_config_provider")
+}
+
+/// Dead-letter queue for traffic_event MQ messages. Populated by the Hub
+/// TrafficEventWriter consumer when a single message has been redelivered
+/// more than `redeliveryThresholdAttempts` times (default 5) — typically
+/// because the row violates a constraint, references a missing column, or
+/// hits some other persistent DB-side error. ACKing + writing here breaks
+/// the redeliver-forever loop and lets the broker move on; operators
+/// inspect and decide whether to fix the bug + requeue or discard.
+model traffic_event_dlq {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  msgId           String   @map("msg_id")
+  subject         String
+  payload         Bytes
+  deliveryCount   Int      @map("delivery_count")
+  lastError       String?  @map("last_error")
+  firstSeenAt     DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  dlqInsertedAt   DateTime @default(now()) @map("dlq_inserted_at") @db.Timestamptz(6)
+
+  @@index([msgId], map: "traffic_event_dlq_msg_id_idx")
+  @@index([dlqInsertedAt(sort: Desc)], map: "traffic_event_dlq_inserted_at_idx")
+  @@map("traffic_event_dlq")
+}

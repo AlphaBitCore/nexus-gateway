@@ -1,0 +1,24 @@
+---
+description: Pre-GA — no backward compatibility, no defer, no parallel legacy paths
+alwaysApply: true
+---
+
+# Development-phase policy: no backward compatibility, no defer (binding)
+
+Pre-GA, no installed users. Treat all refactoring as greenfield.
+
+## Rules
+
+1. **Delete obsolete code / tables / endpoints / configs outright** when replacing them — no parallel "legacy" paths.
+2. **No phased compatibility rollouts** — specs / plans must not contain "Phase 1 keeps old behavior, Phase 2 migrates".
+3. **No `@deprecated` markers kept alive**, no "cleanup later" TODOs, no "will remove after X ships".
+4. **No data-migration code for dev-only records** — fresh schema + seed is acceptable.
+5. **No feature flags for rollback** — rollback is `git revert`.
+
+"Phase" in plans means **order of work**, not **compatibility layer**.
+
+## Why
+
+Pre-GA means we don't owe migration paths to anyone. Every parallel-old-and-new branch is a fork that has to be reconciled, tested, and eventually torn out. Pay that cost only after GA, never before.
+
+Skipping this rule requires **explicit user approval** in chat.

@@ -1,0 +1,54 @@
+/* ─── Switch root ────────────────────────────────────────────────────────── */
+
+.root {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  width: 28px;
+  height: 16px;
+  border-radius: var(--g-radius-full);
+  background: var(--color-border-strong);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--g-transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Expand tap area to 44px via invisible pseudo-element */
+.root::before {
+  content: '';
+  position: absolute;
+  inset: -12px -4px;
+}
+
+.root[data-state='checked'] {
+  background: var(--color-control-gradient);
+}
+
+.root:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.root[data-disabled] {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* ─── Thumb ─────────────────────────────────────────────────────────────── */
+
+.thumb {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--g-gray-50);
+  transform: translateX(2px);
+  transition: transform var(--g-transition-fast);
+  will-change: transform;
+}
+
+.thumb[data-state='checked'] {
+  transform: translateX(12px);
+  background: var(--color-primary-foreground);
+}

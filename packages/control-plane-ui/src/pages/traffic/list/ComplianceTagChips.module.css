@@ -1,0 +1,102 @@
+/*
+ * ComplianceTagChips — namespace-aware chip + chip-input styles.
+ *
+ * Tag strings are namespaced (e.g. `severity:confidential`, `compliance:pii`,
+ * `detector:content-safety`, `category:violence`). The prefix before the colon
+ * picks the color family; unknown prefixes fall back to neutral.
+ */
+
+.chipList {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-2);
+  align-items: center;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: var(--g-radius-full);
+  border: 1px solid var(--color-border-light);
+  background: var(--color-muted);
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+/* Namespace color families. We deliberately compose on top of the neutral
+   chip so unknown prefixes still render sensibly. */
+.chipSeverity {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  color: var(--color-danger);
+}
+
+.chipCompliance {
+  background: color-mix(in srgb, var(--color-violet) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-violet) 35%, transparent);
+  color: var(--color-violet-dark);
+}
+
+.chipDetector {
+  background: var(--color-muted);
+  border-color: var(--color-border-light);
+  color: var(--color-text-secondary);
+}
+
+.chipCategory {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 35%, transparent);
+  color: var(--color-info);
+}
+
+.removeBtn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-left: 2px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.removeBtn:hover {
+  opacity: 1;
+}
+
+.emptyHint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Chip input wrapper */
+.input {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-info);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-info) 25%, transparent);
+}
+
+.inputWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}

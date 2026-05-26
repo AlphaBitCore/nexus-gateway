@@ -1,0 +1,46 @@
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 14px 18px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  box-shadow: var(--shadow-xs);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  flex-wrap: wrap;
+}
+
+.searchInput {
+  min-width: 200px;
+  flex: 1;
+}
+
+.clearButton {
+  padding: var(--g-space-1) var(--g-space-3);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--g-transition-fast);
+}
+
+.clearButton:hover {
+  background: var(--color-surface-hover);
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: var(--g-space-2);
+  padding-top: 0;
+  border-top: none;
+}

@@ -1,0 +1,42 @@
+---
+description: Redis is cache-only — no pub/sub (config invalidation goes via Hub WebSocket)
+globs:
+  - packages/**/*.go
+  - tools/**/*.go
+---
+
+# Redis is cache-only — no pub/sub (binding)
+
+Nexus Gateway uses **Redis for caching only**: sessions, IAM cache, rate-limit counters, response cache, desired-state cache, cert cache, quota counters.
+
+Config invalidation across services is the **Hub WebSocket change-signal**, not Redis pub/sub. See `docs/developers/architecture/cross-cutting/foundation/thing-config-sync-architecture.md` and `docs/developers/architecture/cross-cutting/storage/cache-multi-tier-architecture.md`.
+
+## What this rule forbids
+
+- `redis.Subscribe(...)`, `redis.PSubscribe(...)` for cross-service event notification.
+- `redis.Publish(...)` for cross-service signaling.
+- New code that "broadcasts an invalidation via Redis channel `nexus:config:...`".
+
+## What's allowed
+
+- `redis.Set` / `Get` / `HGet` etc. for plain key-value caching.
+- Lua scripts on Redis for sliding-window counters (quota, rate-limit).
+- Redis-backed LRU promotion in two-tier cert / IAM caches.
+
+## Why
+
+The pre-Hub architecture used Redis pub/sub for config invalidation; it had three documented problems (no apply receipt, cold-start divergence, two parallel code paths). The Hub-centric Thing model replaced it. Bringing pub/sub back in any form re-introduces those failure modes.
+
+## Enforcement
+
+`npm run check:no-redis-pubsub` (CI + pre-commit) catches three regression shapes:
+
+1. **Forbidden pub/sub calls** — `redis.Publish/Subscribe/PSubscribe(…)` in production Go.
+2. **Channel literals** — string `nexus:config*` appearing anywhere in production code.
+3. **Deleted-package re-imports** — any Go import of `packages/shared/heartbeat`, `packages/control-plane/internal/pubsub`, or `packages/control-plane/internal_registry`. These packages were deleted with the Hub-centric migration; their re-appearance is an unambiguous architectural regression.
+
+## Historical context (informational)
+
+Pre-Hub, config invalidation rode `nexus:config:shared` with payloads `"hooks" | "routing" | "credentials" | "all"`. The pub/sub design had three documented failure modes (no apply receipt, cold-start divergence, two parallel code paths) which the Hub WebSocket change-signal eliminates. The packages named above implemented the old design and are deleted — the names are kept here only so future searches that hit this file get the "use Hub WebSocket instead" answer.
+
+Skipping this rule requires **explicit user approval** in chat.

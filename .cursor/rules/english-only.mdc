@@ -1,0 +1,37 @@
+---
+description: All repository artifacts (docs, comments, UI strings, commits) are English
+alwaysApply: true
+---
+
+# English only — repository (binding)
+
+All **project artifacts** in this repo must be **English**:
+
+- `CLAUDE.md`, `.cursor/rules/*`.
+- `docs/**` (requirements, SDD, architecture, OpenAPI descriptions and examples).
+- Source **comments**.
+- **User-visible UI copy** (also requires i18n — see `i18n-mandatory.mdc`).
+- **Commit messages**.
+- READMEs, config / doc strings you add or edit.
+
+## Forbidden
+
+Adding Chinese or other natural languages to those artifacts.
+
+## Allowed
+
+- **Conversation language in chat** may follow the user — say what you want in chat. **Anything written into the codebase stays English.**
+- **Legal quotes / verbatim user content** that must be preserved in another language — requires **explicit user approval**.
+
+## Enforcement
+
+- `npm run check:terminology` — terminology guard on product surfaces (CI gate).
+- Code review — reviewer rejects non-English content.
+
+## What this protects
+
+- Globally distributable codebase.
+- Tool / search / lint compatibility (most tools assume English identifiers).
+- Predictable diff readability for international contributors.
+
+Skipping this rule requires **explicit user approval** in chat (e.g., "we need to embed a Chinese legal quote here").

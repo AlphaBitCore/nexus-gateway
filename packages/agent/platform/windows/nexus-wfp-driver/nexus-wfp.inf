@@ -1,0 +1,86 @@
+; nexus-wfp.inf — NexusWFP kernel-mode driver install manifest.
+;
+; Authoritative design: docs/developers/architecture/agent-windows-wfp-driver.md
+; SDDs: e59-s3-msi-changes.md (pnputil flow), e59-s4-cross-arch-build.md (NT$ARCH$)
+;
+; pnputil /add-driver nexus-wfp.inf /install registers BOTH the driver
+; file (into the driver store) AND the SCM service "NexusWFP" with
+; ServiceType=1 (kernel) + StartType=2 (auto).
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = NetService
+ClassGUID   = {4D36E974-E325-11CE-BFC1-08002BE10318}
+Provider    = %ManufacturerName%
+CatalogFile = nexus-wfp.cat
+DriverVer   = 05/24/2026,1.0.0.0
+PnpLockdown = 1
+
+[Manufacturer]
+%ManufacturerName% = Standard, NT$ARCH$
+
+[Standard.NTamd64]
+%DeviceDescription% = NexusWfpInstall, Root\NexusWFP
+
+[Standard.NTarm64]
+%DeviceDescription% = NexusWfpInstall, Root\NexusWFP
+
+;
+; Per-arch install + Service sections.
+;
+[NexusWfpInstall.NTamd64]
+CopyFiles = NexusWfpFiles.amd64
+AddReg    = NexusWfpAddReg
+
+[NexusWfpInstall.NTamd64.Services]
+AddService = NexusWFP, 2, NexusWfpService_Inst
+
+[NexusWfpInstall.NTarm64]
+CopyFiles = NexusWfpFiles.arm64
+AddReg    = NexusWfpAddReg
+
+[NexusWfpInstall.NTarm64.Services]
+AddService = NexusWFP, 2, NexusWfpService_Inst
+
+[NexusWfpFiles.amd64]
+nexus-wfp.sys
+
+[NexusWfpFiles.arm64]
+nexus-wfp.sys
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles.amd64]
+nexus-wfp.sys = 1,amd64
+
+[SourceDisksFiles.arm64]
+nexus-wfp.sys = 1,arm64
+
+[DestinationDirs]
+DefaultDestDir       = 12   ; %SystemRoot%\System32\drivers
+NexusWfpFiles.amd64  = 12
+NexusWfpFiles.arm64  = 12
+
+[NexusWfpAddReg]
+HKR,, NexusWfpProtocolVersion, %REG_DWORD%, 1
+
+;
+; SCM service entry. ServiceType=1 (kernel), StartType=2 (auto),
+; ErrorControl=1 (normal). LoadOrderGroup left blank — we don't
+; depend on any other driver and don't gate anyone else.
+;
+[NexusWfpService_Inst]
+DisplayName    = %ServiceDescription%
+Description    = %ServiceDescription%
+ServiceType    = 1
+StartType      = 2
+ErrorControl   = 1
+ServiceBinary  = %12%\nexus-wfp.sys
+
+[Strings]
+ManufacturerName   = "Nexus Gateway"
+DeviceDescription  = "Nexus WFP Filter"
+ServiceDescription = "Nexus WFP Packet Capture Driver"
+DiskName           = "Nexus WFP Driver Disk"
+REG_DWORD          = 0x00010001

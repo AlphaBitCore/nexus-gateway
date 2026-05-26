@@ -1,0 +1,22 @@
+.inlineCode {
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+  background: var(--color-surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.filterSelect {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+}
+.filterSelect:focus {
+  border-color: var(--color-primary);
+}

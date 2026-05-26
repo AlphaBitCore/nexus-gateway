@@ -1,0 +1,58 @@
+/* ─── Chip (pill toggle / segmented-control unit) ────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-full);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-weight: var(--g-font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast),
+    border-color var(--g-transition-fast);
+}
+
+.chip:hover:not(:disabled):not(.active) {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}
+
+.chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Active state ──────────────────────────────────────────────────────── */
+
+.chip.active {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-color: var(--color-primary);
+}
+
+.chip.active:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+/* ── Sizes ─────────────────────────────────────────────────────────────── */
+
+.sm {
+  padding: var(--g-space-0-5) var(--g-space-2);
+  font-size: var(--g-font-size-xs);
+}
+
+.md {
+  padding: var(--g-space-1) var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+}

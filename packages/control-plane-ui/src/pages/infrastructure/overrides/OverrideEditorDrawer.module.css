@@ -1,0 +1,317 @@
+/* ── OverrideEditorDrawer ───────────────────────────────────────────
+ *
+ * Right-side drawer with two stacked panes (template + editable JSON) and a
+ * sticky footer carrying TTL + reason + save controls. Mirrors the visual
+ * conventions of ProxyAuditDetailDrawer (overlay, slide-in, var-token
+ * styling) but is wider since the body hosts code-style content.
+ */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--g-z-overlay);
+  background: var(--color-overlay);
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(55vw, 720px);
+  height: 100vh;
+  max-height: 100dvh;
+  z-index: var(--g-z-modal);
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  box-shadow: -12px 0 40px var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--g-space-3) var(--g-space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--g-font-size-md);
+  font-family: var(--g-font-mono);
+  word-break: break-all;
+}
+
+.closeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--g-radius-md);
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.closeBtn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+/* ── Body: panes ─────────────────────────────────────────────────── */
+
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+  padding: var(--g-space-3) var(--g-space-4);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.paneHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-2);
+}
+
+.paneLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.paneActions {
+  display: flex;
+  gap: var(--g-space-2);
+}
+
+.linkBtn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-link);
+  font-size: var(--g-font-size-xs);
+  text-decoration: none;
+}
+
+.linkBtn:hover {
+  text-decoration: underline;
+}
+
+/* ── Template pane (read-only) ──────────────────────────────────── */
+
+.templatePre {
+  margin: 0;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-bg-hover);
+  padding: var(--g-space-2) var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+  max-height: min(28vh, 220px);
+  overflow: auto;
+}
+
+/* ── Override editor textarea ────────────────────────────────────── */
+
+.editor {
+  flex: 1;
+  /* min-height was 220px which combined with `resize: vertical` let the
+     textarea grow past its flex-shrunk pane and visually overflow into
+     the footer area on shorter viewports. The drag handle in the
+     bottom-right corner then captured clicks meant for Save/Cancel.
+     Drop the explicit min-height (flex:1 + body overflow-y:auto already
+     gives plenty of editing surface) and disable user resize so the
+     textarea cannot push past its pane. */
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  line-height: 1.5;
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-code-bg);
+  color: var(--color-code-fg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  caret-color: var(--color-warning);
+}
+
+.editor:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* ── Diff view ───────────────────────────────────────────────────── */
+
+.diffView {
+  flex: 1;
+  min-height: 220px;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  line-height: 1.5;
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  overflow: auto;
+}
+
+.diffSign {
+  display: inline-block;
+  width: 1.25em;
+  user-select: none;
+  color: var(--color-text-muted);
+}
+
+.diffAdd {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success-dark);
+}
+
+.diffRemove {
+  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+  color: var(--color-danger-dark);
+}
+
+.diffSame {
+  color: var(--color-text-muted);
+}
+
+/* ── Errors ──────────────────────────────────────────────────────── */
+
+.error {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-danger);
+  padding: var(--g-space-1) 0;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+
+.footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  padding: var(--g-space-3) var(--g-space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  /* Defensive: the footer is the click target for Save/Cancel. Force
+     it onto its own positioned layer above any sibling overflow that
+     might creep in (e.g. a future code editor with absolute-positioned
+     gutter). Without this, an overflowing body child could stack
+     above the footer at the same z-index and absorb the click. */
+  position: relative;
+  z-index: 1;
+}
+
+.footerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  flex-wrap: wrap;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  min-width: 60px;
+}
+
+.ttlSelect {
+  height: 32px;
+  padding: 0 var(--g-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.ttlCustomInput {
+  height: 32px;
+  padding: 0 var(--g-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.reasonInput {
+  flex: 1;
+  height: 32px;
+  padding: 0 var(--g-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.reasonInput[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+.reasonCounter {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  font-family: var(--g-font-mono);
+  min-width: 60px;
+  text-align: right;
+}
+
+.breakGlassHint {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-warning);
+  font-style: italic;
+}
+
+.footerActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--g-space-2);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .drawer {
+    width: 100vw;
+  }
+
+  .body {
+    padding: var(--g-space-2);
+  }
+
+  .footer {
+    padding: var(--g-space-2);
+  }
+}

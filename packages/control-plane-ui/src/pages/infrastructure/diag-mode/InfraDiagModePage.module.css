@@ -1,0 +1,77 @@
+/* ── InfraDiagModePage ─────────────────────────────────────────────── */
+
+.sectionTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+}
+
+.dataTable th,
+.dataTable td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border-muted);
+  vertical-align: middle;
+}
+
+.codeCell {
+  font-family: var(--g-font-mono);
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.empty {
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 16px 0;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.formGridFull {
+  grid-column: 1 / -1;
+}
+
+.previewBanner {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.previewCount {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.actionRow {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.warningCard {
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+.successCard {
+  border-left: 3px solid var(--color-success);
+  background: var(--color-success-soft);
+}
+
+.validationError {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-danger);
+  margin: 4px 0 0 0;
+}

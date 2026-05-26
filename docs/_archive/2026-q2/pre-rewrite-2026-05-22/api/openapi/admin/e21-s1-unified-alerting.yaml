@@ -1,0 +1,1305 @@
+openapi: "3.1.0"
+info:
+  title: Nexus — Unified Alerting (E21 / Story 1)
+  description: |
+    Hub-centralized alert pipeline introduced in Epic 21. Replaces three
+    fragmented alert mechanisms (quota job, compliance-proxy in-memory
+    evaluator, Hub webhook evaluator) with durable Postgres-backed storage,
+    per-rule lifecycle management, severity × source-type channel routing,
+    and a disk spool for crash-safe data-plane delivery.
+
+    ## Two API surfaces
+
+    ### Internal (service-to-service)
+    Hosted on **Nexus Hub** (default port 3060). Caller is a data-plane service
+    (`compliance-proxy`, `ai-gateway`) using a device bearer token issued
+    during Thing enrollment. Auth is the same `Authorization: Bearer <device-token>`
+    header used for all Hub internal endpoints.
+
+    These two endpoints are consumed exclusively by `shared/alertclient`:
+    - `POST /api/v1/alerts/raise`
+    - `POST /api/v1/alerts/resolve`
+
+    ### Admin (UI-facing via CP BFF)
+    Hosted on **Control Plane** (default port 3001) under `/api/admin/alerts/*`.
+    The CP BFF authenticates the session cookie, evaluates the IAM action
+    (`admin:ReadAlerts` or `admin:ManageAlerts`), injects
+    `X-Nexus-Actor-User-Id: <userId>` into the forwarded request, then
+    thin-forwards to Hub at `http://hub/api/v1/admin/alerts/*`. Hub handler
+    reads the actor from that header for audit columns (`acknowledgedBy`,
+    `resolvedBy`).
+
+    ## Severity casing
+    Severity values are **lowercase** in all JSON payloads (`critical`, `high`,
+    `medium`, `low`, `info`). The underlying Postgres enum is uppercase
+    (`AlertSeverity.CRITICAL` etc. per Prisma convention), but the Go types
+    (`alerting.Severity` in `packages/nexus-hub/internal/alerting/types.go`)
+    use lowercase string constants and JSON tags that serialize directly to
+    lowercase. Consumers should always use lowercase values in request bodies
+    and query parameters.
+
+    ## Secret masking
+    `AlertChannel.config` responses always mask sensitive fields. The mask
+    format is `xxxx-••••-` + last 4 characters of the original value. Masked
+    fields: `botToken`, `smtpPassword`, `routingKey`, and any header whose
+    name contains "authorization", "token", or "secret" (case-insensitive).
+    A PUT round-trip that sends back a masked value preserves the original
+    secret (implemented in `handlers_admin.go:mergeMaskedSecrets`).
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3060
+    description: Local Nexus Hub instance (internal endpoints)
+  - url: http://localhost:3001
+    description: Local Control Plane instance (admin endpoints)
+
+tags:
+  - name: Internal — Alert Events
+    description: |
+      Service-to-service endpoints on Hub. Consumed by `shared/alertclient`
+      in compliance-proxy and ai-gateway. No user session — device bearer token only.
+  - name: Admin — Alert Inbox
+    description: View, acknowledge, and resolve fired alert instances.
+  - name: Admin — Alert Rules
+    description: View and configure the built-in alert rule registry.
+  - name: Admin — Alert Channels
+    description: CRUD for notification channels (webhook / slack / email / pagerduty).
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ===========================================================================
+  # INTERNAL: POST /api/v1/alerts/raise
+  # ===========================================================================
+  /api/v1/alerts/raise:
+    post:
+      tags: [Internal — Alert Events]
+      operationId: internalRaiseAlert
+      summary: Raise an alert envelope from a data-plane service
+      description: |
+        Accepts an `AlertEnvelope` from a data-plane service
+        (`compliance-proxy`, `ai-gateway`) via `shared/alertclient`.
+
+        **Raise semantics (Hub-side):**
+        1. SELECT FOR UPDATE the latest FIRING or ACKNOWLEDGED row for
+           `(ruleId, targetKey)`.
+        2. No row (or last row RESOLVED): INSERT new row, state=FIRING,
+           dispatch to channels.
+        3. Last row FIRING: UPDATE `lastSeenAt` and `duplicateCount++`.
+           No re-dispatch — dedupe at this level.
+        4. Last row ACKNOWLEDGED: INSERT new row (re-fire after ack creates
+           a fresh incident), dispatch.
+
+        All four cases are wrapped in a single transaction to prevent
+        duplicate inserts under concurrent Raise calls.
+
+        Returns **200 OK** on success (including the update-only FIRING case).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertEnvelope'
+            example:
+              ruleId: "proxy.hook_failure_rate"
+              targetKey: "proxy:node-A|hook:external-pii-scan"
+              targetLabel: "Node A — External PII Scan hook"
+              severity: "high"
+              message: "42% of hook invocations failed in the last 5 minutes"
+              details:
+                failures: 42
+                total: 100
+                windowSec: 300
+              firedAt: "2026-04-21T10:30:00Z"
+      responses:
+        "200":
+          description: Alert raised successfully (new insert or duplicate update).
+        "400":
+          description: Missing required fields (`ruleId` or `targetKey`) or invalid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "ruleId and targetKey required"
+        "500":
+          description: Hub-side raiser error (DB failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # INTERNAL: POST /api/v1/alerts/resolve
+  # ===========================================================================
+  /api/v1/alerts/resolve:
+    post:
+      tags: [Internal — Alert Events]
+      operationId: internalResolveAlert
+      summary: Auto-resolve matching alerts from a data-plane service
+      description: |
+        Called by `shared/alertclient` when a CheckFunc flips back to healthy.
+        Updates all FIRING or ACKNOWLEDGED rows with `(ruleId, targetKey)` to
+        state=RESOLVED, setting `resolvedBy='system'` and
+        `resolvedReason=<reason>`.
+
+        No dispatch is sent on resolve (v1).
+
+        Returns **204 No Content** on success. Returns 204 even if no matching
+        FIRING or ACKNOWLEDGED row exists (idempotent).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveRequest'
+            example:
+              ruleId: "proxy.hook_failure_rate"
+              targetKey: "proxy:node-A|hook:external-pii-scan"
+              reason: "auto"
+      responses:
+        "204":
+          description: Resolved successfully (or no matching row to resolve).
+        "400":
+          description: Missing `ruleId` or `targetKey`, or invalid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Hub-side resolver error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: GET /api/admin/alerts
+  # ===========================================================================
+  /api/admin/alerts:
+    get:
+      tags: [Admin — Alert Inbox]
+      operationId: listAlerts
+      summary: List alert instances with filtering and pagination
+      description: |
+        Returns a paginated list of alert instances. All categorical filters
+        (`state`, `severity`, `sourceType`, `ruleId`) accept repeated
+        query-string values — e.g. `?state=firing&state=acknowledged` matches
+        rows in either state. Dimensions are AND'd; values within a dimension
+        are OR'd.
+
+        Requires IAM action `admin:ReadAlerts`.
+      parameters:
+        - name: state
+          in: query
+          description: Filter by alert state. Repeatable. Empty = all states.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/AlertState'
+          style: form
+          explode: true
+          example: [firing, acknowledged]
+        - name: severity
+          in: query
+          description: Filter by severity. Repeatable. Empty = all severities.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/AlertSeverity'
+          style: form
+          explode: true
+        - name: sourceType
+          in: query
+          description: Filter by source type (quota, proxy, thing, provider, system, audit). Repeatable.
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: ruleId
+          in: query
+          description: Filter by rule ID. Repeatable.
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: since
+          in: query
+          description: Return alerts with `firedAt >= since` (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+          example: "2026-04-01T00:00:00Z"
+        - name: until
+          in: query
+          description: Return alerts with `firedAt <= until` (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+      responses:
+        "200":
+          description: Alert list and total count.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAlertsResponse'
+              example:
+                alerts:
+                  - id: "3a4b5c6d-7e8f-9012-abcd-ef0123456789"
+                    ruleId: "quota.threshold"
+                    sourceType: "quota"
+                    targetKey: "org:org-abc|period:2026-04"
+                    targetLabel: "Acme Corp — April 2026"
+                    severity: "high"
+                    state: "firing"
+                    message: "Usage at 92% of monthly quota"
+                    details:
+                      usagePct: 92
+                      limitUSD: 500
+                    firedAt: "2026-04-21T09:00:00Z"
+                    lastSeenAt: "2026-04-21T10:00:00Z"
+                    duplicateCount: 4
+                total: 1
+        "400":
+          description: Invalid query parameter (e.g. non-integer offset, non-RFC3339 since).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: GET /api/admin/alerts/{id}
+  # ===========================================================================
+  /api/admin/alerts/{id}:
+    get:
+      tags: [Admin — Alert Inbox]
+      operationId: getAlert
+      summary: Get a single alert with its dispatch history
+      description: |
+        Returns the full `Alert` object and its associated `AlertDispatch`
+        rows (one per channel send attempt).
+
+        Requires IAM action `admin:ReadAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Alert detail with dispatch history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertDetail'
+              example:
+                alert:
+                  id: "3a4b5c6d-7e8f-9012-abcd-ef0123456789"
+                  ruleId: "quota.threshold"
+                  sourceType: "quota"
+                  targetKey: "org:org-abc|period:2026-04"
+                  targetLabel: "Acme Corp — April 2026"
+                  severity: "high"
+                  state: "acknowledged"
+                  message: "Usage at 92% of monthly quota"
+                  details:
+                    usagePct: 92
+                    limitUSD: 500
+                  firedAt: "2026-04-21T09:00:00Z"
+                  lastSeenAt: "2026-04-21T10:00:00Z"
+                  duplicateCount: 4
+                  acknowledgedBy: "alice@nexus.ai"
+                  acknowledgedAt: "2026-04-21T10:05:00Z"
+                dispatches:
+                  - id: "aaaa1111-bbbb-2222-cccc-3333dddd4444"
+                    alertId: "3a4b5c6d-7e8f-9012-abcd-ef0123456789"
+                    channelId: "ch-uuid-001"
+                    channelName: "Ops Slack"
+                    success: true
+                    statusCode: 200
+                    attemptedAt: "2026-04-21T09:00:01Z"
+        "404":
+          description: Alert not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: POST /api/admin/alerts/{id}/ack
+  # ===========================================================================
+  /api/admin/alerts/{id}/ack:
+    post:
+      tags: [Admin — Alert Inbox]
+      operationId: ackAlert
+      summary: Acknowledge a firing alert
+      description: |
+        Transitions a FIRING alert to ACKNOWLEDGED. Sets `acknowledgedBy`
+        to the value of the `X-Nexus-Actor-User-Id` header forwarded by CP.
+
+        Request body is optional (`{reason?}`). If no body is sent or
+        `Content-Length` is 0, the reason is left empty.
+
+        Returns 404 if the alert does not exist or is not in FIRING state.
+
+        Requires IAM action `admin:ManageAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckResolveBody'
+            example:
+              reason: "Investigating with the quota team"
+      responses:
+        "204":
+          description: Alert acknowledged.
+        "404":
+          description: Alert not found or not in FIRING state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: POST /api/admin/alerts/{id}/resolve
+  # ===========================================================================
+  /api/admin/alerts/{id}/resolve:
+    post:
+      tags: [Admin — Alert Inbox]
+      operationId: resolveAlert
+      summary: Manually resolve an alert
+      description: |
+        Transitions a FIRING or ACKNOWLEDGED alert to RESOLVED. Sets
+        `resolvedBy` to the actor from `X-Nexus-Actor-User-Id` and
+        `resolvedReason` to the provided reason (or empty string).
+
+        Returns 404 if the alert does not exist or is already RESOLVED.
+
+        Requires IAM action `admin:ManageAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckResolveBody'
+            example:
+              reason: "Manually resolved after quota reset"
+      responses:
+        "204":
+          description: Alert resolved.
+        "404":
+          description: Alert not found or already RESOLVED.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: GET /api/admin/alerts/rules
+  # ===========================================================================
+  /api/admin/alerts/rules:
+    get:
+      tags: [Admin — Alert Rules]
+      operationId: listAlertRules
+      summary: List all registered alert rules
+      description: |
+        Returns all rows in the `alert_rule` table. Rules are seeded at
+        migration time and represent code-registered evaluator types. The
+        `id` field matches the Go evaluator selector (e.g. `quota.threshold`).
+
+        Requires IAM action `admin:ReadAlerts`.
+      responses:
+        "200":
+          description: List of alert rules.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AlertRule'
+              example:
+                rules:
+                  - id: "quota.threshold"
+                    displayName: "Quota Threshold Exceeded"
+                    sourceType: "quota"
+                    defaultSeverity: "high"
+                    requiresAck: true
+                    enabled: true
+                    params:
+                      warnPct: 80
+                      criticalPct: 95
+                    paramsSchema:
+                      type: object
+                      properties:
+                        warnPct:
+                          type: number
+                        criticalPct:
+                          type: number
+                    cooldownSec: 3600
+                    createdAt: "2026-04-21T00:00:00Z"
+                    updatedAt: "2026-04-21T00:00:00Z"
+
+  # ===========================================================================
+  # ADMIN: GET /api/admin/alerts/rules/{id}
+  # ===========================================================================
+  /api/admin/alerts/rules/{id}:
+    get:
+      tags: [Admin — Alert Rules]
+      operationId: getAlertRule
+      summary: Get a single alert rule including paramsSchema
+      description: |
+        Returns the full `AlertRule` record. The `paramsSchema` field is a
+        JSON Schema document that the UI uses to render the generic params
+        editor and validate submissions before PUT.
+
+        Requires IAM action `admin:ReadAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "proxy.hook_failure_rate"
+      responses:
+        "200":
+          description: Alert rule detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertRule'
+        "404":
+          description: Rule not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags: [Admin — Alert Rules]
+      operationId: updateAlertRule
+      summary: Update operator-editable fields on an alert rule
+      description: |
+        Partial update — only fields present in the body are written. Omitted
+        fields retain their current DB value. Allowed mutable fields:
+        `enabled`, `params`, `cooldownSec`, `requiresAck`, `defaultSeverity`,
+        `displayName`.
+
+        If `params` is supplied, it is validated against the rule's current
+        `paramsSchema` via `jsonschema/v5` before the DB write. A schema
+        violation returns 400.
+
+        Returns the updated `AlertRule`.
+
+        Requires IAM action `admin:ManageAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAlertRuleBody'
+            example:
+              enabled: true
+              cooldownSec: 1800
+              params:
+                warnPct: 75
+                criticalPct: 90
+      responses:
+        "200":
+          description: Updated alert rule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertRule'
+        "400":
+          description: Invalid JSON or params schema validation failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "params validation: warnPct must be <= 100"
+        "404":
+          description: Rule not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: POST /api/admin/alerts/rules/{id}/reset
+  # ===========================================================================
+  /api/admin/alerts/rules/{id}/reset:
+    post:
+      tags: [Admin — Alert Rules]
+      operationId: resetAlertRule
+      summary: Reset a rule to its code-declared defaults
+      description: |
+        Looks up the rule's `RuleDefault` in the in-memory `RuleRegistry`
+        (populated from `rules/builtin.go` at startup) and writes those
+        values back to the DB, overwriting all operator-edited fields:
+        `displayName`, `defaultSeverity`, `requiresAck`, `enabled`,
+        `cooldownSec`, `params`, `paramsSchema`.
+
+        Returns 404 if the rule ID does not exist in the built-in registry.
+
+        Returns the refreshed `AlertRule`.
+
+        Requires IAM action `admin:ManageAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rule reset to defaults.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertRule'
+        "404":
+          description: No built-in rule with the given id, or rule not in DB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: GET /api/admin/alerts/channels
+  # ===========================================================================
+  /api/admin/alerts/channels:
+    get:
+      tags: [Admin — Alert Channels]
+      operationId: listAlertChannels
+      summary: List all notification channels
+      description: |
+        Returns all `AlertChannel` rows. Sensitive `config` fields (botToken,
+        smtpPassword, routingKey, auth headers) are masked in the response.
+
+        Requires IAM action `admin:ReadAlerts`.
+      responses:
+        "200":
+          description: List of channels with secrets masked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channels]
+                properties:
+                  channels:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AlertChannel'
+              example:
+                channels:
+                  - id: "ch-uuid-001"
+                    name: "Ops Slack"
+                    type: "slack"
+                    enabled: true
+                    severities: ["critical", "high"]
+                    sourceTypes: []
+                    config:
+                      url: "https://hooks.slack.com/services/T00/B00/xxxx-••••-3456"
+                    createdAt: "2026-04-21T00:00:00Z"
+                    updatedAt: "2026-04-21T00:00:00Z"
+
+    post:
+      tags: [Admin — Alert Channels]
+      operationId: createAlertChannel
+      summary: Create a new notification channel
+      description: |
+        Creates a new `AlertChannel` row. Returns 201 with the created
+        channel (secrets masked).
+
+        Required fields: `name`, `type`. Optional: `enabled` (default true),
+        `severities` (default []), `sourceTypes` (default []), `config`.
+
+        Empty `severities` and `sourceTypes` arrays mean "match all" — the
+        dispatcher skips a channel only when its filter list is non-empty
+        and the alert does not match.
+
+        Requires IAM action `admin:ManageAlerts`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelBody'
+            example:
+              name: "PagerDuty Critical"
+              type: "pagerduty"
+              enabled: true
+              severities: ["critical"]
+              sourceTypes: []
+              config:
+                routingKey: "R09XXXXXXXXXXXXXXXXXXX"
+      responses:
+        "201":
+          description: Channel created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertChannel'
+        "400":
+          description: Missing required fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "name and type required"
+
+  # ===========================================================================
+  # ADMIN: GET /api/admin/alerts/channels/{id}
+  # ===========================================================================
+  /api/admin/alerts/channels/{id}:
+    get:
+      tags: [Admin — Alert Channels]
+      operationId: getAlertChannel
+      summary: Get a single notification channel
+      description: |
+        Returns the `AlertChannel` with secrets masked.
+
+        Requires IAM action `admin:ReadAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Channel detail (secrets masked).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertChannel'
+        "404":
+          description: Channel not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags: [Admin — Alert Channels]
+      operationId: updateAlertChannel
+      summary: Update an existing notification channel
+      description: |
+        Full replacement of mutable fields (`name`, `type`, `enabled`,
+        `severities`, `sourceTypes`, `config`). Returns the updated channel
+        with secrets masked.
+
+        **Secret preservation:** if the client sends back a masked value
+        (value starts with `xxxx-••••-`), the server preserves the original
+        plaintext stored in the DB. This allows a GET → display → PUT
+        round-trip without exposing the actual secret.
+
+        Requires IAM action `admin:ManageAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelBody'
+      responses:
+        "200":
+          description: Updated channel (secrets masked).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertChannel'
+        "400":
+          description: Invalid JSON or missing required fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Channel not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags: [Admin — Alert Channels]
+      operationId: deleteAlertChannel
+      summary: Delete a notification channel
+      description: |
+        Deletes the channel row. Existing `alert_dispatch` rows referencing
+        this channel are **not** deleted — they use a `channelId` foreign key
+        without `ON DELETE CASCADE` so the audit trail is preserved.
+
+        Returns 204 on success.
+
+        Requires IAM action `admin:ManageAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Channel deleted.
+        "404":
+          description: Channel not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ===========================================================================
+  # ADMIN: POST /api/admin/alerts/channels/{id}/test
+  # ===========================================================================
+  /api/admin/alerts/channels/{id}/test:
+    post:
+      tags: [Admin — Alert Channels]
+      operationId: testAlertChannel
+      summary: Send a synthetic test alert through the channel
+      description: |
+        Creates a synthetic `system.channel_test` alert instance (ruleId =
+        `system.channel_test`, severity = `info`), dispatches it via the
+        channel's registered `Sender`, writes an `alert_dispatch` row, and
+        immediately resolves the synthetic alert so it does not appear in the
+        admin inbox.
+
+        The response body indicates whether the sender call succeeded and
+        includes the HTTP status code returned by the sink (when available)
+        plus the `dispatchId` for the `alert_dispatch` row.
+
+        Returns **200** when the sender call succeeded (`statusCode < 400`).
+        Returns **500** when the sender returned a non-2xx status or an error.
+
+        Requires IAM action `admin:ManageAlerts`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Channel test succeeded — sink returned 2xx.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelTestResponse'
+              example:
+                success: true
+                statusCode: 200
+                dispatchId: "d1e2f3a4-b5c6-7890-abcd-ef1234567890"
+        "500":
+          description: Channel test failed — sender returned error or non-2xx.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelTestResponse'
+              example:
+                success: false
+                error: "Post \"https://hooks.slack.com/...\": context deadline exceeded"
+                statusCode: 0
+                dispatchId: "d1e2f3a4-b5c6-7890-abcd-ef1234567890"
+        "404":
+          description: Channel not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        For **internal** endpoints: device bearer token issued by Hub during
+        Thing enrollment. Value matches `SHA-256(token)` stored in
+        `thing.metadata`.
+
+        For **admin** endpoints: CP session cookie is the primary auth mechanism;
+        the CP BFF forwards requests to Hub using a service token. Clients do
+        not set this header directly — the CP handles auth forwarding.
+
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # Enums
+    # -------------------------------------------------------------------------
+
+    AlertSeverity:
+      type: string
+      enum: [critical, high, medium, low, info]
+      description: |
+        Alert impact level. Values are lowercase in all JSON payloads.
+        The Postgres enum is uppercase (`AlertSeverity.CRITICAL` etc.) but
+        Go serializes to lowercase via `alerting.Severity` string constants
+        in `packages/nexus-hub/internal/alerting/types.go`.
+
+    AlertState:
+      type: string
+      enum: [firing, acknowledged, resolved]
+      description: |
+        Alert lifecycle state. Lowercase in all JSON payloads.
+        - `firing` — condition active, no acknowledgement yet.
+        - `acknowledged` — operator has seen and acknowledged the alert; the
+          triggering condition may still be active.
+        - `resolved` — condition cleared (auto) or manually resolved.
+
+    ChannelType:
+      type: string
+      enum: [webhook, slack, email, pagerduty]
+      description: |
+        Notification channel delivery type. Determines how `config` is
+        interpreted and which `Sender` implementation is used.
+
+    # -------------------------------------------------------------------------
+    # Request bodies
+    # -------------------------------------------------------------------------
+
+    AlertEnvelope:
+      type: object
+      required: [ruleId, targetKey, severity, message]
+      description: |
+        Payload sent to `POST /api/v1/alerts/raise` by `shared/alertclient`.
+        Mirrors `alertclient.AlertEnvelope` in
+        `packages/shared/alertclient/types.go`.
+      properties:
+        ruleId:
+          type: string
+          description: |
+            Matches a registered evaluator (e.g. `proxy.hook_failure_rate`).
+            Must correspond to a row in `alert_rule`.
+          example: "proxy.hook_failure_rate"
+        targetKey:
+          type: string
+          description: |
+            Stable identifier for the alert target. Format is producer-defined.
+            Examples: `org:org-abc|period:2026-04`, `proxy:node-A|hook:pii-scan`,
+            `thing:agent-123`. Used with `ruleId` for dedupe.
+          example: "proxy:node-A|hook:external-pii-scan"
+        targetLabel:
+          type: string
+          description: Human-readable label for the target, denormalized into the `alert` row.
+          example: "Node A — External PII Scan hook"
+        severity:
+          $ref: '#/components/schemas/AlertSeverity'
+        message:
+          type: string
+          description: Short summary for the alert list view.
+          example: "42% of hook invocations failed in the last 5 minutes"
+        details:
+          type: object
+          additionalProperties: true
+          description: Rule-specific payload (thresholds, counts, sample evidence).
+          example:
+            failures: 42
+            total: 100
+            windowSec: 300
+        firedAt:
+          type: string
+          format: date-time
+          description: |
+            ISO 8601 timestamp when the condition was detected. If zero or
+            absent, Hub sets it to `time.Now().UTC()`.
+          example: "2026-04-21T10:30:00Z"
+
+    ResolveRequest:
+      type: object
+      required: [ruleId, targetKey]
+      description: |
+        Payload sent to `POST /api/v1/alerts/resolve` by `shared/alertclient`.
+        Mirrors `alertclient.ResolveRequest` in
+        `packages/shared/alertclient/types.go`.
+      properties:
+        ruleId:
+          type: string
+          example: "proxy.hook_failure_rate"
+        targetKey:
+          type: string
+          example: "proxy:node-A|hook:external-pii-scan"
+        reason:
+          type: string
+          description: Brief reason string stored in `alert.resolvedReason`.
+          example: "auto"
+
+    AckResolveBody:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Optional reason stored in `alert.acknowledgedBy` / `alert.resolvedReason`.
+          example: "Investigating with the quota team"
+
+    UpdateAlertRuleBody:
+      type: object
+      description: |
+        Partial update for `PUT /api/admin/alerts/rules/:id`. Fields not
+        present in the body are preserved from the existing DB row. Implements
+        the `updateRuleBody` struct in `handlers_admin.go`.
+      properties:
+        enabled:
+          type: boolean
+        params:
+          type: object
+          additionalProperties: true
+          description: |
+            Rule-specific knobs. Validated against the rule's current
+            `paramsSchema` via `jsonschema/v5` before the DB write.
+        cooldownSec:
+          type: integer
+          minimum: 0
+        requiresAck:
+          type: boolean
+        defaultSeverity:
+          $ref: '#/components/schemas/AlertSeverity'
+        displayName:
+          type: string
+
+    ChannelBody:
+      type: object
+      required: [name, type]
+      description: |
+        Request body for create and update channel endpoints. Implements
+        `channelBody` in `handlers_admin.go`.
+      properties:
+        name:
+          type: string
+          example: "Ops Slack"
+        type:
+          $ref: '#/components/schemas/ChannelType'
+        enabled:
+          type: boolean
+          default: true
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertSeverity'
+          description: |
+            Empty array means "match all severities". Non-empty = channel
+            receives alerts only for listed severities.
+          default: []
+        sourceTypes:
+          type: array
+          items:
+            type: string
+          description: |
+            Empty array means "match all source types". Non-empty = channel
+            receives alerts only for listed source types (quota, proxy, thing, etc.).
+          default: []
+        config:
+          type: object
+          additionalProperties: true
+          description: |
+            Type-specific delivery config. Required fields by type:
+            - `webhook`: `url` (string)
+            - `slack`: `url` (string, Slack Incoming Webhook URL)
+            - `email`: `host`, `port`, `from`, `to` ([]string). Optional:
+              `username`, `smtpPassword` (masked), `subject`, `useTLS`.
+            - `pagerduty`: `routingKey` (string, masked in responses)
+
+    # -------------------------------------------------------------------------
+    # Response schemas
+    # -------------------------------------------------------------------------
+
+    Alert:
+      type: object
+      required: [id, ruleId, sourceType, targetKey, targetLabel, severity, state,
+                 message, firedAt, lastSeenAt, duplicateCount]
+      description: |
+        A single fired alert instance. Mirrors the `Alert` struct in
+        `packages/nexus-hub/internal/alerting/types.go`.
+      properties:
+        id:
+          type: string
+          format: uuid
+        ruleId:
+          type: string
+          example: "quota.threshold"
+        sourceType:
+          type: string
+          description: Denormalized from the rule row at raise time.
+          example: "quota"
+        targetKey:
+          type: string
+          example: "org:org-abc|period:2026-04"
+        targetLabel:
+          type: string
+          example: "Acme Corp — April 2026"
+        severity:
+          $ref: '#/components/schemas/AlertSeverity'
+        state:
+          $ref: '#/components/schemas/AlertState'
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+          description: Rule-specific payload; may be null or absent.
+        firedAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: Updated on each duplicate Raise while the alert remains FIRING.
+        duplicateCount:
+          type: integer
+          minimum: 1
+          description: Number of times Raise was called for this alert instance.
+        acknowledgedBy:
+          type: string
+          nullable: true
+          description: User ID from `X-Nexus-Actor-User-Id` at ack time, or null.
+        acknowledgedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedBy:
+          type: string
+          nullable: true
+          description: '"system" for auto-resolve; user ID for manual resolve.'
+        resolvedReason:
+          type: string
+          nullable: true
+          description: '"auto", "manual", "rule-disabled", or operator-provided string.'
+
+    AlertDispatch:
+      type: object
+      required: [id, alertId, channelId, channelName, success, attemptedAt]
+      description: |
+        One delivery attempt for an alert to a channel. Mirrors the `Dispatch`
+        struct in `packages/nexus-hub/internal/alerting/types.go`.
+        Note: `channelId` is stored but not a foreign key — channels can be
+        deleted while their dispatch history is preserved.
+      properties:
+        id:
+          type: string
+          format: uuid
+        alertId:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        channelName:
+          type: string
+          description: Denormalized channel name at dispatch time.
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+          nullable: true
+          description: HTTP status code returned by the sink, or null on network error.
+        errorMsg:
+          type: string
+          nullable: true
+          description: Error message when success=false.
+        attemptedAt:
+          type: string
+          format: date-time
+
+    AlertDetail:
+      type: object
+      required: [alert, dispatches]
+      description: Response body for `GET /api/admin/alerts/:id`.
+      properties:
+        alert:
+          $ref: '#/components/schemas/Alert'
+        dispatches:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertDispatch'
+
+    AlertRule:
+      type: object
+      required: [id, displayName, sourceType, defaultSeverity, requiresAck,
+                 enabled, params, paramsSchema, cooldownSec, createdAt, updatedAt]
+      description: |
+        A registered alert rule. Rule `id` is also the Go evaluator selector —
+        the code registers CheckFuncs under the same string. Operator-editable
+        knobs live in `params`; `paramsSchema` is the JSON Schema document
+        the UI uses to render the generic editor and validate submissions.
+
+        Mirrors `alerting.AlertRule` in
+        `packages/nexus-hub/internal/alerting/types.go`.
+      properties:
+        id:
+          type: string
+          description: Rule identity and evaluator selector.
+          example: "proxy.hook_failure_rate"
+        displayName:
+          type: string
+          example: "Proxy Hook Failure Rate"
+        sourceType:
+          type: string
+          example: "proxy"
+        defaultSeverity:
+          $ref: '#/components/schemas/AlertSeverity'
+        requiresAck:
+          type: boolean
+          description: |
+            When true, a re-fire after ack inserts a new alert row.
+            When false, auto-resolve clears the alert without requiring ack.
+        enabled:
+          type: boolean
+        params:
+          type: object
+          additionalProperties: true
+          description: Rule-specific knobs (thresholds, windows, exclusions).
+        paramsSchema:
+          type: object
+          additionalProperties: true
+          description: JSON Schema describing `params`; served from code-declared defaults.
+        cooldownSec:
+          type: integer
+          description: |
+            Producer-side throttle: minimum seconds between successive
+            CheckFunc fires for the same (rule, target) while the condition
+            persists. Does not affect the dispatcher.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    AlertChannel:
+      type: object
+      required: [id, name, type, enabled, severities, sourceTypes, config,
+                 createdAt, updatedAt]
+      description: |
+        A notification delivery target. Mirrors the `Channel` struct in
+        `packages/nexus-hub/internal/alerting/types.go`.
+        Sensitive `config` fields are always masked in responses.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ChannelType'
+        enabled:
+          type: boolean
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertSeverity'
+          description: Empty = all severities.
+        sourceTypes:
+          type: array
+          items:
+            type: string
+          description: Empty = all source types.
+        config:
+          type: object
+          additionalProperties: true
+          description: Type-specific config with sensitive values masked.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ListAlertsResponse:
+      type: object
+      required: [alerts, total]
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        total:
+          type: integer
+          description: Total matching rows (ignoring pagination) for cursor calculation.
+
+    ChannelTestResponse:
+      type: object
+      required: [success]
+      description: Response body for `POST /api/admin/alerts/channels/:id/test`.
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+          description: HTTP status code returned by the sink (0 on network error).
+        error:
+          type: string
+          description: Error message when success=false.
+        dispatchId:
+          type: string
+          format: uuid
+          description: ID of the written `alert_dispatch` row for audit lookup.
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

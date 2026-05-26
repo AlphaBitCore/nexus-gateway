@@ -1,0 +1,51 @@
+/* ── InfraJobsPage ───────────────────────────────────────────────── */
+
+.filterSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.refreshNote {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.errorCount {
+  color: var(--color-danger-text);
+  font-weight: 600;
+}
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nameText {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.descText {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}

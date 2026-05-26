@@ -1,0 +1,472 @@
+openapi: 3.1.0
+info:
+  title: Nexus Rule Packs Admin API
+  version: 1.0.0
+  description: |
+    Control Plane admin endpoints for browsing, importing, testing, and
+    installing Rule Packs on built-in hooks.
+servers:
+  - url: http://localhost:3002
+    description: Local Control Plane instance
+tags:
+  - name: Rule Packs
+    description: Pack catalog, import, dry-run, install, and override management.
+paths:
+  /api/admin/rule-packs:
+    get:
+      tags: [Rule Packs]
+      operationId: adminListRulePacks
+      summary: List rule packs
+      responses:
+        '200':
+          description: Pack metadata rows ordered by name and version.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PackMeta' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:ReadRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '500':
+          description: Pack listing failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-packs/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Rule Packs]
+      operationId: adminGetRulePack
+      summary: Get one rule pack
+      responses:
+        '200':
+          description: Full pack including rules.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pack' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:ReadRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Pack not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-packs/preview:
+    post:
+      tags: [Rule Packs]
+      operationId: adminPreviewRulePack
+      summary: Parse a YAML pack without inserting it
+      requestBody:
+        required: true
+        content:
+          text/x-yaml:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Parse result. Parse failures are returned in `errors[]`, not as 4xx.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewResult' }
+        '400':
+          description: Request body could not be read.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-packs/import:
+    post:
+      tags: [Rule Packs]
+      operationId: adminImportRulePack
+      summary: Parse and insert a YAML pack
+      requestBody:
+        required: true
+        content:
+          text/x-yaml:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Pack inserted successfully.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResult' }
+        '400':
+          description: YAML parse or validation failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '409':
+          description: A pack with the same `(name, version)` already exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '500':
+          description: Import failed after parsing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-packs/{id}/dry-run:
+    post:
+      tags: [Rule Packs]
+      operationId: adminDryRunRulePack
+      summary: Evaluate sample content against a stored pack
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DryRunBody' }
+      responses:
+        '200':
+          description: Matching rules for the sample content.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DryRunResult' }
+        '400':
+          description: Missing content or malformed JSON.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:ReadRulePacks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Pack not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/hooks/{hookId}/rule-packs:
+    post:
+      tags: [Rule Packs]
+      operationId: adminInstallRulePack
+      summary: Install a pinned pack version onto a hook
+      parameters:
+        - in: path
+          name: hookId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallBody' }
+      responses:
+        '200':
+          description: Install row created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Install' }
+        '400':
+          description: Missing hook id, pack id, or pin version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateHooks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '500':
+          description: Install creation failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-pack-installs/{installId}/overrides:
+    patch:
+      tags: [Rule Packs]
+      operationId: adminUpsertRulePackOverrides
+      summary: Upsert per-rule overrides for an install
+      parameters:
+        - in: path
+          name: installId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OverridesBody' }
+      responses:
+        '200':
+          description: Override rows saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverridesResult' }
+        '400':
+          description: Missing install id or malformed JSON.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:UpdateHooks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '500':
+          description: Override save failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/admin/rule-pack-installs/{installId}/effective-rules:
+    get:
+      tags: [Rule Packs]
+      operationId: adminGetEffectiveRulePackRules
+      summary: Get the effective rule set for an install
+      parameters:
+        - in: path
+          name: installId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Pack after applying per-rule overrides.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EffectiveRuleSet' }
+        '400':
+          description: Missing install id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '401':
+          description: Missing or invalid admin credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '403':
+          description: Caller lacks `admin:ReadHooks`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Install not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+components:
+  schemas:
+    PackMeta:
+      type: object
+      required: [id, name, version, maintainer, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        version: { type: string }
+        maintainer: { type: string }
+        description: { type: string }
+        signature: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    Pack:
+      allOf:
+        - $ref: '#/components/schemas/PackMeta'
+        - type: object
+          required: [rules]
+          properties:
+            rules:
+              type: array
+              items: { $ref: '#/components/schemas/Rule' }
+
+    Rule:
+      type: object
+      required: [ruleId, category, severity, pattern]
+      properties:
+        id: { type: string }
+        packId: { type: string }
+        ruleId: { type: string }
+        category: { type: string }
+        severity: { type: string }
+        pattern: { type: string }
+        flags: { type: string }
+        description: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+
+    Install:
+      type: object
+      required: [id, packId, packName, pinVersion, boundHookId, enabled, installedAt]
+      properties:
+        id: { type: string }
+        packId: { type: string }
+        packName: { type: string }
+        pinVersion: { type: string }
+        boundHookId: { type: string }
+        enabled: { type: boolean }
+        installedAt: { type: string, format: date-time }
+
+    Override:
+      type: object
+      required: [ruleLocalId, disabled]
+      properties:
+        id: { type: string }
+        installId: { type: string }
+        ruleLocalId: { type: string }
+        disabled: { type: boolean }
+        severityOverride: { type: string }
+
+    Match:
+      type: object
+      required: [pack, packVersion, ruleId, category, severity, labels]
+      properties:
+        pack: { type: string }
+        packVersion: { type: string }
+        ruleId: { type: string }
+        category: { type: string }
+        severity: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        matchedText: { type: string }
+
+    PreviewResult:
+      type: object
+      required: [warnings, errors]
+      properties:
+        pack:
+          anyOf:
+            - $ref: '#/components/schemas/Pack'
+            - type: 'null'
+        warnings:
+          type: array
+          items: { type: string }
+        errors:
+          type: array
+          items: { type: string }
+
+    ImportResult:
+      type: object
+      required: [packId, ruleCount, warnings]
+      properties:
+        packId: { type: string }
+        ruleCount: { type: integer, minimum: 0 }
+        warnings:
+          type: array
+          items: { type: string }
+
+    DryRunBody:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string }
+
+    DryRunResult:
+      type: object
+      required: [matches]
+      properties:
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/Match' }
+
+    InstallBody:
+      type: object
+      required: [packId, pinVersion]
+      properties:
+        packId: { type: string }
+        pinVersion: { type: string }
+        enabled: { type: boolean }
+
+    OverridesBody:
+      type: object
+      required: [overrides]
+      properties:
+        overrides:
+          type: array
+          items: { $ref: '#/components/schemas/Override' }
+
+    OverridesResult:
+      type: object
+      required: [installId, overridesSaved]
+      properties:
+        installId: { type: string }
+        overridesSaved: { type: integer, minimum: 0 }
+
+    EffectiveRuleSet:
+      type: object
+      required: [install, pack]
+      properties:
+        install: { $ref: '#/components/schemas/Install' }
+        pack: { $ref: '#/components/schemas/Pack' }
+
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          oneOf:
+            - type: string
+            - type: object
+              properties:
+                message: { type: string }
+                type: { type: string }
+                code: { type: string }
+                details: { type: object, additionalProperties: true }
+        detail: { type: string }

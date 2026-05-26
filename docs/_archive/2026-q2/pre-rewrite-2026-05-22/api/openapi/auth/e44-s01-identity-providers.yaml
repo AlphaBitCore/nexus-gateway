@@ -1,0 +1,349 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Identity Provider Admin API (E44)
+  version: 1.0.0
+  description: |
+    Admin CRUD + connectivity-test endpoints for the external `IdentityProvider`
+    resource. Nexus Gateway is a Service Provider (SP); these endpoints
+    manage the external IdPs (Okta, Azure AD, Google Workspace, …) the
+    platform federates with for SSO and SCIM provisioning.
+
+    Authentication: Bearer token issued by `/oauth/token` carrying admin
+    scope. Each route is gated by an `admin:identity-provider.<verb>`
+    IAM action.
+
+servers:
+  - url: https://nexus.example.com/api/admin
+    description: Production
+  - url: http://localhost:3001/api/admin
+    description: Local dev
+
+tags:
+  - name: identity-provider
+    description: External IdP CRUD + connectivity probes.
+  - name: scim-token
+    description: Per-IdP SCIM bearer tokens (existing surface, unchanged here).
+  - name: group-mapping
+    description: Per-IdP external→IAM group mappings (existing surface).
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    IdentityProvider:
+      type: object
+      required: [id, type, name, enabled, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [oidc, saml]
+          description: Protocol this IdP row uses. One row = one (vendor, protocol) pair.
+        name: { type: string, example: "Acme Okta" }
+        enabled: { type: boolean }
+        jitEnabled:
+          type: boolean
+          description: |
+            For OIDC, whether new users are auto-provisioned on first
+            successful sign-in. For SAML, must be false (admin must SCIM-
+            provision first).
+        defaultRole:
+          type: string
+          description: IAM role assigned to users created via JIT or SCIM under this IdP.
+          example: "member"
+        roleMapping:
+          type: object
+          description: |
+            Optional map of upstream group/claim values → Nexus IAM role names.
+            Overrides defaultRole when a match exists.
+          additionalProperties: { type: string }
+        config:
+          oneOf:
+            - $ref: '#/components/schemas/OIDCConfig'
+            - $ref: '#/components/schemas/SAMLConfig'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    OIDCConfig:
+      type: object
+      required: [issuer, clientId, redirectUri]
+      properties:
+        issuer: { type: string, example: "https://acme.okta.com" }
+        jwksUri: { type: string, example: "https://acme.okta.com/oauth2/v1/keys" }
+        authorizeUrl: { type: string, example: "https://acme.okta.com/oauth2/v1/authorize" }
+        tokenUrl: { type: string, example: "https://acme.okta.com/oauth2/v1/token" }
+        clientId: { type: string, example: "0oa1abc2def3ghi4j5k6" }
+        clientSecret:
+          type: string
+          example: "********"
+          description: |
+            Write-only field. Returned masked as `********` on GET. To rotate,
+            send a new plaintext value on PUT. To keep the current value
+            unchanged, send `********`.
+        audience: { type: string, example: "0oa1abc2def3ghi4j5k6" }
+        redirectUri:
+          type: string
+          example: "https://nexus.example.com/authserver/oidc/callback"
+          description: Must be registered with the IdP exactly.
+        scopes:
+          type: array
+          items: { type: string }
+          example: ["openid", "profile", "email", "groups"]
+        emailClaim: { type: string, example: "email" }
+        groupClaim: { type: string, example: "groups" }
+
+    SAMLConfig:
+      type: object
+      required: [entityId, ssoUrl, certificatePem]
+      properties:
+        entityId: { type: string, example: "http://www.okta.com/exk1abc2def3ghi4j5k6" }
+        ssoUrl: { type: string, example: "https://acme.okta.com/app/.../sso/saml" }
+        certificatePem:
+          type: string
+          description: Write-only on rotation. Returned masked as `********` on GET.
+          example: "********"
+        signatureAlgorithm:
+          type: string
+          enum: ["RSA-SHA256", "RSA-SHA512"]
+          default: "RSA-SHA256"
+        nameIdFormat:
+          type: string
+          example: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+
+    IdentityProviderCreate:
+      allOf:
+        - type: object
+          required: [type, name, config]
+          properties:
+            type: { type: string, enum: [oidc, saml] }
+            name: { type: string }
+            enabled: { type: boolean, default: true }
+            jitEnabled: { type: boolean, default: true }
+            defaultRole: { type: string }
+            roleMapping:
+              type: object
+              additionalProperties: { type: string }
+            config:
+              oneOf:
+                - $ref: '#/components/schemas/OIDCConfig'
+                - $ref: '#/components/schemas/SAMLConfig'
+
+    ProbeResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        detail:
+          type: object
+          description: Present when `ok=true`. Protocol-specific fields.
+          additionalProperties: true
+        error:
+          type: string
+          description: Present when `ok=false`. Human-readable.
+        elapsedMs: { type: integer }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code: { type: string }
+        detail: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /identity-providers:
+    get:
+      tags: [identity-provider]
+      summary: List external IdPs
+      description: |
+        Returns every external IdP row, ordered by `createdAt` descending.
+        The seed `local` row is filtered out. Secrets are masked.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/IdentityProvider' }
+                  total: { type: integer }
+        '401': { description: Unauthenticated }
+        '403': { description: Forbidden — missing `admin:identity-provider.read` }
+      x-iam-action: admin:identity-provider.read
+
+    post:
+      tags: [identity-provider]
+      summary: Create an external IdP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityProviderCreate' }
+            examples:
+              oidcOkta:
+                summary: OIDC IdP (Okta)
+                value:
+                  type: oidc
+                  name: "Acme Okta"
+                  enabled: true
+                  jitEnabled: true
+                  defaultRole: "member"
+                  config:
+                    issuer: "https://acme.okta.com"
+                    jwksUri: "https://acme.okta.com/oauth2/v1/keys"
+                    authorizeUrl: "https://acme.okta.com/oauth2/v1/authorize"
+                    tokenUrl: "https://acme.okta.com/oauth2/v1/token"
+                    clientId: "0oa1abc2def3ghi4j5k6"
+                    clientSecret: "secret-from-okta"
+                    audience: "0oa1abc2def3ghi4j5k6"
+                    redirectUri: "https://nexus.example.com/authserver/oidc/callback"
+                    scopes: ["openid", "profile", "email", "groups"]
+                    emailClaim: "email"
+                    groupClaim: "groups"
+              samlAzure:
+                summary: SAML IdP (Azure AD)
+                value:
+                  type: saml
+                  name: "Acme Azure AD"
+                  enabled: true
+                  jitEnabled: false
+                  config:
+                    entityId: "https://sts.windows.net/abc.../..."
+                    ssoUrl: "https://login.microsoftonline.com/abc.../saml2"
+                    certificatePem: "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"
+                    signatureAlgorithm: "RSA-SHA256"
+                    nameIdFormat: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentityProvider' }
+        '400': { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: Unauthenticated }
+        '403': { description: Forbidden — missing `admin:identity-provider.create` }
+      x-iam-action: admin:identity-provider.create
+
+  /identity-providers/test:
+    post:
+      tags: [identity-provider]
+      summary: Test a candidate IdP config without saving
+      description: |
+        Validates that the candidate config is reachable: OIDC discovery
+        document + JWKS; SAML metadata + certificate parse. Times out at
+        10s.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityProviderCreate' }
+      responses:
+        '200':
+          description: Probe result (success OR connectivity failure — never 5xx for downstream error).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProbeResult' }
+        '400': { description: Malformed request }
+        '403': { description: Forbidden — missing `admin:identity-provider.probe` }
+      x-iam-action: admin:identity-provider.probe
+
+  /identity-providers/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+
+    get:
+      tags: [identity-provider]
+      summary: Get one IdP (secrets masked)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentityProvider' }
+        '404': { description: Not found }
+      x-iam-action: admin:identity-provider.read
+
+    put:
+      tags: [identity-provider]
+      summary: Replace an IdP
+      description: |
+        Atomic replace. Secrets sent as `********` are interpreted as
+        "unchanged"; any other value is encrypted and written. To clear
+        a secret send null (where the field is optional).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityProviderCreate' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentityProvider' }
+        '404': { description: Not found }
+      x-iam-action: admin:identity-provider.update
+
+    delete:
+      tags: [identity-provider]
+      summary: Delete an IdP
+      description: |
+        Refuses with 409 if `UserFederatedIdentity` rows exist for the
+        IdP unless `?force=true`. With force, cascade-deletes
+        `IdpGroupMapping` rows, revokes scoped `ScimToken`s, and fans
+        out session-revocations to every linked user.
+      parameters:
+        - in: query
+          name: force
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: Deleted }
+        '404': { description: Not found }
+        '409': { description: Linked users exist — pass `?force=true` to cascade }
+      x-iam-action: admin:identity-provider.delete
+
+  /identity-providers/{id}/test:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [identity-provider]
+      summary: Test a saved IdP's connectivity (or validate a JWT)
+      description: |
+        With an empty body, runs the same probe as `POST /identity-providers/test`
+        but against the saved config. With a body `{token: <jwt>}`, validates the
+        token against the IdP's JWKS — useful for debugging an OIDC sign-in chain.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Optional OIDC id_token to validate.
+      responses:
+        '200':
+          description: Probe / validation result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProbeResult' }
+        '404': { description: Not found }
+      x-iam-action: admin:identity-provider.probe

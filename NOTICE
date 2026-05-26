@@ -1,0 +1,51 @@
+Nexus Gateway
+Copyright 2026 AlphaBit Core (https://alphabitcore.com/)
+
+This product includes software developed at AlphaBit Core.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this product except in compliance with the License. You may obtain a copy
+of the License at http://www.apache.org/licenses/LICENSE-2.0.
+
+----------------------------------------------------------------------
+
+This product bundles, depends on, or is built on top of the following
+third-party components. Each component is governed by its own license; see
+the upstream project for the full text. The list below records only the
+attribution required by the respective licenses (e.g. Apache-2.0 Section 4).
+
+Go runtime dependencies (selected, see each module's go.mod / go.sum for the
+complete dependency graph):
+
+  - github.com/labstack/echo/v4         MIT
+  - github.com/jackc/pgx/v5             MIT
+  - github.com/redis/go-redis/v9        BSD-2-Clause
+  - github.com/nats-io/nats.go          Apache-2.0
+  - github.com/prometheus/client_golang Apache-2.0
+  - github.com/coder/websocket          ISC
+  - github.com/golang-jwt/jwt/v5        MIT
+  - github.com/aws/aws-sdk-go-v2/*      Apache-2.0
+  - github.com/tidwall/gjson, sjson     MIT
+  - github.com/hashicorp/golang-lru/v2  MPL-2.0
+  - github.com/bits-and-blooms/bloom/v3 BSD-2-Clause
+  - go.opentelemetry.io/otel*           Apache-2.0
+  - gopkg.in/yaml.v3                    Apache-2.0 / MIT
+
+Node / TypeScript runtime + build dependencies (selected; see
+packages/*/package.json + package-lock.json for the complete graph):
+
+  - React, React DOM                    MIT
+  - Vite                                MIT
+  - TypeScript                          Apache-2.0
+  - @tanstack/react-query               MIT
+  - i18next + react-i18next             MIT
+  - Recharts                            MIT
+  - Storybook                           MIT
+
+Database tooling:
+
+  - Prisma (tools/db-migrate/)          Apache-2.0
+
+For each dependency above, the upstream LICENSE / NOTICE files apply in full
+and are reproduced inside the corresponding module under node_modules/ or
+$GOPATH/pkg/mod/ at build time.

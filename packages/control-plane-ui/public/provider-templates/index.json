@@ -1,0 +1,156 @@
+{
+  "templates": [
+    {
+      "name": "openai",
+      "displayName": "OpenAI",
+      "description": "OpenAI API — GPT-5, o-series reasoning, GPT-4o, and embedding models.",
+      "baseUrl": "https://api.openai.com",
+      "adapterType": "openai",
+      "modelCount": 14
+    },
+    {
+      "name": "anthropic",
+      "displayName": "Anthropic",
+      "description": "Anthropic API — Claude 4.x model family.",
+      "baseUrl": "https://api.anthropic.com",
+      "adapterType": "anthropic",
+      "modelCount": 6
+    },
+    {
+      "name": "google-gemini",
+      "displayName": "Google Gemini",
+      "description": "Google Gemini API — Gemini 3 Pro, 2.5 Pro/Flash, 2.0 Flash, and embedding models.",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "adapterType": "gemini",
+      "modelCount": 9
+    },
+    {
+      "name": "azure-openai",
+      "displayName": "Azure OpenAI",
+      "description": "Azure OpenAI Service — enterprise-hosted OpenAI models with data residency and compliance.",
+      "baseUrl": "https://{resource}.openai.azure.com",
+      "adapterType": "azure-openai",
+      "modelCount": 7
+    },
+    {
+      "name": "deepseek",
+      "displayName": "DeepSeek",
+      "description": "DeepSeek API — chat, code, and reasoning models.",
+      "baseUrl": "https://api.deepseek.com",
+      "adapterType": "deepseek",
+      "modelCount": 4
+    },
+    {
+      "name": "minimax",
+      "displayName": "MiniMax",
+      "description": "MiniMax API — multilingual text generation models.",
+      "baseUrl": "https://api.minimax.io",
+      "adapterType": "minimax",
+      "modelCount": 2
+    },
+    {
+      "name": "glm",
+      "displayName": "GLM (Zhipu AI)",
+      "description": "Zhipu AI API — GLM-4 series models.",
+      "baseUrl": "https://open.bigmodel.cn",
+      "adapterType": "glm",
+      "modelCount": 4
+    },
+    {
+      "name": "moonshot",
+      "displayName": "Moonshot (Kimi)",
+      "description": "Moonshot OpenAI-compatible API — Kimi models.",
+      "baseUrl": "https://api.moonshot.cn",
+      "adapterType": "moonshot",
+      "modelCount": 3
+    },
+    {
+      "name": "xai",
+      "displayName": "xAI",
+      "description": "xAI Grok — OpenAI-compatible API.",
+      "baseUrl": "https://api.x.ai",
+      "adapterType": "xai",
+      "modelCount": 4
+    },
+    {
+      "name": "groq",
+      "displayName": "Groq",
+      "description": "Groq high-speed LPU inference — OpenAI-compatible API serving Llama and other open-weight models.",
+      "baseUrl": "https://api.groq.com",
+      "adapterType": "groq",
+      "modelCount": 4
+    },
+    {
+      "name": "together",
+      "displayName": "Together AI",
+      "description": "Together AI serverless — OpenAI-compatible API serving open-weight models (Llama, Qwen, Mixtral, DeepSeek).",
+      "baseUrl": "https://api.together.xyz",
+      "adapterType": "together",
+      "modelCount": 5
+    },
+    {
+      "name": "perplexity",
+      "displayName": "Perplexity Sonar",
+      "description": "Perplexity Sonar API — search-grounded chat with Chain-of-Thought reasoning options.",
+      "baseUrl": "https://api.perplexity.ai",
+      "adapterType": "perplexity",
+      "modelCount": 5
+    },
+    {
+      "name": "fireworks",
+      "displayName": "Fireworks AI",
+      "description": "Fireworks AI serverless inference — OpenAI-compatible API serving open-weight models.",
+      "baseUrl": "https://api.fireworks.ai",
+      "adapterType": "fireworks",
+      "modelCount": 5
+    },
+    {
+      "name": "mistral",
+      "displayName": "Mistral",
+      "description": "Mistral La Plateforme — flagship + specialist models including Codestral, Ministral, Magistral.",
+      "baseUrl": "https://api.mistral.ai",
+      "adapterType": "mistral",
+      "modelCount": 8
+    },
+    {
+      "name": "cohere",
+      "displayName": "Cohere",
+      "description": "Cohere Chat v2 — Command R/R+ family with native tool use, RAG citations, and multilingual support.",
+      "baseUrl": "https://api.cohere.com",
+      "adapterType": "cohere",
+      "modelCount": 4
+    },
+    {
+      "name": "huggingface",
+      "displayName": "Hugging Face Inference",
+      "description": "Hugging Face TGI — OpenAI-compatible chat completions on Hugging Face's serverless inference.",
+      "baseUrl": "https://api-inference.huggingface.co",
+      "adapterType": "huggingface",
+      "modelCount": 4
+    },
+    {
+      "name": "replicate",
+      "displayName": "Replicate",
+      "description": "Replicate predictions API — open-weight LLMs hosted as versioned models (owner/name:version).",
+      "baseUrl": "https://api.replicate.com",
+      "adapterType": "replicate",
+      "modelCount": 3
+    },
+    {
+      "name": "bedrock",
+      "displayName": "AWS Bedrock",
+      "description": "AWS Bedrock — multi-model envelope serving Anthropic Claude, Meta Llama, Mistral, Cohere, and Amazon Titan with SigV4 auth and region locality.",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "adapterType": "bedrock",
+      "modelCount": 9
+    },
+    {
+      "name": "vertex",
+      "displayName": "Google Vertex AI",
+      "description": "Google Vertex AI — managed Gemini family on GCP with project-scoped IAM and regional hosts.",
+      "baseUrl": "https://us-central1-aiplatform.googleapis.com",
+      "adapterType": "vertex",
+      "modelCount": 5
+    }
+  ]
+}

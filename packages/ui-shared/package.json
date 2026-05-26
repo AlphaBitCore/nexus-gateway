@@ -1,0 +1,54 @@
+{
+  "name": "@nexus-gateway/ui-shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure presentational React components, TypeScript types, and i18n shared between the Control Plane UI (admin browser app) and the agent Dashboard (Wails desktop app). Contains no API clients, routers, or app-specific contexts.",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./styles/*": "./src/styles/*",
+    "./types": {
+      "types": "./src/types/index.ts",
+      "default": "./src/types/index.ts"
+    },
+    "./i18n/*": "./src/i18n/*",
+    "./shadcn": {
+      "types": "./src/shadcn/index.ts",
+      "default": "./src/shadcn/index.ts"
+    },
+    "./lib/cn": {
+      "types": "./src/lib/cn.ts",
+      "default": "./src/lib/cn.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": "^19.2.6"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "radix-ui": "^1.4.3",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

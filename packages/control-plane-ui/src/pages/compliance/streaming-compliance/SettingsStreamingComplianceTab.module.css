@@ -1,0 +1,8 @@
+.nativeSelect {
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.875rem;
+}

@@ -1,0 +1,91 @@
+/* ── Skeleton primitives ─────────────────────────────────────────────────── */
+
+.base {
+  background: linear-gradient(
+    90deg,
+    var(--color-muted) 25%,
+    var(--color-border-light) 50%,
+    var(--color-muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--g-radius-md);
+}
+
+.line {
+  composes: base;
+  height: 14px;
+  width: 100%;
+}
+
+.heading {
+  composes: base;
+  height: 24px;
+  width: 40%;
+}
+
+.circle {
+  composes: base;
+  border-radius: 50%;
+}
+
+/* ── Page-level skeleton layouts ─────────────────────────────────────────── */
+
+.pageHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.cardSkeleton {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  padding: var(--g-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+  animation: skeletonFadeIn 300ms ease-out both;
+}
+
+.cardSkeleton:nth-child(1) { animation-delay: 0ms; }
+.cardSkeleton:nth-child(2) { animation-delay: 50ms; }
+.cardSkeleton:nth-child(3) { animation-delay: 100ms; }
+.cardSkeleton:nth-child(4) { animation-delay: 150ms; }
+.cardSkeleton:nth-child(n+5) { animation-delay: 200ms; }
+
+@keyframes skeletonFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.metricsRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--g-space-4);
+}
+
+.tableRow {
+  display: flex;
+  gap: var(--g-space-4);
+  padding: var(--g-space-3) 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.tableCell {
+  composes: base;
+  height: 14px;
+  flex: 1;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .base,
+  .cardSkeleton {
+    animation: none;
+  }
+}

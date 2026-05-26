@@ -1,0 +1,102 @@
+.filterSelect {
+  height: 36px;
+  min-width: 148px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.tableHeader {
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.tableCell {
+  padding: var(--g-space-2) var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  white-space: nowrap;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border-light);
+  font-family: var(--g-font-sans);
+}
+
+.treeRow {
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.treeRow:hover {
+  background: var(--color-muted);
+}
+
+.toggleButton {
+  cursor: pointer;
+  margin-right: 8px;
+  display: inline-block;
+  width: 16px;
+  text-align: center;
+}
+
+.toggleSpacer {
+  width: 16px;
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.highlightedName {
+  font-weight: 600;
+}
+
+.codeCell {
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+}
+
+.disabledDelete {
+  opacity: 0.4;
+  cursor: help;
+}
+
+.scrollWrapper {
+  overflow-x: auto;
+}
+
+.fullWidthTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.emptyRow {
+  text-align: center;
+  height: 96px;
+  color: var(--color-text-muted);
+}
+
+.tip {
+  position: fixed;
+  transform: translateY(-100%);
+  z-index: 9999;
+  background: var(--color-text);
+  color: var(--color-text-inverse);
+  padding: var(--g-space-1-5) var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 280px;
+  box-shadow: 0 4px 12px var(--shadow-md);
+  pointer-events: none;
+}

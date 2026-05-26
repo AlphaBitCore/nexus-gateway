@@ -1,0 +1,101 @@
+/* ── MetadataPanel (E42-S3) ─────────────────────────────────────────
+ * Rendered below the InfoRow grid on the Node Detail Overview tab.
+ * Surfaces thing.metadata via three zones:
+ *   1. Common — friendly-labelled rows for well-known keys.
+ *   2. Custom — remaining keys not in the common list.
+ *   3. Raw JSON — collapsed by default, expanded via summary toggle.
+ */
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--g-space-3);
+}
+
+.empty {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  padding: var(--g-space-2) 0;
+}
+
+.subhead {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  margin: var(--g-space-4) 0 var(--g-space-2);
+}
+
+.subhead:first-child {
+  margin-top: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--g-space-3);
+  padding: var(--g-space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.label {
+  flex: 0 0 160px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.value {
+  flex: 1;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  margin: 0;
+  word-break: break-all;
+  font-family: var(--g-font-mono);
+}
+
+.rawDetails {
+  margin-top: var(--g-space-4);
+}
+
+.rawSummary {
+  cursor: pointer;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  padding: var(--g-space-2) 0;
+  user-select: none;
+}
+
+.rawSummary:hover {
+  color: var(--color-text);
+}
+
+.rawJson {
+  margin: var(--g-space-2) 0 0;
+  padding: var(--g-space-3);
+  background: var(--color-bg-hover);
+  border-radius: var(--g-radius-sm);
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

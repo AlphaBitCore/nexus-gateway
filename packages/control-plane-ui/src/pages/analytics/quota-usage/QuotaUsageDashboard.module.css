@@ -1,0 +1,64 @@
+.filterSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.progressContainer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  width: 120px;
+  background: var(--color-surface-secondary);
+  border-radius: var(--g-radius-sm);
+  overflow: hidden;
+}
+
+.progressBar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: var(--g-radius-sm);
+  background: var(--color-primary);
+  transition: width 0.3s ease;
+}
+
+.progressBar[data-level="warning"] {
+  background: var(--color-warning);
+}
+
+.progressBar[data-level="critical"] {
+  background: var(--color-danger);
+}
+
+.progressBar[data-level="normal"] {
+  background: var(--color-success);
+}
+
+.progressLabel {
+  position: relative;
+  z-index: 1;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  padding-left: var(--g-space-1);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: 0 0 var(--g-space-3) 0;
+  color: var(--color-text);
+}

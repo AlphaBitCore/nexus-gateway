@@ -1,0 +1,226 @@
+/* TrafficAnalyticsPage styles */
+
+.cacheBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--g-radius-full);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.cacheBadge.hit {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.cacheBadge.miss {
+  background: var(--color-muted);
+  color: var(--color-text-secondary);
+}
+
+.cacheBadge.disabled {
+  background: var(--color-muted);
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.cacheBadge.skip {
+  background: var(--color-info-light);
+  color: var(--color-info-dark);
+}
+
+.copyableId {
+  cursor: pointer;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  padding: 1px 4px;
+  border-radius: var(--g-radius-sm);
+  transition: all 0.15s ease;
+}
+
+.copyableId.copied {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.notQueryableCard {
+  padding: var(--g-space-6);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+}
+
+.notQueryableIcon {
+  font-size: 28px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.notQueryableTitle {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--g-font-size-md);
+  margin-bottom: var(--g-space-1);
+}
+
+.notQueryableBody {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  line-height: 1.5;
+}
+
+.disabledMessage {
+  color: var(--color-text-muted);
+}
+
+.helperText {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.tableWrapper {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+}
+
+.paginationInfo {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  align-self: center;
+}
+
+/* Analytics tab */
+.filterBar {
+  padding: var(--g-space-2) var(--g-space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  flex-wrap: wrap;
+}
+
+.filterLabel {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+}
+
+.filterDivider {
+  margin: 0 var(--g-space-1);
+  color: var(--color-border);
+}
+
+.nativeSelect {
+  padding: var(--g-space-1) var(--g-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  font-size: var(--g-font-size-sm);
+  height: 32px;
+}
+
+.nativeInput {
+  padding: var(--g-space-1) var(--g-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  font-size: var(--g-font-size-sm);
+  height: 32px;
+  width: 180px;
+}
+
+/* Stat card */
+.statCardInner {
+  padding: var(--g-space-6);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.statCardLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-1-5);
+  font-size: var(--g-font-size-md);
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: 0;
+  margin-bottom: var(--g-space-1-5);
+}
+
+.statCardValue {
+  font-size: var(--g-font-size-2xl);
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.statCardTooltipIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  cursor: default;
+  flex-shrink: 0;
+  line-height: 1;
+  position: relative;
+}
+
+.statCardTooltipText {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  padding: 6px 10px;
+  border-radius: var(--g-radius-md);
+  white-space: normal;
+  width: 220px;
+  text-transform: none;
+  letter-spacing: 0;
+  z-index: 10;
+  pointer-events: none;
+  box-shadow: 0 2px 8px var(--shadow-md);
+}
+
+/* Chart widgets */
+.widgetCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-xl);
+  box-shadow: var(--g-shadow-sm);
+  padding: var(--g-space-6);
+  min-height: 340px;
+  display: flex;
+  flex-direction: column;
+}
+
+.widgetTitle {
+  margin-bottom: var(--g-space-4);
+}
+
+.emptyChart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 250px;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}

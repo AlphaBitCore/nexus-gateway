@@ -1,0 +1,469 @@
+/* Shared styles for the multi-page Policies area:
+ *   /policies                 (Overview)
+ *   /policies/domains         + /:id
+ *   /policies/hooks           + /:id
+ *   /policies/exemptions
+ *   /policies/rule-packs      + /:id
+ *
+ * One module keeps the typography + table tokens consistent across the
+ * list/detail flow. Page-specific tweaks should be additive selectors
+ * targeting page-level wrappers.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-5);
+}
+
+/* ── Breadcrumb + page header ────────────────────────────────────── */
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.breadcrumb a {
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.breadcrumb a:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+.breadcrumbSep {
+  opacity: 0.5;
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--g-space-4);
+}
+
+.title {
+  font-size: var(--g-font-size-2xl);
+  font-weight: 600;
+  margin: 0 0 var(--g-space-1) 0;
+}
+
+.subtitle {
+  font-size: var(--g-font-size-base);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.actionRow {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+}
+
+.button {
+  padding: var(--g-space-2) var(--g-space-4);
+  border-radius: var(--g-radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--color-bg-subtle);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.banner {
+  padding: var(--g-space-3) var(--g-space-4);
+  border-radius: var(--g-radius-sm);
+  border: 1px solid var(--color-danger);
+  background: var(--color-danger-light);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger-dark);
+}
+
+/* ── Hero status strip (Overview only) ──────────────────────────── */
+
+.hero {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-4);
+  padding: var(--g-space-4) var(--g-space-5);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.hero[data-tone="ok"] {
+  border-color: var(--color-success);
+  background: linear-gradient(90deg, var(--color-success-light), transparent 60%);
+}
+
+.hero[data-tone="warn"] {
+  border-color: var(--color-warning);
+  background: linear-gradient(90deg, var(--color-warning-light), transparent 60%);
+}
+
+.hero[data-tone="danger"] {
+  border-color: var(--color-danger);
+  background: linear-gradient(90deg, var(--color-danger-light), transparent 60%);
+}
+
+.heroDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hero[data-tone="ok"] .heroDot { background: var(--color-success); }
+.hero[data-tone="warn"] .heroDot { background: var(--color-warning); }
+.hero[data-tone="danger"] .heroDot { background: var(--color-danger); }
+
+.heroMain {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.heroTitle {
+  font-size: var(--g-font-size-lg);
+  font-weight: 600;
+  margin: 0;
+}
+
+.heroMeta {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.heroVer {
+  display: flex;
+  align-items: baseline;
+  gap: var(--g-space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.heroVerNum {
+  font-size: var(--g-font-size-lg);
+  font-weight: 600;
+}
+
+.heroVerLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+/* ── KPI strip (Overview only) ──────────────────────────────────── */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--g-space-3);
+}
+
+@media (max-width: 720px) {
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+}
+
+.kpi {
+  padding: var(--g-space-3) var(--g-space-4);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.kpi:hover {
+  background: var(--color-bg-subtle);
+}
+
+.kpi[data-state="off"] { opacity: 0.7; }
+.kpi[data-state="danger"] { border-color: var(--color-danger); }
+
+.kpiValue {
+  font-size: var(--g-font-size-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpiLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+/* ── Overview "preview" cards (top-5 + "View all") ──────────────── */
+
+.previewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--g-space-4);
+}
+
+@media (max-width: 900px) {
+  .previewGrid { grid-template-columns: 1fr; }
+}
+
+.preview {
+  padding: var(--g-space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.previewHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+}
+
+.previewTitle {
+  font-size: var(--g-font-size-base);
+  font-weight: 600;
+  margin: 0;
+}
+
+.previewLink {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-info);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.previewLink:hover { text-decoration: underline; }
+
+.previewList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.previewItem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--g-space-2);
+  padding: var(--g-space-1) 0;
+  font-size: var(--g-font-size-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.previewItem:last-child { border-bottom: none; }
+
+.previewItemKey {
+  font-family: var(--g-font-mono);
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewItemMeta {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  flex-shrink: 0;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-bg-subtle);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* ── List-page toolbar (search + count) ─────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+}
+
+.search {
+  flex: 1;
+  padding: var(--g-space-2) var(--g-space-3);
+  border-radius: var(--g-radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: var(--g-font-size-sm);
+}
+
+.toolbarCount {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Data table ─────────────────────────────────────────────────── */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  overflow: hidden;
+}
+
+.table th, .table td {
+  text-align: left;
+  padding: var(--g-space-2) var(--g-space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table tbody tr:last-child td { border-bottom: none; }
+
+.table th {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--color-bg-subtle);
+}
+
+.mono {
+  font-family: var(--g-font-mono);
+  font-size: 0.9em;
+}
+
+/* ── Pagination ──────────────────────────────────────────────────── */
+
+.paginator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+}
+
+.paginatorPages {
+  display: flex;
+  gap: var(--g-space-2);
+}
+
+.paginatorInfo {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Badges ──────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  padding: 2px var(--g-space-2);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  background: var(--shadow-xs);
+}
+
+.badge[data-tone="ok"] { background: var(--color-success-light); color: var(--color-success-dark); }
+.badge[data-tone="warn"] { background: var(--color-warning-light); color: var(--color-warning-dark); }
+.badge[data-tone="danger"] { background: var(--color-danger-light); color: var(--color-danger-dark); }
+.badge[data-tone="muted"] { background: var(--color-muted); color: var(--g-gray-500); }
+
+/* ── Detail page ─────────────────────────────────────────────────── */
+
+.section {
+  padding: var(--g-space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-base);
+  font-weight: 600;
+  margin: 0;
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--g-space-2) var(--g-space-4);
+  margin: 0;
+  font-size: var(--g-font-size-sm);
+}
+
+.dl dt {
+  color: var(--color-text-muted);
+}
+
+.dl dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.codeBlock {
+  margin: 0;
+  padding: var(--g-space-3);
+  background: var(--color-bg-subtle);
+  border-radius: var(--g-radius-sm);
+  font-family: var(--g-font-mono);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+/* ── Sync mini-card on Overview ─────────────────────────────────── */
+
+.syncCard {
+  padding: var(--g-space-3) var(--g-space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+}

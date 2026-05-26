@@ -1,0 +1,132 @@
+{
+  "id": "morningstar",
+  "displayName": "Morningstar AI Gateway",
+  "description": "Morningstar-branded theme — red brand identity, dark sidebar, financial services aesthetic",
+
+  "brand": {
+    "productName": "Morningstar AI Gateway",
+    "tagline": "Intelligent AI traffic governance for financial services"
+  },
+
+  "typography": {
+    "fontUrl": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap",
+    "fontSans": "'IBM Plex Sans', 'Inter', system-ui, -apple-system, sans-serif",
+    "fontDisplay": "'IBM Plex Sans', 'Inter', system-ui, -apple-system, sans-serif",
+    "fontMono": "'IBM Plex Mono', 'JetBrains Mono', monospace"
+  },
+
+  "layer1": {
+    "radii": {
+      "sm": "4px",
+      "md": "6px",
+      "lg": "8px",
+      "xl": "10px"
+    }
+  },
+
+  "lightTokens": {
+    "color-primary": "#c8102e",
+    "color-primary-foreground": "#ffffff",
+    "color-primary-hover": "#a50d26",
+
+    "color-success": "#00af41",
+    "color-success-light": "#e6f7ed",
+    "color-success-dark": "#008a33",
+    "color-warning": "#e57200",
+    "color-warning-light": "#fff3e0",
+    "color-warning-dark": "#c25e00",
+    "color-danger": "#d32f2f",
+    "color-danger-light": "#fdeaea",
+    "color-danger-dark": "#b71c1c",
+    "color-info": "#0077CF",
+    "color-info-light": "#e3f2fd",
+
+    "color-bg": "#f5f5f5",
+    "color-surface": "#ffffff",
+    "color-surface-hover": "#fafafa",
+    "color-surface-raised": "#ffffff",
+    "color-border": "#d6d6d6",
+    "color-border-light": "#ebebeb",
+    "color-border-strong": "#b0b0b0",
+    "color-divider": "#d6d6d6",
+    "color-muted": "#f0f0f0",
+    "color-muted-foreground": "#6b6b6b",
+    "color-accent": "#fdeaea",
+    "color-accent-foreground": "#c8102e",
+    "color-ring": "#c8102e",
+    "color-title-gradient": "linear-gradient(90deg, #c8102e 0%, #0077CF 100%)",
+    "page-shell-glow": "linear-gradient(90deg, #c8102e 0%, #0077CF 100%)",
+    "page-shell-glow-opacity": "0.12",
+
+    "color-text": "#1e1e1e",
+    "color-text-secondary": "#4a4a4a",
+    "color-text-muted": "#8c8c8c",
+    "color-text-inverse": "#ffffff",
+
+    "sidebar-bg": "#1e1e1e",
+    "sidebar-surface": "#252525",
+    "sidebar-text": "#b0b0b0",
+    "sidebar-text-active": "#ffffff",
+    "sidebar-hover": "#2d2d2d",
+    "sidebar-active-bg": "#2d2d2d",
+    "sidebar-active-border": "#c8102e",
+    "sidebar-accent": "#2d2d2d",
+    "sidebar-accent-foreground": "#ffffff",
+    "sidebar-border": "#3a3a3a",
+    "sidebar-section-label": "#d0d0d0",
+    "sidebar-shadow": "1px 0 0 rgba(0,0,0,0.15)"
+  },
+
+  "darkTokens": {
+    "color-primary": "#ef5350",
+    "color-primary-foreground": "#ffffff",
+    "color-primary-hover": "#f44336",
+
+    "color-success": "#4ade80",
+    "color-success-light": "rgba(0, 175, 65, 0.12)",
+    "color-success-dark": "#00af41",
+    "color-warning": "#fb923c",
+    "color-warning-light": "rgba(229, 114, 0, 0.12)",
+    "color-warning-dark": "#e57200",
+    "color-danger": "#f87171",
+    "color-danger-light": "rgba(211, 47, 47, 0.12)",
+    "color-danger-dark": "#d32f2f",
+    "color-info": "#60a5fa",
+    "color-info-light": "rgba(0, 119, 207, 0.12)",
+
+    "color-bg": "#1a1a1a",
+    "color-surface": "#252525",
+    "color-surface-hover": "#2d2d2d",
+    "color-surface-raised": "#2d2d2d",
+    "color-border": "#3a3a3a",
+    "color-border-light": "#2d2d2d",
+    "color-border-strong": "#4a4a4a",
+    "color-divider": "#3a3a3a",
+    "color-muted": "#2d2d2d",
+    "color-muted-foreground": "#b0b0b0",
+    "color-accent": "rgba(200, 16, 46, 0.15)",
+    "color-accent-foreground": "#ef5350",
+    "color-ring": "#ef5350",
+    "color-title-gradient": "linear-gradient(90deg, #ef5350 0%, #60a5fa 100%)",
+    "page-shell-glow": "linear-gradient(90deg, #ef5350 0%, #60a5fa 100%)",
+    "page-shell-glow-opacity": "0.1",
+
+    "color-text": "#f5f5f5",
+    "color-text-secondary": "#b0b0b0",
+    "color-text-muted": "#8c8c8c",
+    "color-text-inverse": "#1a1a1a",
+
+    "sidebar-bg": "#0d0d0d",
+    "sidebar-surface": "#1a1a1a",
+    "sidebar-text": "#8c8c8c",
+    "sidebar-text-active": "#ffffff",
+    "sidebar-hover": "#252525",
+    "sidebar-active-bg": "rgba(239, 83, 80, 0.10)",
+    "sidebar-active-border": "#ef5350",
+    "sidebar-accent": "#252525",
+    "sidebar-accent-foreground": "#ffffff",
+    "sidebar-border": "#3a3a3a",
+    "sidebar-section-label": "#d0d0d0",
+    "sidebar-shadow": "1px 0 0 rgba(0,0,0,0.3)"
+  }
+}

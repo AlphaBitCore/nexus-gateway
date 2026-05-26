@@ -1,0 +1,60 @@
+{
+  "name": "xai",
+  "displayName": "xAI",
+  "description": "xAI Grok \u2014 OpenAI-compatible API.",
+  "baseUrl": "https://api.x.ai",
+  "adapterType": "xai",
+  "models": [
+    {
+      "code": "grok-4.3",
+      "name": "Grok 4.3",
+      "description": "xAI Grok 4.3 \u2014 current flagship. 1M context, stronger reasoning and tool use at lower cost than Grok 4.",
+      "providerModelId": "grok-4.3",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 1.25,
+      "outputPricePerMillion": 2.5,
+      "maxContextTokens": 1000000,
+      "maxOutputTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "grok-3",
+      "name": "Grok 3",
+      "description": "Previous-generation xAI Grok flagship.",
+      "providerModelId": "grok-3",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 3,
+      "outputPricePerMillion": 15,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 8192,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "grok-3-mini",
+      "name": "Grok 3 Mini",
+      "description": "Smaller, faster Grok 3 variant.",
+      "providerModelId": "grok-3-mini",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.3,
+      "outputPricePerMillion": 0.5,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 8192,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

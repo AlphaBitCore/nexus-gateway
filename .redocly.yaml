@@ -1,0 +1,11 @@
+# Redocly CLI (https://redocly.com/docs/cli/configuration/)
+extends:
+  - recommended
+
+apis:
+  gateway:
+    root: docs/users/api/openapi/gateway-api.yaml
+
+rules:
+  # Local dev URLs are intentional for this repo.
+  no-server-example.com: off

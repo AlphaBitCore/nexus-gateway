@@ -1,0 +1,82 @@
+/* ── IamPolicyEditorPage extracted styles ─────────────────────────────── */
+
+.toolbarBetween {
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--g-space-4);
+  flex-wrap: wrap;
+}
+
+.toolbarCenter {
+  align-items: center;
+}
+
+.toolbarWrap {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tooltipIcon {
+  cursor: help;
+  font-size: 12px;
+}
+
+.validationTitle {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.validationList {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.jsonLabelRow {
+  align-items: center;
+  margin-bottom: var(--g-space-2);
+}
+
+.jsonLabelText {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+}
+
+.jsonTextarea {
+  width: 100%;
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.statementHeading {
+  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+}
+
+.fieldsRow {
+  margin-bottom: var(--g-space-2);
+  flex-wrap: wrap;
+}
+
+.sidField {
+  flex: 1 1 200px;
+}
+
+.effectField {
+  flex: 1 1 160px;
+}
+
+.actionsEndRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.conditionTextarea {
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+}

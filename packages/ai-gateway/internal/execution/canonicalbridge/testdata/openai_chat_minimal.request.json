@@ -1,0 +1,9 @@
+{
+  "_source": "OpenAI Chat Completions API reference — minimal chat request shape (documentation snapshot, 2026-04-25).",
+  "model": "gpt-4o-mini",
+  "max_tokens": 32,
+  "temperature": 0.2,
+  "messages": [
+    {"role": "user", "content": "Say hello in one word."}
+  ]
+}

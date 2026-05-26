@@ -1,0 +1,26 @@
+/* ── Top loading bar (NProgress-style) ────────────────────────────────────── */
+
+.bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: var(--color-primary);
+  z-index: calc(var(--g-z-toast) + 1);
+  transition: width var(--g-transition-normal);
+  box-shadow: 0 0 8px var(--color-primary);
+}
+
+.barComplete {
+  transition: width 150ms ease, opacity 300ms ease 150ms;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    transition: none;
+  }
+  .barComplete {
+    transition: none;
+  }
+}

@@ -1,0 +1,113 @@
+.credentialSelectorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  margin-bottom: var(--g-space-2);
+}
+
+.credentialSelectorLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.credentialSelector {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  min-width: 160px;
+}
+
+.credentialSelector:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.testButton {
+  padding: 0 14px;
+  height: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  cursor: pointer;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: all var(--g-transition-fast);
+}
+
+.testButtonDisabled {
+  composes: testButton;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.helpText {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+  max-width: 420px;
+  line-height: 1.4;
+}
+
+.helpCode {
+  font-size: inherit;
+}
+
+.errorText {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger);
+  margin-top: var(--g-space-2);
+}
+
+.resultBox {
+  margin-top: var(--g-space-2);
+  padding: var(--g-space-3);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+}
+
+.resultBoxOk {
+  composes: resultBox;
+  border: 1px solid var(--color-success);
+  background: var(--color-success-light);
+}
+
+.resultBoxError {
+  composes: resultBox;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.resultStatus {
+  font-weight: 600;
+}
+
+.resultStatusOk {
+  composes: resultStatus;
+  color: var(--color-success-dark);
+}
+
+.resultStatusError {
+  composes: resultStatus;
+  color: var(--color-danger);
+}
+
+.resultMessage {
+  margin-top: 6px;
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+.resultUrl {
+  margin-top: 6px;
+  font-size: 11px;
+  font-family: var(--g-font-mono);
+  color: var(--color-text-muted);
+  word-break: break-all;
+}

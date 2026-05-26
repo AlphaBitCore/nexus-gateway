@@ -1,0 +1,38 @@
+---
+description: Prisma migration folders must have unique YYYYMMDDHHMMSS prefixes
+globs:
+  - tools/db-migrate/prisma/migrations/**
+  - tools/db-migrate/prisma/schema.prisma
+---
+
+# Migration timestamp uniqueness (binding)
+
+You are touching Prisma migrations. **Two folders sharing the same `YYYYMMDDHHMMSS` prefix make Prisma silently skip one** — every migration folder name MUST start with a unique prefix.
+
+## The rule
+
+Every migration folder name starts with a unique `YYYYMMDDHHMMSS` prefix.
+
+```bash
+ls tools/db-migrate/prisma/migrations/ | cut -c1-14 | sort | uniq -d
+# must be empty
+```
+
+This check is wired as `npm run check:migration-timestamps` and runs in CI. Pre-commit hook installation is encouraged.
+
+## How to add a new migration safely
+
+```bash
+cd tools/db-migrate
+npx prisma migrate dev --name <descriptive_snake_case>
+# Prisma auto-generates a unique timestamp; usually safe.
+
+# If you crafted the folder by hand or copy-pasted, check:
+npm run check:migration-timestamps
+```
+
+## If you hit a duplicate
+
+Rename one of the conflicting folders with a +1 second / +1 minute suffix and rebase any references (rare; usually only manual scripts or fixtures reference migration names).
+
+Skipping this rule requires **explicit user approval** in chat.

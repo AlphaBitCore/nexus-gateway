@@ -1,0 +1,116 @@
+.panel {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3);
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--g-space-2);
+}
+
+.filterInput {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  background: var(--color-bg);
+  margin-bottom: var(--g-space-2);
+}
+.filterInput:focus {
+  border-color: var(--color-primary);
+}
+
+.masterRow,
+.masterRowActive {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 4px;
+}
+.masterRowActive {
+  background: var(--color-info-light);
+}
+.masterRow:hover {
+  background: var(--color-bg-subtle);
+}
+
+.masterLabel {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.masterCode {
+  font-family: var(--g-font-mono);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.masterCount {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-left: auto;
+}
+
+.verbList {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--g-space-2);
+}
+
+.emptyState {
+  padding: var(--g-space-3);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.verbRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: 6px var(--g-space-2);
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--g-radius-sm);
+}
+.verbRow:hover {
+  background: var(--color-bg-subtle);
+}
+.verbRow input[type='checkbox']:disabled + .verbName {
+  opacity: 0.55;
+}
+
+.verbName {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--g-space-2);
+}
+
+.verbToken {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  font-weight: 600;
+  min-width: 64px;
+}
+
+.verbCode {
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+}

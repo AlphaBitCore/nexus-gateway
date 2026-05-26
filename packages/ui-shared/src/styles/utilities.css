@@ -1,0 +1,72 @@
+/* ─── Utility Classes ────────────────────────────────────────────────────── */
+/* Small curated set for one-off layout tweaks.                              */
+/* If you chain 4+ utilities, use a CSS Module class instead.                */
+
+/* ── Display ─────────────────────────────────────────────────────────────── */
+.u-flex    { display: flex; }
+.u-grid    { display: grid; }
+.u-hidden  { display: none; }
+.u-block   { display: block; }
+.u-inline  { display: inline; }
+
+/* ── Flex shortcuts ──────────────────────────────────────────────────────── */
+.u-flex-center  { display: flex; align-items: center; justify-content: center; }
+.u-flex-between { display: flex; align-items: center; justify-content: space-between; }
+.u-flex-wrap    { flex-wrap: wrap; }
+.u-flex-1       { flex: 1; }
+.u-flex-shrink-0 { flex-shrink: 0; }
+
+/* ── Text ────────────────────────────────────────────────────────────────── */
+.u-text-center { text-align: center; }
+.u-text-right  { text-align: right; }
+.u-text-left   { text-align: left; }
+.u-truncate    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-break-word  { overflow-wrap: break-word; }
+
+/* ── Spacing ─────────────────────────────────────────────────────────────── */
+.u-m-0    { margin: 0; }
+.u-mt-xs  { margin-top: var(--g-space-1); }
+.u-mt-sm  { margin-top: var(--g-space-2); }
+.u-mt-md  { margin-top: var(--g-space-4); }
+.u-mt-lg  { margin-top: var(--g-space-6); }
+.u-mb-xs  { margin-bottom: var(--g-space-1); }
+.u-mb-sm  { margin-bottom: var(--g-space-2); }
+.u-mb-md  { margin-bottom: var(--g-space-4); }
+.u-mb-lg  { margin-bottom: var(--g-space-6); }
+.u-ml-auto { margin-left: auto; }
+.u-mr-auto { margin-right: auto; }
+.u-mx-auto { margin-left: auto; margin-right: auto; }
+.u-p-0    { padding: 0; }
+.u-p-sm   { padding: var(--g-space-2); }
+.u-p-md   { padding: var(--g-space-4); }
+.u-p-lg   { padding: var(--g-space-6); }
+.u-px-md  { padding-left: var(--g-space-4); padding-right: var(--g-space-4); }
+.u-py-md  { padding-top: var(--g-space-4); padding-bottom: var(--g-space-4); }
+
+/* ── Width ───────────────────────────────────────────────────────────────── */
+.u-w-full { width: 100%; }
+.u-w-auto { width: auto; }
+
+/* ── Overflow ────────────────────────────────────────────────────────────── */
+.u-overflow-hidden { overflow: hidden; }
+.u-overflow-auto   { overflow: auto; }
+
+/* ── No Scrollbar ────────────────────────────────────────────────────────── */
+.u-no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.u-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Responsive Visibility ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .u-hide-mobile { display: none !important; }
+}
+@media (min-width: 769px) {
+  .u-hide-desktop { display: none !important; }
+}
+@media (max-width: 1024px) {
+  .u-hide-tablet { display: none !important; }
+}

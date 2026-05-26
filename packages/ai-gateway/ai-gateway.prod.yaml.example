@@ -1,0 +1,206 @@
+# Production config for ai-gateway.
+# Deploy: go run ./cmd/ai-gateway/ -config ai-gateway.prod.yaml
+#
+# Secrets are env-only per CLAUDE.md "Secrets are env-only" binding: they
+# NEVER appear in yaml. Provision them via systemd EnvironmentFile=,
+# Kubernetes Secrets → env, docker --env-file, or a repo-root .env in dev.
+# See `.env.example` at repo root for the full env-var contract; values
+# marked [MUST MATCH] in `.env.example` MUST be identical across all four
+# services.
+
+# Externally-reachable base URL. Reported as staticInfo.publicURL.
+# End-user LLM clients hit this URL via the /v1/* OpenAI-compatible
+# surface.
+publicURL: "https://api.example.com"
+
+server:
+  port: 3050
+  # Internal — nginx proxies api.example.com → 127.0.0.1:3050
+  advertiseHost: "127.0.0.1"
+  readTimeout: "30s"
+  writeTimeout: "360s"
+
+database:
+  # Provided via env DATABASE_URL
+  url: ""
+
+redis:
+  # Universal Redis configuration. Replace yaml password / tls cert paths
+  # with real values per environment (or set env REDIS_PASSWORD /
+  # REDIS_TLS_*). See packages/shared/storage/redisfactory +
+  # docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6379"]
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+# auth.* fields are env-only:
+#   hmacSecret           → ADMIN_KEY_HMAC_SECRET       [MUST MATCH control-plane]
+#   credentialMasterKey  → CREDENTIAL_ENCRYPTION_KEY   [MUST MATCH control-plane, 64 hex chars]
+#   credentialKeyMap     → CREDENTIAL_KEY_MAP
+#   internalServiceToken → INTERNAL_SERVICE_TOKEN      [MUST MATCH all 4 services]
+# Runtime-API tokens are also env-only:
+#   AI_GATEWAY_API_TOKEN
+
+log:
+  level: "info"
+  format: "json"
+  file: "/var/log/nexus/ai-gateway.log"
+  stackOnError: true
+
+registry:
+  # Hub is co-located on the same EC2
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+cors:
+  enabled: true
+  allowedOrigins:
+    - "https://nexus.example.com"
+  allowedMethods: ["GET", "POST", "OPTIONS"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  maxAgeSec: 600
+
+cache:
+  enabled: true
+  ttl: 5m
+  prefix: "ai-gw:"
+  # In-flight same-key dedupe broker. Default true preserves cache
+  # fill on MISS. Flip false for same-key high-concurrency perf tests
+  # (cache writes pause; cache reads of existing entries still HIT).
+  broker: true
+
+otel:
+  endpoint: ""
+  serviceName: "nexus-ai-gateway"
+
+# Per-request instrumentation knobs. Yaml-only — redeploy to flip.
+observability:
+  # latencyDetail: when true, latency_breakdown JSONB on traffic_event
+  # includes sub-millisecond phases (floored to 1ms) so a perf-
+  # investigation has evidence every expected phase ran. Default true
+  # during the E61/E62 perf-investigation window (2026-05-19). Flip to
+  # false later for compact steady-state prod rows.
+  latencyDetail: true
+
+upstream:
+  timeoutSec: 300
+  dialTimeoutSec: 15
+  tlsHandshakeTimeoutSec: 10
+  keepAliveSec: 30
+  # Bumped 2026-05-19 to sustain high-concurrency perf-test bursts
+  # (warm connections survive longer, fewer fresh TLS handshakes).
+  idleConnTimeoutSec: 300
+  # Bumped 2026-05-19 — global pool comfortably above any realistic
+  # burst; per-host pool sized for OpenAI as the dominant target.
+  maxIdleConns: 2000
+  maxIdleConnsPerHost: 500
+
+httpClients:
+  webhook:
+    timeoutSec: 10
+    maxIdleConns: 20
+    maxIdleConnsPerHost: 5
+    idleConnTimeoutSec: 90
+  external:
+    timeoutSec: 30
+
+routing:
+  defaultRetryPolicy:
+    maxAttemptsPerTarget: 1
+    retryOn: ["network", "timeout", "429", "5xx"]
+    backoffInitial: 250ms
+    backoffMax: 5s
+    backoffJitter: 0.2
+
+spill:
+  enabled: true
+  backend: s3
+  s3:
+    # [MUST MATCH] same bucket / region / prefix across nexus-hub, ai-gateway,
+    # compliance-proxy, control-plane. AuthN: EC2 instance IAM role.
+    bucket: nexus-payload-capture-bucket
+    region: us-east-1
+    prefix: prod/
+    perObjectCap: 268435456      # 256 MiB per object
+    totalSizeCap: 0              # unlimited; rely on retention + bucket lifecycle
+    retentionDays: 30
+
+forwardHeaders:
+  request:
+    base:
+      - accept
+      - user-agent
+      - content-type
+    perAdapterType:
+      openai:
+        headers:
+          - openai-beta
+          - openai-organization
+          - openai-project
+      anthropic:
+        headers:
+          - anthropic-beta
+          - anthropic-version
+      gemini:
+        headers:
+          - x-goog-user-project
+      vertex:
+        headers:
+          - x-goog-user-project
+
+  response:
+    base:
+      static: []
+      perRequest: []
+    perAdapterType:
+      openai:
+        static:
+          - openai-version
+        perRequest:
+          - x-request-id
+          - openai-processing-ms
+          - x-ratelimit-limit-tokens
+          - x-ratelimit-remaining-tokens
+          - x-ratelimit-reset-tokens
+          - x-ratelimit-limit-requests
+          - x-ratelimit-remaining-requests
+          - x-ratelimit-reset-requests
+      anthropic:
+        static:
+          - anthropic-version
+        perRequest:
+          - request-id
+          - anthropic-ratelimit-input-tokens-remaining
+          - anthropic-ratelimit-input-tokens-reset
+          - anthropic-ratelimit-output-tokens-remaining
+          - anthropic-ratelimit-output-tokens-reset
+          - anthropic-ratelimit-requests-remaining
+          - anthropic-ratelimit-requests-reset

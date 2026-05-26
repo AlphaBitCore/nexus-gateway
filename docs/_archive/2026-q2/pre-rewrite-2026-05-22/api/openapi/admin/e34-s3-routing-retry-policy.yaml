@@ -1,0 +1,252 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Routing Rule Retry Policy (E34-S3)
+  version: "0.1.0"
+  description: |
+    Schema overlay for the new `retryPolicy` block on routing rules.
+    Adds Create/Update/Read contract for the per-rule override of the
+    AI-Gateway executor's L2 retry budget. Rules without an override
+    inherit the platform default configured in the AI-Gateway YAML
+    (`routing.defaultRetryPolicy`).
+
+    See design spec `docs/_archive/2026-q2/brainstorms/2026-05-06-routing-retry-policy-design.md`
+    §6.2 for the wire-shape rationale and §4.2 for the field-merge
+    semantics. Backoff fields (`backoffInitial`, `backoffMax`,
+    `backoffJitter`) are intentionally **not** exposed here — they are
+    YAML-only knobs.
+
+    This document overlays — but does not replace — the routing-rule
+    CRUD shape published in `e20-s2-routing-rule-crud.yaml`. Only the
+    `retryPolicy` field is described here.
+
+paths:
+  /api/admin/routing-rules:
+    post:
+      summary: Create routing rule (retryPolicy slice only)
+      description: |
+        Documents the `retryPolicy` field added to the existing
+        `POST /api/admin/routing-rules` contract. All other request +
+        response fields stay as defined in `e20-s2-routing-rule-crud.yaml`.
+
+        Validation:
+        - `retryPolicy.maxAttemptsPerTarget` must be in `[1,5]` when set.
+          A value of `0` is accepted as the absent-sentinel (the
+          AI-Gateway field-merge fills it from the YAML default).
+        - Every element of `retryPolicy.retryOn` must be one of
+          `network`, `timeout`, `429`, `5xx`. The list may be empty
+          (semantically "retry nothing").
+        - Backoff fields are silently ignored; admins set them via
+          AI-Gateway YAML, not per-rule.
+      tags: [routing-rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retryPolicy:
+                  oneOf:
+                    - $ref: "#/components/schemas/RetryPolicy"
+                    - type: "null"
+                  description: |
+                    Per-rule override. `null` or omitted means "inherit
+                    AI-Gateway YAML default at runtime".
+            examples:
+              withCustomRetry:
+                summary: Custom retry policy
+                value:
+                  name: "openai-fallback"
+                  strategyType: "single"
+                  config: { providerId: "p-1", modelId: "m-1" }
+                  retryPolicy:
+                    maxAttemptsPerTarget: 3
+                    retryOn: ["5xx", "timeout"]
+              inheritDefault:
+                summary: No override (inherit YAML default)
+                value:
+                  name: "openai-default"
+                  strategyType: "single"
+                  config: { providerId: "p-1", modelId: "m-1" }
+      responses:
+        "201":
+          description: Created. Response includes the persisted retryPolicy verbatim, or omits it when null.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRuleRetryPolicySlice"
+        "400":
+          description: |
+            Validation failure for the retry policy. Error envelope:
+            ```
+            {"error":{"message":"retryPolicy.maxAttemptsPerTarget must be in [1,5]; got 6","type":"retry_policy_invalid","code":""}}
+            ```
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminError" }
+
+  /api/admin/routing-rules/{id}:
+    put:
+      summary: Update routing rule (retryPolicy slice only)
+      description: |
+        Documents the `retryPolicy` field on the existing
+        `PUT /api/admin/routing-rules/{id}` contract.
+
+        Three caller intents on `retryPolicy`:
+
+        | Request body                       | Stored value            |
+        |------------------------------------|--------------------------|
+        | field absent                       | column unchanged        |
+        | `"retryPolicy": null`              | column set to SQL NULL  |
+        | `"retryPolicy": {"...":...}`       | column set to the JSON  |
+
+        Clearing the override (sending `null`) reverts the rule to the
+        AI-Gateway YAML default at the next config reload.
+      tags: [routing-rules]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retryPolicy:
+                  oneOf:
+                    - $ref: "#/components/schemas/RetryPolicy"
+                    - type: "null"
+            examples:
+              setOverride:
+                summary: Add or replace the override
+                value:
+                  retryPolicy:
+                    maxAttemptsPerTarget: 2
+                    retryOn: ["429"]
+              clearOverride:
+                summary: Clear the override (rule reverts to YAML default)
+                value:
+                  retryPolicy: null
+              touchOtherFieldOnly:
+                summary: Update an unrelated field — retryPolicy untouched
+                value:
+                  priority: 7
+      responses:
+        "200":
+          description: Updated. Response shows the post-update retryPolicy state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRuleRetryPolicySlice"
+        "400":
+          description: Validation failure for the retry policy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminError" }
+        "404":
+          description: Routing rule not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminError" }
+
+components:
+  schemas:
+    ErrorClass:
+      type: string
+      description: |
+        Classification of an upstream attempt outcome. The AI-Gateway
+        executor labels every failed attempt with one of these so the
+        retry decision can be rendered as set-membership against
+        `RetryPolicy.retryOn`.
+      enum:
+        - network
+        - timeout
+        - "429"
+        - "5xx"
+
+    RetryPolicy:
+      type: object
+      additionalProperties: false
+      description: |
+        Per-rule override of the AI-Gateway executor's retry policy.
+        Field-merges with the YAML default at request time —
+        unspecified fields fall back to the default.
+
+        - `maxAttemptsPerTarget` controls the L2 retry budget (number
+          of attempts against the same target before failover). The
+          executor clamps this to `[1,5]` at runtime; the admin API
+          rejects out-of-range values up front.
+        - `retryOn` lists the error classes that count as retryable.
+          Anything not in the list short-circuits to L3 failover. An
+          empty list (`[]`) is honored as "retry nothing".
+
+        Backoff fields are intentionally not exposed on the admin API:
+        admins tune `backoffInitial`, `backoffMax`, and `backoffJitter`
+        via the AI-Gateway YAML.
+      properties:
+        maxAttemptsPerTarget:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: |
+            Number of times the executor will hit the same routing
+            target before failing over. `0` is accepted as a synonym
+            for "absent" — the AI-Gateway will field-merge in the
+            YAML default value.
+          example: 3
+        retryOn:
+          type: array
+          description: |
+            Error classes that trigger an L2 retry on the same target.
+            Anything not in this list short-circuits to L3 failover.
+            An empty array means "retry nothing".
+          items:
+            $ref: "#/components/schemas/ErrorClass"
+          example: ["5xx", "timeout"]
+      example:
+        maxAttemptsPerTarget: 3
+        retryOn: ["5xx", "timeout"]
+
+    RoutingRuleRetryPolicySlice:
+      type: object
+      description: |
+        Slice of the full `RoutingRule` response showing only the
+        retryPolicy-related fields. The complete response shape is
+        defined in `e20-s2-routing-rule-crud.yaml` (`RoutingRule`).
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        retryPolicy:
+          oneOf:
+            - $ref: "#/components/schemas/RetryPolicy"
+            - type: "null"
+          description: |
+            Persisted retry override. Omitted from the response (rather
+            than serialized as `null`) when the column is SQL NULL —
+            absence signals "inherit YAML default at runtime".
+
+    AdminError:
+      type: object
+      description: Canonical admin-handler error envelope.
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+              description: |
+                Snake-case machine-readable identifier. For retry-policy
+                validation failures the value is `retry_policy_invalid`.
+            code:
+              type: string
+              description: Optional secondary code; empty for retry-policy errors.

@@ -1,0 +1,14 @@
+{
+  "_source": "Gemini API generateContent — usageMetadata cache fields (documentation snapshot, 2026-04-25). https://ai.google.dev/api/generate-content#UsageMetadata",
+  "candidates": [
+    {"content": {"parts": [{"text": "ok"}], "role": "model"}, "finishReason": "STOP", "index": 0}
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 1024,
+    "candidatesTokenCount": 6,
+    "totalTokenCount": 1030,
+    "cachedContentTokenCount": 768,
+    "thoughtsTokenCount": 4
+  },
+  "modelVersion": "gemini-1.5-pro"
+}

@@ -1,0 +1,63 @@
+/* ─── IconButton ─────────────────────────────────────────────────────────── */
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--g-radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast),
+    border-color var(--g-transition-fast);
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.iconButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+}
+
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Variants ───────────────────────────────────────────────────────────── */
+
+.ghost {
+  /* Default: transparent → bg-hover on hover. Inherits from .iconButton. */
+}
+
+.subtle {
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+}
+
+.subtle:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+/* ── Sizes (square hit targets) ─────────────────────────────────────────── */
+
+.sm {
+  width: 24px;
+  height: 24px;
+}
+
+.md {
+  width: 32px;
+  height: 32px;
+}
+
+.lg {
+  width: 40px;
+  height: 40px;
+}

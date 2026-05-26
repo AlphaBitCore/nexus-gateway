@@ -1,0 +1,118 @@
+{
+  "name": "moonshot",
+  "displayName": "Moonshot (Kimi)",
+  "description": "Moonshot OpenAI-compatible API \u2014 Kimi models.",
+  "baseUrl": "https://api.moonshot.cn",
+  "adapterType": "moonshot",
+  "models": [
+    {
+      "code": "kimi-k2.6",
+      "name": "Kimi K2.6",
+      "description": "Kimi K2.6 \u2014 latest Kimi model, 256K context, automatic prefix caching, best overall quality.",
+      "providerModelId": "kimi-k2.6",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.75,
+      "outputPricePerMillion": 3.5,
+      "maxContextTokens": 262144,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "kimi-k2.5",
+      "name": "Kimi K2.5",
+      "description": "Kimi K2.5 \u2014 256K context, automatic prefix caching, improved instruction following.",
+      "providerModelId": "kimi-k2.5",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision",
+        "prompt_caching"
+      ],
+      "inputPricePerMillion": 0.44,
+      "outputPricePerMillion": 2.0,
+      "maxContextTokens": 262144,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "kimi-k2-thinking",
+      "name": "Kimi K2 Thinking",
+      "description": "Kimi K2 Thinking \u2014 256K context, extended reasoning / chain-of-thought model.",
+      "providerModelId": "kimi-k2-thinking",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "vision",
+        "prompt_caching",
+        "reasoning"
+      ],
+      "inputPricePerMillion": 0.95,
+      "outputPricePerMillion": 4.0,
+      "maxContextTokens": 262144,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "moonshot-v1-128k",
+      "name": "Moonshot (Kimi) 128K",
+      "description": "Kimi chat model with 128k context.",
+      "providerModelId": "moonshot-v1-128k",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.6,
+      "outputPricePerMillion": 0.6,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 4096,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "moonshot-v1-32k",
+      "name": "Moonshot (Kimi) 32K",
+      "description": "Kimi chat model with 32k context.",
+      "providerModelId": "moonshot-v1-32k",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.24,
+      "outputPricePerMillion": 0.24,
+      "maxContextTokens": 32768,
+      "maxOutputTokens": 4096,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "moonshot-v1-8k",
+      "name": "Moonshot (Kimi) 8K",
+      "description": "Kimi chat model with 8k context.",
+      "providerModelId": "moonshot-v1-8k",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.12,
+      "outputPricePerMillion": 0.12,
+      "maxContextTokens": 8192,
+      "maxOutputTokens": 4096,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+# CODEOWNERS — automatic reviewer assignment.
+#
+# Format: <path-pattern> @owner1 @owner2
+# Lines are matched LAST-MATCH-WINS, so more specific patterns go later.
+#
+# The repo follows a single-maintainer model today. As contributors take
+# stewardship of subsystems, add domain owners below their area's section.
+
+# ──────────────────────────────────────────────────────────────────────
+# Default — repo-wide fallback.
+# ──────────────────────────────────────────────────────────────────────
+*                                       @nexus
+
+# ──────────────────────────────────────────────────────────────────────
+# AI vibe-coding workbench artifacts.
+# Changes to rules / skills / lint / CLAUDE.md affect every contributor,
+# so they explicitly route to the maintainer.
+# ──────────────────────────────────────────────────────────────────────
+/CLAUDE.md                              @nexus
+/.cursor/rules/                         @nexus
+/.claude/skills/                        @nexus
+/scripts/check-*                        @nexus
+/.githooks/                             @nexus
+
+# ──────────────────────────────────────────────────────────────────────
+# Services.
+# ──────────────────────────────────────────────────────────────────────
+/packages/ai-gateway/                   @nexus
+/packages/compliance-proxy/             @nexus
+/packages/control-plane/                @nexus
+/packages/control-plane-ui/             @nexus
+/packages/nexus-hub/                    @nexus
+/packages/agent/                        @nexus
+/packages/shared/                       @nexus
+/packages/ui-shared/                    @nexus
+
+# ──────────────────────────────────────────────────────────────────────
+# Database + migrations.
+# ──────────────────────────────────────────────────────────────────────
+/tools/db-migrate/                      @nexus
+
+# ──────────────────────────────────────────────────────────────────────
+# Documentation.
+# ──────────────────────────────────────────────────────────────────────
+/docs/                                  @nexus
+
+# ──────────────────────────────────────────────────────────────────────
+# CI / build infrastructure.
+# ──────────────────────────────────────────────────────────────────────
+/.github/                               @nexus

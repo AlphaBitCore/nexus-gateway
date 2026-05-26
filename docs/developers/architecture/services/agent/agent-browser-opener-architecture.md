@@ -1,0 +1,1 @@
+# Agent browser opener architecture

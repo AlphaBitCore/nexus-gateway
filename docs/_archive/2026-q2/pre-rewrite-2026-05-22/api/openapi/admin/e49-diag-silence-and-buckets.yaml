@@ -1,0 +1,224 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Diag-Event Silences + Group Buckets (E49)
+  version: "1.0.0"
+  description: |
+    Two surfaces driving the redesigned /infrastructure/errors page:
+
+    1. **Silences** — `(messageHash, level)` ack rows that collapse repeating
+       diag-event noise (e.g. "auto-updater disabled" repeating 30×/day) so
+       triage stays focused on what's new. Optional TTL in seconds (cap 30d);
+       TTL=0 means permanent.
+
+    2. **Group buckets** — the existing `/api/admin/diag-events/groups`
+       endpoint adds two fields per row: a `buckets` sparkline series at
+       5-minute granularity over the requested range, and a `silenced` flag
+       derived from EXISTS-against-diag_silence for the group's max level.
+
+    IAM: all surfaces are gated under the `observability` resource —
+    `read` for GETs, `update` for POST/DELETE (silencing affects what other
+    operators see in a comparable way to dashboard config changes).
+
+paths:
+
+  /api/admin/diag-events/groups:
+    get:
+      summary: Top message-hash groups with sparkline buckets + silenced flag
+      description: |
+        Returns up to 100 groups in [from, to), ordered by
+        `totalOccurrences DESC, lastSeen DESC`. Each row carries a
+        `buckets` array — one entry per 5-minute bucket containing at
+        least one event for that hash — and a `silenced` boolean.
+      tags: [observability]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/NodeType'
+      responses:
+        '200':
+          description: Group list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiagGroup' }
+
+  /api/admin/diag-silences:
+    get:
+      summary: List active silences
+      description: |
+        Returns silences whose `expiresAt` is NULL or in the future,
+        ordered by `silencedAt DESC`. Capped at 500 — silences are
+        expected to be sparse; an inflated count usually means the
+        ack-then-ignore workflow has gone off the rails.
+      tags: [observability]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Silence list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiagSilence' }
+    post:
+      summary: Create a silence
+      description: |
+        Inserts a silence keyed on `(messageHash, level)`. `ttlSeconds=0`
+        means permanent (no expiry); positive values are server-clamped
+        to `[1s, 30d]`. `reason` is free-text capped at 500 chars.
+      tags: [observability]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDiagSilenceRequest' }
+      responses:
+        '200':
+          description: Silence persisted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [silence]
+                properties:
+                  silence: { $ref: '#/components/schemas/DiagSilence' }
+        '400':
+          description: Validation error.
+
+  /api/admin/diag-silences/{id}:
+    delete:
+      summary: Unsilence (remove a silence row)
+      description: Audits a `diag_silence_delete` entry with the pre-delete state.
+      tags: [observability]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        '404':
+          description: Silence not found.
+
+components:
+  parameters:
+    From:
+      in: query
+      name: from
+      schema: { type: string, format: date-time }
+      required: true
+      description: Inclusive lower bound (RFC3339).
+    To:
+      in: query
+      name: to
+      schema: { type: string, format: date-time }
+      required: true
+      description: Exclusive upper bound (RFC3339).
+    NodeType:
+      in: query
+      name: nodeType
+      schema:
+        type: string
+        enum: [ai-gateway, compliance-proxy, control-plane, nexus-hub, agent]
+
+  schemas:
+    DiagLevel:
+      type: string
+      enum: [debug, info, warn, error, fatal]
+
+    DiagGroupBucket:
+      type: object
+      required: [ts, count]
+      properties:
+        ts:    { type: string, format: date-time, description: "Bucket start (5-minute aligned)." }
+        count: { type: integer, minimum: 1 }
+
+    DiagGroup:
+      type: object
+      required:
+        - messageHash
+        - sampleMessage
+        - source
+        - affectedNodes
+        - totalOccurrences
+        - firstSeen
+        - lastSeen
+        - maxLevel
+        - buckets
+        - silenced
+      properties:
+        messageHash:      { type: string }
+        sampleMessage:    { type: string }
+        source:           { type: string }
+        affectedNodes:    { type: integer }
+        totalOccurrences: { type: integer }
+        firstSeen:        { type: string, format: date-time }
+        lastSeen:         { type: string, format: date-time }
+        maxLevel:         { $ref: '#/components/schemas/DiagLevel' }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/DiagGroupBucket' }
+        silenced:
+          type: boolean
+          description: |
+            True iff at least one active diag_silence row exists for
+            `(messageHash, maxLevel)`.
+
+    DiagSilence:
+      type: object
+      required: [id, messageHash, level, silencedBy, silencedAt]
+      properties:
+        id:          { type: string, format: uuid }
+        messageHash: { type: string }
+        level:       { $ref: '#/components/schemas/DiagLevel' }
+        silencedBy:  { type: string, description: "NexusUser.id of the operator." }
+        silencedAt:  { type: string, format: date-time }
+        expiresAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: 'null' }
+          description: NULL = permanent silence.
+        reason:      { type: string }
+
+    CreateDiagSilenceRequest:
+      type: object
+      required: [messageHash, level]
+      properties:
+        messageHash: { type: string }
+        level:       { $ref: '#/components/schemas/DiagLevel' }
+        ttlSeconds:
+          type: integer
+          minimum: 0
+          maximum: 2592000
+          default: 0
+          description: |
+            0 = permanent silence. Positive values are clamped server-side
+            to the [1s, 30d] range.
+        reason:      { type: string, maxLength: 500 }
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nexus_session

@@ -1,0 +1,613 @@
+{
+  "nav": {
+    "overview": "Resumen",
+    "activity": "Actividad",
+    "traffic": "Traffic Events",
+    "policies": "Políticas",
+    "stats": "Estadísticas",
+    "identity": "Identidad",
+    "diagnostics": "Diagnóstico",
+    "settings": "Ajustes"
+  },
+  "updateBanner": {
+    "message": "Hay una versión más reciente de Nexus Agent disponible. Instálela para mantener al día las políticas y correcciones.",
+    "install": "Instalar",
+    "dismiss": "Recordar mañana"
+  },
+  "policies": {
+    "title": "Políticas",
+    "subtitle": "Configuración que su administrador envió a este dispositivo — qué se intercepta, qué hooks se ejecutan, qué está exento y el estado de sincronización.",
+    "loading": "Cargando…",
+    "empty": "El administrador aún no ha enviado ningún {{section}}.",
+    "refresh": {
+      "action": "Refrescar ahora",
+      "refreshing": "Refrescando…",
+      "failed": "Refresco fallido: {{error}}"
+    },
+    "breadcrumb": {
+      "root": "Políticas"
+    },
+    "viewAll": "Ver todo ({{n}}) →",
+    "notFound": "Elemento no encontrado en la instantánea actual. Puede que el administrador lo haya eliminado.",
+    "noMatch": "Ningún elemento coincide con su búsqueda.",
+    "toolbar": {
+      "count": "{{shown}} mostrados · {{filtered}} de {{total}}"
+    },
+    "paginator": {
+      "info": "Página {{page}} de {{total}}",
+      "prev": "Anterior",
+      "next": "Siguiente"
+    },
+    "detail": {
+      "attributes": "Atributos"
+    },
+    "hero": {
+      "inSync": "Configuración sincronizada",
+      "inSyncMeta": "Políticas aplicadas, último reporte: {{at}}.",
+      "drifted": "Desincronizado del administrador",
+      "driftedMeta": "{{behind}} versión(es) por detrás. El agente se pondrá al día en la próxima sincronización.",
+      "killSwitchEngaged": "Kill switch activado",
+      "killSwitchMeta": "La interceptación está pausada por el administrador. Motivo: {{reason}}.",
+      "diagActive": "Modo de diagnóstico activo",
+      "diagActiveMeta": "Telemetría detallada hasta {{until}}.",
+      "desired": "objetivo"
+    },
+    "kpi": {
+      "domains": "Dominios",
+      "hooks": "Hooks",
+      "exemptions": "Exenciones",
+      "rulePacks": "Paquetes",
+      "killSwitch": "Kill switch",
+      "diagMode": "Modo diag.",
+      "on": "ON",
+      "off": "OFF"
+    },
+    "columns": {
+      "enforcement": "Aplicación",
+      "deviceControls": "Controles del dispositivo"
+    },
+    "section": {
+      "count": "{{count}} elemento{{s}}"
+    },
+    "sync": {
+      "title": "Estado de sincronización",
+      "desired": "Versión objetivo",
+      "reported": "Versión reportada",
+      "inSync": "Sincronizado",
+      "drifted": "Desincronizado ({{behind}} versión(es) por detrás)",
+      "lastReportedAt": "Último reporte"
+    },
+    "interceptionDomains": {
+      "title": "Dominios interceptados",
+      "subtitle": "Patrones de host que este Agent inspecciona.",
+      "empty": "No se han enviado dominios.",
+      "searchPlaceholder": "Buscar por patrón, nombre o adaptador…",
+      "cols": {
+        "name": "Nombre",
+        "pattern": "Patrón",
+        "matchType": "Coincidencia",
+        "priority": "Prioridad",
+        "defaultAction": "Acción por defecto",
+        "action": "Acción",
+        "status": "Estado",
+        "enabled": "activo",
+        "disabled": "inactivo"
+      },
+      "detail": {
+        "adapter": "Adaptador",
+        "onAdapterError": "Error de adaptador",
+        "networkZone": "Zona de red",
+        "paths": "Anulaciones por ruta",
+        "pathPattern": "Patrón de ruta",
+        "noPaths": "Sin anulaciones por ruta — toda solicitud usa la acción por defecto de arriba."
+      }
+    },
+    "hooks": {
+      "title": "Hooks activos",
+      "subtitle": "Hooks de cumplimiento evaluados contra el tráfico interceptado, en orden de prioridad.",
+      "empty": "No hay hooks configurados.",
+      "searchPlaceholder": "Buscar por nombre, implementación o etapa…",
+      "cols": {
+        "priority": "Prioridad",
+        "name": "Nombre",
+        "stage": "Etapa",
+        "implementation": "Implementación",
+        "failBehavior": "Al fallar",
+        "status": "Estado",
+        "enabled": "activo",
+        "disabled": "inactivo"
+      },
+      "detail": {
+        "timeout": "Timeout",
+        "applicableIngress": "Aplica a",
+        "config": "Configuración del hook",
+        "noConfig": "Sin configuración personalizada; el hook usa los valores por defecto de su implementación."
+      },
+      "pipeline": {
+        "title": "Vista general del pipeline",
+        "summary": "{{enabled}}/{{total}} activos en {{stages}} etapas — clic para expandir",
+        "empty": "No hay hooks configurados.",
+        "stageCount": "{{count}} hooks"
+      }
+    },
+    "exemptions": {
+      "title": "Exenciones",
+      "subtitle": "Hosts o usuarios con permiso para omitir uno o más hooks.",
+      "empty": "No se han concedido exenciones.",
+      "searchPlaceholder": "Buscar por host, usuario o motivo…",
+      "cols": {
+        "hostUser": "Host / Usuario",
+        "reason": "Motivo"
+      }
+    },
+    "deviceDefaults": {
+      "title": "Valores predeterminados",
+      "subtitle": "Configuración que el administrador definió.",
+      "empty": "Usando los valores predeterminados.",
+      "quitAllowed": "Salida permitida",
+      "heartbeat": "Heartbeat",
+      "auditDrain": "Subida de auditoría",
+      "configSync": "Sincronización de config",
+      "auditBatch": "Lote de auditoría",
+      "shutdownWarning": "Aviso de cierre",
+      "autoUpdate": "Auto-actualización",
+      "logLevel": "Nivel de log",
+      "seconds": "{{value}} s",
+      "rows": "{{value}} filas",
+      "enabled": "Activado",
+      "disabled": "Desactivado"
+    },
+    "killSwitch": {
+      "title": "Kill Switch",
+      "subtitle": "Apagado de emergencia que el administrador puede activar desde la CP UI.",
+      "status": "Estado",
+      "engaged": "Activado",
+      "disengaged": "Desactivado",
+      "reason": "Motivo"
+    },
+    "quicFallback": {
+      "title": "Bundles de respaldo QUIC",
+      "desc": "IDs de bundle de navegadores y apps Electron cuyos flujos UDP se cierran para que caigan de HTTP/3 (QUIC) a HTTP/2 — necesario para que la ruta TLS-bump del agente inspeccione su tráfico. El administrador gestiona la lista en el Control Plane.",
+      "empty": "No hay bundles configurados — el agente no cierra ningún flujo UDP."
+    },
+    "rulePacks": {
+      "title": "Paquetes de reglas",
+      "subtitle": "Paquetes de reglas de cumplimiento instalados en sus hooks.",
+      "empty": "No hay paquetes instalados.",
+      "searchPlaceholder": "Buscar por nombre, mantenedor o hook…",
+      "cols": {
+        "name": "Nombre",
+        "version": "Versión",
+        "maintainer": "Mantenedor",
+        "boundHook": "Hook vinculado",
+        "rules": "Reglas",
+        "status": "Estado",
+        "enabled": "activo",
+        "disabled": "inactivo"
+      },
+      "detail": {
+        "packId": "ID de paquete",
+        "installedAt": "Instalado",
+        "installId": "ID de instalación",
+        "rules": "Reglas",
+        "noRules": "Este paquete no incluye reglas.",
+        "ruleCols": {
+          "ruleId": "ID de regla",
+          "category": "Categoría",
+          "severity": "Severidad",
+          "pattern": "Patrón",
+          "description": "Descripción"
+        }
+      }
+    },
+    "deviceGroup": {
+      "title": "Grupo de dispositivos",
+      "subtitle": "Grupo de flota al que está asignado este dispositivo.",
+      "empty": "No asignado a ningún grupo.",
+      "id": "ID",
+      "name": "Nombre"
+    },
+    "diagMode": {
+      "title": "Modo de diagnóstico",
+      "subtitle": "Ventana de diagnóstico detallado.",
+      "active": "Activo hasta {{until}}",
+      "inactive": "No activo.",
+      "until": "Activo hasta"
+    }
+  },
+  "traffic": {
+    "title": "Traffic Events",
+    "subtitle": "Conexiones de red salientes interceptadas por el Agent en este dispositivo — proceso, host/IP, acción y latencia. Los datos se leen del registro local y nunca salen de esta máquina.",
+    "loading": "Cargando…",
+    "empty": "Aún no se ha capturado tráfico.",
+    "emptyAi": "Aún no se ha capturado tráfico IA.",
+    "searchPlaceholder": "Buscar por host, IP o proceso…",
+    "aiOnly": "Solo IA",
+    "pageSize": "Filas por página",
+    "previous": "Anterior",
+    "next": "Siguiente",
+    "pageInfo": "{{from}}–{{to}} de {{total}}",
+    "filter": {
+      "label": "Mostrar",
+      "all": "Todo",
+      "ai": "Solo IA",
+      "blocked": "Solo bloqueado",
+      "processed": "Solo procesado"
+    },
+    "refresh": {
+      "label": "Auto-refrescar",
+      "tooltip": "Re-consultar la página automáticamente con la misma búsqueda y filtro. Elija Apagado para congelar la vista.",
+      "off": "Apagado",
+      "5s": "Cada 5 s",
+      "15s": "Cada 15 s",
+      "30s": "Cada 30 s",
+      "1m": "Cada 1 min",
+      "5m": "Cada 5 min"
+    },
+    "col": {
+      "time": "Hora",
+      "app": "App",
+      "site": "Sitio",
+      "process": "Proceso",
+      "target": "Destino",
+      "provider": "Proveedor",
+      "model": "Modelo",
+      "tokens": "Tokens (prompt+respuesta)",
+      "latency": "Latencia",
+      "action": "Acción",
+      "status": "Estado",
+      "tags": "Etiquetas",
+      "compliance": "Hook"
+    },
+    "detail": {
+      "title": "Detalles del evento",
+      "close": "Cerrar",
+      "fieldId": "Evento",
+      "fieldProcess": "Proceso",
+      "fieldTarget": "Destino",
+      "fieldStatus": "Estado",
+      "hooksTitle": "Pipeline de Hooks",
+      "hookId": "Hook",
+      "hookStage": "Etapa",
+      "hookDecision": "Decisión",
+      "hookLatency": "Latencia",
+      "hooksEmpty": "Ningún hook se ejecutó para este evento.",
+      "hooksParseError": "El payload del pipeline de hooks no es analizable.",
+      "waterfall": {
+        "title": "Desglose por fase"
+      }
+    },
+    "waterfall": {
+      "reqHooks": "Hooks de petición",
+      "ourOther": "Nuestro overhead",
+      "upstreamTtfb": "TTFB Upstream",
+      "upstreamBody": "Cuerpo Upstream",
+      "respHooks": "Hooks de respuesta",
+      "noData": "No hay datos de fases para este evento."
+    },
+    "since": {
+      "label": "Rango de tiempo",
+      "1h": "Última hora",
+      "24h": "Últimas 24 horas",
+      "7d": "Últimos 7 días",
+      "30d": "Últimos 30 días",
+      "all": "Todo el tiempo"
+    }
+  },
+  "agentNotRunning": {
+    "title": "Nexus Agent no está en ejecución",
+    "body": "El Dashboard no pudo conectar con el Agent local. Asegúrese de que el servicio Nexus Agent esté iniciado y vuelva a intentarlo.",
+    "retry": "Reintentar conexión",
+    "troubleshootHint": "Si el Agent sigue detenido, launchd puede haberlo descargado. Desde la Terminal puede reiniciarlo (requiere contraseña de administrador):",
+    "troubleshootCommand": "sudo launchctl kickstart system/com.nexus-gateway.agent",
+    "copyCommand": "Copiar comando",
+    "copyCommandSuccess": "Copiado"
+  },
+  "overview": {
+    "title": "Resumen",
+    "subtitle": "Estado en vivo de su dispositivo.",
+    "today": "Hoy",
+    "todayHeader": "Protección de hoy",
+    "inspected": "Inspeccionado",
+    "passthrough": "Paso directo",
+    "denied": "Denegado",
+    "recentActivity": "Actividad reciente",
+    "recentTopN": "Últimos {{n}}",
+    "col": {
+      "time": "Hora",
+      "process": "Proceso",
+      "dest": "Destino",
+      "action": "Acción"
+    },
+    "hero": {
+      "activeTitle": "Protegiendo este dispositivo",
+      "activeMeta": "El Agent {{device}} está activo y aplicando la política más reciente.",
+      "pausedTitle": "Protección pausada",
+      "pausedUntil": "Se reanudará el {{until}}.",
+      "pausedIndefinite": "Pausa indefinida — reanude desde el menú cuando esté listo.",
+      "errorTitle": "Agent no funcional",
+      "errorMeta": "{{reason}}",
+      "degradedTitle": "Funcionalidad reducida",
+      "degradedMeta": "{{reason}}",
+      "updateTitle": "Actualización disponible",
+      "updateMeta": "Instale la nueva versión para mantenerse al día con políticas y correcciones.",
+      "noSso": "Sin sesión",
+      "identity": "Identidad",
+      "version": "Versión"
+    },
+    "tile": {
+      "hub": "Hub",
+      "heartbeat": "Heartbeat",
+      "queue": "Cola auditoría",
+      "cert": "Cert.",
+      "update": "Actualización",
+      "connected": "Conectado",
+      "disconnected": "Desconectado",
+      "available": "Disponible",
+      "current": "Al día",
+      "certDays": "{{days}}d restantes",
+      "latency": "Latencia"
+    },
+    "age": {
+      "justNow": "ahora mismo",
+      "minutes": "hace {{n}} min",
+      "hours": "hace {{n}} h",
+      "days": "hace {{n}} d"
+    }
+  },
+  "activity": {
+    "title": "Actividad",
+    "subtitle": "Eventos de ciclo de vida del Agent en este dispositivo — cuándo se inició, se pausó, inició sesión o se cerró.",
+    "empty": "Aún no hay eventos de ciclo de vida.",
+    "col": {
+      "time": "Hora",
+      "action": "Evento",
+      "details": "Detalles"
+    },
+    "action": {
+      "agentStartup": "Iniciado",
+      "agentShutdown": "Cerrado",
+      "agentPaused": "Pausado",
+      "agentResumed": "Reanudado",
+      "agentSsoLogin": "Sesión iniciada",
+      "agentSsoLogout": "Sesión cerrada"
+    }
+  },
+  "stats": {
+    "title": "Estadísticas",
+    "subtitle": "Resumen local del tráfico de este dispositivo, calculado a partir del registro de auditoría. Nunca sale de esta máquina.",
+    "loading": "Cargando agregaciones…",
+    "range": "Rango",
+    "range1h": "Última hora",
+    "range6h": "Últimas 6 horas",
+    "range24h": "Últimas 24 horas",
+    "range7d": "Últimos 7 días",
+    "range30d": "Últimos 30 días",
+    "granulePrefix": "Granularidad",
+    "cohort": {
+      "label": "Cohorte",
+      "all": "Todos los flujos",
+      "ai": "Solo IA"
+    },
+    "trendTitle": "Solicitudes en el tiempo",
+    "breakdownTitle": "Top por",
+    "breakdownDimension": "Dimensión",
+    "breakdownEmpty": "Sin datos para este desglose en la ventana.",
+    "requestsColumn": "Solicitudes",
+    "kpi": {
+      "requests": "Solicitudes",
+      "successRate": "Tasa de éxito",
+      "avgLatency": "Latencia media",
+      "avgUs": "Promedio Nosotros",
+      "avgUpstream": "Promedio Upstream",
+      "bytesIn": "Bytes recibidos",
+      "bytesOut": "Bytes enviados",
+      "inspectRate": "Tasa de inspección",
+      "hookAllowRate": "Tasa de permiso de hook",
+      "bumpSuccessRate": "Tasa de éxito de TLS Bump",
+      "naLabel": "n/a",
+      "naWhy": "¿Por qué?",
+      "emptyHint": {
+        "successRate": "Sin flujos en esta ventana — la tasa de éxito se calcula cuando llegue cualquier petición.",
+        "avgUs": "Sin muestras de overhead del agente — se calcula cuando cualquier flujo complete la pipeline local.",
+        "avgUpstream": "Sin muestras de duración upstream — proviene de flujos inspect que completaron el relay upstream.",
+        "inspectRate": "Sin flujos aún — la mezcla inspect/passthrough/deny requiere al menos una decisión.",
+        "hookAllowRate": "Sin decisiones de hook — requiere al menos un flujo que ejecute la pipeline de cumplimiento.",
+        "bumpSuccessRate": "Sin eventos de bump — requiere al menos un flujo inspect con un handshake TLS."
+      }
+    },
+    "dim": {
+      "target_host": "Host destino",
+      "source_process": "Proceso origen",
+      "action": "Acción"
+    },
+    "trendMetric": "Métrica de tendencia",
+    "metric": {
+      "requests": "Solicitudes",
+      "our": "Nuestro overhead",
+      "upstream": "Upstream"
+    },
+    "col": {
+      "avgUs": "Prom. nuestro (ms)",
+      "avgUpstream": "Prom. upstream (ms)"
+    }
+  },
+  "identity": {
+    "title": "Identidad",
+    "subtitle": "Cómo está registrado este dispositivo en el Gateway.",
+    "deviceID": "ID de dispositivo",
+    "trustLevel": "Nivel de confianza",
+    "ssoEmail": "Sesión iniciada como",
+    "certExpiresAt": "El certificado caduca el",
+    "deviceAuthMode": "Modo de autenticación",
+    "user": {
+      "displayName": "Nombre",
+      "email": "Correo",
+      "status": "Estado de cuenta"
+    },
+    "org": {
+      "title": "Organización",
+      "subtitle": "Su organización dentro de la jerarquía de la empresa.",
+      "name": "Nombre",
+      "code": "Código",
+      "timezone": "Zona horaria",
+      "description": "Descripción",
+      "hierarchyAria": "Jerarquía de la organización"
+    }
+  },
+  "diagnostics": {
+    "title": "Diagnóstico",
+    "subtitle": "Herramientas para inspeccionar la conexión del Agent con el Gateway.",
+    "hubReachable": "Gateway accesible",
+    "logTail": "Últimas líneas de registro",
+    "certPath": "Archivo de certificado",
+    "interceptionMode": {
+      "label": "Modo de interceptación",
+      "fallbackWarning": "El controlador del kernel WinDivert no se cargó; usando el modo de respaldo de proxy del sistema. Algunas aplicaciones que ignoran el proxy del sistema pueden eludir el filtrado. Contacte con soporte."
+    },
+    "actions": {
+      "title": "Acciones de recuperación",
+      "subtitle": "Use estas opciones solo al diagnosticar problemas. El daemon sigue en ejecución en una instalación normal."
+    },
+    "restartDaemon": {
+      "button": "Reiniciar daemon",
+      "confirm": "¿Reiniciar el daemon de Nexus Agent? La supervisión del tráfico se pausará durante ~10 segundos mientras launchd lo vuelve a iniciar.",
+      "inflight": "Reiniciando daemon…",
+      "success": "Reinicio del daemon solicitado. Estará disponible en ~10 segundos.",
+      "blocked": "Reinicio bloqueado: {{error}}",
+      "failed": "Reinicio fallido: {{error}}"
+    },
+    "copyBundle": {
+      "button": "Copiar paquete de soporte",
+      "success": "Paquete de soporte ({{size}} caracteres) copiado al portapapeles.",
+      "failed": "No se pudo copiar al portapapeles."
+    },
+    "copyLogPath": {
+      "button": "Copiar ruta del log",
+      "success": "Ruta del log copiada. Péguela en Finder o en la Terminal.",
+      "failed": "No se pudo copiar al portapapeles."
+    }
+  },
+  "settings": {
+    "title": "Ajustes",
+    "subtitle": "Preferencias por dispositivo.",
+    "accountTitle": "Cuenta",
+    "accountSubtitle": "Cómo está registrado este dispositivo en el Gateway.",
+    "groupAccount": "Cuenta",
+    "groupPreferences": "Preferencias",
+    "groupProtection": "Protección",
+    "groupDanger": "Zona peligrosa",
+    "aboutConnected": "Conectado",
+    "aboutDisconnected": "Desconectado",
+    "aboutTitle": "Acerca de",
+    "aboutVersion": "Versión",
+    "aboutDeviceID": "ID de dispositivo",
+    "aboutGateway": "Gateway",
+    "pause": "Pausar protección",
+    "resume": "Reanudar protección",
+    "pausedUntil": "Se reanudará a las {{time}}",
+    "pauseDuration": {
+      "15min": "15 minutos",
+      "1hour": "1 hora",
+      "8hours": "8 horas",
+      "indefinite": "Hasta que yo lo reanude"
+    },
+    "themeTitle": "Tema",
+    "themeDesc": "Elija la apariencia clara u oscura del Dashboard.",
+    "themeLight": "Claro",
+    "themeDark": "Oscuro",
+    "themeSystem": "Sistema",
+    "languageTitle": "Idioma",
+    "languageDesc": "Cambia el idioma de la interfaz.",
+    "signOutTitle": "Cerrar sesión",
+    "signOutDesc": "Cierra la sesión de esta cuenta en este dispositivo. El Agent se desregistrará; el próximo inicio le pedirá volver a autenticarse.",
+    "signOutAction": "Cerrar sesión",
+    "signOutConfirmTitle": "¿Cerrar sesión?",
+    "signOutConfirmBody": "Esta máquina borrará las credenciales de inscripción y el estado de sesión. La supervisión de tráfico se detendrá hasta que vuelva a iniciar sesión.",
+    "signOutConfirmCancel": "Cancelar",
+    "signOutConfirmAction": "Cerrar sesión",
+    "signOutInProgress": "Cerrando sesión…",
+    "signOutFailed": "Error al cerrar sesión: {{error}}",
+    "updates": {
+      "title": "Actualizaciones de software",
+      "desc": "Compruebe si hay una versión más reciente del Nexus Agent disponible en su gateway. El comportamiento de actualización automática lo controla el administrador (vea Políticas → Valores predeterminados).",
+      "checkNow": "Comprobar ahora",
+      "upToDate": "Está en la versión más reciente.",
+      "foundNew": "Actualización disponible: {{version}}. El agent la instalará en la próxima ventana de inactividad."
+    }
+  },
+  "onboarding": {
+    "welcomeTitle": "Bienvenido a Nexus Agent",
+    "welcomeSubtitle": "Su dispositivo debe inscribirse en el gateway corporativo antes de que comience la protección.",
+    "ssoTitle": "Inicia sesión con el SSO de tu empresa",
+    "ssoBody": "Abriremos el navegador para que inicie sesión. El dispositivo se registrará automáticamente.",
+    "tokenTitle": "Pega tu token de inscripción",
+    "tokenBody": "Pide a tu administrador de TI un token de inscripción de un solo uso y pégalo abajo.",
+    "tokenPlaceholder": "Token de inscripción",
+    "tokenSubmit": "Inscribirse",
+    "tokenRunning": "Inscribiendo — esto tarda unos segundos…",
+    "tokenSuccess": "Inscrito — reiniciando el Agent",
+    "tokenFailure": "Error de inscripción",
+    "discoveringTitle": "Contactando con el gateway…",
+    "discoveringHint": "Buscando cómo debe iniciar sesión este dispositivo. Normalmente termina en unos segundos.",
+    "errorUnknown": "Error desconocido"
+  },
+  "reconnecting": {
+    "title": "Finalizando configuración",
+    "body": "El agente se está reiniciando con tu nuevo certificado de dispositivo. Normalmente tarda unos segundos."
+  },
+  "normalized": {
+    "tabs": {
+      "normalized": "Normalizado",
+      "raw": "Sin procesar"
+    },
+    "tier": {
+      "tier1": "Tier 1",
+      "tier2": "Tier 2",
+      "hint": "Qué normalizador procesó esta fila: Tier 1 = análisis preciso por host; Tier 2 = sondeo de patrones multi-spec; sin distintivo = Tier 3 textual."
+    },
+    "modelLabel": "Modelo",
+    "finishReason": "Razón de cierre",
+    "role": {
+      "system": "Sistema",
+      "user": "Usuario",
+      "assistant": "Asistente",
+      "tool": "Herramienta"
+    },
+    "usage": {
+      "prompt": "Prompt",
+      "completion": "Compleción",
+      "total": "Total",
+      "cacheRead": "Lectura caché",
+      "cacheCreate": "Escritura caché"
+    },
+    "banner": {
+      "failedTitle": "Falló la normalización para esta dirección.",
+      "failedHint": "Cambia a la pestaña Sin procesar para ver los bytes originales.",
+      "partialTitle": "Normalización parcial — algunos campos pueden faltar.",
+      "empty": "Sin payload normalizado para esta dirección.",
+      "unsupported": "Tipo no soportado. Cambia a Sin procesar para inspeccionar."
+    },
+    "dropped": {
+      "title": "Contenido descartado según la política de almacenamiento.",
+      "hint": "El operador configuró storageAction=drop-content para el hook que coincidió. El registro de auditoría conserva solo la decisión y los metadatos.",
+      "ruleIds": "Reglas que dispararon"
+    },
+    "binary": {
+      "title": "Contenido binario",
+      "size": "Tamaño",
+      "contentType": "Tipo de contenido",
+      "metadataOnly": "Solo metadatos (sin captura de bytes)."
+    },
+    "embedding": {
+      "inputsLabel": "Entradas de embedding",
+      "binaryInputNotStored": "Entrada de array de tokens binarios — no almacenada según la política de auditoría.",
+      "vectorsNotStored": "Los vectores de embedding no se almacenan según la política de auditoría.",
+      "noInputs": "No se capturaron entradas."
+    }
+  },
+  "trafficDetail": {
+    "tabRaw": "Sin procesar",
+    "tabNormalized": "Normalizado"
+  }
+}

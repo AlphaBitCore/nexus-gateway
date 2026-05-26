@@ -1,0 +1,58 @@
+{
+  "name": "nexus-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise AI Traffic Gateway - compliance, routing, caching, and analytics",
+  "workspaces": [
+    "packages/*",
+    "packages/agent/ui/frontend",
+    "tools/db-migrate"
+  ],
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
+    "db:migrate": "cd tools/db-migrate && npx prisma migrate dev",
+    "dev:control-plane-ui": "npm run dev --workspace=packages/control-plane-ui",
+    "dev": "npm run dev:control-plane-ui",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "check:i18n": "node scripts/check-i18n-parity.mjs",
+    "check:design-tokens": "node scripts/check-design-tokens.mjs",
+    "check:design-tokens:hints": "node scripts/check-design-tokens.mjs --fix-suggest",
+    "check:theme-completeness": "node scripts/check-theme-completeness.mjs",
+    "check:brand-strings": "node scripts/check-brand-strings.mjs",
+    "check:effect-tokens": "node scripts/check-effect-tokens.mjs",
+    "check:tz": "bash scripts/check-timezone-correctness.sh",
+    "check:terminology": "bash scripts/check-terminology.sh",
+    "check:json-dupkeys": "node scripts/check-json-dupkeys.mjs",
+    "check:arch-doc-triggers": "node scripts/check-arch-doc-triggers.mjs",
+    "check:e86-matrix": "node scripts/check-e86-matrix-refs.mjs",
+    "check:doc-lockstep": "node scripts/check-doc-lockstep.mjs",
+    "check:doc-lockstep:staged": "node scripts/check-doc-lockstep.mjs --staged",
+    "check:migration-timestamps": "bash scripts/check-migration-timestamps.sh",
+    "check:useapi-querykey": "node scripts/check-useapi-querykey.mjs",
+    "check:useapi-querykey:strict": "node scripts/check-useapi-querykey.mjs --strict",
+    "check:no-redis-pubsub": "node scripts/check-no-redis-pubsub.mjs",
+    "check:no-redis-pubsub:strict": "node scripts/check-no-redis-pubsub.mjs --strict",
+    "check:ui-shared-boundary": "node scripts/check-ui-shared-boundary.mjs",
+    "check:ui-shared-boundary:strict": "node scripts/check-ui-shared-boundary.mjs --strict",
+    "check:sidebar-icon-mapping": "node scripts/check-sidebar-icon-mapping.mjs",
+    "check:sidebar-icon-mapping:strict": "node scripts/check-sidebar-icon-mapping.mjs --strict",
+    "check:workspace-replace": "node scripts/check-workspace-replace.mjs",
+    "check:jobs-catalogue": "bash scripts/check-jobs-catalogue.sh",
+    "check:no-prod-todos": "node scripts/check-no-prod-todos.mjs",
+    "check:no-prod-todos:strict": "node scripts/check-no-prod-todos.mjs --strict",
+    "check:no-yaml-secrets": "node scripts/check-no-yaml-secrets.mjs",
+    "check:no-yaml-secrets:strict": "node scripts/check-no-yaml-secrets.mjs --strict",
+    "check:coverage": "bash scripts/check-go-coverage.sh",
+    "check:coverage:strict": "bash scripts/check-go-coverage.sh --strict-allowlist",
+    "check:all": "npm-run-all -p check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:arch-doc-triggers check:e86-matrix check:doc-lockstep check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:no-yaml-secrets check:coverage || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "jsdom": "^29.1.1"
+  }
+}

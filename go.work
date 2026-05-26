@@ -1,0 +1,12 @@
+go 1.25.0
+
+use (
+	./packages/agent
+	./packages/agent/ui
+	./packages/ai-gateway
+	./packages/compliance-proxy
+	./packages/control-plane
+	./packages/nexus-hub
+	./packages/shared
+	./tests/integration-go
+)

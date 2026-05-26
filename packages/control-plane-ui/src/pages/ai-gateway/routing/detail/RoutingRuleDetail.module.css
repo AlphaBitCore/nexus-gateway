@@ -1,0 +1,553 @@
+/* ── KV grid ────────────────────────────────────────────────────── */
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 4px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+/* ── Back button ────────────────────────────────────────────────── */
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+  margin-bottom: var(--g-space-4);
+}
+
+.backBtn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ── Action / danger / primary buttons ──────────────────────────── */
+
+.actionBtn {
+  padding: 0 16px;
+  height: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  box-shadow: var(--shadow-xs);
+  font-weight: 500;
+  font-size: var(--g-font-size-sm);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+  background: transparent;
+  color: var(--color-text);
+}
+
+.actionBtn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dangerBtn {
+  composes: actionBtn;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.dangerBtn:hover {
+  background: var(--color-danger);
+  color: var(--g-gray-50);
+}
+
+.primaryBtn {
+  padding: 0 16px;
+  height: 36px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: none;
+  border-radius: var(--g-radius-md);
+  box-shadow: var(--shadow-xs);
+  font-weight: 500;
+  font-size: var(--g-font-size-sm);
+  cursor: pointer;
+  transition: background var(--g-transition-fast);
+}
+
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.primaryBtnSaving {
+  cursor: wait;
+}
+
+/* ── Edit sections ──────────────────────────────────────────────── */
+
+.editSection {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-6);
+  margin-bottom: var(--g-space-4);
+}
+
+.editSectionTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: var(--g-space-4);
+}
+
+/* ── Row / input / select ───────────────────────────────────────── */
+
+.row {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+  margin-bottom: var(--g-space-2);
+}
+
+.nativeInput {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+}
+
+.nativeSelect {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+/* ── Small / remove buttons ─────────────────────────────────────── */
+
+.smallBtn {
+  padding: 4px 12px;
+  font-size: var(--g-font-size-xs);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+}
+
+.removeBtn {
+  composes: smallBtn;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* ── Tag chips ──────────────────────────────────────────────────── */
+
+.tagContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  min-height: 40px;
+  align-items: center;
+  cursor: text;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-radius: 12px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+}
+
+.tagRemove {
+  background: none;
+  border: none;
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+/* ── Warning callout (fallback strategy) ─────────────────────────── */
+
+.warningCallout {
+  margin-top: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-warning-light);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ── Muted label ─────────────────────────────────────────────────── */
+
+.mutedLabel {
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+/* ── Config table ────────────────────────────────────────────────── */
+
+.configTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.configTableHeader {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid var(--color-border);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.configTableCell {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--g-font-size-sm);
+}
+
+/* ── Pre / code blocks ───────────────────────────────────────────── */
+
+.codeBlock {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  overflow: auto;
+  background: var(--color-muted);
+  border-radius: var(--g-radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.codeBlockScrollable {
+  composes: codeBlock;
+  max-height: 420px;
+}
+
+.systemPromptPre {
+  composes: codeBlock;
+  margin: 8px 0 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Widget title ────────────────────────────────────────────────── */
+
+.widgetTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--g-space-4) 0;
+}
+
+.widgetSubtitle {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* ── Textarea for policy fields ──────────────────────────────────── */
+
+.policyTextarea {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  font-family: var(--g-font-mono);
+  font-size: 12px;
+}
+
+/* ── Smart routing system prompt textarea ────────────────────────── */
+
+.smartPromptTextarea {
+  width: 100%;
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  padding: var(--g-space-2);
+  border-radius: var(--g-radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  resize: vertical;
+}
+
+/* ── Strategy label row (with required asterisk) ─────────────────── */
+
+.strategyLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+/* ── Inline-style replacements ─────────────────────────────────── */
+
+/* Inline help "?" button (repeated pattern) */
+.helpBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+/* Horizontal row for a label + optional help icon */
+.kvLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+/* kvLabel without its default bottom margin (used inside kvLabelRow) */
+.kvLabelInline {
+  composes: kvLabel;
+  margin-bottom: 0;
+}
+
+/* editSectionTitle without bottom margin (used beside help icon) */
+.editSectionTitleInline {
+  composes: editSectionTitle;
+  margin-bottom: 0;
+}
+
+/* Form field label (policy / smart routing) */
+.fieldLabel {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--color-text);
+  display: block;
+  margin-bottom: 6px;
+}
+
+/* Required-field asterisk */
+.requiredAsterisk {
+  color: var(--color-danger);
+  margin-left: 2px;
+}
+
+/* Inline "Enabled" text next to the switch */
+.enabledLabel {
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+/* Spacing wrapper for section title + help icon row */
+.sectionTitleRow {
+  margin-bottom: var(--g-space-4);
+}
+
+/* Entry-list header row (Provider / Model / Weight columns) */
+.entryRowHeader {
+  composes: row;
+  margin-bottom: var(--g-space-1);
+  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* Compact row (tighter bottom margin) */
+.rowCompact {
+  composes: row;
+  margin-bottom: var(--g-space-1);
+}
+
+/* Flex utilities */
+.flexGrow1 {
+  flex: 1;
+}
+
+.flexGrow2 {
+  flex: 2;
+}
+
+.fixedWidth80 {
+  width: 80px;
+  flex: none;
+}
+
+.fixedWidth70 {
+  width: 70px;
+  flex: none;
+}
+
+/* "No items" placeholder text */
+.emptyMessage {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  margin-bottom: var(--g-space-2);
+}
+
+/* Fallback chain index number (view mode) */
+.fallbackIndex {
+  color: var(--color-text-muted);
+  width: 20px;
+  text-align: right;
+}
+
+/* Fallback chain index number (edit mode — wider) */
+.fallbackIndexEdit {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Fallback chain entry label (view) */
+.fallbackViewLabel {
+  font-weight: 500;
+}
+
+/* Section block with standard top spacing (read-only sections) */
+.sectionBlock {
+  margin-top: var(--g-space-6);
+}
+
+/* Section header row (subtitle + help icon) */
+.sectionHeaderRow {
+  margin-bottom: var(--g-space-3);
+}
+
+/* Full-width grid span */
+.fullSpan {
+  grid-column: 1 / -1;
+}
+
+/* Tooltip paragraph (non-last) */
+.tooltipParagraph {
+  margin: 0 0 var(--g-space-2) 0;
+}
+
+/* Tooltip paragraph (last) */
+.tooltipParagraphLast {
+  margin: 0;
+}
+
+/* Badge offset for status row */
+.badgeOffset {
+  margin-top: 2px;
+}
+
+/* Overflow wrapper for tables */
+.overflowX {
+  overflow-x: auto;
+}
+
+/* Simulation description text */
+.simDescription {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--g-space-3);
+}
+
+/* Simulation input row */
+.simInputRow {
+  margin-bottom: var(--g-space-3);
+}
+
+/* Input + button on the same row inside the FormField.
+ * Putting the button here (rather than at Stack level) anchors it to the
+ * Input's vertical center, independent of label/helpText height. */
+.simInputGroup {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+}
+
+.simInputGroup > :first-child {
+  flex: 1;
+}
+
+/* Provider + model cascading selector wrapper */
+.providerModelRow {
+  display: flex;
+  gap: var(--g-space-2);
+}
+
+/* Tag container with bottom spacing */
+.tagContainerSpaced {
+  composes: tagContainer;
+  margin-bottom: 8px;
+}
+
+/* Visible tag container with bottom margin */
+.tagContainerVisible {
+  margin-bottom: 8px;
+  min-height: 40px;
+}
+
+/* Hidden tag container when no tags selected */
+.tagContainerHidden {
+  display: none;
+}
+
+/* Match conditions field group spacing */
+.matchFieldGroup {
+  margin-bottom: 20px;
+}
+
+/* Label row with small gap (used in match conditions, smart routing) */
+.labelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+/* Fallback chain view entry font size */
+.fallbackViewEntry {
+  font-size: var(--g-font-size-sm);
+}
+
+/* Disabled remove button */
+.removeBtnDisabled {
+  composes: removeBtn;
+  opacity: 0.4;
+}
+
+.strategyLabelRow {
+  margin-bottom: 4px;
+}
+
+.fieldLabelNoMargin {
+  margin-bottom: 0;
+}

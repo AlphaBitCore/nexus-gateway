@@ -1,0 +1,10 @@
+/* All @import rules must come first (PostCSS/CSSOM). @source / @custom-variant follow. */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@nexus-gateway/ui-shared/styles/prime-shadcn-tokens.css";
+
+@source "../../ui-shared/src/**/*.{tsx,ts}";
+@source "../**/*.{tsx,ts}";
+
+@custom-variant dark (&:is(.dark *));

@@ -1,0 +1,426 @@
+openapi: "3.1.0"
+info:
+  title: Nexus Control Plane — Traffic Signal Fields (E18)
+  description: |
+    Admin API deltas introduced by Epic 18 (Unified LLM Traffic Signal
+    Extraction). Documents the three new columns surfaced on traffic-event
+    responses (`apiKeyClass`, `apiKeyFingerprint`, `usageExtractionStatus`)
+    and the new filter / pivot options on the analytics surfaces.
+
+    This spec is additive only — existing fields and parameters of the
+    affected endpoints are unchanged. Production OpenAPI for the Control
+    Plane admin API composes this file with the canonical base spec.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane instance
+
+tags:
+  - name: Traffic Log
+    description: Traffic event list and detail
+  - name: Analytics
+    description: Aggregate analytics over traffic_event
+
+paths:
+  # ============================================================
+  # GET /api/admin/traffic
+  # ============================================================
+  /api/admin/traffic:
+    get:
+      tags: [Traffic Log]
+      operationId: adminListTrafficEvents
+      summary: List traffic events (with LLM signal filters)
+      description: |
+        Returns a paginated, filtered list of `traffic_event` rows written
+        by any data plane (`ai-gateway` / `compliance-proxy` / `agent`).
+
+        **E18 additions**
+        - Response items include `apiKeyClass`, `apiKeyFingerprint`,
+          `usageExtractionStatus`.
+        - Two new filter query params: `apiKeyFingerprint` and
+          `usageExtractionStatus`.
+        - `apiKeyFingerprint` is an 8-byte hex string (16 chars). Semantics
+          depend on `source`: for `ai-gateway` it is a **virtual-key**
+          fingerprint (`SHA256(vk)[:8]`); for `compliance-proxy` and
+          `agent` it is a **real upstream API key** fingerprint.
+      parameters:
+        - name: source
+          in: query
+          description: Data-plane domain filter. One of `vk` / `proxy` / `agent`. Empty = all.
+          schema: { type: string, enum: [vk, proxy, agent] }
+        - name: provider
+          in: query
+          schema: { type: string }
+        - name: modelUsed
+          in: query
+          schema: { type: string }
+        - name: entityId
+          in: query
+          schema: { type: string }
+        - name: orgId
+          in: query
+          schema: { type: string }
+        - name: hookDecision
+          in: query
+          schema: { type: string }
+        - name: statusCode
+          in: query
+          schema: { type: integer, minimum: 100, maximum: 599 }
+        - name: statusRange
+          in: query
+          schema: { type: string, enum: ["2xx", "3xx", "4xx", "5xx"] }
+        - name: startTime
+          in: query
+          schema: { type: string, format: date-time }
+        - name: endTime
+          in: query
+          schema: { type: string, format: date-time }
+        # --- E18 additions ---
+        - name: apiKeyFingerprint
+          in: query
+          description: |
+            Filter by 8-byte hex fingerprint (16 chars). Matches exactly against
+            `traffic_event.api_key_fingerprint`. Combine with `source` to
+            disambiguate VK vs real-key fingerprints.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{16}$"
+          example: "a1b2c3d4e5f60718"
+        - name: usageExtractionStatus
+          in: query
+          description: Filter by one of the enum values in `UsageExtractionStatus`.
+          schema:
+            $ref: "#/components/schemas/UsageExtractionStatus"
+        # --- pagination ---
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total, limit, offset]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TrafficEvent"
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+              example:
+                data:
+                  - id: "01H..."
+                    source: "compliance-proxy"
+                    timestamp: "2026-04-21T10:15:00Z"
+                    targetHost: "api.openai.com"
+                    path: "/v1/chat/completions"
+                    statusCode: 200
+                    providerName: "openai"
+                    modelName: "gpt-4o-mini"
+                    promptTokens: 120
+                    completionTokens: 340
+                    totalTokens: 460
+                    apiKeyClass: "sk-proj-"
+                    apiKeyFingerprint: "a1b2c3d4e5f60718"
+                    usageExtractionStatus: "streaming_estimated"
+                total: 1
+                limit: 50
+                offset: 0
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # ============================================================
+  # GET /api/admin/traffic/{id}
+  # ============================================================
+  /api/admin/traffic/{id}:
+    get:
+      tags: [Traffic Log]
+      operationId: adminGetTrafficEvent
+      summary: Get a single traffic event
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrafficEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ============================================================
+  # GET /api/admin/analytics/cost  (E18 pivot addition)
+  # ============================================================
+  /api/admin/analytics/cost:
+    get:
+      tags: [Analytics]
+      operationId: adminAnalyticsCost
+      summary: Aggregate cost by dimension (adds `apiKeyFingerprint` pivot)
+      description: |
+        Aggregates `traffic_event.estimated_cost_usd` by the requested
+        dimension. **E18 addition**: `groupBy=apiKeyFingerprint` returns
+        one row per `(source, api_key_fingerprint)` tuple — the tuple is
+        required to disambiguate VK fingerprints from real-key fingerprints
+        because the column is dual-semantic.
+      parameters:
+        - name: groupBy
+          in: query
+          required: false
+          description: |
+            Aggregation dimension. Unrecognized values fall back to `provider`.
+            `apiKeyFingerprint` is new in E18.
+          schema:
+            type: string
+            enum:
+              - provider
+              - model
+              - project
+              - organization
+              - user
+              - virtual_key
+              - host
+              - device
+              - apiKeyFingerprint
+        - name: startTime
+          in: query
+          schema: { type: string, format: date-time }
+        - name: endTime
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 1000 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      oneOf:
+                        - $ref: "#/components/schemas/CostGroupByGeneric"
+                        - $ref: "#/components/schemas/CostGroupByApiKey"
+                  total: { type: integer }
+              examples:
+                byApiKey:
+                  summary: groupBy=apiKeyFingerprint
+                  value:
+                    data:
+                      - source: "ai-gateway"
+                        apiKeyClass: "nvk_"
+                        apiKeyFingerprint: "7e2f91c3a8b40d55"
+                        totalCostUsd: 12.84
+                        totalTokens: 148_200
+                        requestCount: 412
+                      - source: "compliance-proxy"
+                        apiKeyClass: "sk-ant-"
+                        apiKeyFingerprint: "0a1c44de77b0c219"
+                        totalCostUsd: 3.40
+                        totalTokens: 41_750
+                        requestCount: 98
+                    total: 2
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  responses:
+    BadRequest:
+      description: Invalid query parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid session
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    # ============================================================
+    # Shared error envelope (matches existing Control Plane shape)
+    # ============================================================
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, code]
+          properties:
+            message: { type: string }
+            code: { type: string }
+            details: { type: string }
+
+    # ============================================================
+    # UsageExtractionStatus enum (shared across 3 data planes)
+    # ============================================================
+    UsageExtractionStatus:
+      type: string
+      description: |
+        How the token counts on this row were obtained. Defined in
+        `packages/shared/traffic.UsageStatus`.
+
+        | Value | Meaning |
+        |-------|---------|
+        | `ok` | Non-streaming response with a fully parsed usage block. |
+        | `streaming_reported` | Streaming response where the provider emitted a terminal usage frame (Anthropic, Gemini, OpenAI with `stream_options.include_usage`). |
+        | `streaming_estimated` | Streaming response without provider-reported usage; counts produced by the shared tokenizer (Tier 2). |
+        | `streaming_unavailable` | Streaming response; neither provider nor tokenizer could yield counts (including >10MB bypass in Agent MITM). |
+        | `parse_failed` | AI-shaped response whose body could not be parsed. |
+        | `no_body` | Response had no inspectable body (e.g. HEAD, 204). |
+        | `non_llm` | Traffic did not match any AI-provider adapter. |
+      enum:
+        - ok
+        - streaming_reported
+        - streaming_estimated
+        - streaming_unavailable
+        - parse_failed
+        - no_body
+        - non_llm
+
+    # ============================================================
+    # TrafficEvent — E18 delta over existing shape
+    # ============================================================
+    TrafficEvent:
+      type: object
+      description: |
+        One row of the unified `traffic_event` table. Only the fields this
+        spec introduces or touches are documented here; the full shape lives
+        in the canonical Control Plane admin spec.
+      required: [id, source, timestamp]
+      properties:
+        id: { type: string }
+        source:
+          type: string
+          description: Writer binary. Determines the semantic of `apiKeyFingerprint`.
+          enum: [ai-gateway, compliance-proxy, agent]
+        timestamp: { type: string, format: date-time }
+        targetHost: { type: [string, "null"] }
+        path: { type: [string, "null"] }
+        statusCode: { type: [integer, "null"] }
+        providerName: { type: [string, "null"] }
+        modelName: { type: [string, "null"] }
+        promptTokens: { type: [integer, "null"] }
+        completionTokens: { type: [integer, "null"] }
+        totalTokens: { type: [integer, "null"] }
+        estimatedCostUsd: { type: [number, "null"] }
+        # --- E18 additions ---
+        apiKeyClass:
+          type: [string, "null"]
+          description: |
+            Coarse class label of the presented API key. Stable set:
+            `sk-ant-`, `sk-proj-`, `sk-`, `AIza`, `nvk_`, `azure-api-key`,
+            `aws-sigv4`, `gcp-oauth`, `glm-jwt`, `""` (unknown / non-LLM).
+          example: "sk-ant-"
+        apiKeyFingerprint:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{16}$"
+          description: |
+            8-byte hex fingerprint of the presented API key (`SHA256(key)[:8]`).
+            Semantics depend on `source`:
+            - `ai-gateway` → fingerprint of the **virtual key** minted by
+              the gateway.
+            - `compliance-proxy` / `agent` → fingerprint of the **real upstream
+              provider key** extracted from the request.
+            Empty string on rows where no key was extractable.
+          example: "a1b2c3d4e5f60718"
+        usageExtractionStatus:
+          type: [string, "null"]
+          description: |
+            Per-row usage-extraction status; empty string on pre-E18 rows.
+            See `UsageExtractionStatus` for the value semantics.
+          enum:
+            - ok
+            - streaming_reported
+            - streaming_estimated
+            - streaming_unavailable
+            - parse_failed
+            - no_body
+            - non_llm
+            - ""
+            - null
+
+    # ============================================================
+    # Cost groupBy row shapes (relevant subset)
+    # ============================================================
+    CostGroupByGeneric:
+      type: object
+      description: Shape for existing `groupBy` dimensions (provider, model, user, …).
+      required: [label, totalCostUsd, totalTokens, requestCount]
+      properties:
+        label: { type: string }
+        totalCostUsd: { type: number }
+        totalTokens: { type: integer }
+        requestCount: { type: integer }
+
+    CostGroupByApiKey:
+      type: object
+      description: |
+        Shape for `groupBy=apiKeyFingerprint`. `source` is part of the
+        grouping key because `apiKeyFingerprint` is dual-semantic
+        (VK at `ai-gateway` vs real key at `compliance-proxy` / `agent`).
+      required:
+        - source
+        - apiKeyFingerprint
+        - totalCostUsd
+        - totalTokens
+        - requestCount
+      properties:
+        source:
+          type: string
+          enum: [ai-gateway, compliance-proxy, agent]
+        apiKeyClass:
+          type: string
+          description: Class label (for UI row prefix).
+        apiKeyFingerprint:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+        totalCostUsd: { type: number }
+        totalTokens: { type: integer }
+        requestCount: { type: integer }
+
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: nexus_session
+      description: Cookie-based admin session (see `authserver-login.yaml`).
+
+security:
+  - SessionCookie: []

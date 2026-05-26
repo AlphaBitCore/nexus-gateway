@@ -1,0 +1,29 @@
+/* ── TimeSeriesChart shared empty / loading / error states ──────── */
+
+.chartState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.chartStateEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.chartStateError {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0 var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger);
+  text-align: center;
+  word-break: break-word;
+}

@@ -1,0 +1,183 @@
+# Local development config (run from packages/compliance-proxy).
+# Requires: ./dev-certs/ca.crt and ./dev-certs/ca.key (generate with Makefile target dev-certs).
+#
+# Business-level configuration (domain allowlists, compliance hooks, alerting
+# channels, etc.) is managed in the Control Plane and loaded from the database
+# at startup. This file only contains process-level / deployment settings that
+# are NOT managed by the Control Plane.
+
+# Externally-reachable base URL. The compliance-proxy is a CONNECT
+# intercept point — clients use this URL as their HTTP/HTTPS proxy.
+# Reported as staticInfo.publicURL. Dev = localhost:listener port.
+publicURL: "http://localhost:3128"
+
+# --- Process listener ---
+listener:
+  address: ":3128"
+
+# --- TLS CA for MITM cert issuance ---
+ca:
+  certPath: "./dev-certs/ca.crt"
+  keyPath: "./dev-certs/ca.key"
+
+# --- PostgreSQL (top-level; env override: DATABASE_URL). Used by hook
+# configs, rule packs, and audit writes (replaces audit.database.dsn). ---
+database:
+  url: "postgresql://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
+
+# --- Redis (cert cache + cross-instance replication only) ---
+# Config invalidation rides the Hub WebSocket control channel via
+# thingclient.OnConfigChanged; Redis pub/sub is no longer used on this
+# path (see CLAUDE.md "Current State Summary").
+redis:
+  # Local dev Redis runs on 6437 via docker-compose. See packages/shared/
+  # storage/redisfactory + docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6437"]
+  username: ""
+  password: ""
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+# --- Network-level access control (deployment config, not business rules) ---
+# YAML is the source of truth — changes require redeploy (security
+# policy, not admin business policy). The AccessChecker is constructed
+# once at boot from this block; there is no runtime override path.
+accessControl:
+  # Source IP ranges allowed to connect to the proxy.
+  sourceIpAllowlist:
+    - "127.0.0.0/8"
+    - "::1/128"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  # Domain allowlist is loaded from the database (InterceptionDomain table)
+  # and hot-reloaded via the Hub WebSocket control channel
+  # (thingclient.OnConfigChanged). Leave empty here.
+  domainAllowlist: []
+  internalNetworkExceptions: []
+  # DEV ONLY. When true, CONNECTs to domains not in the allowlist are
+  # tunneled as raw TCP (no MITM, no audit) instead of returning 403. Lets a
+  # single host use this proxy as the system-wide HTTPS proxy without
+  # tripping ERR_TUNNEL_CONNECTION_FAILED on every non-AI domain. Production
+  # deployments MUST keep this false. See docs/developers/specs/e31/e31-s5-cp-unlisted-passthrough.md.
+  allowUnlistedPassthrough: true
+
+# --- Process tuning ---
+connections:
+  maxConcurrentTunnels: 10000
+  maxStreamsPerConnection: 100
+  idleTimeout: "300s"
+  shutdownGracePeriod: "30s"
+
+upstream:
+  maxConnsPerHost: 100
+  idleConnTimeout: "90s"
+  dialTimeout: "10s"
+
+limits:
+  requestBodyLimit: "10MB"
+  responseBodyLimit: "10MB"
+  sseBufferLimit: "8MB"
+
+# --- Observability ---
+log:
+  # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
+  # boot default only. logging.SetLevel mutates the slog.LevelVar live on
+  # shadow push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  level: "debug"
+  format: "text"
+  file: "logs/compliance-proxy.log"
+  stackOnError: true
+
+metrics:
+  address: ":9090"
+  # Host portion of the URL Hub uses to reach /metrics + /debug/runtime
+  # (registered as `metricsUrl` in the thing registry). Defaults to
+  # 127.0.0.1 if empty; set to a routable host when Hub runs on a
+  # different machine than this binary.
+  advertiseHost: "127.0.0.1"
+
+# --- Audit (database is top-level `database.url`; env DATABASE_URL) ---
+audit:
+  enabled: true
+  batch:
+    size: 10
+    flushIntervalMs: 500
+    channelBufferSize: 1000
+  ndjson:
+    enabled: false
+    dir: ""
+    maxFileSizeMB: 100
+    maxTotalSizeMB: 1000
+  pinning:
+    exemptions: []
+    autoExempt:
+      enabled: true
+      failureThreshold: 3
+      windowSeconds: 3600
+      exemptionDurationSeconds: 86400
+
+# --- Compliance pipeline (hooks loaded from DB via Control Plane) ---
+# Streaming mode + per-hook / total timeouts (when set) are shadow-overridable
+# via Hub admin UI (config_key: compliance_streaming); ProxyServer.SetStreamingTuning
+# atomic-swaps the snapshot for the next bumped CONNECT. The hooks themselves
+# live in the DB and load via hooks shadow. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+compliance:
+  enabled: true
+
+# --- Runtime API (healthz, connections, killswitch) ---
+runtimeApi:
+  listenAddress: "127.0.0.1:3040"
+
+# --- Message queue (event streaming to Hub) ---
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+# --- Hub registration (thingclient) ---
+registry:
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+# --- Inter-service auth ---
+# auth.internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN) per the
+# "Secrets are env-only" binding in CLAUDE.md. Must match Hub's value.
+# See .env / .env.example at repo root.
+# The runtime-API token is also env-only:
+#   COMPLIANCE_PROXY_API_TOKEN
+# (shared with Control Plane's BFF — same value on both sides).
+
+# E34-S? — out-of-band body storage. Bodies whose captured size meets/exceeds
+# inline on traffic_event_payload. All 4 services (Hub, ai-gateway,
+# compliance-proxy, control-plane) point at the SAME backend root so the
+# control-plane read path can resolve refs produced anywhere.
+spill:
+  enabled: true
+  backend: localfs
+  localfs:
+    root: /tmp/nexus-spill
+    perObjectCap: 268435456      # 256 MiB
+    totalSizeCap: 5368709120     # 5 GiB
+    retentionDays: 7

@@ -1,0 +1,1 @@
+# Useapi queryclient architecture

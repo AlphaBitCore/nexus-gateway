@@ -1,0 +1,36 @@
+.fieldGroup {
+  margin-bottom: 20px;
+}
+
+.labelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.label {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.helpBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}

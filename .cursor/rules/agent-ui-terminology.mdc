@@ -1,0 +1,43 @@
+---
+description: Agent UI uses "traffic event" never "AI call"; agent has NO quota concept
+globs:
+  - packages/agent/ui/frontend/**
+  - packages/ui-shared/src/i18n/locales/**
+---
+
+# Agent UI terminology (binding)
+
+The Agent UI surfaces what's happening on **this device** to an **end-user**, not to a platform admin. Its vocabulary differs from the Control Plane UI on purpose.
+
+## Required terminology
+
+- **"Traffic event"** — every intercepted request. NEVER "AI call", "LLM call", "prompt", or "completion" as the primary noun. (Inside an event detail panel, "prompt" / "completion" labels for body content are fine — but the row itself is a "traffic event".)
+- **"Allowed / Flagged / Blocked"** — outcome verbs map directly to canonical hook decisions.
+- **"Protection Pause"** — user-side temporary intercept pause. Never "disable agent" (the agent is still running).
+- **"Connection"** — Hub link status. Never "platform connection" or "control-plane connection" (too admin-y).
+
+## Forbidden terminology in Agent UI
+
+| Don't use | Use instead | Why |
+|---|---|---|
+| "AI call" / "LLM call" | "Traffic event" / "Request" | Agent is provider-agnostic at this surface |
+| "Quota" / "Limit" / "Budget" | (don't surface; not a concept) | Quota is server-side; the agent never tracks or displays it |
+| "API key" | "Credential" or omit | API keys live admin-side; on-device user shouldn't reason about them |
+| "Tenant" / "Org" | omit unless contextually needed | Admin language; on-device user belongs to their org implicitly |
+| "Disable agent" | "Pause protection" | Pause keeps the agent running, just stops intercepting |
+| "Inspection" | "Compliance check" / "Hook" | Match admin-side surface naming |
+
+## i18n keys
+
+All these terms ride through the i18n pipeline (cross-ref `i18n-mandatory.mdc`). When you add a key under `packages/ui-shared/src/i18n/locales/{en,zh,es}/dashboard.json` or the agent-side equivalent, use the required vocabulary.
+
+## Enforcement
+
+CI script `npm run check:agent-ui-terminology` greps the agent UI source + locale files for forbidden tokens. New violations fail CI in strict mode.
+
+## Source
+
+- Decision record: memory [[project_agent_ui_ia_redesign]].
+- Feature docs: `docs/users/features/agent-ui/overview.md` §IA + per-page docs.
+
+Skipping this rule requires **explicit user approval** in chat.

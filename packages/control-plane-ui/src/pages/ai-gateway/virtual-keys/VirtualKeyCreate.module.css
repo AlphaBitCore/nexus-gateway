@@ -1,0 +1,221 @@
+.outlineBtn {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  transition: all var(--g-transition-fast);
+}
+
+.modelSearchInput {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  outline: none;
+}
+
+.modelSelectAllBtn {
+  padding: 4px 10px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.modelListContainer {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-2);
+}
+
+.providerHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  padding: 4px 8px;
+  background: var(--color-bg);
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.modelLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: 4px 8px 4px 16px;
+  cursor: pointer;
+  font-size: var(--g-font-size-sm);
+}
+
+.filterSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.expirationDateInput {
+  flex: 1;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+}
+
+.neverExpiresLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--g-font-size-sm);
+  white-space: nowrap;
+}
+
+.secretKeyContainer {
+  font-family: var(--g-font-mono);
+  font-size: 13px;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border-radius: var(--g-radius-md);
+  border: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  word-break: break-all;
+}
+
+/* ── Extracted from inline styles ────────────────────────────────────── */
+
+.modelAccessLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.modelSearchRow {
+  margin-bottom: var(--g-space-2);
+  align-items: center;
+}
+
+.emptyModelHint {
+  padding: var(--g-space-2);
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.providerGroupWrapper {
+  margin-bottom: var(--g-space-2);
+}
+
+.providerCounter {
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.modelIdHint {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+}
+
+.modelAccessWrapper {
+  margin-bottom: var(--g-space-4);
+}
+
+.modelAccessSummary {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+.successCard {
+  background: var(--color-success-light);
+  border: 1px solid var(--color-success);
+}
+
+.successTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-success-dark);
+}
+
+.secretKeyLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.keyWarning {
+  font-size: 12px;
+  color: var(--color-warning-dark);
+}
+
+.tooltipLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.projectSelect {
+  width: 100%;
+  height: 40px;
+}
+
+.enabledRow {
+  align-items: center;
+}
+
+.formActions {
+  justify-content: flex-end;
+  margin-top: var(--g-space-2);
+}
+
+/* ── Extracted from inline styles ────────────────────────────────────── */
+
+.collapseArrow {
+  display: inline-block;
+  transition: transform 0.15s;
+  font-size: 10px;
+}
+
+.collapseArrowOpen {
+  composes: collapseArrow;
+  transform: rotate(0deg);
+}
+
+.collapseArrowClosed {
+  composes: collapseArrow;
+  transform: rotate(-90deg);
+}

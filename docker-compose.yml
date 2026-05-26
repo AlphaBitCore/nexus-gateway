@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus-postgres
+    ports:
+      - "55532:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-nexus_gateway}
+      TZ: UTC
+      PGTZ: UTC
+    command: ["postgres", "-c", "timezone=UTC", "-c", "log_timezone=UTC"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # E61-S3 (2026-05-20): Swapped redis:7-alpine → valkey/valkey-bundle:8-trixie.
+  #
+  # Why valkey-bundle?
+  #   The official Valkey project ships two bundled images on Docker Hub:
+  #   valkey/valkey-bundle (all modules: search, json, bloom, ldap) and
+  #   valkey/valkey-extensions (subset). valkey-bundle is the simplest
+  #   BSD-compatible path — valkey-search lands in /usr/lib/valkey/libsearch.so
+  #   and the container entrypoint auto-discovers + loads every .so in that
+  #   directory at startup via --loadmodule flags.  No custom Dockerfile needed.
+  #
+  # Why not redis-stack?
+  #   redis-stack carries SSPL on the module layer — incompatible with the
+  #   project's OSS-readiness requirement (CLAUDE.md C-7).
+  #
+  # Why trixie (Debian) not alpine?
+  #   valkey-bundle does not publish alpine-tagged images for version 8 as of
+  #   2026-05-20.  The trixie (Debian 13 testing) image is the official slim
+  #   variant supplied by the Valkey project and is equivalent in footprint for
+  #   dev/CI purposes.  Pinned to 8-trixie so minor patch bumps auto-update
+  #   while the major-version contract holds.
+  #
+  # Wire compatibility:
+  #   Valkey 8 is wire-compatible with Redis 7.  All existing clients that use
+  #   redis-cli, go-redis/v9, or miniredis continue to work unchanged.
+  #
+  # Module verification:
+  #   After `docker compose up valkey` run:
+  #     docker exec nexus-valkey valkey-cli MODULE LIST
+  #   Expect an entry named "search" (valkey-search).
+  #
+  # Runbook:  docs/runbooks/e61-valkey-migration.md
+  # SDD:      docs/sdd/e61-s3-valkey-switch-and-l2-write.md §T1
+  valkey:
+    image: valkey/valkey-bundle:8-trixie
+    container_name: nexus-valkey
+    environment:
+      TZ: UTC
+    ports:
+      - "6437:6379"
+    healthcheck:
+      # valkey-cli is the Valkey-native CLI; identical wire protocol to redis-cli.
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2-alpine
+    container_name: nexus-nats
+    environment:
+      TZ: UTC
+    command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # Services run outside Docker for dev. See scripts/dev-start.sh for bootstrap.
+  #   Nexus Hub (Go):        cd packages/nexus-hub && go run ./cmd/nexus-hub/                → port 3060
+  #   Control Plane (Go):    cd packages/control-plane && go run ./cmd/control-plane/        → port 3001
+  #   Control Plane UI:      npm run dev:control-plane-ui                                    → port 3000
+  #   AI Gateway (Go):       cd packages/ai-gateway && go run ./cmd/ai-gateway/              → port 3050
+  #   Compliance Proxy (Go): cd packages/compliance-proxy && go run ./cmd/compliance-proxy/  → port 3040
+
+volumes:
+  pgdata:
+  natsdata:

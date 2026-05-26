@@ -1,0 +1,792 @@
+openapi: 3.1.0
+info:
+  title: Nexus AI Gateway — E62 Cross-Adapter Embeddings
+  version: "1.0.0"
+  description: |
+    Adds four embedding ingress shapes to the AI Gateway plus the canonical
+    bridge that fans them into the OpenAI `/v1/embeddings` canonical hub.
+    Each ingress accepts its native wire shape, canonicalizes (when the
+    target provider differs), and returns the response reshaped to the
+    ingress format.
+
+    **Ingress shapes:**
+      - `POST /v1/embeddings` — OpenAI canonical (the hub)
+      - `POST /openai/deployments/{deployment}/embeddings` — Azure OpenAI
+      - `POST /v1/embed` — Cohere
+      - `POST /v1{api_version}/models/{model}:embedContent` — Gemini single
+      - `POST /v1{api_version}/models/{model}:batchEmbedContents` — Gemini batch
+
+    **Cross-format routing.** Any ingress shape can route to any target
+    provider whose `Model.capabilityJson.embeddings` matches the request.
+    If no compatible target exists, the gateway returns
+    `400 no_compatible_provider` shaped per the ingress format envelope —
+    no silent down-projection.
+
+    Companion documents:
+      - docs/developers/specs/e62/e62-cross-adapter-embeddings.md
+      - docs/developers/specs/e62-s1..s6-*.md
+      - docs/developers/architecture/cross-cutting/foundation/endpoint-typology-architecture.md (§2, §5)
+      - docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md §3a Rules 1-7
+
+    **Out of scope for E62:** GLM `/api/paas/v4/embeddings` (preserved but
+    no codec); Voyage / Bedrock embeddings (deferred follow-up); streaming
+    embeddings (no provider supports them); image / audio / video endpoints
+    (E63 / E64 / E66).
+
+servers:
+  - url: https://gateway.example.com
+    description: Customer-facing AI Gateway
+
+tags:
+  - name: AI Gateway — Embeddings
+    description: Data-plane embedding endpoints (virtual-key authenticated)
+
+security:
+  - BearerVK: []
+
+paths:
+  /v1/embeddings:
+    post:
+      tags: [AI Gateway — Embeddings]
+      operationId: createEmbedding
+      summary: Create embeddings (OpenAI canonical ingress)
+      description: |
+        Compute embedding vectors for the supplied input(s). Canonical
+        ingress — body shape is the OpenAI `/v1/embeddings` JSON contract.
+
+        Cross-format routing: when the resolved target is a non-OpenAI
+        provider (Cohere, Gemini), the canonical bridge translates the
+        request body and reshapes the response back to OpenAI form.
+
+        **Capability rejection:** if the request's `dimensions`,
+        `encoding_format`, or batch size cannot be served by any candidate
+        target, the gateway returns `400 no_compatible_provider`. The
+        gateway never down-projects or truncates user input.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenAIEmbeddingsRequest"
+            examples:
+              single-string:
+                summary: Single input string
+                value:
+                  model: text-embedding-3-small
+                  input: "Nexus Gateway routes AI traffic with compliance."
+              batch-strings:
+                summary: Batch of input strings
+                value:
+                  model: text-embedding-3-small
+                  input:
+                    - "Hello world"
+                    - "Goodbye world"
+              with-dimensions:
+                summary: With custom dimensions (text-embedding-3-* only)
+                value:
+                  model: text-embedding-3-large
+                  input: "Custom dimension request"
+                  dimensions: 1024
+              base64-encoding:
+                summary: Base64 encoding format
+                value:
+                  model: text-embedding-3-small
+                  input: "Compact transmission"
+                  encoding_format: base64
+              cross-format-to-cohere:
+                summary: Routes to Cohere (when routing rule pins Cohere); requires nexus.ext.cohere.input_type
+                value:
+                  model: text-embedding-3-small
+                  input: "What is Nexus?"
+                  nexus.ext.cohere.input_type: search_query
+      responses:
+        "200":
+          description: Embeddings response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIEmbeddingsResponse"
+              examples:
+                single-result:
+                  summary: Single input → one embedding
+                  value:
+                    object: list
+                    data:
+                      - object: embedding
+                        index: 0
+                        embedding: [0.001, -0.024, 0.018, "...1533 more values..."]
+                    model: text-embedding-3-small
+                    usage:
+                      prompt_tokens: 8
+                      total_tokens: 8
+        "400":
+          description: Invalid request or capability mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorEnvelope"
+              examples:
+                no-compatible-provider:
+                  summary: No routable target supports the requested dimensions; admin sees the supported alternatives
+                  value:
+                    error:
+                      code: no_compatible_provider
+                      message: "No routing target supports dimensions=2048 for embedding requests"
+                      param: dimensions
+                      type: invalid_request_error
+                      available_capabilities:
+                        - provider: openai
+                          model: text-embedding-3-small
+                          supported_dimensions: [512, 1024, 1536]
+                        - provider: openai
+                          model: text-embedding-3-large
+                          supported_dimensions: [256, 1024, 3072]
+                        - provider: cohere
+                          model: embed-english-v3
+                          supported_dimensions: [1024]
+                          required_extensions: ["nexus.ext.cohere.input_type"]
+                model-rejects-dimensions:
+                  summary: Codec safety-net — ada-002 doesn't support dimensions
+                  value:
+                    error:
+                      code: invalid_request_error
+                      message: "Model text-embedding-ada-002 does not support the dimensions parameter"
+                      param: dimensions
+                      type: invalid_request_error
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+  /openai/deployments/{deployment}/embeddings:
+    post:
+      tags: [AI Gateway — Embeddings]
+      operationId: createEmbeddingAzure
+      summary: Create embeddings (Azure OpenAI ingress)
+      description: |
+        Azure OpenAI compatibility ingress. Body shape is identical to
+        OpenAI's `/v1/embeddings`; URL carries the Azure deployment name
+        and api-version query parameter. Auth uses `api-key` header
+        (existing Azure convention) — `BearerVK` is also accepted.
+
+        Cross-format routing to non-Azure-OpenAI targets follows the same
+        capability rules as `/v1/embeddings`.
+      parameters:
+        - name: deployment
+          in: path
+          required: true
+          schema: { type: string }
+          description: Azure OpenAI deployment name
+          example: my-embedding-deployment
+        - name: api-version
+          in: query
+          required: true
+          schema: { type: string }
+          description: Azure OpenAI API version
+          example: "2024-02-15-preview"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenAIEmbeddingsRequest"
+      responses:
+        "200":
+          description: Embeddings response (OpenAI shape)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIEmbeddingsResponse"
+        "400":
+          $ref: "#/components/responses/OpenAI400"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+  /v1/embed:
+    post:
+      tags: [AI Gateway — Embeddings]
+      operationId: createEmbeddingCohere
+      summary: Create embeddings (Cohere ingress)
+      description: |
+        Cohere `/v1/embed` compatibility ingress. The gateway canonicalizes
+        Cohere shape to OpenAI canonical (`texts` → `input`,
+        `input_type` → `nexus.ext.cohere.input_type`,
+        `embedding_types` → `nexus.ext.cohere.embedding_types`,
+        `truncate` → `nexus.ext.cohere.truncate`) and routes per
+        routing rules.
+
+        **Cohere v3 model requirement:** `input_type` is mandatory for
+        `embed-english-v3` / `embed-multilingual-v3` family models. The
+        gateway codec rejects requests missing this field with HTTP 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CohereEmbedRequest"
+            examples:
+              v3-search-query:
+                summary: Cohere v3 — search-query input
+                value:
+                  model: embed-multilingual-v3.0
+                  texts: ["What is Nexus?"]
+                  input_type: search_query
+              v3-search-document:
+                summary: Cohere v3 — search-document input
+                value:
+                  model: embed-english-v3.0
+                  texts:
+                    - "Nexus Gateway routes AI traffic with compliance."
+                    - "Embeddings encode meaning into vectors."
+                  input_type: search_document
+              v3-multi-embedding-types:
+                summary: Multiple embedding types
+                value:
+                  model: embed-english-v3.0
+                  texts: ["Hello"]
+                  input_type: classification
+                  embedding_types: [float, int8]
+      responses:
+        "200":
+          description: Embeddings response (Cohere shape)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CohereEmbedResponse"
+              examples:
+                v3-result:
+                  summary: Single Cohere v3 result
+                  value:
+                    id: "abc-123"
+                    response_type: embeddings_floats
+                    embeddings: [[0.001, -0.024, "...1021 more values..."]]
+                    texts: ["Hello"]
+                    meta:
+                      api_version: { version: "1" }
+                      billed_units: { input_tokens: 2 }
+        "400":
+          description: Invalid request or capability mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CohereErrorEnvelope"
+              examples:
+                missing-input-type:
+                  summary: Cohere v3 missing required input_type
+                  value:
+                    message: "Cohere v3 models require input_type"
+                    code: missing_required_extension
+                no-compatible-provider:
+                  summary: No routable target supports the request
+                  value:
+                    message: "No routing target supports batch_size=120 for embedding requests"
+                    code: no_compatible_provider
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+  /v1{apiVersion}/models/{model}:embedContent:
+    post:
+      tags: [AI Gateway — Embeddings]
+      operationId: embedContentGemini
+      summary: Create embedding (Gemini single ingress)
+      description: |
+        Gemini `:embedContent` compatibility ingress (single-input). The
+        gateway canonicalizes Gemini shape to OpenAI canonical
+        (`content.parts[*].text` → `input`,
+        `taskType` → `nexus.ext.gemini.taskType`,
+        `title` → `nexus.ext.gemini.title`,
+        `outputDimensionality` → `dimensions`) and routes per
+        routing rules.
+
+        Auth: query param `?key=<api_key>` or header `x-goog-api-key`,
+        per Google convention. `BearerVK` also accepted.
+      parameters:
+        - name: apiVersion
+          in: path
+          required: true
+          schema: { type: string, enum: [beta, ""] }
+          description: API version suffix (empty for v1, "beta" for v1beta)
+          example: beta
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+          description: Gemini embedding model id (without `models/` prefix)
+          example: text-embedding-004
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiEmbedContentRequest"
+            examples:
+              retrieval-query:
+                summary: Retrieval-query task
+                value:
+                  content:
+                    parts: [{ text: "What is Nexus?" }]
+                  taskType: RETRIEVAL_QUERY
+              retrieval-document-with-title:
+                summary: Retrieval-document with title
+                value:
+                  content:
+                    parts: [{ text: "Nexus Gateway routes AI traffic with compliance." }]
+                  taskType: RETRIEVAL_DOCUMENT
+                  title: "Nexus Overview"
+              with-output-dimensionality:
+                summary: With custom output dimensionality
+                value:
+                  content:
+                    parts: [{ text: "Custom dim request" }]
+                  taskType: SEMANTIC_SIMILARITY
+                  outputDimensionality: 256
+      responses:
+        "200":
+          description: Embedding response (Gemini shape)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiEmbedContentResponse"
+              examples:
+                single-result:
+                  summary: Single embedding
+                  value:
+                    embedding:
+                      values: [0.001, -0.024, "...766 more values..."]
+        "400":
+          $ref: "#/components/responses/Gemini400"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+  /v1{apiVersion}/models/{model}:batchEmbedContents:
+    post:
+      tags: [AI Gateway — Embeddings]
+      operationId: batchEmbedContentsGemini
+      summary: Create batch embeddings (Gemini batch ingress)
+      description: |
+        Gemini `:batchEmbedContents` compatibility ingress. The gateway
+        canonicalizes each `requests[i].content.parts[*].text` into the
+        canonical `input: []string` array, then routes per routing rules.
+      parameters:
+        - name: apiVersion
+          in: path
+          required: true
+          schema: { type: string, enum: [beta, ""] }
+          example: beta
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+          example: text-embedding-004
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiBatchEmbedRequest"
+            examples:
+              batch:
+                summary: Batch of three inputs
+                value:
+                  requests:
+                    - content: { parts: [{ text: "First input" }] }
+                      taskType: RETRIEVAL_DOCUMENT
+                    - content: { parts: [{ text: "Second input" }] }
+                      taskType: RETRIEVAL_DOCUMENT
+                    - content: { parts: [{ text: "Third input" }] }
+                      taskType: RETRIEVAL_DOCUMENT
+      responses:
+        "200":
+          description: Batch embeddings response (Gemini shape)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiBatchEmbedResponse"
+        "400":
+          $ref: "#/components/responses/Gemini400"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+components:
+  securitySchemes:
+    BearerVK:
+      type: http
+      scheme: bearer
+      description: Nexus Virtual Key as bearer token. Other auth (Azure `api-key`, Gemini `?key=`) is also accepted on the respective ingress.
+
+  schemas:
+    # ----- OpenAI shape -----
+    OpenAIEmbeddingsRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          description: Embedding model id (e.g. `text-embedding-3-small`)
+        input:
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+            - { type: array, items: { type: integer } }
+            - { type: array, items: { type: array, items: { type: integer } } }
+          description: Input as a single string, an array of strings, an array of integers (tokens), or an array of arrays of integers (batched token sequences).
+        dimensions:
+          type: integer
+          description: Desired embedding dimension (only supported on `text-embedding-3-*` models)
+        encoding_format:
+          type: string
+          enum: [float, base64]
+          default: float
+        user:
+          type: string
+          description: Per-end-user identifier for abuse detection
+      additionalProperties: true   # nexus.ext.<provider>.* extension fields permitted
+
+    OpenAIEmbeddingsResponse:
+      type: object
+      required: [object, data, model, usage]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenAIEmbeddingItem"
+        model:
+          type: string
+        usage:
+          $ref: "#/components/schemas/OpenAIEmbeddingUsage"
+
+    OpenAIEmbeddingItem:
+      type: object
+      required: [object, embedding, index]
+      properties:
+        object:
+          type: string
+          enum: [embedding]
+        embedding:
+          oneOf:
+            - type: array
+              items: { type: number, format: float }
+              description: float-encoded vector (default)
+            - type: string
+              description: base64-encoded vector when `encoding_format=base64`
+        index:
+          type: integer
+
+    OpenAIEmbeddingUsage:
+      type: object
+      required: [prompt_tokens, total_tokens]
+      properties:
+        prompt_tokens: { type: integer }
+        total_tokens: { type: integer }
+
+    OpenAIErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, type]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            param: { type: string }
+            type:
+              type: string
+              enum:
+                - invalid_request_error
+                - authentication_error
+                - permission_error
+                - rate_limit_error
+                - api_error
+                - upstream_unavailable
+                - no_compatible_provider
+            available_capabilities:
+              type: array
+              description: |
+                Populated on `code=no_compatible_provider`. Lists the candidate
+                targets the routing engine evaluated AND what each would have
+                accepted. Lets admin self-diagnose capability mismatches
+                without back-channel debugging. Empty / absent when not
+                applicable.
+              items:
+                $ref: "#/components/schemas/CandidateCapability"
+
+    CandidateCapability:
+      type: object
+      required: [provider, model]
+      properties:
+        provider: { type: string }
+        model:    { type: string }
+        supported_dimensions:
+          type: array
+          items: { type: integer }
+          description: When the rejected parameter was `dimensions`. Empty / omitted otherwise.
+        max_batch_size:
+          type: integer
+          description: When the rejected parameter was input batch size. Omitted otherwise.
+        supported_encoding_formats:
+          type: array
+          items: { type: string, enum: [float, base64] }
+          description: When the rejected parameter was `encoding_format`. Omitted otherwise.
+        required_extensions:
+          type: array
+          items: { type: string }
+          description: When the candidate required an extension the request did not provide (e.g. `nexus.ext.cohere.input_type` for Cohere v3). Omitted otherwise.
+
+    # ----- Cohere shape -----
+    CohereEmbedRequest:
+      type: object
+      required: [texts, model]
+      properties:
+        texts:
+          type: array
+          items: { type: string }
+          minItems: 1
+          maxItems: 96
+        model:
+          type: string
+        input_type:
+          type: string
+          enum: [search_document, search_query, classification, clustering]
+          description: Required for Cohere v3 models
+        embedding_types:
+          type: array
+          items:
+            type: string
+            enum: [float, int8, uint8, binary, ubinary]
+          default: [float]
+        truncate:
+          type: string
+          enum: [NONE, START, END]
+          default: END
+
+    CohereEmbedResponse:
+      type: object
+      required: [embeddings, meta]
+      properties:
+        id: { type: string }
+        response_type:
+          type: string
+          enum: [embeddings_floats, embeddings_by_type]
+        embeddings:
+          oneOf:
+            - type: array
+              items:
+                type: array
+                items: { type: number, format: float }
+              description: When `response_type=embeddings_floats`
+            - type: object
+              description: When `response_type=embeddings_by_type` — keyed by embedding_type (`float`, `int8`, …)
+        texts:
+          type: array
+          items: { type: string }
+        meta:
+          type: object
+          properties:
+            api_version:
+              type: object
+              properties:
+                version: { type: string }
+            billed_units:
+              type: object
+              properties:
+                input_tokens: { type: integer }
+
+    CohereErrorEnvelope:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+        code:
+          type: string
+          description: Nexus-extended code field; absent on native Cohere errors.
+
+    # ----- Gemini shape -----
+    GeminiEmbedContentRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          $ref: "#/components/schemas/GeminiContent"
+        taskType:
+          type: string
+          enum:
+            - TASK_TYPE_UNSPECIFIED
+            - RETRIEVAL_QUERY
+            - RETRIEVAL_DOCUMENT
+            - SEMANTIC_SIMILARITY
+            - CLASSIFICATION
+            - CLUSTERING
+            - QUESTION_ANSWERING
+            - FACT_VERIFICATION
+        title:
+          type: string
+          description: Required when taskType=RETRIEVAL_DOCUMENT, otherwise optional
+        outputDimensionality:
+          type: integer
+          description: Optional desired output dimension (subject to model capability)
+
+    GeminiContent:
+      type: object
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          items:
+            type: object
+            required: [text]
+            properties:
+              text: { type: string }
+
+    GeminiEmbedContentResponse:
+      type: object
+      required: [embedding]
+      properties:
+        embedding:
+          type: object
+          required: [values]
+          properties:
+            values:
+              type: array
+              items: { type: number, format: float }
+
+    GeminiBatchEmbedRequest:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/GeminiEmbedContentRequest"
+          minItems: 1
+          maxItems: 100
+
+    GeminiBatchEmbedResponse:
+      type: object
+      required: [embeddings]
+      properties:
+        embeddings:
+          type: array
+          items:
+            type: object
+            required: [values]
+            properties:
+              values:
+                type: array
+                items: { type: number, format: float }
+
+    GeminiErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, status]
+          properties:
+            code: { type: integer }
+            message: { type: string }
+            status: { type: string }
+            details: { type: array, items: {} }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid VK / auth header
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorEnvelope"
+          example:
+            error:
+              code: invalid_api_key
+              message: "Invalid Virtual Key"
+              type: authentication_error
+
+    RateLimited:
+      description: VK / org / provider rate or quota exhausted
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorEnvelope"
+          example:
+            error:
+              code: rate_limit_exceeded
+              message: "Embedding quota exceeded for this VK"
+              type: rate_limit_error
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before retry
+
+    InternalError:
+      description: Internal gateway error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorEnvelope"
+          example:
+            error:
+              code: internal_error
+              message: "Internal gateway error"
+              type: api_error
+
+    UpstreamUnavailable:
+      description: Upstream provider unreachable or returned 5xx
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorEnvelope"
+          example:
+            error:
+              code: upstream_unavailable
+              message: "Upstream provider unreachable"
+              type: upstream_unavailable
+
+    OpenAI400:
+      description: Invalid request or capability mismatch (OpenAI envelope)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorEnvelope"
+
+    Gemini400:
+      description: Invalid request or capability mismatch (Gemini envelope)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GeminiErrorEnvelope"
+          example:
+            error:
+              code: 400
+              message: "outputDimensionality 1536 is not supported by text-embedding-004"
+              status: INVALID_ARGUMENT

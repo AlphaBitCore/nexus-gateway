@@ -1,0 +1,264 @@
+{
+  "adapters": [
+    {
+      "id": "openai-compat",
+      "name": "OpenAI-compatible",
+      "description": "Parses OpenAI chat/completions, embeddings, and responses. Also covers Mistral, DeepSeek, and other OpenAI-wire-compatible APIs.",
+      "configSchema": null
+    },
+    {
+      "id": "generic-jsonpath",
+      "name": "Generic (JSONPath)",
+      "description": "Admin-configurable JSONPath extraction for custom or proprietary LLM APIs.",
+      "configSchema": {
+        "type": "object",
+        "properties": {
+          "requestPaths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "gjson path expressions to extract text from request bodies"
+          },
+          "responsePaths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "gjson path expressions to extract text from response bodies"
+          },
+          "streamDeltaPaths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "gjson path expressions to extract text from SSE delta chunks"
+          }
+        },
+        "required": ["requestPaths"]
+      }
+    },
+    {
+      "id": "chatgpt-web",
+      "name": "ChatGPT.com Web Client",
+      "description": "Browser traffic to chatgpt.com /backend-api/f/conversation. Distinct from the public OpenAI API: streams JSON-Patch-style deltas in SSE frames, authenticated by session cookies (not API keys), no token usage on the wire.",
+      "configSchema": null
+    },
+    {
+      "id": "claude-web",
+      "name": "Claude.ai Web Client",
+      "description": "Browser traffic to claude.ai conversation completion endpoints. Distinct from the public Anthropic Messages API: handles both the legacy `completion` SSE shape and the newer Anthropic-Messages-API-style content_block_delta shape. Authenticated by session cookies; no token usage on the wire.",
+      "configSchema": null
+    },
+    {
+      "id": "gemini-web",
+      "name": "Gemini.google.com Web Client",
+      "description": "Browser traffic to gemini.google.com (consumer Gemini chat). Distinct from the public Gemini API on generativelanguage.googleapis.com: the wire format is undocumented and uses Google's obfuscated form-encoded RPC framing with an XSSI-prefixed streaming response. Adapter is defensive — handles JSON shapes for forward-compat plus heuristic extraction of long string leaves from the form-encoded payload. Live-fixture follow-up recommended to tighten the heuristic.",
+      "configSchema": null
+    },
+    {
+      "id": "copilot-ms-web",
+      "name": "Microsoft Copilot Web Client",
+      "description": "Browser traffic to copilot.microsoft.com (Microsoft Copilot consumer, descended from Bing Chat / Sydney). The adapter detects three plausible JSON request shapes (modern Copilot author/text, legacy Sydney arguments envelope, and OpenAI-compatible role/content) and parses streaming responses in three corresponding shapes. Authenticated by Microsoft account session cookies; no token usage on the wire.",
+      "configSchema": null
+    },
+    {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "description": "IDE traffic to api.githubcopilot.com and copilot-proxy.githubusercontent.com. Copilot Chat uses an OpenAI-compatible wire format under /chat/completions, so the adapter delegates to openai-compat after path normalisation and re-classifies the API key by GitHub-issued prefix (tid_, gho_, ghs_, ghu_, ghp_, github_pat_).",
+      "configSchema": null
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor IDE",
+      "description": "IDE traffic to api2.cursor.sh, api3.cursor.sh, and cursor.com. Cursor's wire format is heavily proprietary — many endpoints use Connect-RPC with protobuf payloads which the adapter cannot generally parse. Defensive behaviour: JSON request bodies with chat-like fields (messages / prompt / query / text) extract content normally; binary protobuf bodies return ErrUnknownSchema with a hex-safe preview captured in Extra for offline analysis. Live-fixture follow-up recommended.",
+      "configSchema": null
+    },
+    {
+      "id": "codeium",
+      "name": "Codeium / Windsurf",
+      "description": "IDE traffic to server.codeium.com, inference.codeium.com, and api.codeium.com. Codeium's wire format is heavily proprietary — most endpoints use Connect-RPC with protobuf payloads. Defensive behaviour mirrors the cursor adapter: JSON chat-like bodies extract content; binary protobuf bodies return ErrUnknownSchema with a preview in Extra. Live-fixture follow-up recommended.",
+      "configSchema": null
+    },
+    {
+      "id": "grok-web",
+      "name": "Grok.com Web Client",
+      "description": "Browser traffic to grok.com (xAI consumer chat) and Grok embedded in x.com paths. Distinct from the public xAI API on api.x.ai. Wire format is undocumented — defensive adapter handles OpenAI-compat messages, prompt/query/text fields, plus result.message streaming variants observed in some Grok streams. Live-fixture follow-up recommended.",
+      "configSchema": null
+    },
+    {
+      "id": "perplexity-web",
+      "name": "Perplexity.ai Web Client",
+      "description": "Browser traffic to www.perplexity.ai and perplexity.ai. Distinct from the public Perplexity Sonar API on api.perplexity.ai. Wire format is undocumented — defensive adapter handles OpenAI-compat messages, query/prompt/text fields, plus answer / chunks streaming variants observed in some Perplexity streams. Live-fixture follow-up recommended.",
+      "configSchema": null
+    },
+    {
+      "id": "mistral-web",
+      "name": "Mistral Le Chat Web Client",
+      "description": "Browser traffic to chat.mistral.ai (Mistral's Le Chat consumer product). Distinct from the public Mistral API on api.mistral.ai. Defensive JSON-aware adapter. Live-fixture follow-up recommended.",
+      "configSchema": null
+    },
+    {
+      "id": "openai-platform-web",
+      "name": "OpenAI Platform / Playground Web",
+      "description": "Browser traffic to platform.openai.com — the OpenAI developer console (playground, dashboard, settings). The playground exercises the public OpenAI API directly, so the adapter delegates to openai-compat for parsing while attributing traffic to the developer-console surface separately for audit.",
+      "configSchema": null
+    },
+    {
+      "id": "anthropic-console-web",
+      "name": "Anthropic Console / Workbench Web",
+      "description": "Browser traffic to console.anthropic.com — the Anthropic developer console (workbench, settings, dashboard). The workbench exercises the public Anthropic Messages API directly, so the adapter delegates to the anthropic adapter for parsing while attributing traffic to the developer-console surface separately for audit.",
+      "configSchema": null
+    },
+    {
+      "id": "google-aistudio-web",
+      "name": "Google AI Studio Web",
+      "description": "Browser traffic to aistudio.google.com — the Gemini API developer playground. Distinct from gemini.google.com (consumer chat) and generativelanguage.googleapis.com (programmatic API). Adapter delegates to the gemini adapter and re-labels Provider to google-aistudio-web for audit.",
+      "configSchema": null
+    },
+    {
+      "id": "tabnine",
+      "name": "Tabnine IDE",
+      "description": "IDE traffic to api.tabnine.com (Tabnine cloud-hosted code completion + chat). Self-hosted Tabnine deployments use customer-configured hosts and are out of scope for this adapter. Defensive JSON-aware adapter with binary-preview fallback.",
+      "configSchema": null
+    },
+    {
+      "id": "m365-copilot-web",
+      "name": "Microsoft 365 Copilot Web",
+      "description": "In-suite Copilot embedded in Microsoft 365 (Word, Excel, PowerPoint, Outlook, Teams). Hosted under m365.cloud.microsoft and reachable via various *.office.com paths. Distinct from copilot.microsoft.com (consumer Copilot). Adapter delegates to copilot-ms-web and re-labels Provider to m365-copilot-web for audit.",
+      "configSchema": null
+    },
+    {
+      "id": "together",
+      "name": "Together AI",
+      "description": "OpenAI-compatible API at api.together.xyz and api.together.ai. Adapter delegates to openai-compat and re-labels Provider to 'together' for audit, with together-bearer key class.",
+      "configSchema": null
+    },
+    {
+      "id": "fireworks",
+      "name": "Fireworks AI",
+      "description": "OpenAI-compatible API at api.fireworks.ai. Adapter delegates to openai-compat and re-labels Provider to 'fireworks' for audit, with fireworks-bearer key class.",
+      "configSchema": null
+    },
+    {
+      "id": "deepseek-web",
+      "name": "DeepSeek Web Client",
+      "description": "Browser traffic to chat.deepseek.com (DeepSeek consumer chat). Distinct from api.deepseek.com (programmatic API). Defensive JSON-aware adapter with reasoning_content support.",
+      "configSchema": null
+    },
+    {
+      "id": "moonshot",
+      "name": "Moonshot AI",
+      "description": "OpenAI-compatible API at api.moonshot.cn (China region) and api.moonshot.ai (international region). Adapter delegates to openai-compat with Provider='moonshot' and moonshot-bearer key class.",
+      "configSchema": null
+    },
+    {
+      "id": "kimi-web",
+      "name": "Kimi Web Client",
+      "description": "Browser traffic to kimi.com and kimi.moonshot.cn (Moonshot's consumer Kimi chat product). Defensive JSON-aware adapter.",
+      "configSchema": null
+    },
+    {
+      "id": "chatglm-web",
+      "name": "ChatGLM Web Client",
+      "description": "Browser traffic to chatglm.cn (Zhipu consumer ChatGLM chat). Distinct from open.bigmodel.cn (programmatic API). Defensive JSON-aware adapter.",
+      "configSchema": null
+    },
+    {
+      "id": "cohere",
+      "name": "Cohere",
+      "description": "Cohere Chat API v2 at api.cohere.com. Native parser supporting structured content blocks, tool_calls (request and response), tool_results, tool_plan reasoning trace, plus the Cohere streaming event family (content-delta, tool-plan-delta, tool-call-start/delta/end, message-end). Replaces the generic-jsonpath placeholder used in the original seed.",
+      "configSchema": null
+    },
+    {
+      "id": "huggingface",
+      "name": "Hugging Face Inference",
+      "description": "Hugging Face Inference API (api-inference.huggingface.co) and Inference Endpoints (*.endpoints.huggingface.cloud). Detects between TGI OpenAI-compat (/v1/chat/completions) and legacy serverless (top-level inputs field) request shapes. hf_-prefixed Bearer tokens classified as huggingface-token; other tokens as huggingface-bearer.",
+      "configSchema": null
+    },
+    {
+      "id": "continue-dev",
+      "name": "Continue.dev Hub",
+      "description": "IDE traffic to the Continue Hub at *.continue.dev. Continue.dev primarily proxies to underlying provider APIs (OpenAI, Anthropic, etc.); this adapter captures the hub-specific traffic (assistant marketplace, hub-hosted models, telemetry).",
+      "configSchema": null
+    },
+    {
+      "id": "v0-web",
+      "name": "v0.dev Web",
+      "description": "Browser traffic to v0.dev (Vercel's AI UI codegen). Defensive JSON-aware adapter.",
+      "configSchema": null
+    },
+    {
+      "id": "bolt-web",
+      "name": "Bolt.new Web",
+      "description": "Browser traffic to bolt.new (StackBlitz's AI fullstack codegen) and StackBlitz subdomains. Defensive JSON-aware adapter.",
+      "configSchema": null
+    },
+    {
+      "id": "replicate",
+      "name": "Replicate",
+      "description": "Replicate's prediction API at api.replicate.com. Native parser for the poll-based prediction wire format (request: {version, input}; response: {id, status, output}). Token-class detection for r8_-prefixed Replicate API tokens.",
+      "configSchema": null
+    },
+    {
+      "id": "character-web",
+      "name": "Character.AI Web",
+      "description": "Browser traffic to character.ai and c.ai (Character.AI consumer chat). Defensive JSON-aware adapter.",
+      "configSchema": null
+    },
+    {
+      "id": "you-web",
+      "name": "You.com Web",
+      "description": "Browser traffic to you.com and chat.you.com (You.com search + AI chat). Defensive JSON-aware adapter with youChatToken streaming support.",
+      "configSchema": null
+    },
+    {
+      "id": "huggingchat-web",
+      "name": "HuggingChat Web",
+      "description": "Browser traffic to huggingface.co/chat (HuggingChat — Hugging Face's free consumer chat). The shared huggingface.co host serves many non-AI routes; the corresponding InterceptionDomain row uses defaultPathAction PASSTHROUGH and a path-level rule scopes this adapter to /chat/* only.",
+      "configSchema": null
+    },
+    {
+      "id": "replit-ai",
+      "name": "Replit AI",
+      "description": "AI agent / assistant traffic on replit.com. The shared replit.com host serves both IDE workspaces and AI; path-level rules in the InterceptionDomain scope this adapter to AI paths only.",
+      "configSchema": null
+    },
+    {
+      "id": "devin-web",
+      "name": "Devin (Cognition Labs)",
+      "description": "Browser traffic to devin.ai, app.devin.ai, and cognition.ai (Cognition Labs's Devin AI software-engineer agent). Defensive JSON-aware adapter.",
+      "configSchema": null
+    },
+    {
+      "id": "mistral",
+      "name": "Mistral La Plateforme",
+      "description": "OpenAI-compatible API at api.mistral.ai. Adapter delegates to openai-compat and re-labels Provider to 'mistral' for audit, with mistral-bearer key class.",
+      "configSchema": null
+    },
+    {
+      "id": "xai",
+      "name": "xAI Grok API",
+      "description": "OpenAI-compatible API at api.x.ai. Adapter delegates to openai-compat and re-labels Provider to 'xai' for audit, with xai-bearer key class.",
+      "configSchema": null
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "description": "OpenAI-compatible LPU inference API at api.groq.com. Adapter delegates to openai-compat and re-labels Provider to 'groq' for audit, with groq-bearer key class.",
+      "configSchema": null
+    },
+    {
+      "id": "perplexity",
+      "name": "Perplexity Sonar API",
+      "description": "OpenAI-compatible Sonar API at api.perplexity.ai. Adapter delegates to openai-compat and re-labels Provider to 'perplexity' for audit, with perplexity-bearer key class.",
+      "configSchema": null
+    },
+    {
+      "id": "poe-web",
+      "name": "Poe.com Web Client",
+      "description": "Browser traffic to poe.com (Quora's multi-model aggregator). Wire format is undocumented and shifts between bot families. Defensive JSON-aware adapter with binary-preview fallback.",
+      "configSchema": null
+    },
+    {
+      "id": "github-copilot-web",
+      "name": "GitHub Copilot Chat Web",
+      "description": "Browser traffic to github.com/copilot (Copilot Chat web UI). Distinct from api.githubcopilot.com (IDE backend). The shared github.com host serves many non-AI routes; the corresponding InterceptionDomain row uses defaultPathAction PASSTHROUGH and a path-level rule scopes this adapter to /copilot/* only.",
+      "configSchema": null
+    }
+  ]
+}

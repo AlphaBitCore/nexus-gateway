@@ -1,0 +1,94 @@
+openapi: 3.1.0
+info:
+  title: AI Gateway No-Match Passthrough Fallback
+  version: 1.0.0
+  description: >
+    Documents AI Gateway behavior when routing resolves to zero targets.
+    Gateway applies passthrough fallback by requested model when authorized.
+
+servers:
+  - url: http://localhost:3050
+    description: Local AI Gateway development endpoint
+
+paths:
+  /v1/chat/completions:
+    post:
+      operationId: chatCompletionsNoMatchFallback
+      summary: Chat completion request with no-match passthrough fallback
+      tags: [AI Gateway, Routing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: Request completed successfully (matched rule or no-match passthrough fallback)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: Requested model is not allowed by virtual key policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+              examples:
+                modelNotAllowed:
+                  value:
+                    error:
+                      message: model deepseek-chat is not allowed for this virtual key
+                      type: proxy_error
+                      code: MODEL_NOT_ALLOWED
+                      hint: Use an allowed model or request policy update
+        '404':
+          description: Requested model does not exist or is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+              examples:
+                modelNotFound:
+                  value:
+                    error:
+                      message: no available provider for model deepseek-chat
+                      type: proxy_error
+                      code: ROUTING_NO_MATCH
+                      hint: Ensure the model exists and is enabled
+
+components:
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: true
+
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            code:
+              oneOf:
+                - type: string
+                - type: integer
+            hint:
+              type: string

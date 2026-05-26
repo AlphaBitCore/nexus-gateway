@@ -1,0 +1,21 @@
+/* ── NotFoundPage ─────────────────────────────────────────────────────────── */
+
+.container {
+  padding: var(--g-space-8);
+  text-align: center;
+}
+
+.heading {
+  color: var(--color-text-muted);
+  margin-bottom: var(--g-space-4);
+  font-size: 3rem;
+}
+
+.message {
+  color: var(--color-text-muted);
+  margin-bottom: var(--g-space-6);
+}
+
+.link {
+  color: var(--color-primary);
+}

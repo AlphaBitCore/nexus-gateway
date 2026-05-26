@@ -1,0 +1,9 @@
+.select {
+  font-size: 0.7rem;
+  padding: 0.125rem 0.375rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}

@@ -1,0 +1,35 @@
+---
+description: Read the listed architecture doc BEFORE editing any subsystem
+alwaysApply: true
+---
+
+# Architecture doc triggers — binding
+
+Before editing code in any of the areas listed in `docs/developers/architecture/README.md`, you **MUST** first read the listed architecture doc(s).
+
+This rule is one of the **three required reads** before any code change (see `pre-edit-reading.mdc` for the full requirement: architecture + feature + conventions). It operationalises Step 1 of the Mandatory Development Workflow in `CLAUDE.md` ("Architecture") with per-module precision.
+
+## How to apply
+
+When the user asks you to edit code, before writing any change:
+
+1. Open `docs/developers/architecture/README.md`.
+2. Find the row whose "Editing area / file glob" matches.
+3. Open and read the listed doc(s).
+4. If your edit area is **not** covered by any row, that itself is a signal — either the architecture is undocumented (raise it with the user before continuing) or this is a new subsystem that needs its own doc + row.
+
+## What to do if you're refactoring
+
+If your PR introduces a new architectural subsystem:
+
+1. Write the new `docs/developers/architecture/<service>/<name>-architecture.md` first (or in the same PR, ordered before code).
+2. Append the new row to `docs/developers/architecture/README.md` in the same PR.
+3. CI lockstep (`npm run check:arch-doc-triggers`) will fail if either side is missing.
+
+## What this rule is NOT
+
+- It is **not** a substitute for the Plan / Todo discipline in CLAUDE.md.
+- It is **not** asking you to read every doc — just the ones for the area you are touching.
+- It does **not** require updating the doc unless the architecture itself is changing.
+
+Skipping this rule requires **explicit user approval** in chat.

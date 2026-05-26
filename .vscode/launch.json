@@ -1,0 +1,61 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Nexus Hub (dev)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/packages/nexus-hub/cmd/nexus-hub",
+      "cwd": "${workspaceFolder}/packages/nexus-hub",
+      "args": ["-config", "nexus-hub.dev.yaml"]
+    },
+    {
+      "name": "Control Plane (dev)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/packages/control-plane/cmd/control-plane",
+      "cwd": "${workspaceFolder}/packages/control-plane",
+      "args": ["-config", "control-plane.dev.yaml"]
+    },
+    {
+      "name": "AI Gateway (dev)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/packages/ai-gateway/cmd/ai-gateway",
+      "cwd": "${workspaceFolder}/packages/ai-gateway",
+      "args": ["-config", "ai-gateway.dev.yaml"]
+    },
+    {
+      "name": "Compliance Proxy (dev)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/packages/compliance-proxy/cmd/compliance-proxy",
+      "cwd": "${workspaceFolder}/packages/compliance-proxy",
+      "args": ["-config", "compliance-proxy.dev.yaml"]
+    },
+    {
+      "name": "Agent (dev, run)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/packages/agent/cmd/agent",
+      "cwd": "${workspaceFolder}/packages/agent",
+      "args": ["run", "-config", "agent.dev.yaml"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Platform Services (Hub + CP + AI GW + Proxy)",
+      "configurations": [
+        "Nexus Hub (dev)",
+        "Control Plane (dev)",
+        "AI Gateway (dev)",
+        "Compliance Proxy (dev)"
+      ]
+    }
+  ]
+}

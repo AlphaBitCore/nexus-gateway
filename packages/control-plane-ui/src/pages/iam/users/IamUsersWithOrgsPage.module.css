@@ -1,0 +1,92 @@
+/* ── IamUsersWithOrgsPage — flat list layout ─────────────────────────── */
+
+/* orgFilter lives inside ListFilterToolbar's .row now */
+.orgFilter {
+  width: 200px;
+  flex-shrink: 0;
+}
+
+/* ── User avatar + name cell ──────────────────────────────────────────── */
+
+.avatarCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  border: 1px solid var(--color-info-light);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .orgFilter {
+    width: 100%;
+  }
+
+  .filterRow {
+    flex-direction: column;
+  }
+}
+
+/* ── Role badge variants ──────────────────────────────────────────────── */
+
+.rolesWrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.roleBadge {
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.roleBadgeOverflow {
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: default;
+  background: var(--color-muted);
+  color: var(--color-text-muted);
+}
+
+.rolesMuted {
+  color: var(--color-text-muted);
+}
+
+/* ── Org name link inside table cell ──────────────────────────────────── */
+
+.orgLink {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-primary);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.orgLink:hover {
+  opacity: 0.75;
+}

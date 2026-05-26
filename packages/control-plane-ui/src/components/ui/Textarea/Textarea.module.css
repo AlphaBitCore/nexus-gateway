@@ -1,0 +1,50 @@
+/* ─── Textarea ───────────────────────────────────────────────────────────── */
+
+.textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  line-height: var(--g-line-height-normal);
+  color: var(--color-text);
+  background: var(--color-surface);
+  resize: vertical;
+  transition:
+    border-color var(--g-transition-fast),
+    box-shadow var(--g-transition-fast);
+}
+
+.textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.textarea:hover {
+  border-color: var(--color-border-strong);
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+/* ── Error state ─────────────────────────────────────────────────────────── */
+
+.textarea[data-error] {
+  border-color: var(--color-danger);
+}
+
+.textarea[data-error]:focus {
+  box-shadow: 0 0 0 1px var(--color-danger);
+}
+
+/* ── Disabled ────────────────────────────────────────────────────────────── */
+
+.textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--color-muted);
+}

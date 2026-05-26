@@ -1,0 +1,17 @@
+.area {
+  opacity: 0.1;
+}
+
+.line {
+  vector-effect: non-scaling-stroke;
+}
+
+.dot {
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line, .area, .dot {
+    animation: none;
+  }
+}

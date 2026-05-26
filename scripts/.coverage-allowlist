@@ -1,0 +1,195 @@
+# Coverage allowlist — packages exempt from the 95% threshold.
+#
+# Binding rule: CLAUDE.md → Mandatory rules → "Unit test coverage ≥95%".
+#
+# Format:
+#   - one glob pattern per line; shell-style globs supported (* matches any).
+#   - lines beginning with # are comments.
+#   - blank lines ignored.
+#
+# Policy for adding entries:
+#   1. The package MUST fall into one of these categories:
+#      A. cmd/* entry point (only `main()` wiring, no business logic).
+#      B. Test helper (bufconn / testutil / idptest / storetest).
+#      C. DB-bound — tests require live PostgreSQL.
+#      D. OS-bound — tests need kernel APIs / system keychain / packet capture.
+#      E. Network-infra-bound — tests need real S3 / NATS / Redis Sentinel.
+#      F. Integration-only — existing tests live behind build tags.
+#   2. Each entry MUST cite the category in the trailing comment.
+#   3. Adding to the allowlist requires explicit user approval.
+#   4. Goal: empty allowlist. Run `scripts/check-go-coverage.sh --strict-allowlist`
+#      to surface entries that have since reached the threshold and can be removed.
+#
+# Audit method: docs/developers/workflow/coverage-allowlist-methodology.md.
+# Removed-entry history is in `git log -p scripts/.coverage-allowlist`; this
+# file carries only the current live state plus a section at the bottom
+# listing the canonical seam patterns proven during prior sweeps.
+
+# ──────────────────────────────────────────────────────────────────────
+# (A) cmd/* entry points — main() wiring, no business logic.
+# ──────────────────────────────────────────────────────────────────────
+
+# (A) Service main entry points — main() that parses flags, calls boot,
+# and waits on a signal. Cannot be unit-tested in isolation because they
+# call os.Exit and rely on real OS signal delivery.
+*/packages/agent/cmd/agent
+*/packages/ai-gateway/cmd/ai-gateway
+*/packages/compliance-proxy/cmd/compliance-proxy
+*/packages/control-plane/cmd/control-plane
+*/packages/nexus-hub/cmd/nexus-hub
+
+# (A) cmd/*/wiring — DI assembly with measurable observable behavior. E85
+# Phase 7 pushed each package as far as unit tests can reach (see D-10
+# outcome table in docs/developers/specs/e85/decision-log.md). The residual
+# in each package is integration-bound:
+#   - agent/wiring  93.1% — D OS (keystore/keychain, Win/Linux paths),
+#       E network (WS reconnect closure bodies, OAuth Run path).
+#   - ai-gateway/wiring  73.4% — A `Boot` orchestrator (15-stage sequencer),
+#       C DB-bound (`InitCacheLayer`, `LoadHookConfigsFromDB`, `InitQuota`,
+#       `InitHookConfigCache`), E network (`InitThingClient`, `MountRoutes`
+#       Prometheus duplicate-registration, `InitGeminiCacheMgrSet`,
+#       `WireDiagReconnect`, `WireStaticInfoReconnect`, `InitDB`,
+#       `InitMQProducer`).
+#   - compliance-proxy/wiring  82.8% — C `InitCompliance` DB-bound, E network
+#       (`InitThingClient`, `InitMQProducer`, `LastReportAge`,
+#       `doReconnectWork`, `RunShutdown`, `WireOnReconnect`,
+#       `CaptureThingClientResult`), structurally unreachable (`InitInfra`
+#       NewUpstreamTransport error, cert warmup).
+#   - control-plane/wiring  90.4% — C DB (`InitDB`, `runtime.go`,
+#       `reconcile.go`), D OS (`authserver.go` Abs/keystore, `bootstrap.go`
+#       Setenv), E network (`hub.go`, `redis.go`, `mq.go` consumer-fails),
+#       structurally unreachable (3 timing/dead-code arms).
+#   - nexus-hub/wiring  66.1% — C DB (`InitDB`, `InitSelfReg`,
+#       `InitSelfShadow`, `InitScheduler`, `RunConfigKeyAudit`,
+#       `InitSIEMBridge`), E network (`InitMQ`, `InitOTEL`,
+#       `StartWSSignalSubscriber`).
+# Integration coverage via /smoke-gateway --all-ingress + /test-all + the
+# scenario harness covers every wiring path end-to-end.
+*/packages/agent/cmd/agent/wiring
+*/packages/ai-gateway/cmd/ai-gateway/wiring
+*/packages/compliance-proxy/cmd/compliance-proxy/wiring
+*/packages/control-plane/cmd/control-plane/wiring
+*/packages/nexus-hub/cmd/nexus-hub/wiring
+
+# ──────────────────────────────────────────────────────────────────────
+# (B) Test helpers — used only from *_test.go of other packages.
+# ──────────────────────────────────────────────────────────────────────
+*/packages/shared/transport/bufconn
+*/packages/control-plane/internal/identity/idptest
+*/packages/control-plane/internal/identity/authserver/store/storetest
+*/packages/compliance-proxy/internal/testutil
+
+# ──────────────────────────────────────────────────────────────────────
+# (C) DB-bound — tests require live PostgreSQL.
+# ──────────────────────────────────────────────────────────────────────
+
+# (C) control-plane/internal/store — destructive integration tests under
+# TEST_DATABASE_URL gate skip without a live Postgres. Per-test coverage
+# in this package is 95.2% in CI with TEST_DATABASE_URL set; without it
+# the package reports 0%. Promotion to the "OR ≥95% without allowlist"
+# branch waits on E86 wiring docker-compose Postgres into the unit-test
+# runner — not deferred E85 work, separate-epic infrastructure.
+*/packages/control-plane/internal/store
+
+# ──────────────────────────────────────────────────────────────────────
+# (D) OS-bound — tests need kernel APIs / system keychain / WinDivert /
+#                packet capture / Wails-frontend embed.
+# ──────────────────────────────────────────────────────────────────────
+
+# (D) Agent OS-direct shims — keychain, systray, browser launcher.
+*/packages/agent/internal/identity/keystore
+*/packages/agent/internal/host/trayipc
+*/packages/agent/internal/host/openbrowser
+
+# (D) agent/cmd/agent/platformshim — re-categorized 2026-05-21 from (A)
+# to (D) (E85 D-4). 16 files split across //go:build darwin / linux /
+# windows / !X. Functions invoke:
+#   - macOS `security add-trusted-cert` (System Keychain) via catrust
+#   - Linux `update-ca-certificates` (root + system trust store)
+#   - Windows SCM `mgr.OpenService` + `MessageBoxW` UI prompts
+#   - SystemExtensions bundle inventory (/Library/SystemExtensions/<UUID>)
+#   - NE bridge XPC over Darwin-only socket
+# None testable in unit scope; covered by /build-agent + per-platform
+# install/uninstall smoke + the integration suite.
+*/packages/agent/cmd/agent/platformshim
+
+# (D) agent/ui — Wails desktop app entry. `//go:embed all:frontend/dist`
+# requires `npm run build` on the Wails frontend before `go test` can
+# even compile the main package. Build chain belongs to the Agent release
+# pipeline (`Skill('build-agent')`), not the unit-test runner.
+*/packages/agent/ui
+
+# ──────────────────────────────────────────────────────────────────────
+# (E) Network-infra-bound — real S3, NATS, Valkey Sentinel, live TLS.
+# ──────────────────────────────────────────────────────────────────────
+
+# (E) Real S3 client; tested via /smoke-gateway with spillstore enabled.
+*/packages/shared/storage/spillstore/s3
+
+# (E) Real NATS JetStream client; tested via /test-all (which spins
+# JetStream in docker-compose).
+*/packages/shared/transport/mq
+
+# (E) Live TLS handshake required (bumping leaf certs through the
+# compliance-proxy CA); tested via /test-compliance-proxy.
+*/packages/shared/transport/tlsbump
+
+# ──────────────────────────────────────────────────────────────────────
+# (F) Integration-only — existing *_integration_test.go behind build tag.
+# ──────────────────────────────────────────────────────────────────────
+
+# (F) agent/internal/platform — integration tests behind a build tag;
+# concrete impls live in `darwin/`, `linux/`, `windows/` sub-pkgs and
+# require OS-level packet-capture / NE bridge / WinDivert. Sub-pkg
+# tests cover the actual logic; the root pkg only re-exports.
+*/packages/agent/internal/platform
+
+# ai-gateway/internal/ingress/proxy: removed 2026-05-21 — now 95.1%
+# (E85 D-5 closure). 7 fakeexec-driven tests in proxy_fakeexec_test.go +
+# proxy_residuals_test.go covered the last non-cache-HIT branches:
+# DryRun rate-limited 429 / Coerced header stamp / E57 reverse-decode
+# success / CacheReadTokens=0→ProviderCacheMiss / CacheCreationTokens
+# audit stamp / Embeddings dimension metadata / nil-Usage guard in
+# provcoreUsageToMap. L2 semantic-cache HIT path is still unit-untested
+# but the package now crosses 95% without needing the exemption;
+# /smoke-gateway --all-ingress covers the cache-HIT integration.
+
+# ──────────────────────────────────────────────────────────────────────
+# Removed-entry breadcrumbs — proven seam patterns from past sweeps.
+# These are not active allowlist lines; they document the testability
+# refactor patterns that have already worked in this repo so future
+# coverage sweeps can re-apply them. Full history: `git log -p`.
+# ──────────────────────────────────────────────────────────────────────
+
+# Seam pattern 1 — PgxPool interface, *pgxpool.Pool satisfies it.
+# Applied to (alphabetical, 2026-05-16 → 2026-05-21):
+#   ai-gateway/internal/cache/layer   (100.0%)
+#   ai-gateway/internal/store         (97.1%)
+#   control-plane/internal/store      (95.2% — DB-bound, still allowlisted)
+#   nexus-hub/internal/audit          (95.7%)
+#   nexus-hub/internal/handler        (95.1%)
+#   nexus-hub/internal/jobs/consumer  (99.6%)
+#   nexus-hub/internal/jobs/store     (98.9%)
+#   nexus-hub/internal/opsmetrics     (99.0%)
+#   nexus-hub/internal/selfshadow     (97.0% — pooledConn interface variant)
+#   nexus-hub/internal/siem           (99.4%)
+#   nexus-hub/internal/storage/quotastore  (100.0%)
+#   nexus-hub/internal/storage/rollupstore (100.0%)
+#   nexus-hub/internal/store          (95.5%)
+#   nexus-hub/internal/thingmgr       (95.7%)
+#   control-plane/internal/identity/enrollment (100.0%)
+#   shared/configstore                (100.0%)
+
+# Seam pattern 2 — narrow interface in production file, concrete type
+# satisfies unchanged. Applied to (E85 D-8):
+#   compliance-proxy/cmd/compliance-proxy/breakglass (100.0%) —
+#     `shadowProbeClient` + `replayer` interfaces
+#   compliance-proxy/cmd/compliance-proxy/replay (96.7%) —
+#     injectable `buildSink` package-level var
+
+# Seam pattern 3 — doc_test.go converts `[no test files]` to
+# `[no statements]` for pure-type / sentinel-only packages. Applied to
+# (E85 D-1): nexus-hub/internal/{storage/hubstore,jobs/defs},
+# shared/policy/decision, shared/schemas/configtypes (root + enums +
+# observability sub-pkgs), agent/internal/platform/{api,darwin/flow},
+# compliance-proxy/internal/{config/shadow,tls/pinning}.

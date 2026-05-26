@@ -1,0 +1,47 @@
+/* ─── RadioGroup root ────────────────────────────────────────────────────── */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+/* ─── RadioGroup item ────────────────────────────────────────────────────── */
+
+.item {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color var(--g-transition-fast);
+}
+
+.item[data-state='checked'] {
+  border-color: var(--color-primary);
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.item[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Indicator ─────────────────────────────────────────────────────────── */
+
+.indicator {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}

@@ -1,0 +1,266 @@
+openapi: "3.1.0"
+info:
+  title: Nexus — Admin Hook Test (E26 / Story 1)
+  description: |
+    Admin-facing endpoint for dry-running a configured hook against
+    sample input. The operation is side-effect free: no traffic event
+    is recorded, no MQ message is emitted, no audit row is written.
+
+    **E26-S1 change:** the control-plane no longer instantiates builtin
+    hook factories itself. When the stored hook is `type=builtin`, the
+    request is proxied to the AI gateway's internal endpoint
+    `POST /internal/hooks-test`, which resolves the factory from its
+    own registry (`gwHookRegistry`, the shared registry plus
+    AI-gateway-local entries such as `quality-checker`). When the
+    stored hook is `type=webhook`, the control-plane still executes the
+    test locally — that path is a direct HTTP call to the
+    user-configured endpoint and has no factory dependency.
+
+    This spec documents the public surface only. The internal
+    `POST /internal/hooks-test` endpoint used between services is
+    described in the hook-architecture dev doc and the E26-S1 SDD.
+
+    Authentication: admin session cookie established via
+    `POST /api/admin/auth/login`; permission `admin:ReadHook`.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane instance
+
+tags:
+  - name: Hooks
+    description: Admin hook configuration — test endpoint
+
+paths:
+  /api/admin/hooks/{id}/test:
+    post:
+      tags: [Hooks]
+      operationId: adminHookTest
+      summary: Dry-run a configured hook against sample input
+      description: |
+        Loads the hook config by `id`, routes the call either to the
+        AI gateway (`type=builtin`) or to the user webhook
+        (`type=webhook`), and returns the hook's decision against the
+        supplied sample input.
+
+        The request body carries the sample input. Two shapes are
+        accepted; the handler prefers `messages` when both are
+        present:
+        - `{"messages": [{"role": "user", "content": "..."}]}`
+        - `{"prompt": "..."}`
+
+        For response-stage hooks, callers typically send the sampled
+        upstream response verbatim; the AI gateway's
+        `buildHookTestInput` helper extracts the response text blocks.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HookTestSampleInput"
+            examples:
+              promptShape:
+                summary: Prompt-style sample input
+                value:
+                  prompt: "Please summarize the latest earnings call."
+              messagesShape:
+                summary: Chat-completions-style sample input
+                value:
+                  messages:
+                    - { role: "system", content: "You are a helpful assistant." }
+                    - { role: "user", content: "Summarize the Q3 earnings call." }
+      responses:
+        "200":
+          description: |
+            Hook ran. The body may contain a successful
+            `output` or an `error` string — a 200 with an `error`
+            field indicates the hook's `Execute` returned a runtime
+            error (e.g. upstream webhook non-2xx, execute timeout),
+            not a handler-level failure. Handler-level failures use
+            4xx/5xx status codes.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/HookTestSuccessEnvelope"
+                  - $ref: "#/components/schemas/HookTestRuntimeErrorEnvelope"
+              examples:
+                contentSafetyViolation:
+                  summary: content-safety rejecting input containing a matched keyword
+                  value:
+                    output:
+                      HookID: "hc-01HYZ...CSAFETY"
+                      ImplementationID: "content-safety"
+                      HookName: "Content Safety — default"
+                      Decision: "REJECT_HARD"
+                      Reason: "content safety violation: violence"
+                      ReasonCode: "CONTENT_SAFETY_VIOLATION"
+                      DataClassification: "RESTRICTED"
+                      LatencyMs: 1
+                    executionTimeMs: 2
+                    stage: "request"
+                qualityCheckerApprove:
+                  summary: quality-checker approving a normal response
+                  value:
+                    output:
+                      Decision: "APPROVE"
+                    executionTimeMs: 1
+                    stage: "response"
+                upstreamWebhookUnreachable:
+                  summary: webhook-type hook whose user endpoint returned 5xx
+                  value:
+                    error: "webhook returned 503"
+                    executionTimeMs: 41
+                    stage: "response"
+        "400":
+          description: |
+            The builtin hook could not be instantiated. Returned by the
+            AI gateway and relayed by the control-plane. Common
+            `code` values:
+            - `unknown_implementation` — `implementationId` is not
+              registered in `gwHookRegistry`.
+            - `invalid_config` — stored `config` is not valid JSON.
+            - `factory_error` — factory rejected the config (e.g.
+              missing required field).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                unknownImplementation:
+                  value:
+                    error: "unknown builtin implementationId \"no-such-hook\""
+                    code: "unknown_implementation"
+        "404":
+          description: Hook config with the given id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "502":
+          description: |
+            The control-plane could not reach the AI gateway while
+            proxying a builtin hook test. Equivalent to the 502 path
+            in the provider-test and routing-simulate endpoints.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                aiGatewayDown:
+                  value:
+                    error: "AI Gateway unreachable: dial tcp 127.0.0.1:3050: connect: connection refused"
+
+components:
+  schemas:
+    Decision:
+      type: string
+      enum: [APPROVE, REJECT_HARD, REJECT_SOFT, MODIFY]
+
+    DataClassification:
+      type: string
+      enum: [PUBLIC, INTERNAL, CONFIDENTIAL, RESTRICTED]
+
+    HookTestSampleInput:
+      type: object
+      additionalProperties: true
+      description: |
+        Arbitrary JSON body. The AI gateway `buildHookTestInput`
+        helper recognizes `messages` (chat completions shape) and
+        `prompt` (plain-string shape); any other JSON is passed to
+        the hook as a single content block of its serialized form.
+      properties:
+        prompt:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+              content:
+                type: string
+
+    HookOutput:
+      type: object
+      required: [Decision]
+      description: |
+        Mirrors `shared/hooks.HookResult`. The struct carries no JSON
+        tags, so the wire field names are the Go field names
+        (PascalCase). Different hook implementations populate
+        different subsets: `content-safety` sets `HookID`,
+        `ImplementationID`, `HookName`, `Decision`, `Reason`,
+        `ReasonCode`, `DataClassification`; `quality-checker` sets
+        only `Decision` and optionally `Reason`/`ReasonCode`.
+      properties:
+        HookID:
+          type: string
+        ImplementationID:
+          type: string
+        HookName:
+          type: string
+        Decision:
+          $ref: "#/components/schemas/Decision"
+        Reason:
+          type: string
+        ReasonCode:
+          type: string
+        DataClassification:
+          $ref: "#/components/schemas/DataClassification"
+        LatencyMs:
+          type: integer
+        Error:
+          type: string
+          description: Set when the hook ran but recorded a soft error.
+        ModifiedContent:
+          type: array
+          items:
+            type: object
+          description: Populated by hooks that return `Decision=MODIFY` (e.g. `pii-detector` in redact mode).
+
+    HookTestSuccessEnvelope:
+      type: object
+      required: [output, executionTimeMs, stage]
+      properties:
+        output:
+          $ref: "#/components/schemas/HookOutput"
+        executionTimeMs:
+          type: integer
+        stage:
+          type: string
+          enum: [request, response]
+
+    HookTestRuntimeErrorEnvelope:
+      type: object
+      required: [error, executionTimeMs, stage]
+      description: |
+        Returned with HTTP 200 when the hook's own `Execute` errored or
+        exceeded its timeout. Handler-level failures use 4xx/5xx.
+      properties:
+        error:
+          type: string
+        executionTimeMs:
+          type: integer
+        stage:
+          type: string
+          enum: [request, response]
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string

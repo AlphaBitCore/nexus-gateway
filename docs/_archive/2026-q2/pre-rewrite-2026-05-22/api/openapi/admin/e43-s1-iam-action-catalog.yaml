@@ -1,0 +1,172 @@
+openapi: "3.1.0"
+info:
+  title: Nexus — IAM Action Catalog
+  description: |
+    Read-only metadata endpoint that returns the canonical IAM resource ×
+    verb taxonomy this Control Plane evaluates against (the
+    `packages/shared/iam.Catalog` table). Every layer that needs to enumerate
+    admin operations consumes this endpoint:
+
+      * Control Plane UI — IAM Simulator's resource/action dropdowns, IAM
+        Policy Editor's quick-add groups, and `usePermission` lookups.
+      * SIEM eventType admin UI — operators picking the filter strings to
+        ship to their SIEM (the `siem` field of each action equals the
+        Hub-emitted SIEM eventType for that operation).
+      * Operator tooling (CLIs, scripts) that want to enumerate every
+        action the engine recognizes.
+
+    Before E43 these surfaces all carried hand-typed copies of the action
+    set that drifted independently — see
+    `docs/developers/specs/e43/e43-s1-iam-canonical-taxonomy.md` for the full design.
+
+    **Authorization.** Requires only an authenticated admin session; no
+    IAM action gate. The response is pure metadata about the engine's
+    action surface and exposes no user-scoped data, mirroring the
+    `/me/permissions` endpoint.
+  version: "1.0.0"
+servers:
+  - url: https://nexus.example.com
+    description: Production
+  - url: http://localhost:3001
+    description: Local dev
+paths:
+  /api/admin/iam/action-catalog:
+    get:
+      summary: List the canonical resource × verb taxonomy.
+      operationId: getIAMActionCatalog
+      tags: [IAM]
+      responses:
+        "200":
+          description: |
+            Returns every resource defined in `iam.Catalog` along with the
+            full set of verbs declared on that resource. Order within the
+            response is stable (mirrors the source slice in
+            `packages/shared/iam/catalog_data.go`); callers wanting
+            alphabetic display should sort client-side.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionCatalogResponse"
+              examples:
+                excerpt:
+                  summary: Excerpt — provider, virtual-key, audit-log
+                  value:
+                    resources:
+                      - type: provider
+                        service: gateway
+                        nrn: "nrn:nexus:gateway:*:provider/*"
+                        actions:
+                          - { verb: create, name: "admin:provider.create", siem: "provider.create" }
+                          - { verb: read,   name: "admin:provider.read",   siem: "provider.read" }
+                          - { verb: update, name: "admin:provider.update", siem: "provider.update" }
+                          - { verb: delete, name: "admin:provider.delete", siem: "provider.delete" }
+                      - type: virtual-key
+                        service: gateway
+                        nrn: "nrn:nexus:gateway:*:virtual-key/*"
+                        actions:
+                          - { verb: create,  name: "admin:virtual-key.create",  siem: "virtual-key.create" }
+                          - { verb: read,    name: "admin:virtual-key.read",    siem: "virtual-key.read" }
+                          - { verb: update,  name: "admin:virtual-key.update",  siem: "virtual-key.update" }
+                          - { verb: delete,  name: "admin:virtual-key.delete",  siem: "virtual-key.delete" }
+                          - { verb: approve, name: "admin:virtual-key.approve", siem: "virtual-key.approve" }
+                          - { verb: reject,  name: "admin:virtual-key.reject",  siem: "virtual-key.reject" }
+                          - { verb: revoke,  name: "admin:virtual-key.revoke",  siem: "virtual-key.revoke" }
+                          - { verb: renew,   name: "admin:virtual-key.renew",   siem: "virtual-key.renew" }
+                      - type: audit-log
+                        service: admin
+                        nrn: "nrn:nexus:admin:*:audit-log/*"
+                        actions:
+                          - { verb: read,   name: "admin:audit-log.read",   siem: "audit-log.read" }
+                          - { verb: export, name: "admin:audit-log.export", siem: "audit-log.export" }
+        "401":
+          description: Missing or invalid admin session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  schemas:
+    ActionCatalogResponse:
+      type: object
+      required: [resources]
+      properties:
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceCatalogEntry"
+
+    ResourceCatalogEntry:
+      type: object
+      required: [type, service, nrn, actions]
+      properties:
+        type:
+          type: string
+          description: |
+            Canonical kebab-case resource name (e.g. `virtual-key`,
+            `audit-log`). This is the value emitted as `EntityType` in
+            admin audit rows and as the resource segment of NRN strings.
+          pattern: "^[a-z][a-z0-9-]*$"
+          example: "virtual-key"
+        service:
+          type: string
+          description: |
+            Platform component that owns this resource — drives the
+            second segment of the NRN template.
+          enum: [gateway, admin, compliance]
+        nrn:
+          type: string
+          description: |
+            Canonical NRN wildcard for this resource (`scope=*`, `id=*`)
+            suitable for use in IAM policy `Resource` blocks that target
+            every instance.
+          pattern: "^nrn:nexus:(gateway|admin|compliance):\\*:[a-z][a-z0-9-]*/\\*$"
+          example: "nrn:nexus:gateway:*:virtual-key/*"
+        actions:
+          type: array
+          description: |
+            Every verb declared on this resource. Empty when the resource
+            is internal (referenced by audit/SIEM but not gated by any
+            iamMW call — e.g. `nexus-session` before E43 P4 added the
+            `revoke` verb).
+          items:
+            $ref: "#/components/schemas/ResourceCatalogAction"
+
+    ResourceCatalogAction:
+      type: object
+      required: [verb, name, siem]
+      properties:
+        verb:
+          type: string
+          description: |
+            Canonical kebab-case verb (e.g. `create`, `force-resync`,
+            `acknowledge`). One of the closed enum members defined in
+            `packages/shared/iam/catalog.go`.
+          pattern: "^[a-z][a-z-]*$"
+          example: "create"
+        name:
+          type: string
+          description: |
+            Full IAM action string for this (resource, verb) pair, usable
+            verbatim in an IAM policy document's `Statement[].Action[]`
+            array. Format is always `admin:<resource>.<verb>`.
+          pattern: "^admin:[a-z][a-z0-9-]*\\.[a-z][a-z-]*$"
+          example: "admin:virtual-key.create"
+        siem:
+          type: string
+          description: |
+            SIEM `eventType` emitted by `ClassifyAdminEvent` when this
+            verb fires on this resource — equal to `name` with the
+            `admin:` prefix stripped. Surfaced so that SIEM-filter UI
+            can present operators with the same dropdown that the IAM
+            policy editor does.
+          pattern: "^[a-z][a-z0-9-]*\\.[a-z][a-z-]*$"
+          example: "virtual-key.create"
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        error_code:
+          type: string

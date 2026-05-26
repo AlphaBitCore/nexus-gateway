@@ -1,0 +1,31 @@
+{
+  "_source": "Gemini API generateContent — Multi-turn function calls (documentation snapshot, 2026-04-25). https://ai.google.dev/api/generate-content#FunctionCall",
+  "systemInstruction": {"parts": [{"text": "You are a helpful weather assistant."}]},
+  "contents": [
+    {"role": "user", "parts": [{"text": "What is the weather in San Francisco?"}]},
+    {"role": "model", "parts": [
+      {"functionCall": {"id": "fc_001", "name": "get_weather", "args": {"location": "San Francisco"}}}
+    ]},
+    {"role": "user", "parts": [
+      {"functionResponse": {"name": "get_weather", "response": {"temp_f": 62}}}
+    ]},
+    {"role": "model", "parts": [{"text": "It is 62°F in San Francisco."}]}
+  ],
+  "tools": [
+    {"functionDeclarations": [
+      {
+        "name": "get_weather",
+        "description": "Look up current weather for a location",
+        "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}
+      }
+    ]}
+  ],
+  "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
+  "generationConfig": {
+    "temperature": 0.0,
+    "maxOutputTokens": 256,
+    "topP": 0.95,
+    "topK": 40,
+    "stopSequences": ["END", "<|eot|>"]
+  }
+}

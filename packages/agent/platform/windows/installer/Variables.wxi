@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  E40 Phase 3 D3b: WiX shared variables for NexusAgent.wxs.
+
+  Build-time overrides:
+    wix build NexusAgent.wxs -d Version=1.2.3 -d StagingDir=...\staging
+-->
+<Include xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+    <!-- Stable upgrade code: never change this across versions. -->
+    <?define UpgradeCode = "F5C8E5A8-3F2D-4B5C-9A1E-7E9D2B3C4F1A" ?>
+
+    <!-- Product metadata -->
+    <?define ProductName    = "Nexus Agent" ?>
+    <?define Manufacturer   = "Nexus Gateway" ?>
+
+    <!-- Default version (overridden via -d Version=...) -->
+    <?ifndef Version ?>
+        <?define Version = "0.0.0" ?>
+    <?endif?>
+
+    <!-- Default staging directory (overridden via -d StagingDir=...) -->
+    <?ifndef StagingDir ?>
+        <?define StagingDir = "..\\..\\..\\..\\..\\dist\\windows\\staging" ?>
+    <?endif?>
+
+</Include>

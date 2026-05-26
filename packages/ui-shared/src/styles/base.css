@@ -1,0 +1,144 @@
+/* ─── Base Styles & Reset ────────────────────────────────────────────────── */
+/* Element-level resets and defaults. Loaded first, before token files.       */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border-color: var(--color-border);
+}
+
+html {
+  font-size: 16px;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-normal);
+  color: var(--color-text);
+  /* Layered: theme ambient gradient on top, base background colour below.
+     Default theme ships ambient-gradient: none in light mode and a subtle
+     radial gradient in dark mode — themes can override per mode. */
+  background-color: var(--color-bg);
+  background-image: var(--g-effect-ambient-gradient);
+  line-height: var(--g-line-height-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100svh;
+  width: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button, [role="button"] {
+  cursor: pointer;
+}
+
+button:disabled, [role="button"]:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+  opacity: 0.38;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+  /*
+   * #83 click feedback: a quick scale-down + brightness shift on
+   * :active so the user gets sub-100ms visual confirmation that the
+   * click registered. Pre-fix the Diagnostics → Restart Daemon
+   * interaction silently swallowed clicks (no animation + no toast +
+   * 250ms IPC delay) and the user concluded "nothing happened". The
+   * 80ms transition is short enough that holding the mouse down
+   * doesn't feel sluggish but long enough to be visible at 60fps.
+   * `will-change: transform` keeps GPU compositing on standby so
+   * the press feels instant under heavy main-thread load.
+   */
+  transition: transform 80ms ease-out, filter 80ms ease-out;
+}
+
+button:active:not(:disabled), [role="button"]:active:not([aria-disabled="true"]) {
+  transform: scale(0.97);
+  filter: brightness(0.92);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--g-font-size-base);
+  caption-side: bottom;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: var(--color-surface);
+}
+
+/* Prevent iOS zoom on focus */
+@media screen and (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* ── Prose line-length control ───────────────────────────────────────────── */
+
+p, li, dd, blockquote {
+  max-width: 72ch;
+}
+
+/* ── Focus ───────────────────────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-ring);
+  border-radius: var(--g-radius-md);
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--g-radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ── Selection ───────────────────────────────────────────────────────────── */
+
+::selection {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}

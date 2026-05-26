@@ -1,0 +1,1 @@
+# Domain device predicate architecture

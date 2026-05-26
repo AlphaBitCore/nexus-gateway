@@ -1,0 +1,45 @@
+{
+  "name": "deepseek",
+  "displayName": "DeepSeek",
+  "description": "DeepSeek API \u2014 V4 chat and reasoning models.",
+  "baseUrl": "https://api.deepseek.com",
+  "adapterType": "deepseek",
+  "models": [
+    {
+      "code": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "description": "Fast, cost-effective V4 model. Strong multilingual reasoning and coding at competitive pricing.",
+      "providerModelId": "deepseek-v4-flash",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.14,
+      "outputPricePerMillion": 0.28,
+      "maxContextTokens": 65536,
+      "maxOutputTokens": 8192,
+      "cachedInputReadPricePerMillion": 0.014,
+      "cachedInputWritePricePerMillion": 0
+    },
+    {
+      "code": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "description": "Advanced V4 model with extended context and improved capability for complex tasks.",
+      "providerModelId": "deepseek-v4-pro",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.435,
+      "outputPricePerMillion": 0.87,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 0.0435,
+      "cachedInputWritePricePerMillion": 0
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+/* ── ExtractCacheCard — design-token strict ───────────────────────────────── */
+
+.cardHeading {
+  margin: 0 0 var(--g-space-1);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.cardSubtitle {
+  margin: 0 0 var(--g-space-3);
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+/* Settings grid — matches the CachePage four-column pattern so Extract /
+   Semantic share one visual rhythm. Two label+control pairs per row on
+   wide viewports, collapses to one pair per row below 1024px. */
+.settingsGrid {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr) minmax(140px, max-content) minmax(0, 1fr);
+  column-gap: var(--g-space-4);
+  row-gap: var(--g-space-3);
+  align-items: center;
+}
+
+@media (max-width: 1024px) {
+  .settingsGrid {
+    grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+  }
+}
+
+.settingLabel {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  text-align: right;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--g-space-1);
+}
+
+.settingControl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--g-space-2);
+  min-width: 0;
+}
+
+.ttlInput {
+  width: 8rem;
+}
+
+.settingsActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--g-space-2);
+  margin-top: var(--g-space-4);
+  padding-top: var(--g-space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.helpIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: help;
+  user-select: none;
+}
+
+.helpIcon:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+.rowError {
+  margin: var(--g-space-2) 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-error-fg);
+}

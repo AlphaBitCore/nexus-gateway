@@ -1,0 +1,150 @@
+.header {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.headerActions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.9rem;
+  line-height: 1.08;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 58rem;
+  color: var(--color-text-secondary);
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.metaLabel {
+  margin-bottom: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.metaValue {
+  font-weight: 600;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.sortHint {
+  color: var(--color-text-secondary);
+  font-size: 0.88rem;
+}
+
+.tableWrap {
+  overflow: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: 16px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+}
+
+.table th,
+.table td {
+  padding: 0.85rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-light);
+  vertical-align: top;
+}
+
+.table th {
+  background: var(--color-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.sortButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.sortButton:hover {
+  color: var(--color-info);
+}
+
+.patternCell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.84rem;
+  word-break: break-word;
+}
+
+.state {
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-surface);
+}
+
+@media (max-width: 960px) {
+  .metaGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .title {
+    font-size: 1.5rem;
+  }
+
+  .metaGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .sectionHeader {
+    align-items: start;
+    flex-direction: column;
+  }
+}
+

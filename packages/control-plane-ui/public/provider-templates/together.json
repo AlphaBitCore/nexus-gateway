@@ -1,0 +1,80 @@
+{
+  "name": "together",
+  "displayName": "Together AI",
+  "description": "Together AI serverless \u2014 OpenAI-compatible API serving open-weight models (Llama, Qwen, Mixtral, DeepSeek). Model list per 2026-04 vendor docs; admin should verify against https://docs.together.ai/docs/serverless-models before customer-facing use.",
+  "baseUrl": "https://api.together.xyz",
+  "adapterType": "together",
+  "models": [
+    {
+      "code": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "name": "Llama 3.3 70B Instruct Turbo",
+      "description": "Meta's flagship 70B Llama 3.3 served via Together AI's Turbo (FP8) inference profile.",
+      "providerModelId": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+      "name": "Llama 3.1 405B Instruct Turbo",
+      "description": "Meta's 405B reference model, served at FP8 for production cost.",
+      "providerModelId": "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "Qwen/Qwen2.5-72B-Instruct-Turbo",
+      "name": "Qwen 2.5 72B Instruct Turbo",
+      "description": "Alibaba's Qwen 2.5 72B served via Together's Turbo profile.",
+      "providerModelId": "Qwen/Qwen2.5-72B-Instruct-Turbo",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+      "name": "Mixtral 8x7B Instruct",
+      "description": "Mistral's 8x7B mixture-of-experts.",
+      "providerModelId": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 32768,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "deepseek-ai/DeepSeek-V3",
+      "name": "DeepSeek V3",
+      "description": "DeepSeek's V3 chat model.",
+      "providerModelId": "deepseek-ai/DeepSeek-V3",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 65536,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

@@ -1,0 +1,258 @@
+openapi: 3.1.0
+info:
+  title: Admin — Emergency Passthrough (E48-S6 + S8)
+  version: 1.1.0
+  description: |
+    Three-tier emergency passthrough kill-switch: global / adapter / provider.
+    Each tier carries independent flags `bypassHooks` / `bypassCache` /
+    `bypassNormalize` and a forced `expiresAt` + `reason`. Effective
+    resolution at runtime is provider > adapter > global; tier rows with
+    `enabled=false` are skipped during resolution.
+
+    All endpoints are IAM-gated by the `passthrough` resource:
+      - `read` for every GET
+      - `write` for DELETE on adapter / provider tier rows (cleanup)
+      - `emergency-enable` for every PUT (the gate for `enabled=true`)
+
+    Mutating endpoints also push the assembled blob to the Hub via
+    `NotifyConfigChange(ConfigKey="gateway_passthrough_config")` and return
+    HTTP 502 with a structured `propagation_error` body if Hub propagation
+    fails; the DB write still happens and the Hub reconcile job heals
+    drift within ~60s.
+
+    S8 additions over S6:
+      - `GET /api/admin/passthrough/snapshot` — bulk read used by the
+        admin UI page so all 3 tiers + provider names land in one round-trip.
+      - Endpoint gates wired through `iam.ResourcePassthrough.Action(...)`
+        (was opaque strings under S6); behaviour unchanged.
+
+servers:
+  - url: https://nexus.example.com
+    description: Production
+  - url: http://localhost:3001
+    description: Local dev
+
+paths:
+  /api/admin/passthrough/global:
+    get:
+      summary: Read Tier-1 (global) passthrough state
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.read']}]
+      responses:
+        '200':
+          description: Singleton global tier row.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassthroughPayload'}
+    put:
+      summary: Replace Tier-1 (global) passthrough state
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.emergency-enable']}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PassthroughPayload'}
+      responses:
+        '200':
+          description: Saved + propagated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassthroughPayload'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '502': {$ref: '#/components/responses/PropagationError'}
+
+  /api/admin/passthrough/adapter/{adapter_type}:
+    parameters:
+      - $ref: '#/components/parameters/AdapterTypePath'
+    get:
+      summary: Read Tier-2 (per adapter_type) passthrough state
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.read']}]
+      responses:
+        '200':
+          description: Tier-2 row for this adapter.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassthroughPayload'}
+        '404': {description: No tier row exists for this adapter.}
+    put:
+      summary: Upsert Tier-2 (per adapter_type) passthrough state
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.emergency-enable']}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PassthroughPayload'}
+      responses:
+        '200':
+          description: Saved + propagated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassthroughPayload'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '502': {$ref: '#/components/responses/PropagationError'}
+    delete:
+      summary: Remove Tier-2 passthrough row (reset to inherit)
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.write']}]
+      responses:
+        '204': {description: Override removed + propagated.}
+        '502': {$ref: '#/components/responses/PropagationError'}
+
+  /api/admin/passthrough/provider/{provider_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProviderIdPath'
+    get:
+      summary: Read Tier-3 (per provider_id) passthrough state
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.read']}]
+      responses:
+        '200':
+          description: Tier-3 row for this provider.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassthroughPayload'}
+        '404': {description: No tier row exists for this provider.}
+    put:
+      summary: Upsert Tier-3 (per provider_id) passthrough state
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.emergency-enable']}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PassthroughPayload'}
+      responses:
+        '200':
+          description: Saved + propagated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassthroughPayload'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '502': {$ref: '#/components/responses/PropagationError'}
+    delete:
+      summary: Remove Tier-3 passthrough row (reset to inherit)
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.write']}]
+      responses:
+        '204': {description: Override removed + propagated.}
+        '502': {$ref: '#/components/responses/PropagationError'}
+
+  /api/admin/passthrough/effective/{provider_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProviderIdPath'
+    get:
+      summary: Read effective passthrough state for a provider (3-tier merged)
+      description: |
+        Computes the merged result of Tier 1 → Tier 2 → Tier 3 for the
+        provided `provider_id`. Returned shape matches `PassthroughPayload`.
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.read']}]
+      responses:
+        '200':
+          description: Effective state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassthroughPayload'}
+        '404': {description: Provider not found.}
+
+  /api/admin/passthrough/snapshot:
+    get:
+      summary: Bulk read all 3 tiers + provider name lookup (S8)
+      description: |
+        Returns the full passthrough state in one round-trip — used by the
+        admin UI page so the active-state banner, global panel, adapter
+        overrides table, and provider overrides table all render off a
+        single fetch. The shape matches the Hub shadow blob, plus
+        `providerNames` for display.
+      tags: [Passthrough]
+      security: [{bearerAuth: ['admin:passthrough.read']}]
+      responses:
+        '200':
+          description: Snapshot of all 3 tiers + provider name lookup.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Snapshot'}
+
+components:
+  parameters:
+    AdapterTypePath:
+      in: path
+      name: adapter_type
+      required: true
+      schema:
+        type: string
+        enum: [anthropic, bedrock, gemini, vertex, openai, azure-openai, deepseek, glm, moonshot, mistral, xai, groq, perplexity, together, fireworks, minimax, cohere, huggingface, replicate]
+    ProviderIdPath:
+      in: path
+      name: provider_id
+      required: true
+      schema: {type: string, format: uuid}
+
+  responses:
+    ValidationError:
+      description: Request body failed one of the passthrough invariants.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          examples:
+            no_bypass:
+              value: {message: 'at least one bypass flag must be set when enabled=true', code: passthrough_no_bypass_selected}
+            normalize_without_cache:
+              value: {message: 'bypassNormalize=true requires bypassCache=true', code: passthrough_normalize_requires_cache_bypass}
+            invalid_expiry:
+              value: {message: 'expiresAt is required when enabled=true; max NOW()+8h', code: passthrough_invalid_expiry}
+            invalid_reason:
+              value: {message: 'reason must be at least 20 characters explaining why passthrough is needed', code: passthrough_invalid_reason}
+    PropagationError:
+      description: |
+        Config saved to DB but Hub propagation failed. The Hub reconcile job
+        will heal drift within ~60s; operator may also retry the request.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  schemas:
+    PassthroughPayload:
+      type: object
+      properties:
+        enabled: {type: boolean, description: 'Master switch for this tier row.'}
+        bypassHooks: {type: boolean, description: 'Skip compliance pipeline (hooks, AI Guard, rule packs).'}
+        bypassCache: {type: boolean, description: 'Skip response-cache lookup AND write.'}
+        bypassNormalize: {type: boolean, description: 'Skip TransformSpan emission. Requires bypassCache=true.'}
+        expiresAt: {type: string, format: date-time, description: 'UTC. Max NOW+8h. Hub auto-flips enabled=false at this time.'}
+        enabledBy: {type: string, description: 'User id of the last enabler. Server-populated; ignored on write.'}
+        reason: {type: string, minLength: 20, description: 'Required (≥20 chars) when enabled=true.'}
+      additionalProperties: false
+
+    Snapshot:
+      type: object
+      properties:
+        global: {$ref: '#/components/schemas/PassthroughPayload'}
+        adapters:
+          type: object
+          description: Keyed by adapter_type.
+          additionalProperties: {$ref: '#/components/schemas/PassthroughPayload'}
+        providers:
+          type: object
+          description: Keyed by provider_id (uuid).
+          additionalProperties: {$ref: '#/components/schemas/PassthroughPayload'}
+        providerNames:
+          type: object
+          description: Lookup of provider_id → human-readable name for UI display.
+          additionalProperties: {type: string}
+
+    ErrorResponse:
+      type: object
+      properties:
+        message: {type: string}
+        code: {type: string}
+        detail: {type: string}
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,212 @@
+version: "2"
+
+# Show every finding — golangci-lint defaults cap same-issue and
+# per-linter output, which silently hides real work.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+# Single source of truth for all six Go modules in this workspace
+# (agent, ai-gateway, compliance-proxy, control-plane, nexus-hub, shared).
+# golangci-lint walks up from the run directory to find this file, so
+# `cd packages/<svc> && golangci-lint run ./...` works unchanged.
+#
+# Module-specific exclusions live in `exclusions.rules` below. Do not
+# reintroduce per-module .golangci.yml files.
+
+linters:
+  enable:
+    # Correctness baseline.
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+
+    # Project-specific bans (forbidigo) — see settings.forbidigo.
+    - forbidigo
+
+    # HTTP / context discipline. The gateway makes outbound HTTP
+    # everywhere; an unclosed body or a context-less request is a bug.
+    - bodyclose
+    - noctx
+
+    # Error wrapping discipline. CLAUDE.md mandates
+    # fmt.Errorf("...: %w", err) and errors.Is/As — errorlint flags
+    # %s/%v on errors and == comparisons that bypass the chain.
+    - errorlint
+
+    # Go 1.22+ correctness wins. The workspace is on Go 1.25+, so
+    # there is no reason to keep pre-1.22 loop / range patterns.
+    - copyloopvar
+    - intrange
+
+    # Cleanups that complement the baseline.
+    - unconvert
+    - wastedassign
+    - nilerr
+    - usestdlibvars
+
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # ── Outbound HTTP discipline ──────────────────────────────
+        # Every *http.Client must come from
+        # packages/shared/transport/http.New(...). See
+        # docs/developers/architecture/overview.md §Outbound HTTP. Allowlist
+        # (see exclusions.rules below): the factory itself, the agent
+        # raw-TLS relay path, the ai-gateway hot-swap singleton, the
+        # shared/transport/thingclient infrastructure, the agent
+        # warm-bootstrap path that needs system roots, and the CP
+        # AI-Guard simulator streaming-Timeout=0 path.
+        - pattern: '^http\.DefaultClient$'
+          msg: "use packages/shared/transport/http.New instead of http.DefaultClient"
+        - pattern: '&http\.Client\{'
+          msg: "use packages/shared/transport/http.New instead of bare http.Client literals"
+        # http.Get/Post/Head/PostForm dispatch through DefaultClient,
+        # so they bypass the timeout/transport policy enforced by
+        # http.New. Same rationale as the DefaultClient ban.
+        - pattern: '^http\.(Get|Post|Head|PostForm)$'
+          msg: "http.{Get,Post,Head,PostForm} use http.DefaultClient — build a client via packages/shared/transport/http.New and call client.Do"
+
+        # ── Logging discipline ────────────────────────────────────
+        # All structured logging must go through log/slog. The
+        # standard log package's print/fatal/panic helpers bypass the
+        # configured slog handler (no JSON, no level, no fields).
+        # Tests are excluded; cmd entry points are NOT — they should
+        # use fmt.Fprintf(os.Stderr, ...) for pre-logger startup
+        # output, not log.Fatalf.
+        - pattern: '^log\.(Print|Println|Printf|Fatal|Fatalln|Fatalf|Panic|Panicln|Panicf)$'
+          msg: "use log/slog instead of the standard log package; for pre-logger startup output use fmt.Fprintf(os.Stderr, ...) and os.Exit"
+
+        # fmt.Print/Println/Printf write to os.Stdout and bypass the
+        # logger. Forbidden in production; cmd/ packages may use them
+        # for human-facing CLI output (usage strings, success
+        # messages) and are excluded by path below.
+        - pattern: '^fmt\.(Print|Println|Printf)$'
+          msg: "fmt.Print* writes to stdout and bypasses log/slog; use the structured logger, or move CLI-only output into a cmd/ package"
+
+        # The unqualified println/print builtins are debug aids that
+        # must never ship in production code. There are zero
+        # legitimate uses today — keep it that way.
+        - pattern: '^(println|print)$'
+          msg: "println/print builtins are debug-only — remove or replace with the structured logger"
+
+        # ── Stdlib hygiene ────────────────────────────────────────
+        # io/ioutil has been deprecated since Go 1.16. All
+        # replacements are in io and os.
+        - pattern: '^ioutil\.'
+          msg: "io/ioutil is deprecated since Go 1.16 — use io and os equivalents"
+
+        # os.Exit terminates without running deferred functions and
+        # makes a function untestable. Acceptable only in cmd/ entry
+        # points (main, signal-handler bridges); library code returns
+        # errors and lets the caller decide how to exit.
+        - pattern: '^os\.Exit$'
+          msg: "os.Exit skips deferred cleanup and is forbidden outside cmd/ — return an error and let main decide how to exit"
+
+        # ── E43 IAM canonical taxonomy discipline ─────────────────
+        # audit.Entry{...} literal construction is forbidden outside the
+        # audit package itself (where EntryFor uses it internally) and
+        # auth_sessions.go (the Hub-driven revoke-device path that has a
+        # synthetic actor identity). Every other audit emission must go
+        # through audit.EntryFor(c, resource, verb) so the (EntityType,
+        # Action) pair is constrained to the canonical iam.Catalog.
+        # The companion Go consistency test
+        # (packages/control-plane/internal/iam/catalog_consistency_test.go)
+        # provides the same guarantee at test time; this lint rule
+        # surfaces violations at compile time (faster feedback).
+        - pattern: 'audit\.Entry\{'
+          msg: "construct audit.Entry via audit.EntryFor(c, iam.ResourceX, iam.VerbY); free-form Entry{Action:..., EntityType:...} is forbidden because it bypasses the canonical iam.Catalog (see docs/developers/specs/e43/e43-s1-iam-canonical-taxonomy.md)"
+
+    errorlint:
+      # %w is the rule; %s / %v on errors hides the chain from
+      # errors.Is / errors.As.
+      errorf: true
+      errorf-multi: true
+      asserts: true
+      comparison: true
+
+  exclusions:
+    rules:
+      # Tests may use bare http.Client / log.Fatalf / fmt.Print* /
+      # os.Exit / println for fixtures, table-driven assertions, and
+      # debug helpers. The forbidigo bans are about production code
+      # only. noctx is also waived in tests: httptest.NewRequest /
+      # http.NewRequest in tests typically feed a handler directly
+      # rather than make a real network call, so the ctx-cancellation
+      # benefit does not apply (matches the policy used by k8s,
+      # prometheus, and other large Go projects).
+      # Tests may use bare http.Client / log.Fatalf / fmt.Print* /
+      # os.Exit / println for fixtures, table-driven assertions, and
+      # debug helpers (forbidigo). httptest.NewRequest / http.NewRequest
+      # in tests typically feed a handler directly rather than make a
+      # real network call (noctx). And Go convention treats unchecked
+      # cleanup close on test doubles (rdb.Close, srv.Close, etc.) as
+      # idiomatic (errcheck) — production code still has it on.
+      - path: _test\.go$
+        linters: [forbidigo, noctx, errcheck]
+
+      # The httpclient factory is the one place allowed to construct
+      # the underlying *http.Client; everywhere else must call into
+      # it. Path uses the per-module run convention
+      # (`cd packages/shared && golangci-lint run ./...`).
+      - path: (^|/)transport/http/httpclient\.go$
+        linters: [forbidigo]
+
+      # The agent relay package owns the raw-TLS interception path
+      # (see docs/_archive/2026-q2/brainstorms/2026-04-26-agent-transport-rewrite-design.md §5.5).
+      # Bare http.Client construction is legitimate there because it
+      # backs httpclient.New for tests and helpers.
+      - path: (^|/)internal/network/relay/
+        linters: [forbidigo]
+
+      # ai-gateway upstream provider singleton uses a hot-swap
+      # liveTransport (atomic.Pointer reload on every config change).
+      # Cannot use httpclient.New because the transport MUST be
+      # liveTransport{}. See packages/ai-gateway/internal/providers/specutil/http.go.
+      - path: (^|/)internal/providers/specutil/http\.go$
+        linters: [forbidigo]
+
+      # shared/transport/thingclient/client.go IS the shared infrastructure
+      # the rest of the codebase routes through. Uses a custom dialer
+      # tuned for short connection holds (WS upgrade + occasional HTTP
+      # fallback). It cannot route through itself.
+      - path: (^|/)shared/transport/thingclient/client\.go$
+        linters: [forbidigo]
+
+      # agent warm-bootstrap intentionally uses SYSTEM roots (not the
+      # pinned shared client). The "unknown authority" stall was the
+      # original reason for this carve-out — see the comment in
+      # packages/agent/internal/lifecycle/bootstrap/bootstrap.go DefaultHTTPClient.
+      - path: (^|/)internal/lifecycle/bootstrap/bootstrap\.go$
+        linters: [forbidigo]
+
+      # CP admin AI-Guard simulator wraps httpclient.WrapTransport already
+      # but keeps Timeout=0 so streaming chat completions inherit the
+      # request lifetime from the operator's browser ctx.
+      - path: (^|/)handler/admin_ai_gateway_simulator\.go$
+        linters: [forbidigo]
+
+      # cmd/ packages are CLI entry points: they print usage strings,
+      # success messages, and they call os.Exit. Forbidigo's
+      # fmt.Print*, println/print, and os.Exit bans do not apply
+      # there. http.Client and log.* bans still do.
+      - path: (^|/)cmd/
+        text: 'fmt\.(Print|Println|Printf)|^(println|print)$|os\.Exit'
+        linters: [forbidigo]
+
+      # E43 — the audit package itself constructs Entry literals
+      # (audit.EntryFor and the writer test fixtures), and
+      # auth_sessions.go has the one legitimate Hub-driven
+      # revoke-device path that bypasses EntryFor because actor
+      # identity is synthetic. The Entry{...} ban applies everywhere
+      # else.
+      - path: (^|/)internal/audit/
+        text: 'audit\.Entry\{'
+        linters: [forbidigo]
+      - path: (^|/)handler/auth_sessions\.go$
+        text: 'audit\.Entry\{'
+        linters: [forbidigo]

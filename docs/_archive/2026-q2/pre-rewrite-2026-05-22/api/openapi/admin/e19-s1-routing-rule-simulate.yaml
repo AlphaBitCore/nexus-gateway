@@ -1,0 +1,509 @@
+openapi: "3.1.0"
+info:
+  title: Nexus — Routing Rule Simulate (E19 / Story 1)
+  description: |
+    Adds a routing-rule simulation endpoint pair. The Control Plane admin
+    endpoint `POST /api/admin/routing-rules/simulate` authenticates the
+    caller via session cookie, authorizes against the IAM action
+    `admin:SimulateRoutingRule`, and forwards the request body to the AI
+    Gateway internal endpoint `POST /internal/routing-simulate`. The AG
+    handler drives the real `router.Resolver.Resolve` path used by live
+    traffic, projects the resulting `RoutingPlan` into a JSON DTO, and
+    returns the decision trace — without performing upstream HTTP fan-out
+    and without writing `traffic_event` or emitting MQ events.
+
+    This spec is additive. Existing admin endpoints are unchanged.
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane instance
+  - url: http://localhost:3050
+    description: Local AI Gateway instance (internal endpoint, service-to-service only)
+
+tags:
+  - name: Routing Rules
+    description: Admin CRUD + simulation for routing rules
+  - name: AI Gateway Internal
+    description: Service-to-service endpoints on AI Gateway (no VK / user JWT)
+
+paths:
+  # ============================================================
+  # POST /api/admin/routing-rules/simulate  (Control Plane)
+  # ============================================================
+  /api/admin/routing-rules/simulate:
+    post:
+      tags: [Routing Rules]
+      operationId: adminSimulateRoutingRule
+      summary: Simulate the routing decision for a hypothetical request
+      description: |
+        Evaluates the live routing rule set against a hypothetical
+        `{modelId, endpointType, messages?}` tuple and returns the full
+        decision trace: matched stage-1 rule, per-stage pipeline log,
+        per-strategy trace of the winning rule, primary targets, recovery
+        targets, and stage-0 narrowing summary (when applicable).
+
+        **Side-effect free.** Does not perform upstream HTTP, does not
+        write `traffic_event`, does not emit MQ events, does not increment
+        quota counters, does not mutate health tracker state.
+
+        **Authorization.** Requires IAM action `admin:SimulateRoutingRule`.
+        Unauthorized callers receive HTTP 403.
+
+        **Forwarding.** The Control Plane handler forwards the body verbatim
+        to AI Gateway `POST /internal/routing-simulate` with a 15-second
+        timeout. On transport error the CP returns HTTP 502.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SimulateRequest" }
+            examples:
+              smartRouting:
+                summary: Smart routing (auto) with chat messages
+                value:
+                  modelId: "auto"
+                  endpointType: "chat"
+                  messages:
+                    - role: "user"
+                      content: "Hello, summarise this paragraph in one sentence."
+              directModel:
+                summary: Direct model request
+                value:
+                  modelId: "gpt-4o-mini"
+                  endpointType: "chat/completions"
+              embeddings:
+                summary: Embeddings endpoint
+                value:
+                  modelId: "text-embedding-3-small"
+                  endpointType: "embeddings"
+      responses:
+        "200":
+          description: Decision trace produced successfully.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulateResponse" }
+              examples:
+                ruleMatched:
+                  summary: Stage-1 rule matched, single primary target
+                  value:
+                    request: { modelId: "gpt-4o-mini", endpointType: "chat/completions" }
+                    originalModelId: "gpt-4o-mini"
+                    substituted: false
+                    ruleId: "rr-01HYZ...QWERTY"
+                    ruleName: "OpenAI chat baseline"
+                    stages:
+                      - { stage: 0, decision: "no stage-0 rules applied", durationMs: 0 }
+                      - { stage: 1, decision: "rule matched: OpenAI chat baseline", durationMs: 2 }
+                    trace:
+                      - ruleId: "rr-01HYZ...QWERTY"
+                        ruleName: "OpenAI chat baseline"
+                        strategyType: "direct"
+                        decision: "selected target gpt-4o-mini @ openai-prod"
+                        durationMs: 1
+                    targets:
+                      - providerId: "prov-01HYZ...OPENAI"
+                        providerName: "openai-prod"
+                        modelId: "mdl-01HYZ...MINI"
+                        modelCode: "gpt-4o-mini"
+                        modelName: "GPT-4o mini"
+                        providerModelId: "gpt-4o-mini"
+                        source: "direct"
+                    recoveryTargets: []
+                noRuleMatched:
+                  summary: No stage-1 rule matched
+                  value:
+                    request: { modelId: "unknown-model", endpointType: "chat/completions" }
+                    originalModelId: "unknown-model"
+                    substituted: false
+                    stages:
+                      - { stage: 1, decision: "no rule matched", durationMs: 1 }
+                    trace: []
+                    targets: []
+                    recoveryTargets: []
+                    warnings:
+                      - "no stage-1 rule matched — request would be rejected by router"
+                autoNoMessages:
+                  summary: Smart routing with empty messages (warning)
+                  value:
+                    request: { modelId: "auto", endpointType: "chat/completions" }
+                    originalModelId: "auto"
+                    substituted: true
+                    ruleId: "rr-01HYZ...SMART"
+                    ruleName: "Smart default"
+                    stages:
+                      - { stage: 1, decision: "rule matched: Smart default", durationMs: 4 }
+                    trace:
+                      - ruleId: "rr-01HYZ...SMART"
+                        ruleName: "Smart default"
+                        strategyType: "smart"
+                        decision: "fell back to default target (no messages)"
+                        durationMs: 3
+                    targets:
+                      - providerId: "prov-01HYZ...OPENAI"
+                        providerName: "openai-prod"
+                        modelId: "mdl-01HYZ...MINI"
+                        modelCode: "gpt-4o-mini"
+                        modelName: "GPT-4o mini"
+                        providerModelId: "gpt-4o-mini"
+                        source: "smart-default"
+                    recoveryTargets: []
+                    warnings:
+                      - "smart routing requested but messages is empty"
+                narrowing:
+                  summary: Stage-0 policy applied narrowing
+                  value:
+                    request: { modelId: "gpt-4o", endpointType: "chat/completions" }
+                    originalModelId: "gpt-4o"
+                    substituted: false
+                    ruleId: "rr-01HYZ...CHAT"
+                    ruleName: "Default chat rule"
+                    stages:
+                      - { stage: 0, decision: "applied policy rule 'EU-only providers'", durationMs: 1 }
+                      - { stage: 1, decision: "rule matched: Default chat rule", durationMs: 2 }
+                    trace:
+                      - ruleId: "rr-01HYZ...CHAT"
+                        ruleName: "Default chat rule"
+                        strategyType: "direct"
+                        decision: "selected provider azure-eu after narrowing"
+                        durationMs: 2
+                    targets:
+                      - providerId: "prov-01HYZ...AZUREU"
+                        providerName: "azure-eu"
+                        modelId: "mdl-01HYZ...GPT4O"
+                        modelCode: "gpt-4o"
+                        modelName: "GPT-4o"
+                        providerModelId: "gpt-4o-2024-08-06"
+                        source: "policy-narrowed"
+                    recoveryTargets: []
+                    narrowingSummary:
+                      allowModelIds: []
+                      denyModelIds: []
+                      allowProviderIds: ["prov-01HYZ...AZUREU"]
+                      denyProviderIds: ["prov-01HYZ...OPENAI"]
+        "400":
+          description: Malformed body or missing required field.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              examples:
+                missingModelId:
+                  value: { error: "modelId is required" }
+                malformedJson:
+                  value: { error: "invalid JSON body" }
+        "401":
+          description: Not authenticated (no valid session cookie).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: Authenticated but missing `admin:SimulateRoutingRule`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500":
+          description: Routing engine error (e.g. DB unreachable on rule load).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "502":
+          description: AI Gateway unreachable from Control Plane.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              examples:
+                agUnreachable:
+                  value: { error: "AI Gateway unreachable: dial tcp 127.0.0.1:3050: connect: connection refused" }
+
+  # ============================================================
+  # POST /internal/routing-simulate  (AI Gateway internal)
+  # ============================================================
+  /internal/routing-simulate:
+    post:
+      tags: [AI Gateway Internal]
+      operationId: agInternalRoutingSimulate
+      summary: Drive the routing engine without performing upstream HTTP
+      description: |
+        Internal service-to-service endpoint. No VK auth, no user JWT —
+        same trust boundary as `POST /internal/provider-test`. Intended to
+        be called from the Control Plane admin forwarder; exposing this
+        port to untrusted networks is a deployment error.
+
+        Behavior summary:
+        1. Decode JSON body; reject malformed with 400.
+        2. Require `modelId`; reject empty with 400.
+        3. Normalize `endpointType`: default empty → `chat/completions`;
+           rewrite `chat` → `chat/completions`.
+        4. Build a `RoutingContext` with `RequestedModel.ID = modelId`
+           (Type/ProviderID/ProviderModelID left blank; engine fills from
+           catalog). If `messages` is provided and non-empty, JSON-encode
+           it and inject as `headers["x-smart-messages"]` so smart
+           strategies can evaluate the request payload.
+        5. Call `resolver.Explain(ctx, rctx)` (Resolve + deterministic
+           branch enumeration of the matched primary rule). On engine
+           error, return HTTP 500.
+        6. Project the returned `RoutingPlan` into `SimulateResponse`.
+        7. Append diagnostic `warnings`:
+           - `"no stage-1 rule matched — request would be rejected by router"`
+             when `plan.RuleID == ""` and `len(plan.Targets) == 0`.
+           - `"smart routing requested but messages is empty"` when
+             `modelId == "auto"` and `messages` is empty.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SimulateRequest" }
+      responses:
+        "200":
+          description: Decision trace.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulateResponse" }
+        "400":
+          description: Malformed body or missing `modelId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500":
+          description: Routing engine error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nexus_session
+      description: |
+        Session cookie issued by `POST /api/admin/auth/login`. Required by
+        all admin endpoints. The AI Gateway internal endpoint does NOT use
+        this scheme — it is service-to-service and deployed behind a
+        trusted network boundary.
+
+  schemas:
+    SimulateRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId:
+          type: string
+          description: |
+            Client-requested model id. Pass `"auto"` to trigger smart
+            routing (rules with `strategyType: "smart"` will evaluate).
+          example: "gpt-4o-mini"
+        endpointType:
+          type: string
+          description: |
+            Endpoint domain. Accepted values: `chat/completions`, `chat`
+            (rewritten to `chat/completions`), `embeddings`, `models`.
+            Empty string defaults to `chat/completions`.
+          example: "chat/completions"
+        messages:
+          type: array
+          description: |
+            Optional chat messages. Only used when `modelId` is `"auto"`
+            or a rule uses a smart strategy. Stringified and injected as
+            `headers["x-smart-messages"]` on the routing context.
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, example: "user" }
+              content: { type: string }
+      additionalProperties: true
+
+    SimulateResponse:
+      type: object
+      required:
+        - request
+        - originalModelId
+        - substituted
+        - stages
+        - trace
+        - targets
+        - recoveryTargets
+        - branches
+      properties:
+        request: { $ref: "#/components/schemas/SimulateRequestEcho" }
+        originalModelId:
+          type: string
+          description: The model id the client requested, before any substitution.
+        substituted:
+          type: boolean
+          description: True when the winning target model id differs from `originalModelId`.
+        ruleId:
+          type: string
+          description: Stable ID of the stage-1 rule that won. Absent when no rule matched.
+        ruleName:
+          type: string
+          description: Human-readable name of the winning stage-1 rule.
+        stages:
+          type: array
+          description: Per-pipeline-stage decision log.
+          items: { $ref: "#/components/schemas/StageEntry" }
+        trace:
+          type: array
+          description: Per-strategy-evaluation entries of the winning rule.
+          items: { $ref: "#/components/schemas/TraceEntry" }
+        targets:
+          type: array
+          description: |
+            Primary resolved targets in engine-emitted order. Health
+            ranking is NOT applied for simulate; this reflects the
+            pre-health-ranker plan.
+          items: { $ref: "#/components/schemas/Target" }
+        recoveryTargets:
+          type: array
+          description: Fallback / recovery targets (same shape as `targets`).
+          items: { $ref: "#/components/schemas/Target" }
+        branches:
+          type: array
+          description: |
+            Deterministic enumeration of every terminal target reachable from
+            the matched primary rule, with cumulative selection probability.
+            `targets` reflects the stochastic pick a particular simulate roll
+            produced; `branches` reflects what the rule *could* produce.
+            Populated for `loadbalance`, `ab_split`, and `conditional`
+            primary rules; empty for purely deterministic rules
+            (`single`, `fallback`) once the pick has been made. Also empty
+            when no stage-1 rule matched.
+          items: { $ref: "#/components/schemas/BranchEntry" }
+        narrowingSummary:
+          description: |
+            Stage-0 narrowing outcome, when any stage-0 policy rules
+            applied. Absent otherwise.
+          allOf:
+            - $ref: "#/components/schemas/NarrowingSummary"
+        warnings:
+          type: array
+          description: Non-fatal diagnostics. English strings.
+          items: { type: string }
+
+    SimulateRequestEcho:
+      type: object
+      required: [modelId, endpointType]
+      properties:
+        modelId: { type: string }
+        endpointType: { type: string }
+
+    StageEntry:
+      type: object
+      required: [stage, decision, durationMs]
+      properties:
+        stage: { type: integer, minimum: 0 }
+        decision: { type: string }
+        durationMs: { type: integer, minimum: 0 }
+
+    TraceEntry:
+      type: object
+      required: [strategyType, decision, durationMs]
+      properties:
+        ruleId: { type: string }
+        ruleName: { type: string }
+        strategyType:
+          type: string
+          description: e.g. `direct`, `smart`, `failover`, `loadbalance`, `policy`.
+        decision: { type: string }
+        durationMs: { type: integer, minimum: 0 }
+
+    Target:
+      type: object
+      required: [providerId, providerName, modelId, modelCode, modelName, providerModelId, source]
+      properties:
+        providerId: { type: string }
+        providerName: { type: string }
+        modelId: { type: string }
+        modelCode:
+          type: string
+          description: |
+            Customer-facing model identifier (e.g. `gpt-4o`) — the string
+            clients send in `{model: "..."}` requests. Distinct from
+            `providerModelId`, which is the upstream vendor's id.
+        modelName: { type: string }
+        providerModelId:
+          type: string
+          description: Upstream-visible model identifier (e.g. `gpt-4o-2024-08-06`).
+        source:
+          type: string
+          description: |
+            Why this target was picked. Examples: `direct`, `smart-default`,
+            `smart-selected`, `failover`, `loadbalance-weighted`,
+            `policy-narrowed`.
+
+    BranchEntry:
+      type: object
+      required: [providerId, modelId, modelCode, probability, matched, path]
+      properties:
+        providerId: { type: string }
+        providerName:
+          type: string
+          description: Empty string when the branch's provider lookup failed.
+        modelId: { type: string }
+        modelCode:
+          type: string
+          description: |
+            Customer-facing model identifier (e.g. `gpt-4o`). Empty string
+            when the branch's model lookup failed.
+        modelName:
+          type: string
+          description: Empty string when the branch's model lookup failed.
+        providerModelId: { type: string }
+        probability:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            Cumulative selection probability along the path from the primary
+            rule root. For a flat loadbalance/ab_split this is
+            `branch.weight / total`. For nested strategies it is the product
+            of per-level probabilities. For fallback entries this is 1.0 (a
+            fallback chain retries each branch in order, not stochastically).
+        path:
+          type: string
+          description: |
+            Human-readable trace of the strategy tree to this terminal, e.g.
+            `loadbalance[0,w=70/100] > single(openai/gpt-4)`.
+        matched:
+          type: boolean
+          description: |
+            True iff the branch would actually fire under the simulated
+            RoutingContext. Always true for loadbalance / ab_split / single /
+            fallback. False for unmatched conditional predicates (and for
+            the default branch when at least one predicate matched).
+        note:
+          type: string
+          description: |
+            Only present when the target lookup failed (e.g. provider or
+            model disabled). Explains why the UI cannot show a live target
+            name for this branch.
+
+    NarrowingSummary:
+      type: object
+      properties:
+        allowModelIds:
+          type: array
+          items: { type: string }
+        denyModelIds:
+          type: array
+          items: { type: string }
+        allowProviderIds:
+          type: array
+          items: { type: string }
+        denyProviderIds:
+          type: array
+          items: { type: string }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message in English.

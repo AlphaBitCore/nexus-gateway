@@ -1,0 +1,1 @@
+# Agent tray ipc architecture

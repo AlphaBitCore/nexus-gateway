@@ -1,0 +1,48 @@
+/* ── ObservabilityRetention ────────────────────────────────────────── */
+
+.layerGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--g-space-3);
+}
+
+.layerRow {
+  display: grid;
+  grid-template-columns: 200px 120px 1fr;
+  align-items: center;
+  gap: var(--g-space-2);
+}
+
+.layerLabel {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+.layerHint {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.layerError {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-danger);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: var(--g-space-2);
+}
+
+.changeBadge {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-info);
+  margin-left: 8px;
+}

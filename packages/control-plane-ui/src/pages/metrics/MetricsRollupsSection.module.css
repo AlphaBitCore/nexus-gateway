@@ -1,0 +1,164 @@
+.rangeBar {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.rangeLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text);
+}
+
+.rangeSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.rangeSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 24px;
+  align-items: stretch;
+}
+
+.chartFull {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+.chartPair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: stretch;
+}
+
+/* Ensure ExpandableWrapper fills grid cell */
+.chartFull > *,
+.chartPair > * {
+  height: 100%;
+}
+
+/* Ensure ExpandableWrapper (grid child) stretches to fill cell */
+.chartGrid > *,
+.byProviderGrid > * {
+  height: 100%;
+}
+
+.sectionHeading {
+  font-size: var(--g-font-size-lg);
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: 0;
+  margin-top: 24px;
+}
+
+.sectionSubtitle {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.byProviderGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 24px;
+  align-items: stretch;
+}
+
+.chartPanel {
+  padding: var(--g-space-6);
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.chartPanelTitle {
+  font-size: var(--g-font-size-lg);
+  font-family: var(--g-font-display);
+  letter-spacing: 0;
+}
+
+.chartPanelSubtitle {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  margin-bottom: 16px;
+}
+
+.chartPanelEmpty {
+  color: var(--color-text-muted);
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.mutedInfo {
+  color: var(--color-text-muted);
+  max-width: 720px;
+  font-size: var(--g-font-size-sm);
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  padding: var(--g-space-6);
+}
+
+.statLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-1-5);
+  font-size: var(--g-font-size-md);
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: 0;
+  margin-bottom: var(--g-space-1-5);
+}
+
+.statValue {
+  font-size: var(--g-font-size-2xl);
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.statSubtitle {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--g-space-1-5);
+  line-height: 1.5;
+}

@@ -1,0 +1,52 @@
+/* ── StatusStrip — sticky top-of-page summary ─────────────────────────────── */
+/* Design-token strict — no hex/rgba/hsla literals.                            */
+
+.strip {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-5);
+  padding: var(--g-space-2) var(--g-space-4);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+}
+
+.cell {
+  display: flex;
+  align-items: baseline;
+  gap: var(--g-space-2);
+}
+
+.cellLabel {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.cellValue {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cellSub {
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.spacer {
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .strip {
+    flex-wrap: wrap;
+    gap: var(--g-space-3);
+  }
+  .spacer {
+    flex-basis: 100%;
+  }
+}

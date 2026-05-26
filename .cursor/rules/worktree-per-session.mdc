@@ -1,0 +1,25 @@
+---
+description: Each parallel Claude Code / Cursor session runs in its own git worktree under ./worktrees/
+alwaysApply: true
+---
+
+# Worktree per session (binding)
+
+Each parallel Claude Code / Cursor session runs in its own `git worktree` so working tree, index, and `.git/index.lock` are private to that session.
+
+## Conventions
+
+1. **Spawn**: `git worktree add ./worktrees/<topic> [-b feature/<new-branch>] [<base>]`. `./worktrees/` is gitignored.
+2. **Clean up after merge**: `git worktree remove ./worktrees/<topic>`; if the branch is fully merged, also `git branch -d feature/<topic>`.
+3. **One branch per worktree** — git enforces this. For a second session on the same logical work, create a sibling branch.
+4. **Shared module coordination** — worktrees isolate the working tree, not the module graph. Two worktrees editing the same `packages/shared/<subpkg>/` file at once will conflict at merge. Coordinate at the subpackage level; pick disjoint shared sub-packages per worktree.
+5. **Commit hygiene**: `git status --short` before commit; `git log -1 --stat` after — confirms you committed what you intended.
+6. **`.git/index.lock` in your worktree** = your own prior git invocation crashed mid-flight. Investigate freely.
+
+## Inside a worktree, all git operations are private
+
+`git stash`, `git add -A`, `git restore`, removing `.git/index.lock` — all safe inside your own worktree because the working tree is not shared with any other session.
+
+Memory anchor: [[project_parallel_worktree_sessions]].
+
+Skipping this rule requires **explicit user approval** in chat.

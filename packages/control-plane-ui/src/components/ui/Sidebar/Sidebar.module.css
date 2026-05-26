@@ -1,0 +1,710 @@
+/* ── Sidebar shell ─────────────────────────────────────────────────────────── */
+
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--sidebar-bg);
+  height: 100dvh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--sidebar-border);
+  box-shadow: var(--sidebar-shadow);
+  overflow: visible;
+  z-index: var(--g-z-sidebar);
+  transition: width var(--g-transition-normal),
+              transform var(--g-transition-normal);
+}
+
+.sidebar::-webkit-scrollbar {
+  display: none;
+}
+
+.sidebar {
+  scrollbar-width: none;
+}
+
+.collapsed {
+  width: var(--sidebar-width-icon);
+  overflow: visible;
+}
+
+/* ── Brand header ─────────────────────────────────────────────────────────── */
+
+.header {
+  padding: var(--g-space-4) var(--g-space-3) var(--g-space-3);
+  flex-shrink: 0;
+}
+
+.logoLockupHeader {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  padding: var(--g-space-2) var(--g-space-4);
+}
+
+.brandRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  position: relative;
+}
+
+.logoLockupRow {
+  align-items: flex-end;
+  min-width: 0;
+  flex: 1;
+}
+
+.brandRow .collapseToggle {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.brandMark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-family: var(--g-font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.brandMark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.logoLockupMark {
+  width: 46px;
+  height: 44px;
+  align-self: center;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.logoLockupText {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--g-space-1);
+  padding-bottom: var(--g-space-0-5);
+}
+
+.logoLockupWordmark {
+  width: 118px;
+  height: 20px;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.logoLockupTagline {
+  width: 113px;
+  height: 6px;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.brandText {
+  min-width: 0;
+}
+
+.brandName {
+  font-family: var(--g-font-display);
+  color: var(--sidebar-text-active);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 0;
+  line-height: 1.15;
+}
+
+.brandSubtitle {
+  color: var(--sidebar-text-active);
+  font-size: 11px;
+  font-weight: 500;
+  margin-top: 2px;
+  letter-spacing: 0;
+  opacity: 0.6;
+}
+
+/* ── Divider ──────────────────────────────────────────────────────────────── */
+
+.divider {
+  height: 1px;
+  margin: 0 var(--g-space-4);
+  background: var(--sidebar-border);
+  flex-shrink: 0;
+}
+
+/* ── Sections container ───────────────────────────────────────────────────── */
+
+.body {
+  flex: 1;
+  padding: var(--g-space-2) var(--g-space-3) var(--g-space-4);
+  overflow-y: auto;
+}
+
+/* ── Nav section ──────────────────────────────────────────────────────────── */
+
+.section {
+  /* default: no extra spacing for first section */
+}
+
+.section + .section {
+  margin-top: var(--g-space-3);
+  padding-top: var(--g-space-3);
+  border-top: 1px solid var(--sidebar-border);
+}
+
+/* ── Section toggle (collapsible) ─────────────────────────────────────────── */
+
+.sectionToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-3);
+  margin-top: var(--g-space-1);
+  color: var(--sidebar-section-label);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  line-height: 1.2;
+  background: transparent;
+  border: none;
+  border-radius: var(--g-radius-md);
+  cursor: pointer;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast);
+  text-align: left;
+}
+
+.sectionToggle:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-active);
+}
+
+.sectionToggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--sidebar-bg), 0 0 0 4px var(--color-ring);
+}
+
+/* ── Section label (non-collapsible) ──────────────────────────────────────── */
+
+.sectionLabel {
+  padding: var(--g-space-2) var(--g-space-3);
+  margin-top: var(--g-space-3);
+  color: var(--sidebar-section-label);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.sectionLabelFirst {
+  margin-top: 0;
+}
+
+/* ── Chevron icon ─────────────────────────────────────────────────────────── */
+
+.chevron {
+  flex-shrink: 0;
+  opacity: 0.88;
+  transition: transform var(--g-transition-fast);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* ── Collapsible list ─────────────────────────────────────────────────────── */
+
+.collapsibleWrapper {
+  overflow: hidden;
+  transition: max-height var(--g-transition-normal);
+}
+
+.collapsibleNone {
+  transition: none;
+}
+
+/* ── Nav items list ───────────────────────────────────────────────────────── */
+
+.navList {
+  list-style: none;
+  margin: 0;
+  padding: var(--g-space-1) 0 0;
+}
+
+/* ── Nav link ─────────────────────────────────────────────────────────────── */
+
+.navLink {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 12px;
+  margin-bottom: 2px;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
+  line-height: var(--g-line-height-tight);
+  border-radius: var(--g-radius-md);
+  border: none;
+  background: transparent;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast),
+    box-shadow var(--g-transition-normal),
+    font-weight var(--g-transition-fast);
+}
+
+.navLink:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-active);
+  text-decoration: none;
+}
+
+.navLink:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--sidebar-bg), 0 0 0 4px var(--color-ring);
+}
+
+.navLinkActive {
+  color: var(--sidebar-text-active);
+  font-weight: var(--g-font-weight-medium);
+  background: var(--sidebar-active-bg);
+  box-shadow: var(--g-effect-glow-active);
+  text-decoration: none;
+}
+
+.navLinkLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Nav icon ─────────────────────────────────────────────────────────────── */
+
+.navIcon {
+  flex-shrink: 0;
+  width: var(--g-space-4);
+  height: var(--g-space-4);
+  opacity: 0.85;
+}
+
+.navLinkActive .navIcon {
+  opacity: 1;
+  color: var(--sidebar-text-active);
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+
+.footer {
+  padding: var(--g-space-2-5) var(--g-space-3) var(--g-space-3);
+  border-top: 1px solid var(--sidebar-border);
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+}
+
+.userBlockTrigger {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2-5);
+  background: transparent;
+  border: none;
+  border-radius: var(--g-radius-lg);
+  color: var(--sidebar-text);
+  padding: var(--g-space-2) var(--g-space-2-5);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.userBlockTrigger:hover,
+.userBlockTrigger[data-state="open"] {
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-text-active);
+}
+
+.userBlockTrigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--sidebar-bg), 0 0 0 4px var(--color-ring);
+}
+
+.userAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--g-radius-full);
+  display: grid;
+  place-items: center;
+  background: var(--color-control-gradient);
+  color: var(--color-primary-foreground);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-bold);
+  flex-shrink: 0;
+  position: relative;
+  box-shadow: var(--shadow-sm);
+}
+
+.userStatusDot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--g-radius-full);
+  background: var(--color-danger);
+  border: 2px solid var(--sidebar-bg);
+  box-shadow: 0 0 0 1px var(--color-danger);
+}
+
+.userNameBlock {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-0-5);
+  line-height: var(--g-line-height-tight);
+}
+
+.userNameMain {
+  color: var(--sidebar-text-active);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userNameSub {
+  color: var(--sidebar-text);
+  font-size: 11px;
+  font-weight: var(--g-font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userChevron {
+  flex-shrink: 0;
+  color: var(--sidebar-text);
+  transition: transform var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.userBlockTrigger[data-state="open"] .userChevron {
+  color: var(--sidebar-text-active);
+  transform: rotate(180deg);
+}
+
+.userMenuContent {
+  width: calc(var(--sidebar-width) - var(--g-space-6));
+  max-height: calc(100dvh - 48px);
+  padding: var(--g-space-1-5) 0;
+  border-color: var(--sidebar-border);
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text-active);
+  box-shadow: var(--shadow-xl);
+}
+
+.userMenuContent[data-side="right"] {
+  width: 248px;
+}
+
+.userMenuItem {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  color: var(--sidebar-text-active);
+  font-size: var(--g-font-size-sm);
+  border-radius: 0;
+}
+
+.userMenuItem[data-highlighted],
+.userMenuItem:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-active);
+}
+
+.userMenuItemActive {
+  font-weight: var(--g-font-weight-medium);
+}
+
+.menuIcon {
+  width: 16px;
+  height: 16px;
+  color: var(--sidebar-text);
+}
+
+.userMenuItemActive .menuIcon {
+  color: var(--color-success);
+}
+
+.menuAccordionSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.menuSectionTrigger {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3);
+  background: transparent;
+  border: none;
+  color: var(--sidebar-text-active);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--g-font-size-sm);
+  text-align: left;
+}
+
+.menuSectionTrigger:hover,
+.menuAccordionSectionOpen > .menuSectionTrigger {
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-text-active);
+}
+
+.menuAccordionSectionOpen > .menuSectionTrigger {
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.menuAccordionSectionOpen > .menuSectionTrigger .menuIcon {
+  color: var(--sidebar-text-active);
+}
+
+.menuSectionValue {
+  max-width: 72px;
+  flex-shrink: 0;
+  overflow: hidden;
+  color: var(--sidebar-text);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuAccordionSectionOpen .menuSectionValue {
+  display: none;
+}
+
+.menuSectionChevron {
+  flex-shrink: 0;
+  color: var(--sidebar-text);
+  transform: rotate(-90deg);
+  transition: transform var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.menuAccordionSectionOpen .menuSectionChevron {
+  color: var(--color-success);
+  transform: rotate(0deg);
+}
+
+.menuSubmenu {
+  display: flex;
+  flex-direction: column;
+  padding: var(--g-space-0-5) 0 var(--g-space-1-5);
+  background: color-mix(in srgb, var(--sidebar-bg) 72%, black);
+}
+
+.menuOptionItem {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  padding: var(--g-space-2) var(--g-space-3) var(--g-space-2) var(--g-space-8);
+  background: transparent;
+  border: none;
+  color: var(--sidebar-text-active);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--g-font-size-sm);
+  text-align: left;
+}
+
+.menuOptionItem:hover {
+  background: var(--sidebar-hover);
+}
+
+.menuItemLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuBadge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--g-space-1-5);
+  border-radius: var(--g-radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-danger);
+  color: var(--color-primary-foreground);
+  font-size: 10px;
+  font-weight: var(--g-font-weight-bold);
+  line-height: 1;
+}
+
+.menuCheck {
+  color: var(--color-success);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-bold);
+}
+
+.userMenuSeparator {
+  background: var(--sidebar-border);
+  margin: var(--g-space-1-5) 0;
+}
+
+.logoutItem {
+  color: var(--color-danger);
+}
+
+.logoutItem .menuIcon {
+  color: var(--color-danger);
+}
+
+/* ── Collapse toggle ─────────────────────────────────────────────────────── */
+
+.collapseToggle {
+  position: absolute;
+  top: calc(var(--g-space-12) + var(--g-space-1));
+  right: calc(-1 * var(--g-space-3));
+  z-index: calc(var(--g-z-sidebar) + 1);
+  display: grid;
+  align-items: center;
+  justify-content: center;
+  place-items: center;
+  width: var(--g-space-6);
+  height: var(--g-space-6);
+  min-width: var(--g-space-6);
+  min-height: var(--g-space-6);
+  padding: 0;
+  border: none;
+  border-radius: var(--g-radius-full);
+  background: var(--sidebar-collapse-gradient);
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+  box-shadow: var(--sidebar-collapse-shadow);
+  transition: filter var(--g-transition-fast), transform var(--g-transition-fast);
+  flex-shrink: 0;
+}
+
+.collapseToggle:hover {
+  background: var(--sidebar-collapse-gradient);
+  color: var(--color-primary-foreground);
+  filter: brightness(1.08);
+}
+
+.collapseToggle:focus-visible {
+  outline: none;
+  box-shadow: var(--sidebar-collapse-shadow), 0 0 0 3px var(--sidebar-bg), 0 0 0 5px var(--color-ring);
+}
+
+.collapseToggle:active {
+  transform: scale(0.96);
+}
+
+.collapseIcon {
+  width: var(--g-space-3);
+  height: var(--g-space-3);
+  transition: transform var(--g-transition-fast);
+}
+
+.collapseIconFlipped {
+  transform: rotate(180deg);
+}
+
+/* ── Collapsed state: hide text, center items ────────────────────────────── */
+
+.collapsed .brandText,
+.collapsed .sectionLabel,
+.collapsed .sectionLabelFirst {
+  display: none;
+}
+
+.collapsed .header {
+  padding: var(--g-space-3) var(--g-space-2);
+}
+
+.collapsed .brandRow {
+  justify-content: center;
+}
+
+.collapsed .brandMark {
+  display: flex;
+}
+
+.collapsed .logoLockupHeader {
+  padding: var(--g-space-2);
+}
+
+.collapsed .logoLockupMark {
+  width: 46px;
+  height: 44px;
+}
+
+.collapsed .body {
+  padding: var(--g-space-2) var(--g-space-1) var(--g-space-4);
+}
+
+.collapsed .navLink {
+  justify-content: center;
+  padding: var(--g-space-2);
+}
+
+.collapsed .navLinkLabel {
+  display: none;
+}
+
+.collapsed .footer {
+  justify-content: center;
+  padding: var(--g-space-2);
+}
+
+.collapsed .userBlockTrigger {
+  justify-content: center;
+  min-height: 44px;
+  padding: var(--g-space-1-5);
+}
+
+.collapsed .sectionToggle {
+  justify-content: center;
+  padding: var(--g-space-2);
+}
+
+.collapsed .sectionToggle span:not(.chevron) {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapseIcon {
+    transition: none;
+  }
+}

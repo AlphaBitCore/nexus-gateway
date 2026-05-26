@@ -1,0 +1,30 @@
+.infoCallout {
+  background: var(--color-info-light);
+  border-left: 4px solid var(--color-info);
+}
+
+.infoCalloutBody {
+  padding: 0.5rem 0.25rem;
+  font-size: 0.875rem;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.summaryField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.summaryFieldLabel {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.summaryFieldValue {
+  font-size: 0.9rem;
+}

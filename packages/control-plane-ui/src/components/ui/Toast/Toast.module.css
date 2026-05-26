@@ -1,0 +1,107 @@
+/* ─── Toast ──────────────────────────────────────────────────────────────── */
+
+.viewport {
+  position: fixed;
+  bottom: var(--g-space-4);
+  right: var(--g-space-4);
+  z-index: var(--g-z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  width: 360px;
+  max-width: 100vw;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.toast {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3) var(--g-space-4);
+  box-shadow: var(--g-shadow-lg);
+  animation: slideLeft var(--g-transition-normal);
+  position: relative;
+}
+
+/* ── Variants ────────────────────────────────────────────────────────────── */
+
+.success {
+  border-left: 3px solid var(--color-success);
+}
+
+.error {
+  border-left: 3px solid var(--color-danger);
+}
+
+.warning {
+  border-left: 3px solid var(--color-warning);
+}
+
+/* ── Title ───────────────────────────────────────────────────────────────── */
+
+.title {
+  font-weight: var(--g-font-weight-medium);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+/* ── Description ─────────────────────────────────────────────────────────── */
+
+.description {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-secondary);
+  margin-top: var(--g-space-1);
+}
+
+/* ── Close button ────────────────────────────────────────────────────────── */
+
+.close {
+  position: absolute;
+  top: var(--g-space-2);
+  right: var(--g-space-2);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: var(--g-radius-sm);
+  color: var(--color-text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.close:hover {
+  background: var(--color-muted);
+  color: var(--color-text);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes slideLeft {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

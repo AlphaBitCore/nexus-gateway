@@ -1,0 +1,47 @@
+.textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.preview {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: 14px;
+  background: var(--color-surface);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.summary span {
+  color: var(--color-text-secondary);
+}
+
+.listTitle,
+.errorTitle {
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.errorTitle {
+  color: var(--color-danger-700);
+}
+
+.list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--color-text-secondary);
+}
+

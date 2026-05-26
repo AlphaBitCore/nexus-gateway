@@ -1,0 +1,12 @@
+# Vendor: Gemini API streamGenerateContent — Function calling streaming.
+# Source: https://ai.google.dev/api/generate-content#streamGenerateContent (retrieved 2026-04-25).
+# Function-call args buffered across three frames; final usage trailer comes
+# in a separate chunk after the finishReason marker.
+
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{}}}],"role":"model"},"index":0}]}
+
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"San"}}}],"role":"model"},"index":0}]}
+
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"San Francisco"}}}],"role":"model"},"finishReason":"STOP","index":0}]}
+
+data: {"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":4,"totalTokenCount":16}}

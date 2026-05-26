@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main, worktree-chore-pr-review]
+  pull_request:
+    branches: [main]
+
+jobs:
+  terminology-guard:
+    name: Terminology Guard - No Internal Thing Model Terms in Product Surfaces
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Terminology check
+        run: ./scripts/check-terminology.sh
+
+  governance-lints:
+    name: Governance Lints - Arch-Doc Triggers, Migration Timestamps, i18n, TZ, Code Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need full clone for `git ls-files` + `git show :path` patterns
+          # used by check-no-redis-pubsub.mjs / check-hardcoded-agent-paths.mjs.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      # Arch-doc trigger-map lockstep: every docs/developers/architecture/**/*-architecture.md
+      # must have a row in architecture-doc-triggers.md (and vice versa).
+      - name: Arch-doc triggers lockstep
+        run: node scripts/check-arch-doc-triggers.mjs
+
+      # Migration timestamp uniqueness (2026-05-14 audit-gap scar).
+      - name: Migration timestamp uniqueness
+        run: bash scripts/check-migration-timestamps.sh
+
+      # i18n key parity across en/zh/es bundles.
+      - name: i18n parity
+        run: node scripts/check-i18n-parity.mjs
+
+      # Timezone-handling correctness.
+      - name: Timezone correctness
+        run: bash scripts/check-timezone-correctness.sh
+
+      # Code-binding lints (STRICT mode — net-new violations fail CI).
+      # All bindings are currently clean as of the docs+governance
+      # program closeout commit a254e350.
+
+      - name: useApi queryKey shape (strict)
+        run: node scripts/check-useapi-querykey.mjs --strict
+
+      - name: No Redis pub/sub (strict)
+        run: node scripts/check-no-redis-pubsub.mjs --strict
+
+      - name: packages/ui-shared boundary (strict)
+        run: node scripts/check-ui-shared-boundary.mjs --strict
+
+      - name: Sidebar icon mapping (strict)
+        run: node scripts/check-sidebar-icon-mapping.mjs --strict
+
+      - name: Hardcoded agent paths (strict)
+        run: node scripts/check-hardcoded-agent-paths.mjs --strict
+
+      - name: No placeholder markers in production Go (strict)
+        run: node scripts/check-no-prod-todos.mjs --strict
+
+      - name: No inline secrets in yaml (strict)
+        run: node scripts/check-no-yaml-secrets.mjs --strict
+
+  control-plane-ui:
+    name: Control Plane UI - Type Check, Test, Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: JSON duplicate key guard selftest
+        run: node scripts/check-json-dupkeys.mjs --selftest
+      - name: JSON duplicate key check (locale files)
+        run: node scripts/check-json-dupkeys.mjs
+      - name: Design-token compliance (theme/mode safety)
+        run: node scripts/check-design-tokens.mjs
+      - run: cd packages/control-plane-ui && npx tsc --noEmit
+      - run: cd packages/control-plane-ui && npx vitest run
+      - run: cd packages/control-plane-ui && npx vite build
+
+  go-services:
+    name: Go Services - Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Build all Go packages
+        run: go build ./packages/shared/... ./packages/nexus-hub/... ./packages/control-plane/... ./packages/ai-gateway/... ./packages/compliance-proxy/...
+      - name: Test shared
+        run: go test -race -count=1 ./packages/shared/...
+      - name: Test nexus-hub
+        run: go test -race -count=1 ./packages/nexus-hub/...
+      - name: Test control-plane
+        run: go test -race -count=1 ./packages/control-plane/...
+      - name: Test ai-gateway
+        run: go test -race -count=1 ./packages/ai-gateway/...
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: govulncheck
+        run: |
+          for m in shared nexus-hub control-plane ai-gateway compliance-proxy; do
+            echo "=== govulncheck $m ===" && (cd packages/$m && govulncheck ./...)
+          done
+      - name: gosec
+        run: |
+          for m in shared nexus-hub control-plane ai-gateway; do
+            echo "=== gosec $m ===" && (cd packages/$m && gosec -quiet ./...)
+          done
+        continue-on-error: true
+      - name: npm audit
+        run: npm ci && npm audit --audit-level=high
+        continue-on-error: true
+
+  # Agent platform builds (macOS .pkg, Windows .msi) intentionally NOT
+  # run here. The Nexus Agent ships as a fork-and-build artifact per
+  # enterprise deployment, not as an org-published binary, so building
+  # .pkg / .msi on every push is wasted CI minutes + a fragile drag
+  # on the dev loop (Xcode toolchain drift, WiX OSMF EULA, kernel-
+  # driver schema changes, wails version pins). Agent Go code is
+  # still validated by `Go CI` (go vet + go build + go test on
+  # packages/agent/**). Enterprise forks that need cross-platform
+  # packaging triggers can run `agent-release.yml` via
+  # workflow_dispatch.

@@ -1,0 +1,1764 @@
+openapi: "3.1.0"
+info:
+  title: Nexus Hub API
+  description: |
+    Hub HTTP API for the Nexus Gateway platform. Two route groups:
+    - `/api/hub/*` — Called by Control Plane (INTERNAL_SERVICE_TOKEN auth)
+    - `/api/internal/things/*` — Called by Things in HTTP fallback mode (Thing bearer token auth)
+  version: "1.0.0"
+  contact:
+    email: nexus@alphabitcore.com
+
+servers:
+  - url: http://localhost:3060
+    description: Local Hub instance
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Hub API
+    description: Control Plane → Hub endpoints (INTERNAL_SERVICE_TOKEN)
+  - name: Internal Things API
+    description: Thing → Hub endpoints (Thing bearer token)
+
+paths:
+  # ============================================================
+  # Hub API — /api/hub/*
+  # ============================================================
+
+  /api/hub/config/update:
+    post:
+      tags: [Hub API]
+      operationId: hubConfigUpdate
+      summary: Push config update to Things
+      description: |
+        Called by Control Plane after a config CRUD operation. Hub updates the
+        desired state for all Things of the given type, pushes via WebSocket,
+        and records a config_change_event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigUpdateRequest"
+            example:
+              thingType: compliance-proxy
+              configKey: hook_config
+              state:
+                version: 13
+              action: update
+              actorId: user-admin-001
+              actorName: admin@nexus.ai
+              sourceIp: "10.0.0.1"
+      responses:
+        "200":
+          description: Config update applied successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigUpdateResponse"
+              example:
+                ok: true
+                version: 13
+                thingsNotified: 3
+                thingsOnline: 3
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/things:
+    get:
+      tags: [Hub API]
+      operationId: hubListThings
+      summary: List all Things
+      description: Returns a paginated list of registered Things with optional filtering by type, status, and free-text search.
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [nexus-hub, control-plane, ai-gateway, compliance-proxy, agent]
+          description: Filter by thing type
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, offline, drift, degraded]
+          description: Filter by status
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive substring match against Thing id, name, and address.
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: List of Things
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThingListResponse"
+              example:
+                things:
+                  - id: proxy-abc
+                    type: compliance-proxy
+                    version: "1.2.0"
+                    address: "10.0.0.5:3040"
+                    role: default
+                    status: online
+                    desiredVer: 12
+                    reportedVer: 12
+                    synced: true
+                    registeredAt: "2026-04-16T10:00:00Z"
+                    lastSeenAt: "2026-04-16T10:30:00Z"
+                total: 5
+                page: 1
+                pageSize: 50
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/things/{id}:
+    get:
+      tags: [Hub API]
+      operationId: hubGetThing
+      summary: Get Thing detail
+      description: Returns a single Thing with full shadow data.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Thing ID
+      responses:
+        "200":
+          description: Thing detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThingDetail"
+              example:
+                id: proxy-abc
+                type: compliance-proxy
+                version: "1.2.0"
+                address: "10.0.0.5:3040"
+                runtimeApiUrl: "http://10.0.0.5:3040/api/internal"
+                metricsUrl: "http://10.0.0.5:3040/metrics"
+                role: default
+                status: online
+                desired:
+                  killswitch:
+                    enabled: false
+                    version: 5
+                  hook_config:
+                    version: 13
+                reported:
+                  killswitch:
+                    enabled: false
+                    version: 5
+                  hook_config:
+                    version: 13
+                desiredVer: 13
+                reportedVer: 13
+                metadata:
+                  checks:
+                    redis: connected
+                    db: connected
+                registeredAt: "2026-04-16T10:00:00Z"
+                lastSeenAt: "2026-04-16T10:30:00Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/things/{id}/shadow:
+    get:
+      tags: [Hub API]
+      operationId: hubGetThingShadow
+      summary: Get Thing shadow comparison
+      description: Returns desired vs reported state per config key with sync status.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Thing ID
+      responses:
+        "200":
+          description: Shadow comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShadowComparison"
+              example:
+                thingId: proxy-abc
+                thingType: compliance-proxy
+                desiredVer: 13
+                reportedVer: 12
+                synced: false
+                keys:
+                  killswitch:
+                    desired:
+                      enabled: false
+                      version: 5
+                    reported:
+                      enabled: false
+                      version: 5
+                    synced: true
+                  hook_config:
+                    desired:
+                      version: 13
+                    reported:
+                      version: 12
+                    synced: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/config/catalog:
+    get:
+      tags: [Hub API]
+      operationId: hubListConfigCatalog
+      summary: List (thingType, configKey) pairs present in thing_config_template
+      description: |
+        Returns every distinct (thingType, configKey) pair currently stored
+        in thing_config_template, grouped by thingType and sorted. Consumed
+        by the admin Config Sync history filter so the Type / Config Key
+        selects reflect real database contents instead of a hardcoded
+        allow-list. Empty DB => `{"entries": []}`.
+      responses:
+        "200":
+          description: Grouped catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      required: [thingType, configKeys]
+                      properties:
+                        thingType:
+                          type: string
+                        configKeys:
+                          type: array
+                          items: { type: string }
+              example:
+                entries:
+                  - thingType: ai-gateway
+                    configKeys: [credentials, hook_config, killswitch, observability, routing_rules]
+                  - thingType: compliance-proxy
+                    configKeys: [active_exemptions, alert_channels, hook_config, killswitch]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/things/{id}/resync:
+    post:
+      tags: [Hub API]
+      operationId: hubResyncThing
+      summary: Re-push a single config key to a Thing
+      description: |
+        Replays the current desired state for one config key to a specific
+        Thing via WebSocket (local) or via a nexus.hub.signal MQ broadcast
+        (when the Thing is connected to a peer Hub). This endpoint does NOT
+        bump the config template version, does NOT update thing.desired, and
+        does NOT write a config_change_event row — it is a pure redelivery
+        of state the Thing should already know about, used to repair an
+        out-of-sync key without creating a spurious config change.
+
+        Called by Control Plane's POST /api/admin/nodes/{id}/resync, which
+        is the admin-facing entry point for the "Re-sync this key" button
+        on the Node Detail page.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Thing ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configKey]
+              properties:
+                configKey:
+                  type: string
+                  description: The config key to replay. Must exist in the Thing's desired state.
+            example:
+              configKey: credentials
+      responses:
+        "200":
+          description: Resync request accepted and dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  thingId:
+                    type: string
+                  configKey:
+                    type: string
+              example:
+                ok: true
+                thingId: gw-abc-3050
+                configKey: credentials
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Thing not found or configKey not in the Thing's desired state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/drift:
+    get:
+      tags: [Hub API]
+      operationId: hubListDrift
+      summary: List drifted Things
+      description: Returns all Things with status='drift' or version mismatch.
+      responses:
+        "200":
+          description: List of drifted Things
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriftListResponse"
+              example:
+                drifted:
+                  - id: proxy-abc
+                    type: compliance-proxy
+                    status: drift
+                    desiredVer: 13
+                    reportedVer: 10
+                    retries: 3
+                    lastSeenAt: "2026-04-16T10:25:00Z"
+                total: 1
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/config/history:
+    get:
+      tags: [Hub API]
+      operationId: hubListConfigHistory
+      summary: List config change history
+      description: Returns paginated config_change_event entries with optional filters.
+      parameters:
+        - name: thingType
+          in: query
+          schema:
+            type: string
+          description: Filter by thing type
+        - name: configKey
+          in: query
+          schema:
+            type: string
+          description: Filter by config key
+        - name: actorId
+          in: query
+          schema:
+            type: string
+          description: Filter by actor ID
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start timestamp (ISO 8601)
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End timestamp (ISO 8601)
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Config change history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigHistoryResponse"
+              example:
+                events:
+                  - id: evt-001
+                    timestamp: "2026-04-16T10:30:00Z"
+                    thingType: compliance-proxy
+                    configKey: hook_config
+                    action: update
+                    actorId: user-admin-001
+                    actorName: admin@nexus.ai
+                    newState:
+                      version: 13
+                    newVersion: 13
+                    sourceIp: "10.0.0.1"
+                total: 42
+                page: 1
+                pageSize: 50
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/jobs:
+    get:
+      tags: [Hub API]
+      operationId: hubListJobs
+      summary: List scheduler jobs
+      description: |
+        Returns every job registered with the Hub scheduler with live status.
+        Enabled flag and run counters persist across Hub restarts via the
+        `job` / `job_run` tables.
+      responses:
+        "200":
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListResponse"
+              example:
+                jobs:
+                  - id: drift-detector
+                    name: drift-detector
+                    description: Flags things whose shadow desired/reported diverged past the threshold.
+                    interval: 60000000000
+                    enabled: true
+                    lastRun: "2026-04-16T10:29:00Z"
+                    lastDuration: 245000000
+                    lastStatus: success
+                    nextRun: "2026-04-16T10:30:00Z"
+                    runCount: 1440
+                    errorCount: 0
+                  - id: metric-rollup-5m
+                    name: metric-rollup-5m
+                    description: Rolls one-minute traffic_event rows into five-minute buckets.
+                    interval: 300000000000
+                    enabled: true
+                    lastRun: "2026-04-16T10:25:00Z"
+                    lastDuration: 3200000000
+                    lastStatus: success
+                    nextRun: "2026-04-16T10:30:00Z"
+                    runCount: 288
+                    errorCount: 2
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/jobs/{id}:
+    get:
+      tags: [Hub API]
+      operationId: hubGetJob
+      summary: Get scheduler job
+      description: Returns a single scheduler job status by its stable ID.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID (stable slug, e.g. `drift-detector`)
+      responses:
+        "200":
+          description: Job detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Hub API]
+      operationId: hubUpdateJob
+      summary: Update scheduler job
+      description: |
+        Enables or disables a scheduler job. Only the `enabled` field is
+        mutable from the admin API; name, description, and interval are
+        owned by the code registration path.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateJobRequest"
+            example:
+              enabled: false
+      responses:
+        "200":
+          description: Job updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateJobResponse"
+              example:
+                ok: true
+                jobId: drift-detector
+                enabled: false
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/jobs/{id}/runs:
+    get:
+      tags: [Hub API]
+      operationId: hubListJobRuns
+      summary: List job run history
+      description: |
+        Returns the recent persisted runs for a job, newest first. Retention
+        is bounded by the `job-run-retention` scheduled job (default keep
+        last 100 per job). `limit` is clamped to `[1, 500]`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 500
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: Run history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobRunsResponse"
+              example:
+                runs:
+                  - id: 7f1b3c4e-2a11-4b8a-9d00-0c1d9e5f7a10
+                    jobId: drift-detector
+                    startedAt: "2026-04-16T10:29:00Z"
+                    finishedAt: "2026-04-16T10:29:00.245Z"
+                    durationMs: 245
+                    status: success
+                    replicaId: hub-0
+                total: 1
+                limit: 100
+                offset: 0
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/jobs/{id}/trigger:
+    post:
+      tags: [Hub API]
+      operationId: hubTriggerJob
+      summary: Trigger a scheduler job
+      description: Manually triggers the named scheduler job immediately.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID
+      responses:
+        "200":
+          description: Job triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobTriggerResponse"
+              example:
+                ok: true
+                jobId: drift-detector
+                triggeredAt: "2026-04-16T10:30:05Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/enrollment/token:
+    post:
+      tags: [Hub API]
+      operationId: hubGenerateEnrollmentToken
+      summary: Generate agent enrollment token
+      description: Creates a new enrollment token for agent fleet provisioning.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateEnrollmentTokenRequest"
+            example:
+              label: Engineering Team MacBooks
+              expiresIn: "72h"
+              maxUses: 50
+              metadata:
+                orgId: org-eng
+                groupId: grp-macbook
+      responses:
+        "201":
+          description: Enrollment token created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollmentToken"
+              example:
+                token: enroll-abc123def456
+                label: Engineering Team MacBooks
+                expiresAt: "2026-04-19T10:30:00Z"
+                maxUses: 50
+                usedCount: 0
+                createdAt: "2026-04-16T10:30:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/hub/enrollment/tokens:
+    get:
+      tags: [Hub API]
+      operationId: hubListEnrollmentTokens
+      summary: List enrollment tokens
+      description: Returns all enrollment tokens with their usage status.
+      responses:
+        "200":
+          description: List of enrollment tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollmentTokenListResponse"
+              example:
+                tokens:
+                  - id: enroll-abc123
+                    label: Engineering Team MacBooks
+                    expiresAt: "2026-04-19T10:30:00Z"
+                    maxUses: 50
+                    usedCount: 12
+                    status: active
+                    createdAt: "2026-04-16T10:30:00Z"
+                total: 3
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ============================================================
+  # Internal Things API — /api/internal/things/*
+  # ============================================================
+
+  /api/internal/things/register:
+    post:
+      tags: [Internal Things API]
+      operationId: thingRegister
+      summary: Register a Thing (HTTP fallback)
+      description: |
+        Creates or updates a thing_registry row. Returns the current desired
+        state for startup recovery. Used when WebSocket is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThingRegisterRequest"
+            example:
+              id: proxy-abc
+              type: compliance-proxy
+              version: "1.2.0"
+              address: "10.0.0.5:3040"
+              runtimeApiUrl: "http://10.0.0.5:3040/api/internal"
+              metricsUrl: "http://10.0.0.5:3040/metrics"
+              role: default
+              metadata:
+                os: linux
+                arch: amd64
+      responses:
+        "200":
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThingRegisterResponse"
+              example:
+                ack: true
+                desired:
+                  killswitch:
+                    enabled: false
+                    version: 5
+                  hook_config:
+                    version: 13
+                desiredVer: 13
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/internal/things/heartbeat:
+    post:
+      tags: [Internal Things API]
+      operationId: thingHeartbeat
+      summary: Thing heartbeat (HTTP fallback)
+      description: |
+        Updates last_seen_at. If the Thing's reported version is behind the
+        desired version, returns the new desired config in the response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThingHeartbeatRequest"
+            example:
+              id: proxy-abc
+              status: online
+              reportedVer: 5
+              metadata:
+                checks:
+                  redis: connected
+      responses:
+        "200":
+          description: Heartbeat acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThingHeartbeatResponse"
+              examples:
+                in_sync:
+                  summary: Thing is in sync
+                  value:
+                    ack: true
+                    desiredVer: 5
+                    desired: null
+                config_changed:
+                  summary: Config has changed
+                  value:
+                    ack: true
+                    desiredVer: 7
+                    desired:
+                      killswitch:
+                        enabled: true
+                        version: 7
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/internal/things/shadow:
+    post:
+      tags: [Internal Things API]
+      operationId: thingShadowReport
+      summary: Shadow report (HTTP fallback)
+      description: Reports the Thing's actual (reported) config state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThingShadowRequest"
+            example:
+              id: proxy-abc
+              reported:
+                killswitch:
+                  enabled: true
+                  version: 7
+                hook_config:
+                  version: 13
+              reportedVer: 13
+      responses:
+        "200":
+          description: Shadow report acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ack:
+                    type: boolean
+              example:
+                ack: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/internal/things/config:
+    get:
+      tags: [Internal Things API]
+      operationId: thingBulkConfigPull
+      summary: Bulk config pull
+      description: |
+        Returns all config keys for the given Thing type. When query `id` (Thing id)
+        is set, merges `thing.desired` over templates and sets top-level `desiredVer`
+        to the Thing row's monotonic `desired_ver` (same value as each per-key
+        `version`) so HTTP-fallback clients can compare to `reported_ver`. Without
+        `id`, returns template-only state and `desiredVer = max(template.version)`.
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [nexus-hub, control-plane, ai-gateway, compliance-proxy, agent]
+          description: Thing type
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Thing id — when set, response uses Thing shadow desired_ver semantics
+      responses:
+        "200":
+          description: All config keys for the type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkConfigResponse"
+              example:
+                configs:
+                  killswitch:
+                    state:
+                      enabled: false
+                    version: 5
+                  hook_config:
+                    state:
+                      version: 13
+                    version: 13
+                  observability:
+                    state:
+                      samplingRate: 0.1
+                    version: 2
+                desiredVer: 13
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/internal/things/config/{key}:
+    get:
+      tags: [Internal Things API]
+      operationId: thingSingleConfigPull
+      summary: Single config pull
+      description: Returns a single config key's state and version.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Config key name
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Thing type
+      responses:
+        "200":
+          description: Config key data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SingleConfigResponse"
+              example:
+                configKey: hook_config
+                state:
+                  version: 13
+                version: 13
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/internal/things/audit:
+    post:
+      tags: [Internal Things API]
+      operationId: thingAuditUpload
+      summary: Agent audit batch upload
+      description: |
+        Receives a batch of audit events from an Agent. Events are written
+        to MQ queue `nexus.event.agent` for processing by Hub consumers.
+        Always uses HTTP (not WebSocket) because audit batches can be large.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuditUploadRequest"
+            example:
+              deviceId: agent-jdoe-macbook
+              events:
+                - id: evt-local-001
+                  timestamp: "2026-04-16T10:30:00Z"
+                  traceId: trace-abc123
+                  sourceIp: "10.0.0.50"
+                  targetHost: api.openai.com
+                  method: POST
+                  path: /v1/chat/completions
+                  statusCode: 200
+                  latencyMs: 1250
+                  sourceProcess: cursor
+                  action: intercept
+                  hookDecision: allow
+                  hookReason: passed all hooks
+                  hooksPipeline:
+                    - hookId: hook-pii
+                      action: allow
+                      durationMs: 12
+                  details:
+                    destIP: "104.18.7.23"
+                    destPort: 443
+                    bytesIn: 1234
+                    bytesOut: 5678
+                    osUser: jdoe
+                  identity:
+                    status: matched
+                    method: enrollment
+                    user:
+                      id: nexus-user-jdoe
+                      name: John Doe
+                    device:
+                      id: agent-jdoe-macbook
+                      name: jdoe-macbook
+      responses:
+        "200":
+          description: Audit batch accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditUploadResponse"
+              example:
+                ack: true
+                accepted: 1
+                eventIds:
+                  - evt-local-001
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: MQ temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: event queue temporarily unavailable, retry later
+                code: SERVICE_UNAVAILABLE
+
+  /api/internal/things/deregister:
+    post:
+      tags: [Internal Things API]
+      operationId: thingDeregister
+      summary: Deregister a Thing (HTTP fallback)
+      description: Marks the Thing as offline on graceful shutdown.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThingDeregisterRequest"
+            example:
+              id: proxy-abc
+              reason: graceful_shutdown
+      responses:
+        "200":
+          description: Deregistration acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ack:
+                    type: boolean
+              example:
+                ack: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        For Hub API (`/api/hub/*`): INTERNAL_SERVICE_TOKEN shared between CP and Hub.
+        For Internal Things API (`/api/internal/things/*`): Thing-specific bearer token
+        (service token for servers, device token for agents).
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: Page number
+    PageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+      description: Items per page
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: invalid request body
+            code: INVALID_REQUEST
+    Unauthorized:
+      description: Missing or invalid authorization
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: missing authorization header
+            code: UNAUTHORIZED
+    Forbidden:
+      description: Valid token but insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: invalid service token
+            code: FORBIDDEN
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: thing not found
+            code: NOT_FOUND
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: internal server error
+            code: INTERNAL_ERROR
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable error code
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - INTERNAL_ERROR
+            - SERVICE_UNAVAILABLE
+
+    # ---- Hub API Schemas ----
+
+    ConfigUpdateRequest:
+      type: object
+      required: [thingType, configKey, state, action, actorId, actorName]
+      properties:
+        thingType:
+          type: string
+          enum: [nexus-hub, control-plane, ai-gateway, compliance-proxy, agent]
+        configKey:
+          type: string
+          description: Config key name (e.g. hook_config, killswitch)
+        state:
+          type: object
+          description: New desired state (full state for Category A, version object for Category B)
+        action:
+          type: string
+          enum: [update, delete]
+        actorId:
+          type: string
+        actorName:
+          type: string
+        sourceIp:
+          type: string
+
+    ConfigUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+          description: thing_config_template.version for the updated config_key (audit)
+        thingDesiredVer:
+          type: integer
+          format: int64
+          description: Monotonic thing.desired_ver written to all Things of the type; same value broadcast on config_changed
+        thingsNotified:
+          type: integer
+          description: Number of Things that received the WebSocket push
+        thingsOnline:
+          type: integer
+          description: Total online Things of that type
+
+    ThingSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        version:
+          type: string
+        address:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, drift, degraded]
+        desiredVer:
+          type: integer
+          format: int64
+        reportedVer:
+          type: integer
+          format: int64
+        synced:
+          type: boolean
+        registeredAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+
+    ThingListResponse:
+      type: object
+      properties:
+        things:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThingSummary"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    ThingDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        version:
+          type: string
+        address:
+          type: string
+        runtimeApiUrl:
+          type: string
+        metricsUrl:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, drift, degraded]
+        desired:
+          type: object
+          description: Desired config state (JSONB)
+        reported:
+          type: object
+          description: Reported config state (JSONB)
+        desiredVer:
+          type: integer
+          format: int64
+        reportedVer:
+          type: integer
+          format: int64
+        metadata:
+          type: object
+          description: Type-specific metadata (JSONB)
+        registeredAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+
+    ShadowKeyComparison:
+      type: object
+      properties:
+        desired:
+          type: object
+        reported:
+          type: object
+        synced:
+          type: boolean
+
+    ShadowComparison:
+      type: object
+      properties:
+        thingId:
+          type: string
+        thingType:
+          type: string
+        desiredVer:
+          type: integer
+          format: int64
+        reportedVer:
+          type: integer
+          format: int64
+        synced:
+          type: boolean
+        keys:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ShadowKeyComparison"
+
+    DriftedThing:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+        desiredVer:
+          type: integer
+          format: int64
+        reportedVer:
+          type: integer
+          format: int64
+        retries:
+          type: integer
+          description: Current retry count from Redis
+        lastSeenAt:
+          type: string
+          format: date-time
+
+    DriftListResponse:
+      type: object
+      properties:
+        drifted:
+          type: array
+          items:
+            $ref: "#/components/schemas/DriftedThing"
+        total:
+          type: integer
+
+    ConfigChangeEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        thingType:
+          type: string
+        configKey:
+          type: string
+        action:
+          type: string
+        actorId:
+          type: string
+        actorName:
+          type: string
+        newState:
+          type: object
+        newVersion:
+          type: integer
+          format: int64
+        sourceIp:
+          type: string
+
+    ConfigHistoryResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigChangeEvent"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    JobStatus:
+      type: object
+      required: [id, name, description, interval, enabled, lastStatus, runCount, errorCount]
+      properties:
+        id:
+          type: string
+          description: Stable slug identifier (PK in the `job` table).
+          example: drift-detector
+        name:
+          type: string
+          description: Human-readable job name (may equal id).
+        description:
+          type: string
+          description: One-sentence description shown in the admin UI.
+        interval:
+          type: integer
+          format: int64
+          description: Scheduling interval in nanoseconds (Go time.Duration).
+          example: 60000000000
+        enabled:
+          type: boolean
+        lastRun:
+          type: [string, "null"]
+          format: date-time
+        lastDuration:
+          type: integer
+          format: int64
+          description: Duration of the last run in nanoseconds.
+          example: 245000000
+        lastStatus:
+          type: string
+          enum: [success, error, running, skipped, ""]
+          description: Empty string when the job has never run.
+        lastError:
+          type: string
+          description: Error message from the last failed run (omitted on success).
+        nextRun:
+          type: [string, "null"]
+          format: date-time
+        runCount:
+          type: integer
+          format: int64
+        errorCount:
+          type: integer
+          format: int64
+
+    JobListResponse:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobStatus"
+
+    JobRun:
+      type: object
+      required: [id, jobId, startedAt, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        jobId:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        durationMs:
+          type: [integer, "null"]
+          description: Wall-clock duration in milliseconds; null while status is `running`.
+        status:
+          type: string
+          enum: [running, success, error, skipped]
+        error:
+          type: string
+          description: Error message (present only when status is `error`).
+        replicaId:
+          type: string
+          description: Hub replica identifier that executed the run (for audit trails).
+
+    JobRunsResponse:
+      type: object
+      required: [runs, total, limit, offset]
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobRun"
+        total:
+          type: integer
+          description: Total run count for this job across all pages.
+        limit:
+          type: integer
+          description: Page size applied (echo of the request, clamped to [1, 500]).
+        offset:
+          type: integer
+          description: Page offset applied (echo of the request, floored at 0).
+
+    UpdateJobRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+
+    UpdateJobResponse:
+      type: object
+      required: [ok, jobId, enabled]
+      properties:
+        ok:
+          type: boolean
+        jobId:
+          type: string
+        enabled:
+          type: boolean
+
+    JobTriggerResponse:
+      type: object
+      required: [ok, jobId, triggeredAt]
+      properties:
+        ok:
+          type: boolean
+        jobId:
+          type: string
+        triggeredAt:
+          type: string
+          format: date-time
+
+    GenerateEnrollmentTokenRequest:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          description: Human-readable label for the token
+        expiresIn:
+          type: string
+          description: Duration string (e.g. "72h", "24h")
+          default: "72h"
+        maxUses:
+          type: integer
+          description: Maximum number of enrollments allowed
+          default: 100
+        metadata:
+          type: object
+          description: Arbitrary metadata (orgId, groupId, etc.)
+
+    EnrollmentToken:
+      type: object
+      properties:
+        token:
+          type: string
+          description: The enrollment token string (shown only on creation)
+        id:
+          type: string
+        label:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        maxUses:
+          type: integer
+        usedCount:
+          type: integer
+        status:
+          type: string
+          enum: [active, expired, exhausted, revoked]
+        createdAt:
+          type: string
+          format: date-time
+
+    EnrollmentTokenListResponse:
+      type: object
+      properties:
+        tokens:
+          type: array
+          items:
+            $ref: "#/components/schemas/EnrollmentToken"
+        total:
+          type: integer
+
+    # ---- Internal Things API Schemas ----
+
+    ThingRegisterRequest:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [nexus-hub, control-plane, ai-gateway, compliance-proxy, agent]
+        version:
+          type: string
+        address:
+          type: string
+        runtimeApiUrl:
+          type: string
+        metricsUrl:
+          type: string
+        role:
+          type: string
+          default: default
+        metadata:
+          type: object
+
+    ThingRegisterResponse:
+      type: object
+      properties:
+        ack:
+          type: boolean
+        desired:
+          type: [object, "null"]
+          description: Current desired state for startup recovery
+        desiredVer:
+          type: integer
+          format: int64
+
+    ThingHeartbeatRequest:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [online, degraded]
+        reportedVer:
+          type: integer
+          format: int64
+        metadata:
+          type: object
+
+    ThingHeartbeatResponse:
+      type: object
+      properties:
+        ack:
+          type: boolean
+        desiredVer:
+          type: integer
+          format: int64
+        desired:
+          type: [object, "null"]
+          description: New desired config if versions differ, null if in sync
+
+    ThingShadowRequest:
+      type: object
+      required: [id, reported, reportedVer]
+      properties:
+        id:
+          type: string
+        reported:
+          type: object
+          description: Reported config state per config key
+        reportedVer:
+          type: integer
+          format: int64
+
+    BulkConfigResponse:
+      type: object
+      properties:
+        configs:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ConfigEntry"
+        desiredVer:
+          type: integer
+          format: int64
+
+    ConfigEntry:
+      type: object
+      properties:
+        state:
+          type: object
+        version:
+          type: integer
+          format: int64
+
+    SingleConfigResponse:
+      type: object
+      properties:
+        configKey:
+          type: string
+        state:
+          type: object
+        version:
+          type: integer
+          format: int64
+
+    AuditEvent:
+      type: object
+      required: [id, timestamp]
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        traceId:
+          type: string
+        sourceIp:
+          type: string
+        targetHost:
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        statusCode:
+          type: integer
+        latencyMs:
+          type: integer
+        sourceProcess:
+          type: string
+        action:
+          type: string
+          enum: [intercept, passthrough, reject]
+        hookDecision:
+          type: string
+        hookReason:
+          type: string
+        hooksPipeline:
+          type: array
+          items:
+            type: object
+        details:
+          type: object
+        identity:
+          type: object
+
+    AuditUploadRequest:
+      type: object
+      required: [deviceId, events]
+      properties:
+        deviceId:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+          minItems: 1
+          maxItems: 1000
+
+    AuditUploadResponse:
+      type: object
+      properties:
+        ack:
+          type: boolean
+        accepted:
+          type: integer
+          description: Number of events accepted
+        eventIds:
+          type: array
+          items:
+            type: string
+          description: IDs of accepted events
+
+    ThingDeregisterRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        reason:
+          type: string
+          description: Reason for deregistration
+          default: graceful_shutdown

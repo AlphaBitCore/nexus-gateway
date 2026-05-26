@@ -1,0 +1,73 @@
+.wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 30;
+  padding: 4px;
+}
+
+.statusRow {
+  padding: 8px 10px;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--g-space-2);
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--g-radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  transition: background-color var(--g-transition-fast);
+}
+
+.row:hover,
+.row:focus-visible {
+  background: var(--color-surface-hover);
+  outline: none;
+}
+
+.code {
+  font-family: var(--g-font-mono);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.provider {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}

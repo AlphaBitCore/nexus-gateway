@@ -1,0 +1,35 @@
+/* ── InfraKillSwitchPage ──────────────────────────────────────────── */
+
+.toggleSection {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-4);
+  flex-wrap: wrap;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.kvLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: 2px;
+}
+
+.kvValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: var(--g-space-3);
+}

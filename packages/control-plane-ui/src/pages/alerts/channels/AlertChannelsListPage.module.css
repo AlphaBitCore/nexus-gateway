@@ -1,0 +1,18 @@
+.inlineCode {
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+  background: var(--color-surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dim {
+  color: var(--color-text-muted);
+}

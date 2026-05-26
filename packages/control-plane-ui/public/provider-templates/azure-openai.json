@@ -1,0 +1,196 @@
+{
+  "name": "azure-openai",
+  "displayName": "Azure OpenAI",
+  "description": "Azure OpenAI Service \u2014 enterprise-hosted OpenAI models with data residency and compliance.",
+  "baseUrl": "https://{resource}.openai.azure.com",
+  "adapterType": "azure-openai",
+  "models": [
+    {
+      "code": "azure-gpt-5",
+      "name": "Azure GPT-5",
+      "description": "Azure-hosted GPT-5. Latest OpenAI flagship on Azure infrastructure with data residency and compliance controls.",
+      "providerModelId": "gpt-5",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 5.0,
+      "outputPricePerMillion": 15.0,
+      "maxContextTokens": 256000,
+      "maxOutputTokens": 32768,
+      "cachedInputReadPricePerMillion": 2.5,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-gpt-5-mini",
+      "name": "Azure GPT-5 Mini",
+      "description": "Azure-hosted GPT-5 Mini. Cost-effective GPT-5 class model for high volume.",
+      "providerModelId": "gpt-5-mini",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.5,
+      "outputPricePerMillion": 2.0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 0.25,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-gpt-4.1",
+      "name": "Azure GPT-4.1",
+      "description": "Azure-hosted GPT-4.1 multimodal model.",
+      "providerModelId": "gpt-4.1",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 2.0,
+      "outputPricePerMillion": 8.0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 1.0,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-o3",
+      "name": "Azure o3",
+      "description": "Azure-hosted o3 reasoning model. High-capability reasoning with enterprise data governance.",
+      "providerModelId": "o3",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "function_calling"
+      ],
+      "inputPricePerMillion": 10.0,
+      "outputPricePerMillion": 40.0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000,
+      "cachedInputReadPricePerMillion": 5.0,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-o4-mini",
+      "name": "Azure o4 Mini",
+      "description": "Azure-hosted o4 Mini. Compact reasoning model in the o-series family.",
+      "providerModelId": "o4-mini",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.6,
+      "outputPricePerMillion": 2.4,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000,
+      "cachedInputReadPricePerMillion": 0.3,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-gpt-4o",
+      "name": "Azure GPT-4o",
+      "description": "Azure-hosted GPT-4o. Enterprise-grade with data residency and compliance controls.",
+      "providerModelId": "gpt-4o",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 10.0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 1.25,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-gpt-4o-mini",
+      "name": "Azure GPT-4o Mini",
+      "description": "Azure-hosted GPT-4o Mini. Cost-effective option with enterprise security and compliance.",
+      "providerModelId": "gpt-4o-mini",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.15,
+      "outputPricePerMillion": 0.6,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 0.075,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-gpt-4-turbo",
+      "name": "Azure GPT-4 Turbo",
+      "description": "Azure-hosted GPT-4 Turbo. Previous generation model with vision, hosted on Azure infrastructure.",
+      "providerModelId": "gpt-4-turbo",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 10.0,
+      "outputPricePerMillion": 30.0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 4096,
+      "cachedInputReadPricePerMillion": 5.0,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-o1",
+      "name": "Azure o1",
+      "description": "Azure-hosted o1 reasoning model. Advanced reasoning with enterprise data governance.",
+      "providerModelId": "o1",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "function_calling"
+      ],
+      "inputPricePerMillion": 15.0,
+      "outputPricePerMillion": 60.0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000,
+      "cachedInputReadPricePerMillion": 7.5,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-text-embedding-3-small",
+      "name": "Azure Text Embedding 3 Small",
+      "description": "Azure-hosted embedding model. Cost-effective embeddings with enterprise compliance.",
+      "providerModelId": "text-embedding-3-small",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.02,
+      "maxContextTokens": 8191,
+      "cachedInputReadPricePerMillion": 0.01,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "azure-text-embedding-3-large",
+      "name": "Azure Text Embedding 3 Large",
+      "description": "Azure-hosted high-accuracy embedding model. Best retrieval quality on Azure infrastructure.",
+      "providerModelId": "text-embedding-3-large",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.13,
+      "maxContextTokens": 8191,
+      "cachedInputReadPricePerMillion": 0.065,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

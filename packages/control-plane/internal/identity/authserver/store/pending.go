@@ -1,0 +1,154 @@
+package store
+
+import (
+	"sync"
+	"time"
+)
+
+// pendingAuthzTTL is the default lifetime of a pending-authorize handle.
+// The lifetime must exceed the slowest realistic end-user login time
+// (typing credentials, resolving MFA) but stay short enough that abandoned
+// flows do not accumulate in memory.
+const pendingAuthzTTL = 10 * time.Minute
+
+// PendingAuthzEntry is the fully-parsed authorize-request snapshot stashed by
+// /oauth/authorize and consumed by the login handlers once the user has
+// completed interactive authentication. Entries are single-use: Take
+// returns the entry and deletes it atomically so a replayed authctx
+// cannot mint a second authorization code.
+type PendingAuthzEntry struct {
+	ClientID      string
+	RedirectURI   string
+	Scope         string
+	State         string
+	Nonce         string
+	CodeChallenge string // S256 only
+	DeviceID      string // set for agent flows that passed a binding handle
+	// IdPID is the IdentityProvider.id the user chose at the method-picker step.
+	// Threaded from OIDCBeginHandler to OIDCCallbackHandler so the callback loads
+	// the correct per-IdP config. Empty for local-password login.
+	IdPID     string
+	ExpiresAt time.Time
+}
+
+// PendingAuthzStore holds pending authorize-request snapshots keyed by the
+// opaque authctx handle rendered into the login page. Entries live in
+// process memory only; a restart invalidates all in-flight login flows,
+// which is acceptable given the short TTL.
+type PendingAuthzStore struct {
+	mu   sync.Mutex
+	data map[string]PendingAuthzEntry
+
+	done     chan struct{}
+	closeOne sync.Once
+	ticker   *time.Ticker
+	wg       sync.WaitGroup
+}
+
+// NewPendingAuthzStore returns a store whose janitor sweeps expired entries
+// on a cadence tied to pendingAuthzTTL. Callers must invoke Close to stop
+// the janitor.
+func NewPendingAuthzStore() *PendingAuthzStore {
+	s := &PendingAuthzStore{
+		data:   make(map[string]PendingAuthzEntry),
+		done:   make(chan struct{}),
+		ticker: time.NewTicker(janitorInterval(pendingAuthzTTL)),
+	}
+	s.wg.Add(1)
+	go s.run()
+	return s
+}
+
+// Put stores entry under authctx, overwriting any prior value.
+func (s *PendingAuthzStore) Put(authctx string, entry PendingAuthzEntry) {
+	s.mu.Lock()
+	s.data[authctx] = entry
+	s.mu.Unlock()
+}
+
+// SetIdPID mutates the IdPID of an existing pending entry under authctx,
+// returning false if no live entry is found. Called by the OIDC begin handler
+// after the user picks an IdP so the callback can load the correct config.
+func (s *PendingAuthzStore) SetIdPID(authctx, idpID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.data[authctx]
+	if !ok {
+		return false
+	}
+	if time.Now().After(e.ExpiresAt) {
+		delete(s.data, authctx)
+		return false
+	}
+	e.IdPID = idpID
+	s.data[authctx] = e
+	return true
+}
+
+// Take returns the entry for authctx and deletes it. Expired entries are
+// removed and reported as missing. Pending authorize requests are
+// single-use: Take consumes the entry so a replayed authctx cannot issue
+// a second authorization code.
+func (s *PendingAuthzStore) Take(authctx string) (PendingAuthzEntry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.data[authctx]
+	if !ok {
+		return PendingAuthzEntry{}, false
+	}
+	delete(s.data, authctx)
+	if time.Now().After(e.ExpiresAt) {
+		return PendingAuthzEntry{}, false
+	}
+	return e, true
+}
+
+// Has reports whether a live (non-expired) entry exists for authctx without
+// consuming it. The method-picker endpoint uses this to refuse stale authctx
+// handles up-front so the SPA can surface `authctx_expired` before the user
+// types a password. Expired entries are lazily swept.
+func (s *PendingAuthzStore) Has(authctx string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.data[authctx]
+	if !ok {
+		return false
+	}
+	if time.Now().After(e.ExpiresAt) {
+		delete(s.data, authctx)
+		return false
+	}
+	return true
+}
+
+// Close stops the janitor. Safe to call more than once.
+func (s *PendingAuthzStore) Close() {
+	s.closeOne.Do(func() {
+		close(s.done)
+		s.ticker.Stop()
+	})
+	s.wg.Wait()
+}
+
+func (s *PendingAuthzStore) run() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.ticker.C:
+			s.sweep()
+		}
+	}
+}
+
+func (s *PendingAuthzStore) sweep() {
+	now := time.Now()
+	s.mu.Lock()
+	for k, v := range s.data {
+		if now.After(v.ExpiresAt) {
+			delete(s.data, k)
+		}
+	}
+	s.mu.Unlock()
+}

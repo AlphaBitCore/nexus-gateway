@@ -1,0 +1,461 @@
+/* ─── Dashboard page ─────────────────────────────────────────────────────── */
+
+/* ── Hero summary block ─────────────────────────────────────────────────── */
+
+/*
+ * Hero summary block. Styled as a regular card — uses the same
+ * --color-surface / --color-border / --color-text semantic tokens as
+ * every other dashboard widget below. Mode + theme switching is handled
+ * by the token system, no overrides needed here. Works correctly across
+ * all 3 themes (default / morningstar / rbc) × 2 modes (light / dark).
+ */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: calc(var(--g-space-6) + var(--g-space-1)) var(--g-space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--g-shadow-xs);
+}
+
+.heroRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--g-space-6);
+}
+
+.heroText {
+  min-width: 0;
+}
+
+.heroTitle {
+  margin: 0 0 var(--g-space-1-5);
+  color: var(--color-text);
+  font-size: var(--g-font-size-2xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: var(--g-line-height-tight);
+}
+
+.heroSubtitle {
+  max-width: 640px;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  line-height: var(--g-line-height-normal);
+}
+
+.heroStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--g-space-8);
+  margin-top: var(--g-space-6);
+  padding-top: var(--g-space-6);
+  border-top: 1px solid var(--color-border);
+}
+
+.heroStat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.heroStatLabel {
+  margin-bottom: var(--g-space-1-5);
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.heroStatValue {
+  color: var(--color-text);
+  font-size: var(--g-font-size-2xl);
+  font-weight: var(--g-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--g-line-height-tight);
+}
+
+.heroStatSub {
+  margin-top: var(--g-space-1);
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-xs);
+  line-height: var(--g-line-height-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Time-window picker INSIDE hero — matches the standalone .windowPicker
+ * below by reusing the same surface treatment. */
+.hero .windowPicker {
+  background: var(--color-muted);
+  border-color: var(--color-border);
+}
+
+.hero .windowBtn {
+  color: var(--color-text-muted);
+}
+
+.hero .windowBtn:hover {
+  color: var(--color-text);
+}
+
+.hero .windowBtnActive {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* ── Time window picker (Dashboard PageHeader action) ───────────────────── */
+
+.windowPicker {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  background: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: 3px;
+  flex-shrink: 0;
+}
+
+.windowBtn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: calc(var(--g-radius-md) - 2px);
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  font-family: var(--g-font-display);
+  color: var(--color-text-muted);
+  transition: background var(--g-transition-fast), color var(--g-transition-fast);
+  white-space: nowrap;
+}
+
+.windowBtn:hover {
+  color: var(--color-text);
+}
+
+.windowBtnActive {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--g-shadow-xs);
+}
+
+/* ── Skeleton loading ────────────────────────────────────────────────────── */
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeletonCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  box-shadow: var(--g-shadow-xs);
+  padding: var(--g-space-6);
+  min-height: 100px;
+}
+
+.skeletonBar {
+  border-radius: var(--g-radius-sm);
+  background: linear-gradient(90deg, var(--color-border) 25%, var(--color-surface) 50%, var(--color-border) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeletonBarLabel { composes: skeletonBar; width: 40%; height: 14px; margin-bottom: var(--g-space-3); }
+.skeletonBarValue { composes: skeletonBar; width: 60%; height: 28px; }
+.skeletonBarLabelSecondary { composes: skeletonBar; width: 50%; height: 14px; margin-bottom: var(--g-space-3); }
+.skeletonBarValueSecondary { composes: skeletonBar; width: 40%; height: 24px; }
+
+/* ── KPI metric card ─────────────────────────────────────────────────────── */
+
+.metricCard {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Accent bar — visibility controlled by theme token */
+.metricCard::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-primary), transparent 80%);
+  opacity: var(--g-effect-accent-bar);
+  border-radius: var(--g-radius-lg) var(--g-radius-lg) 0 0;
+}
+
+/* Accent glow — visibility controlled by theme token */
+.metricCard::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 40%;
+  height: 3px;
+  background: var(--color-primary);
+  filter: blur(8px);
+  opacity: var(--g-effect-accent-glow);
+  pointer-events: none;
+}
+
+.metricLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-display);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-bottom: var(--g-space-2);
+}
+
+.metricValueRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--g-space-2);
+}
+
+.metricValue {
+  font-size: 30px;
+  font-weight: 700;
+  font-family: var(--g-font-display);
+  color: var(--color-text);
+  line-height: 1.1;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.metricValueDanger {
+  composes: metricValue;
+  color: var(--color-danger);
+}
+
+.metricValueSuccess {
+  composes: metricValue;
+  color: var(--color-success);
+}
+
+.metricSubtitle {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--g-space-2);
+  line-height: 1.5;
+}
+
+/* ── Secondary metric card ───────────────────────────────────────────────── */
+
+.secondaryValueRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Info icon ───────────────────────────────────────────────────────────── */
+
+.infoIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  cursor: default;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: border-color var(--g-transition-fast), color var(--g-transition-fast);
+}
+
+.infoIcon:hover {
+  border-color: var(--color-text-secondary);
+  color: var(--color-text-secondary);
+}
+
+/* ── Section header ──────────────────────────────────────────────────────── */
+
+.sectionHeader {
+  margin-top: 8px;
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-lg);
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.sectionSubtitle {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+/* ── Split bar ──────────────────────────────────────────────────────────── */
+
+.splitBar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 8px;
+  background: var(--color-muted);
+}
+
+.splitBarVk {
+  background: var(--color-primary);
+}
+
+.splitBarProxy {
+  background: var(--color-info);
+}
+
+/* ── Compliance coverage color states ────────────── */
+
+.coverageMuted {
+  color: var(--color-text-muted);
+}
+
+.coverageSuccess {
+  color: var(--color-success);
+}
+
+.coverageWarning {
+  color: var(--color-warning);
+}
+
+.coverageDanger {
+  color: var(--color-danger);
+}
+
+/* ── Cache savings color states ─────────────────── */
+
+.savingsPositive {
+  color: var(--color-success);
+}
+
+.savingsNegative {
+  color: var(--color-danger);
+}
+
+/* ── Table header row (title + action) ──────────────────────────────────── */
+
+.tableHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+/* ── Table ────────────────────────────────────────────────────────────────── */
+
+.tableWrapper {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+}
+
+.table { width: 100%; border-collapse: collapse; }
+
+.th {
+  text-align: left;
+  padding: var(--g-space-2) var(--g-space-3);
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--g-transition-fast);
+}
+
+.th:hover { color: var(--color-text); }
+
+.td {
+  padding: var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+.tdBold { composes: td; font-weight: 600; max-width: 200px; }
+.tdMono { composes: td; font-family: var(--g-font-mono); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.tableRow {
+  border-bottom: 1px solid var(--color-border-light);
+  transition: background var(--g-transition-fast);
+}
+
+.tableRow:hover {
+  background: var(--color-surface-hover);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.emptyState { text-align: center; color: var(--color-text-muted); padding: var(--g-space-8); }
+.emptyStateTitle { font-size: var(--g-font-size-md); margin: 0; }
+.emptyStateSubtitle { font-size: var(--g-font-size-sm); margin: var(--g-space-2) 0 0; }
+
+/* ── Usage panels ────────────────────────────────────────────────────────── */
+
+.usagePanelsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--g-space-4);
+}
+
+.mutedText { margin: 0; color: var(--color-text-muted); font-size: var(--g-font-size-sm); }
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonBar { animation: none; }
+}
+
+@media (max-width: 980px) {
+  .heroStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .hero {
+    padding: var(--g-space-6);
+  }
+
+  .heroRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .heroStats {
+    grid-template-columns: 1fr;
+    gap: var(--g-space-4);
+  }
+}

@@ -1,0 +1,398 @@
+openapi: 3.1.0
+info:
+  title: Admin — Prompt Cache 3-Tier Config (E38-S13)
+  version: 1.0.0
+  description: |
+    Unified admin API for three-tier prompt cache configuration:
+    global (Tier 1) → per adapter_type (Tier 2) → per provider_id (Tier 3).
+
+    Replaces the obsolete endpoints:
+      - GET/PUT /api/admin/settings/prompt-cache         (deleted in this release)
+      - GET/PUT /api/admin/settings/prompt-cache/gemini  (deleted in this release)
+
+    All endpoints are IAM-gated by `admin:prompt-cache.{read,update}`.
+    All mutating endpoints emit `Hub.NotifyConfigChange(ConfigKey: "cache")`
+    and return HTTP 502 with a `propagation_error` body if Hub propagation fails;
+    the row is still persisted to DB and the reconcile job will heal drift within ~60s.
+
+servers:
+  - url: https://nexus.example.com
+    description: Production
+  - url: http://localhost:3001
+    description: Local dev
+
+paths:
+  /api/admin/cache/global:
+    get:
+      summary: Read Tier-1 (global) config
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.read']}]
+      responses:
+        '200':
+          description: The singleton global config row.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GlobalConfig'}
+              example:
+                normaliser_enabled: true
+                cache_master_kill_switch: false
+    put:
+      summary: Replace Tier-1 (global) config
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.update']}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GlobalConfig'}
+      responses:
+        '200':
+          description: Saved + propagated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GlobalConfig'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '502': {$ref: '#/components/responses/PropagationError'}
+
+  /api/admin/cache/adapters:
+    get:
+      summary: List every Tier-2 (per adapter_type) config in one call
+      description: |
+        Returns the stored Tier-2 rows keyed by `adapter_type`. Adapter types
+        that have no stored row are omitted — the UI synthesises empty configs
+        for them by walking the code-baked bundled-rules table. Used by the
+        global prompt-cache page's "Normalisation rules" panel to render all
+        14 rules across all adapter families without 14 separate round-trips.
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.read']}]
+      responses:
+        '200':
+          description: All adapter rows keyed by adapter_type.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: object
+                    description: Map of adapter_type → AdapterConfig.
+                    additionalProperties: {$ref: '#/components/schemas/AdapterConfig'}
+                  total: {type: integer}
+              example:
+                total: 2
+                items:
+                  anthropic:
+                    marker_inject_enabled: true
+                    marker_boundary3_enabled: false
+                    rules:
+                      claude-code-cch-strip: {enabled: true}
+                  gemini:
+                    cache_enabled: true
+                    ttl_seconds: 7200
+
+  /api/admin/cache/adapter/{adapter_type}:
+    parameters:
+      - $ref: '#/components/parameters/AdapterTypePath'
+    get:
+      summary: Read Tier-2 (per adapter_type) config
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.read']}]
+      responses:
+        '200':
+          description: The Tier-2 row for this adapter.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdapterConfig'}
+              examples:
+                gemini:
+                  value:
+                    cache_enabled: true
+                    min_system_chars: 4096
+                    ttl_seconds: 3600
+                    circuit_breaker_threshold: 5
+                    circuit_breaker_open_secs: 300
+                anthropic:
+                  value:
+                    marker_inject_enabled: true
+                    marker_boundary3_enabled: false
+                    rules:
+                      claude-code-cch-strip:
+                        enabled: true
+        '404':
+          description: Unknown adapter_type.
+    put:
+      summary: Upsert Tier-2 (per adapter_type) config
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.update']}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdapterConfig'}
+      responses:
+        '200':
+          description: Saved + propagated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdapterConfig'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '502': {$ref: '#/components/responses/PropagationError'}
+
+  /api/admin/cache/provider/{provider_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProviderIdPath'
+    get:
+      summary: Read Tier-3 (per provider_id) override config
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.read']}]
+      responses:
+        '200':
+          description: |
+            The Tier-3 row. Returns `{}` (empty object) if no override exists —
+            callers MUST treat absence the same as an empty body, NOT as 404.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderConfig'}
+              example:
+                ttl_seconds: 7200
+    put:
+      summary: Upsert Tier-3 (per provider_id) override config
+      description: |
+        Validates that every key in the body is appropriate for the Provider's
+        `adapter_type`. Setting Gemini-only fields on an Anthropic provider
+        (or vice versa) returns 400 with `validation_error.adapter_mismatch`.
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.update']}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProviderConfig'}
+      responses:
+        '200':
+          description: Saved + propagated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProviderConfig'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '502': {$ref: '#/components/responses/PropagationError'}
+    delete:
+      summary: Remove Tier-3 override (reset to inherit)
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.update']}]
+      responses:
+        '204':
+          description: Override removed + propagated.
+        '502': {$ref: '#/components/responses/PropagationError'}
+
+  /api/admin/cache/effective:
+    get:
+      summary: Read effective config for a Provider, with per-field source attribution
+      description: |
+        Computes the merged result of Tier 1 → Tier 2 → Tier 3 for the given
+        `provider_id`. Each field in the response carries a `_source` companion
+        indicating which tier supplied its value, for UI badge rendering.
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.read']}]
+      parameters:
+        - in: query
+          name: provider_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Effective config + source tags.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EffectiveConfig'}
+              example:
+                provider_id: c6e3b252-303a-45fd-b5dd-f9467eeba669
+                provider_name: gemini-prod
+                adapter_type: gemini
+                effective:
+                  normaliser_enabled: true
+                  cache_master_kill_switch: false
+                  cache_enabled: true
+                  min_system_chars: 4096
+                  ttl_seconds: 7200
+                  circuit_breaker_threshold: 5
+                  circuit_breaker_open_secs: 300
+                sources:
+                  normaliser_enabled: global-default
+                  cache_master_kill_switch: global-default
+                  cache_enabled: adapter-default
+                  min_system_chars: adapter-default
+                  ttl_seconds: provider-override
+                  circuit_breaker_threshold: adapter-default
+                  circuit_breaker_open_secs: adapter-default
+
+  /api/admin/cache/overrides:
+    get:
+      summary: List all providers with non-empty Tier-3 overrides
+      description: |
+        Used by the global prompt-cache page's "Active Overrides" panel.
+        Each row carries the diff between the provider's override and what
+        it would have inherited.
+      tags: [PromptCache3Tier]
+      security: [{bearerAuth: ['admin:prompt-cache.read']}]
+      responses:
+        '200':
+          description: Override list + per-field diff.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/OverrideRow'}
+                  total: {type: integer}
+
+components:
+  parameters:
+    AdapterTypePath:
+      in: path
+      name: adapter_type
+      required: true
+      schema:
+        type: string
+        enum: [anthropic, bedrock, gemini, vertex, openai, azure-openai, deepseek, glm, moonshot, mistral, xai, groq, perplexity, together, fireworks, minimax]
+    ProviderIdPath:
+      in: path
+      name: provider_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    ValidationError:
+      description: Request body failed validation.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            message: 'Gemini fields cannot be set on Anthropic provider'
+            code: validation_error
+            detail: 'gemini_ttl_seconds is not valid for adapter_type=anthropic'
+    PropagationError:
+      description: |
+        Config saved to DB but Hub propagation failed. Operator action recommended
+        (verify Hub health and retry), OR wait up to 60s for the reconcile job
+        to heal automatically.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+          example:
+            message: 'Config saved locally but propagation to gateway failed'
+            code: propagation_error
+            detail: 'Hub: connect: connection refused'
+
+  schemas:
+    GlobalConfig:
+      type: object
+      properties:
+        normaliser_enabled:
+          type: boolean
+          description: NormalizeUpstream pipeline kill switch.
+        cache_master_kill_switch:
+          type: boolean
+          description: Disables all gateway-side cache behavior for all providers; emergency only.
+      additionalProperties: false
+
+    AdapterConfig:
+      type: object
+      description: |
+        Tier-2 config for one adapter family. Field set is family-specific; absent
+        keys mean "use code default at this tier". Concrete examples in
+        `paths./api/admin/cache/adapter/{adapter_type}.get.responses.200.content.application/json.examples`.
+      properties:
+        # Anthropic family
+        marker_inject_enabled: {type: boolean}
+        marker_boundary3_enabled: {type: boolean}
+        # Gemini family
+        cache_enabled: {type: boolean}
+        min_system_chars: {type: integer, minimum: 0}
+        ttl_seconds: {type: integer, minimum: 60}
+        circuit_breaker_threshold: {type: integer, minimum: 1}
+        circuit_breaker_open_secs: {type: integer, minimum: 1}
+        # Rules
+        rules:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/RuleOverride'}
+
+    ProviderConfig:
+      type: object
+      description: |
+        Tier-3 override. Subset of AdapterConfig; field shape must match the
+        Provider's adapter_type or PUT returns 400.
+      properties:
+        marker_inject_enabled: {type: boolean}
+        marker_boundary3_enabled: {type: boolean}
+        cache_enabled: {type: boolean}
+        min_system_chars: {type: integer, minimum: 0}
+        ttl_seconds: {type: integer, minimum: 60}
+        circuit_breaker_threshold: {type: integer, minimum: 1}
+        circuit_breaker_open_secs: {type: integer, minimum: 1}
+      additionalProperties: false
+
+    RuleOverride:
+      type: object
+      properties:
+        enabled: {type: boolean}
+        dry_run_always: {type: boolean}
+
+    EffectiveConfig:
+      type: object
+      properties:
+        provider_id: {type: string, format: uuid}
+        provider_name: {type: string}
+        adapter_type: {type: string}
+        effective:
+          type: object
+          description: All resolved knob values (no source attribution).
+          additionalProperties: true
+        sources:
+          type: object
+          description: One entry per knob in `effective`, value is the source tier.
+          additionalProperties:
+            type: string
+            enum: [provider-override, adapter-default, global-default, code-default]
+
+    OverrideRow:
+      type: object
+      properties:
+        provider_id: {type: string, format: uuid}
+        provider_name: {type: string}
+        adapter_type: {type: string}
+        overridden_keys:
+          type: array
+          items: {type: string}
+        diff:
+          type: object
+          description: |
+            For each overridden key, both the inherited (Tier 1/2) value and the
+            override value, so the UI can render a "was X, now Y" line.
+          additionalProperties:
+            type: object
+            properties:
+              inherited: {}
+              override: {}
+              inherited_source:
+                type: string
+                enum: [adapter-default, global-default, code-default]
+
+    ErrorResponse:
+      type: object
+      properties:
+        message: {type: string}
+        code: {type: string}
+        detail: {type: string}
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

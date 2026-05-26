@@ -1,0 +1,62 @@
+# Local dev overrides for agent.
+# Note: `nexus-agent run` exits at the enrollment check unless the
+# device cert exists. Use `nexus-agent enroll --hub-url ...` first.
+#
+# Cert/audit/log paths default to platform.DefaultPaths(); override
+# below when running uninstalled out of the source tree.
+
+log:
+  # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
+  # boot default only. logging.SetLevel mutates the slog.LevelVar live on
+  # shadow push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  level: "debug"
+  format: "text"
+  file: "logs/agent.log"
+  stackOnError: true
+
+hubURL: "ws://localhost:3060/ws"
+hubHTTPURL: "http://localhost:3060"
+
+deviceID: ""
+# Keep dev certs inside the working tree so multiple devs/branches
+# don't fight over /Library/Application Support permissions.
+certFile: ".nexus-agent/device.pem"
+keyFile: ".nexus-agent/device-key.pem"
+caCertFile: ".nexus-agent/gateway-ca.pem"
+platformBridgeAddress: "127.0.0.1:19080"
+
+auditDBPath: ".nexus-agent/audit.db"
+# heartbeatIntervalSec + auditDrainIntervalSec are shadow-overridable via
+# Hub admin UI (config_key: timing_intervals); YAML is the boot default
+# only. thingclient.SetHeartbeatInterval + the drain supervisor restart
+# their tickers live on shadow push. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+heartbeatIntervalSec: 60
+auditDrainIntervalSec: 30
+auditBatchSize: 200
+auditRetentionDays: 30
+configRefreshSec: 300
+
+# defaultAction is the agent's local policy fallback when nothing matches.
+# The retired policy_rules shadow key was deleted in PR-0 with no live
+# publisher; admin-pushed inspection now flows through interception_domains
+# alone. See docs/developers/architecture/cross-cutting/foundation/configuration-architecture-migration.md.
+defaultAction: "passthrough"
+
+updaterEnabled: false
+updaterCheckSec: 3600
+
+quitAllowed: true
+
+# exemption* fields below are shadow-overridable via Hub admin UI (config_key:
+# exemptions); YAML is the boot default only. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+exemptionEnabled: true
+exemptionFailureThreshold: 3
+exemptionWindowSec: 3600
+exemptionDurationSec: 86400
+exemptionAllowlist: []
+exemptionDenylist: []
+
+otelEnabled: false
+otelEndpoint: "http://localhost:4318"
+otelServiceName: "nexus-agent"
+otelSamplingRate: 1.0

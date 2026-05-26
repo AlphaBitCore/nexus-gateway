@@ -1,0 +1,75 @@
+{
+  "name": "groq",
+  "displayName": "Groq",
+  "description": "Groq high-speed inference \u2014 OpenAI-compatible API serving Llama and other open-weight models.",
+  "baseUrl": "https://api.groq.com",
+  "adapterType": "groq",
+  "models": [
+    {
+      "code": "llama-3.3-70b-versatile",
+      "name": "Llama 3.3 70B Versatile",
+      "description": "Meta's instruction-tuned 70B Llama 3.3 served on Groq's LPU inference fabric \u2014 ~280 tok/s.",
+      "providerModelId": "llama-3.3-70b-versatile",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.59,
+      "outputPricePerMillion": 0.79,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 32768,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "llama-3.1-8b-instant",
+      "name": "Llama 3.1 8B Instant",
+      "description": "Meta's compact 8B Llama 3.1 \u2014 ~675 tok/s. Best for latency-sensitive tasks.",
+      "providerModelId": "llama-3.1-8b-instant",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.06,
+      "outputPricePerMillion": 0.08,
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 8192,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "openai/gpt-oss-120b",
+      "name": "GPT OSS 120B",
+      "description": "OpenAI's open-weight 120B model served on Groq \u2014 ~1000 tok/s.",
+      "providerModelId": "openai/gpt-oss-120b",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 32768,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "openai/gpt-oss-20b",
+      "name": "GPT OSS 20B",
+      "description": "OpenAI's open-weight 20B model \u2014 fastest in catalogue at ~1000 tok/s.",
+      "providerModelId": "openai/gpt-oss-20b",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming"
+      ],
+      "maxContextTokens": 131072,
+      "maxOutputTokens": 8192,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

@@ -1,0 +1,230 @@
+# Nexus Gateway — Compliance Proxy Configuration
+# This file configures the Go compliance-proxy process (separate from gateway.config.yaml).
+
+listener:
+  # Address to listen for CONNECT requests (host:port or :port)
+  address: ":3128"
+
+ca:
+  # Path to enterprise sub-CA certificate (PEM)
+  certPath: "/etc/compliance-proxy/ca.crt"
+  # Path to enterprise sub-CA private key (PEM, ECDSA)
+  keyPath: "/etc/compliance-proxy/ca.key"
+
+# PostgreSQL connection. Env override: DATABASE_URL. Used for hook
+# configs, rule packs, and audit writes (replaces the legacy
+# audit.database.dsn nested key).
+database:
+  url: ""
+
+redis:
+  # Universal Redis configuration. Used for cert cache + hook state.
+  # See packages/shared/storage/redisfactory + docs/developers/architecture/
+  # configuration-architecture.md §9 for the full contract.
+  mode: standalone
+  addrs: ["localhost:6379"]
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+accessControl:
+  # Source IP CIDRs allowed to use the proxy
+  sourceIpAllowlist:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+  # Destination domains allowed (host:port pairs, default port 443)
+  # Prefix wildcards supported: *.openai.com:443
+  domainAllowlist:
+    - "api.openai.com:443"
+    - "*.openai.com:443"
+    - "api.anthropic.com:443"
+    - "*.anthropic.com:443"
+    - "generativelanguage.googleapis.com:443"
+    - "aistudio.google.com:443"
+    - "api.deepseek.com:443"
+    - "api.x.ai:443"
+    - "api.moonshot.cn:443"
+    - "open.bigmodel.cn:443"
+    - "api.minimax.chat:443"
+    - "copilot-proxy.githubusercontent.com:443"
+
+  # Internal network CIDRs exempt from private IP rejection
+  # (for enterprise-hosted AI services on internal networks)
+  internalNetworkExceptions: []
+
+connections:
+  # Maximum concurrent CONNECT tunnels
+  maxConcurrentTunnels: 10000
+  # Maximum HTTP/2 streams per connection
+  maxStreamsPerConnection: 100
+  # Idle connection timeout
+  idleTimeout: "300s"
+  # Graceful shutdown drain period
+  shutdownGracePeriod: "30s"
+
+upstream:
+  # Maximum connections per upstream host
+  maxConnsPerHost: 100
+  # Idle upstream connection timeout
+  idleConnTimeout: "90s"
+  # Dial timeout for new upstream connections
+  dialTimeout: "10s"
+
+limits:
+  # Maximum request body size
+  requestBodyLimit: "10MB"
+  # Maximum response body size (non-SSE)
+  responseBodyLimit: "10MB"
+  # Maximum SSE buffer size
+  sseBufferLimit: "8MB"
+
+log:
+  # Level: trace, debug, info, warn, error. Optional: format (json|text), file (tee to path, relative to cwd), stackOnError.
+  level: "info"
+
+metrics:
+  # Address for health check and Prometheus metrics server
+  address: ":9090"
+
+runtimeApi:
+  listenAddress: "127.0.0.1:3002"
+
+compliance:
+  enabled: true
+  perHookTimeoutMs: 5000
+  totalTimeoutMs: 15000
+  parallelHooks: false
+  # streamingMode YAML field deleted in #115. Admin sets the global
+  # streaming policy via CP admin UI / API (lands in
+  # system_metadata['streaming_compliance.config'].default_mode);
+  # CP picks it up at startup + on every shadow push. Three-service
+  # alignment — agent + ai-gateway use the same admin policy.
+  checkpointChars: 500
+  redactionRulesPath: ""   # path to YAML; empty = use built-in defaults
+  rejectResponse:
+    defaultLevel: 1
+    contactInfo: "Contact IT Security: security@example.com"
+  hooks:
+    - implementationId: "keyword-filter"
+      name: "Default Keyword Filter"
+      priority: 10
+      enabled: false
+      stage: "request"
+      failBehavior: "fail-open"
+      timeoutMs: 5000
+      applicableIngress: "ALL"
+      config:
+        patterns: []
+        caseSensitive: false
+    - implementationId: "pii-detector"
+      name: "Default PII Detector"
+      priority: 20
+      enabled: false
+      stage: "request"
+      failBehavior: "fail-open"
+      timeoutMs: 5000
+      applicableIngress: "ALL"
+      config:
+        types: ["email", "phone", "ssn", "credit_card"]
+        action: "reject_hard"
+
+alerting:
+  enabled: true
+  evalIntervalSec: 30
+  webhook:
+    url: ""          # Set to Slack/Teams/PagerDuty webhook URL
+    headers: {}      # Optional auth headers
+    timeoutSec: 10
+  cooldown:
+    fireMinutes: 5
+    resolveMinutes: 5
+  # S39 — file-backed persistence for runtime channel + threshold
+  # mutations. When set, every Create/Update/Delete on the alerting
+  # channels list and every PUT /alerts/thresholds writes through to
+  # JSON files under this directory, so the state survives restart.
+  # Empty (the default) keeps the legacy in-memory-only behaviour.
+  # Files written:
+  #   <persistenceDir>/alerting-channels.json
+  #   <persistenceDir>/alerting-thresholds.json
+  # The directory is created with mode 0700 (channel headers may
+  # contain secrets, so it must not be world-readable).
+  persistenceDir: ""
+
+# SIEM forwarding is centralized in Nexus Hub's traffic/siem bridge.
+# Compliance-proxy publishes every audit event to nexus.event.compliance
+# (configured in mq.* above) and the Hub picks it up via traffic_event and
+# forwards to the configured external SIEM endpoint. Operators configure
+# the destination from the Control Plane admin UI (Settings → SIEM); no
+# CP-side YAML is involved.
+
+audit:
+  enabled: true
+  batch:
+    # Records per batch INSERT
+    size: 10
+    # Fixed flush interval in milliseconds (used when adaptiveFlush is false)
+    flushIntervalMs: 500
+    # Channel buffer capacity (overflow goes to NDJSON)
+    channelBufferSize: 1000
+    # S25 adaptive flush: when true, the writer scales the flush interval
+    # between flushIntervalMinMs (queue full → drain fast) and
+    # flushIntervalMaxMs (queue empty → batch more aggressively).
+    # The fixed flushIntervalMs above is ignored when this is enabled.
+    adaptiveFlush: false
+    flushIntervalMinMs: 500
+    flushIntervalMaxMs: 10000
+    # S34 adaptive batch size: when true, the writer scales the per-flush
+    # row threshold between batchSizeMin (queue empty → small fast
+    # batches, latency-optimised) and batchSizeMax (queue full → large
+    # batches, throughput-optimised via Postgres COPY amortisation).
+    # The fixed `size` above is ignored when this is enabled.
+    # Composes with adaptiveFlush: at low load you get a long interval
+    # AND a small batch; at high load a short interval AND a large batch.
+    adaptiveBatchSize: false
+    batchSizeMin: 10
+    batchSizeMax: 500
+  ndjson:
+    enabled: true
+    # Spool directory for NDJSON fallback files
+    dir: "/var/lib/nexus-proxy/audit-spool"
+    # Max size per NDJSON file before rotation (MB)
+    maxFileSizeMB: 100
+    # Max total spool directory size (MB)
+    maxTotalSizeMB: 1000
+  pinning:
+    # Admin-configured TLS bump exemptions
+    exemptions: []
+    #  - host: "pinned-app.example.com"
+    #    reason: "Known certificate-pinned application"
+    autoExempt:
+      enabled: true
+      # Consecutive failures before auto-exemption
+      failureThreshold: 3
+      # Time window for counting failures (seconds)
+      windowSeconds: 3600
+      # Duration of auto-exemption (seconds)
+      exemptionDurationSeconds: 86400

@@ -1,0 +1,41 @@
+---
+description: Adversarial product review + less-is-more — challenge every proposed feature, knob, surface, menu item before building
+alwaysApply: true
+---
+
+# Adversarial product review + less-is-more (binding)
+
+Two halves of the same product discipline. Apply both to any proposed feature, config knob, UI surface, menu item, behavior change, or "wouldn't it be nice if…" idea — **including user proposals**.
+
+## Half 1 — Steel-man, then attack
+
+Before implementing, surface in chat:
+
+- (a) Is the user-facing value clear and large?
+- (b) How often will real users hit this path?
+- (c) Could a sensible default, an existing surface, or a convention solve it without a new knob?
+- (d) Is the placement correct (right table / page / layer / menu) or is it being attached to the nearest convenient form?
+- (e) Does the cost (UI surface, config burden, cognitive load, future maintenance) exceed the value?
+
+Counter-arguments go in chat **BEFORE** implementation. If they're strong and unanswered, push back with "I'd challenge: …" rather than building. If the user persists after seeing them, that's signal — proceed.
+
+## Half 2 — Less is more / delete instead of add
+
+Defaults must work out of the box — admins should not face a 5-tab detail page or a JSON editor for every protocol quirk. **Spring-style**: sensible default for every knob; configuration only when divergence is genuinely needed.
+
+When in doubt about adding a UI surface, config field, menu item, or code path: **delete instead**.
+
+Prefer:
+
+1. **Adapter / runtime auto-fills** over admin-facing config. Canonical pattern: Anthropic `max_tokens` default in `packages/ai-gateway/internal/providers/specs/anthropic/codec/codec.go:103-107` — adapter fills the protocol-required field from model capability when caller omits it.
+2. **Global settings** over per-route / per-rule overrides unless real divergence is documented.
+3. **One location per concept** over scattering across menus.
+4. **Extending an existing surface** over adding a new tab / page / route.
+
+New surfaces require an explicit "what user journey, how often, why nothing existing covers it" in the plan; without that, the default is **no**.
+
+## Scope
+
+Applies product-wide — every service, every UI, every config dimension. Includes user-proposed features.
+
+Skipping this rule requires **explicit user approval** in chat.

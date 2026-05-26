@@ -1,0 +1,1 @@
+# Otel pipeline architecture

@@ -1,0 +1,90 @@
+/* ─── Grid ───────────────────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+}
+
+/* ── Columns ────────────────────────────────────────────────────────────── */
+
+.cols-1 { grid-template-columns: repeat(1, 1fr); }
+.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.cols-5 { grid-template-columns: repeat(5, 1fr); }
+.cols-6 { grid-template-columns: repeat(6, 1fr); }
+
+/* ── Gap ────────────────────────────────────────────────────────────────── */
+
+.gap-xs { gap: var(--g-space-1); }
+.gap-sm { gap: var(--g-space-2); }
+.gap-md { gap: var(--g-space-4); }
+.gap-lg { gap: var(--g-space-6); }
+.gap-xl { gap: var(--g-space-8); }
+
+/* ── Viewport responsive mode ───────────────────────────────────────────── */
+/* 3-6 cols collapse to 2 at <=1024px; 2-6 cols collapse to 1 at <=640px   */
+
+@media (max-width: 1024px) {
+  .viewport.cols-3,
+  .viewport.cols-4,
+  .viewport.cols-5,
+  .viewport.cols-6 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .viewport.cols-2,
+  .viewport.cols-3,
+  .viewport.cols-4,
+  .viewport.cols-5,
+  .viewport.cols-6 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Container responsive mode ──────────────────────────────────────────── */
+
+.container {
+  container-type: inline-size;
+}
+
+@container (max-width: 800px) {
+  .container.cols-3,
+  .container.cols-4,
+  .container.cols-5,
+  .container.cols-6 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@container (max-width: 500px) {
+  .container.cols-2,
+  .container.cols-3,
+  .container.cols-4,
+  .container.cols-5,
+  .container.cols-6 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Fallback for browsers without container queries ────────────────────── */
+
+@supports not (container-type: inline-size) {
+  .container.cols-3,
+  .container.cols-4,
+  .container.cols-5,
+  .container.cols-6 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @media (max-width: 640px) {
+    .container.cols-2,
+    .container.cols-3,
+    .container.cols-4,
+    .container.cols-5,
+    .container.cols-6 {
+      grid-template-columns: 1fr;
+    }
+  }
+}

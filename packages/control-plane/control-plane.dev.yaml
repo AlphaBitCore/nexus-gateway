@@ -1,0 +1,176 @@
+# Local dev overrides for control-plane.
+# Differs from control-plane.config.yaml only where dev values are needed.
+
+# Externally-reachable base URL. Reported as staticInfo.publicURL.
+# Dev uses localhost:<port>; prod uses the public domain.
+publicURL: "http://localhost:3001"
+
+server:
+  port: 3001
+  shutdownTimeout: "10s"
+  # Host portion of the URL Hub uses to reach /metrics + /debug/runtime
+  # (registered as `metricsUrl` in the thing registry). Defaults to
+  # 127.0.0.1 if empty; set to a routable host when Hub runs on a
+  # different machine than this binary.
+  advertiseHost: "127.0.0.1"
+
+database:
+  url: "postgresql://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
+  maxConns: 25
+  minConns: 5
+  maxConnLifetime: "300s"
+
+redis:
+  # Local dev Redis runs on 6437 via docker-compose. See packages/shared/
+  # storage/redisfactory + docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6437"]
+  username: ""
+  password: ""
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+log:
+  # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
+  # boot default only. logging.SetLevel mutates the slog.LevelVar live on
+  # shadow push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  level: "debug"
+  format: "text"
+  file: "logs/control-plane.log"
+  stackOnError: true
+
+bff:
+  complianceProxyUrl: "http://127.0.0.1:3040"
+  complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
+  aiGatewayUrl: "http://127.0.0.1:3050"
+  # complianceProxyApiToken is env-only (COMPLIANCE_PROXY_API_TOKEN) and
+  # must match what compliance-proxy itself reads from the same env var.
+
+# Hub registration (thingclient). Symmetric with ai-gateway /
+# compliance-proxy. Env override: NEXUS_HUB_URL.
+registry:
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+auth:
+  # hmacSecret, internalServiceToken are env-only per the "Secrets are
+  # env-only" binding in CLAUDE.md. See .env / .env.example at repo root.
+  # hmacSecret  → ADMIN_KEY_HMAC_SECRET
+  # internalServiceToken → INTERNAL_SERVICE_TOKEN
+  bootstrapKey: "nexus-dev-bootstrap-key"
+  allowDevAuth: true
+
+crypto:
+  # encryptionKey / encryptionPassphrase / encryptionSalt / credentialKeyMap
+  # are env-only:
+  #   encryptionKey         → CREDENTIAL_ENCRYPTION_KEY
+  #   encryptionPassphrase  → CREDENTIAL_ENCRYPTION_PASSPHRASE
+  #   encryptionSalt        → CREDENTIAL_ENCRYPTION_SALT
+  #   credentialKeyMap      → CREDENTIAL_KEY_MAP
+  production: false
+
+retention:
+  auditLogDays: 90
+  adminAuditLogDays: 365
+  metricRollupDays: 365
+  agentAuditDays: 90
+
+agent:
+  caDir: ".agent-ca"
+
+aiGuard:
+  # http.Client.Timeout for the /api/admin/ai-guard/dry-run handler
+  # when it posts to ai-gateway /v1/ai-guard/classify. Must be greater
+  # than the in-DB ai_guard_config.timeout_ms (judge-call budget,
+  # default 30s) plus a small slack — otherwise this fires before the
+  # judge call can return.
+  #
+  # Note: the AI Guard *runtime* judge-call timeout (the value that
+  # actually limits classifier calls) lives in DB and is shadow-overridable
+  # via Hub admin UI (config_key: ai_guard). The dispatchTimeoutSec
+  # here is the wrapper http.Client cap on the dry-run helper and is
+  # YAML-only (no UI surface, restart required to change). See
+  # docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  dispatchTimeoutSec: 60
+
+# Named HTTP clients Control Plane constructs at startup. Each entry is
+# a single timeout knob for now; pool tunables can be added per-client
+# as concrete needs arise (none today — the load profiles are low-QPS
+# admin traffic).
+httpClients:
+  # Typed CP → Nexus Hub control RPC client (registry, jobs, scheduler,
+  # things). 30s covers Hub-side operations that may take a few seconds;
+  # raise if scheduler/job ops run longer in prod.
+  hub:
+    timeoutSec: 30
+  # /api/admin/hub/* admin-UI passthrough. Interactive — keep short so
+  # the UI doesn't hang when Hub is misbehaving.
+  hubProxy:
+    timeoutSec: 10
+  # /api/admin/proxy/* admin-UI passthrough to compliance-proxy runtime
+  # admin API. Interactive — same reasoning as hubProxy.
+  complianceProxyAdmin:
+    timeoutSec: 10
+
+authServer:
+  # Issuer must match the address admin clients reach the auth server on so
+  # that minted access tokens carry a verifiable iss claim and the verifier
+  # can fetch JWKS at issuer + /.well-known/jwks.json. No safe default.
+  issuer: "http://127.0.0.1:3001"
+  keystoreDir: ".nexus/authkeys"
+
+otel:
+  # Shadow-overridable via Hub admin UI (config_key: observability); YAML
+  # is the boot default only. tp.Reconfigure swaps the OTEL exporter live
+  # on shadow push. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+  endpoint: ""
+  serviceName: "nexus-control-plane"
+
+scheduler:
+  enabled: true
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+# E34-S? — out-of-band body storage. Bodies whose captured size meets/exceeds
+# inline on traffic_event_payload. All 4 services (Hub, ai-gateway,
+# compliance-proxy, control-plane) point at the SAME backend root so the
+# control-plane read path can resolve refs produced anywhere.
+spill:
+  enabled: true
+  backend: localfs
+  localfs:
+    root: /tmp/nexus-spill
+    perObjectCap: 268435456      # 256 MiB
+    totalSizeCap: 5368709120     # 5 GiB
+    retentionDays: 7
+
+# costPolicy mirrors Hub's billed-cost policy so the CP-UI traffic event
+# drawer can render the right "internal-ops counted/excluded" hint. Keep
+# this in sync with nexus-hub.yaml's scheduler.excludeInternalOpsFromBilledCost
+# — if they drift, the UI label will lie about what Hub actually rolled up.
+# Default false (zero-value): include — "都是钱". 2026-05-21.
+costPolicy:
+  excludeInternalOpsFromBilledCost: false

@@ -1,0 +1,24 @@
+{
+  "name": "@nexus-gateway/db-migrate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Database schema, migrations, and seeds for Nexus Gateway",
+  "scripts": {
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:status": "prisma migrate status",
+    "migrate:reset": "prisma migrate reset",
+    "db:push": "prisma db push --accept-data-loss",
+    "generate": "prisma generate",
+    "seed": "prisma generate && tsx seed/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "dotenv": "^17.4.2",
+    "pg": "^8.21.0",
+    "prisma": "^7.8.0",
+    "tsx": "^4.22.3",
+    "yaml": "^2.9.0"
+  }
+}

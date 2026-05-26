@@ -1,0 +1,277 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — `/v1/estimate` Multi-Target Compare Endpoint (E58-S4)
+  version: "1.0.0"
+  description: |
+    The `/v1/estimate` endpoint accepts a wrapper body containing one
+    inner ingress request plus a `compareTargets` array. The gateway
+    runs a dry-run per target internally (same pipeline as
+    `nexus.dry_run`) and aggregates the per-target estimates plus a
+    summary identifying the cheapest target.
+
+    The endpoint is VK-authenticated. Each target is validated against
+    the VK's `allowedModels` independently — a VK with limited model
+    access still gets useful per-target results for the accessible
+    subset; inaccessible targets return per-target errors, not a
+    top-level 403.
+
+    Source of truth: `docs/developers/specs/e58/e58-s4-compare-endpoint.md`.
+
+servers:
+  - url: http://localhost:3050
+    description: Local AI Gateway dev server
+
+paths:
+  /v1/estimate:
+    post:
+      summary: Estimate the cost of a request across N candidate targets
+      operationId: estimateCompare
+      tags: [AI Gateway / Estimate]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstimateCompareRequest'
+            examples:
+              compareChatModels:
+                summary: Compare gpt-5 vs claude-sonnet-4-6 vs gemini-2.5-pro
+                value:
+                  request:
+                    model: "placeholder"
+                    messages:
+                      - { role: "user", content: "Summarize the attached document..." }
+                    max_tokens: 1500
+                    reasoning_effort: "medium"
+                  compareTargets:
+                    - { providerId: "openai-direct", modelId: "gpt-5" }
+                    - { providerId: "anthropic-direct", modelId: "claude-sonnet-4-6" }
+                    - { providerId: "google-direct", modelId: "gemini-2.5-pro", reasoningEffort: "low" }
+                  options:
+                    lookupCache: true
+                    ingressFormat: "openai"
+              compareAnthropicTier:
+                summary: Compare Haiku vs Sonnet vs Opus on the same prompt
+                value:
+                  request:
+                    model: "placeholder"
+                    messages: [{ role: "user", content: "..." }]
+                    max_tokens: 1000
+                  compareTargets:
+                    - { providerId: "anthropic-direct", modelId: "claude-haiku-4-5" }
+                    - { providerId: "anthropic-direct", modelId: "claude-sonnet-4-6" }
+                    - { providerId: "anthropic-direct", modelId: "claude-opus-4-7" }
+      responses:
+        '200':
+          description: Per-target estimates plus a summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstimateCompareResponse'
+              examples:
+                threeWayCompare:
+                  value:
+                    targets:
+                      - providerId: "openai-direct-uuid"
+                        providerName: "OpenAI Direct"
+                        modelId: "gpt-5-uuid"
+                        modelCode: "gpt-5"
+                        tokens:
+                          uncachedInput: 1200
+                          inputCached: 0
+                          output: { low: 500, expected: 1500, high: 4500 }
+                          reasoning: { low: 100, expected: 800, high: 2400 }
+                        cost:
+                          currency: "USD"
+                          low: { uncachedInput: 0.0060, cacheRead: 0.0, cacheWrite: 0.0, output: 0.0125, total: 0.0185 }
+                          expected: { uncachedInput: 0.0060, cacheRead: 0.0, cacheWrite: 0.0, output: 0.0375, total: 0.0435 }
+                          high: { uncachedInput: 0.0060, cacheRead: 0.0, cacheWrite: 0.0, output: 0.1125, total: 0.1185 }
+                        cacheBenefit: { responseHitProbability: 0.0, promptCacheReadTokens: 0, savingsExpected: 0.0 }
+                        reasoning: { effortRequested: "medium", supportedByModel: true, estimatedTokens: 800 }
+                        assumptions: []
+                        error: null
+                      - providerId: "anthropic-direct-uuid"
+                        providerName: "Anthropic Direct"
+                        modelId: "claude-sonnet-4-6-uuid"
+                        modelCode: "claude-sonnet-4-6"
+                        tokens:
+                          uncachedInput: 1100
+                          inputCached: 800
+                          output: { low: 500, expected: 1500, high: 4500 }
+                          reasoning: { low: 200, expected: 1200, high: 3600 }
+                        cost:
+                          currency: "USD"
+                          low: { uncachedInput: 0.0033, cacheRead: 0.00024, cacheWrite: 0.0, output: 0.0075, total: 0.01104 }
+                          expected: { uncachedInput: 0.0033, cacheRead: 0.00024, cacheWrite: 0.0, output: 0.0225, total: 0.02604 }
+                          high: { uncachedInput: 0.0033, cacheRead: 0.00024, cacheWrite: 0.0, output: 0.0675, total: 0.07104 }
+                        cacheBenefit: { responseHitProbability: 0.0, promptCacheReadTokens: 800, savingsExpected: 0.00216 }
+                        reasoning: { effortRequested: "medium", supportedByModel: true, estimatedTokens: 1200 }
+                        assumptions:
+                          - "Anthropic token count is a character-ratio heuristic, ±10% typical error"
+                        error: null
+                      - providerId: "google-direct-uuid"
+                        providerName: "Google Gemini Direct"
+                        modelId: null
+                        modelCode: "gemini-2.5-pro"
+                        tokens: null
+                        cost: null
+                        cacheBenefit: null
+                        reasoning: null
+                        assumptions: []
+                        error:
+                          code: "vk_model_not_allowed"
+                          message: "VK 'vk-prod-abc' allowedModels does not include 'gemini-2.5-pro'"
+                    summary:
+                      cheapestExpectedTarget: "claude-sonnet-4-6"
+                      cheapestExpectedTotalUsd: 0.02604
+                      mostExpensiveExpectedTotalUsd: 0.0435
+                      errorsCount: 1
+                      successCount: 2
+        '400':
+          description: Validation error (empty `compareTargets`, too many targets, malformed inner `request`).
+        '401':
+          description: Missing or invalid VK.
+        '429':
+          description: Per-VK compare-endpoint rate limit exceeded; `Retry-After` header.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: VK
+
+  schemas:
+    EstimateCompareRequest:
+      type: object
+      required: [request, compareTargets]
+      properties:
+        request:
+          type: object
+          description: |
+            Any valid ingress request body (OpenAI chat, OpenAI
+            Responses, Anthropic Messages, Gemini generateContent). The
+            endpoint detects the format automatically; override via
+            `options.ingressFormat` if auto-detection is ambiguous.
+            The `model` field inside `request` is overridden per
+            target — provide a placeholder.
+        compareTargets:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { $ref: '#/components/schemas/EstimateCompareTarget' }
+        options:
+          type: object
+          properties:
+            lookupCache:
+              type: boolean
+              default: true
+              description: When false, the estimator skips response-cache and prompt-cache lookups (gives a "fresh request" estimate).
+            ingressFormat:
+              type: string
+              enum: [openai, anthropic, gemini, openai_responses]
+              description: Override automatic format detection.
+
+    EstimateCompareTarget:
+      type: object
+      required: [providerId, modelId]
+      properties:
+        providerId:
+          type: string
+          description: UUID or human-friendly slug of a configured Provider row.
+        modelId:
+          type: string
+          description: UUID or Model.code of a configured Model row.
+        reasoningEffort:
+          type: string
+          description: Override `request.reasoning_effort` (or thinking budget) for this target only.
+
+    EstimateCompareResponse:
+      type: object
+      properties:
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/EstimatePerTarget' }
+        summary: { $ref: '#/components/schemas/EstimateCompareSummary' }
+
+    EstimatePerTarget:
+      type: object
+      properties:
+        providerId: { type: string }
+        providerName: { type: string }
+        modelId: { type: string, nullable: true }
+        modelCode: { type: string }
+        tokens: { $ref: '#/components/schemas/TokenBreakdown', nullable: true }
+        cost: { $ref: '#/components/schemas/CostBreakdown', nullable: true }
+        cacheBenefit: { $ref: '#/components/schemas/CacheBenefit', nullable: true }
+        reasoning: { $ref: '#/components/schemas/ReasoningBreakdown', nullable: true }
+        assumptions:
+          type: array
+          items: { type: string }
+        error:
+          type: object
+          nullable: true
+          properties:
+            code:    { type: string, enum: [vk_model_not_allowed, target_not_found, pricing_unconfigured] }
+            message: { type: string }
+
+    EstimateCompareSummary:
+      type: object
+      properties:
+        cheapestExpectedTarget:       { type: string, nullable: true }
+        cheapestExpectedTotalUsd:     { type: number, nullable: true }
+        mostExpensiveExpectedTotalUsd: { type: number, nullable: true }
+        errorsCount:                  { type: integer }
+        successCount:                 { type: integer }
+
+    TokenBreakdown:
+      type: object
+      properties:
+        uncachedInput: { type: integer }
+        inputCached:   { type: integer }
+        output:
+          type: object
+          properties:
+            low: { type: integer }
+            expected: { type: integer }
+            high: { type: integer }
+        reasoning:
+          type: object
+          properties:
+            low: { type: integer }
+            expected: { type: integer }
+            high: { type: integer }
+
+    CostBreakdown:
+      type: object
+      properties:
+        currency: { type: string, example: "USD" }
+        low: { $ref: '#/components/schemas/CostComponents' }
+        expected: { $ref: '#/components/schemas/CostComponents' }
+        high: { $ref: '#/components/schemas/CostComponents' }
+
+    CostComponents:
+      type: object
+      properties:
+        uncachedInput: { type: number }
+        cacheRead: { type: number }
+        cacheWrite: { type: number }
+        output: { type: number }
+        total: { type: number }
+
+    CacheBenefit:
+      type: object
+      properties:
+        responseHitProbability: { type: number, minimum: 0, maximum: 1 }
+        promptCacheReadTokens:  { type: integer }
+        savingsExpected:        { type: number }
+
+    ReasoningBreakdown:
+      type: object
+      properties:
+        effortRequested:  { type: string }
+        supportedByModel: { type: boolean }
+        estimatedTokens:  { type: integer }
+        budgetTokens:     { type: integer, nullable: true }

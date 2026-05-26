@@ -1,0 +1,69 @@
+{
+  "name": "cohere",
+  "displayName": "Cohere",
+  "description": "Cohere Chat v2 \u2014 Command A/R family with native tool use, RAG citations, and multilingual support.",
+  "baseUrl": "https://api.cohere.com",
+  "adapterType": "cohere",
+  "models": [
+    {
+      "code": "command-a-03-2025",
+      "name": "Command A (2025-03)",
+      "description": "Cohere's current flagship. Excels at tool use, agentic tasks, and RAG \u2014 128k context.",
+      "providerModelId": "command-a-03-2025",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 256000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "command-r7b-12-2024",
+      "name": "Command R7B (2024-12)",
+      "description": "Compact 7B Command model. Low-latency retrieval and summarisation.",
+      "providerModelId": "command-r7b-12-2024",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 128000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "command-r-plus-08-2024",
+      "name": "Command R+ (2024-08)",
+      "description": "Pinned 2024-08 snapshot of Command R+ for reproducible deployments.",
+      "providerModelId": "command-r-plus-08-2024",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 128000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "command-r-08-2024",
+      "name": "Command R (2024-08)",
+      "description": "Pinned 2024-08 snapshot of Command R for reproducible deployments.",
+      "providerModelId": "command-r-08-2024",
+      "type": "chat",
+      "features": [
+        "function_calling",
+        "streaming",
+        "tool_use"
+      ],
+      "maxContextTokens": 128000,
+      "cachedInputReadPricePerMillion": null,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

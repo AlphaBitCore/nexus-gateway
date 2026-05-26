@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  E40 Phase 3 D3b: WiX v4 installer for the Nexus Agent.
+
+  Builds an MSI containing:
+    - nexus-agent.exe          — Go daemon, registered as a Windows Service
+    - nexus-agent-tray.exe     — fyne.io/systray tray applet, autostart on login
+    - nexus-dashboard.exe      — Wails dashboard, start-menu launcher
+
+  Install path: C:\Program Files\Nexus Agent\
+  (Matches packages/agent/cmd/agent-tray/main.go findDashboard().)
+
+  Build:
+    wix build NexusAgent.wxs Variables.wxi \
+      -d Version=1.0.0 \
+      -d StagingDir=C:\path\to\dist\windows\staging \
+      -o C:\path\to\dist\windows\NexusAgent-1.0.0.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+    <?include Variables.wxi ?>
+    <?include wfp.wxi ?>
+
+    <Package
+        Name="$(var.ProductName)"
+        Manufacturer="$(var.Manufacturer)"
+        Version="$(var.Version)"
+        UpgradeCode="$(var.UpgradeCode)"
+        Scope="perMachine"
+        InstallerVersion="500"
+        Compressed="yes">
+
+        <!-- Replace older versions in place; reject downgrades. -->
+        <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+        <MediaTemplate EmbedCab="yes" />
+
+        <!-- Standard install location: C:\Program Files\Nexus Agent\ -->
+        <StandardDirectory Id="ProgramFiles64Folder">
+            <Directory Id="INSTALLFOLDER" Name="Nexus Agent">
+
+                <!-- nexus-agent.exe — Go daemon, registered as Windows Service -->
+                <Component Id="NexusAgentExe" Guid="*" Bitness="always64">
+                    <File Id="nexus_agent.exe"
+                          Source="$(var.StagingDir)\nexus-agent.exe"
+                          KeyPath="yes" />
+
+                    <!-- Register as Windows Service. DependOnService
+                         pins NexusWFP as a required predecessor so
+                         SCM brings the kernel driver up before this
+                         user-mode service on every boot. -->
+                    <ServiceInstall
+                        Id="NexusAgentSvc"
+                        Name="NexusAgent"
+                        DisplayName="Nexus Agent"
+                        Description="AI traffic policy enforcement daemon (Nexus Gateway)."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Arguments="run-svc"
+                        Vital="yes">
+                        <ServiceDependency Id="NexusWFP" />
+                    </ServiceInstall>
+
+                    <!-- Start on install, stop+remove on uninstall.
+                         Wait="no" lets the install proceed even when the daemon
+                         can't reach Hub yet (fresh install before enrolment). -->
+                    <ServiceControl
+                        Id="StartNexusAgentSvc"
+                        Name="NexusAgent"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="no" />
+                </Component>
+
+                <!-- nexus-agent-tray.exe — system-tray applet, runs in user
+                     session. HKLM\…\Run launches it once per user logon. -->
+                <Component Id="NexusAgentTrayExe" Guid="*" Bitness="always64">
+                    <File Id="nexus_agent_tray.exe"
+                          Source="$(var.StagingDir)\nexus-agent-tray.exe"
+                          KeyPath="yes" />
+
+                    <RegistryValue
+                        Root="HKLM"
+                        Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+                        Name="NexusAgentTray"
+                        Type="string"
+                        Value="[#nexus_agent_tray.exe]" />
+                </Component>
+
+                <!-- nexus-dashboard.exe — Wails Dashboard app, launched on
+                     demand from the tray or start-menu shortcut. -->
+                <Component Id="NexusDashboardExe" Guid="*" Bitness="always64">
+                    <File Id="nexus_dashboard.exe"
+                          Source="$(var.StagingDir)\nexus-dashboard.exe"
+                          KeyPath="yes" />
+                </Component>
+
+            </Directory>
+        </StandardDirectory>
+
+        <!-- ─── %ProgramData%\NexusAgent\ — daemon state directory ───
+             The Go daemon (paths_windows.go) writes device-ca.pem,
+             agent.yaml, Logs/agent.log here. Creating it at install
+             time with explicit ACLs avoids a first-run race where the
+             daemon (LocalSystem) can write but unprivileged users
+             can't even list the directory, breaking the Dashboard's
+             "open logs folder" link.
+
+             SDDL breakdown:
+               (A;OICI;FA;;;SY)   LocalSystem        full control
+               (A;OICI;FA;;;BA)   BUILTIN\Admins     full control
+               (A;OICI;0x1200a9;;;BU) BUILTIN\Users  read + execute
+             OI/CI propagate to children so device-ca.pem is readable
+             by every userspace client (curl, Node, Python, browsers
+             via the trust store) — which is the whole point of the
+             env-var hand-off below. -->
+        <StandardDirectory Id="CommonAppDataFolder">
+            <Directory Id="NexusAgentProgramData" Name="NexusAgent">
+                <Component Id="NexusAgentProgramDataDir" Guid="*" Bitness="always64">
+                    <CreateFolder>
+                        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+                    </CreateFolder>
+                    <!-- KeyPath registry value — required because the
+                         component has no File. Removed on uninstall so
+                         the folder ACL is re-applied on reinstall. -->
+                    <RegistryValue Root="HKLM"
+                                   Key="SOFTWARE\Nexus Gateway\Agent"
+                                   Name="ProgramDataInstalled"
+                                   Type="integer" Value="1"
+                                   KeyPath="yes" />
+                </Component>
+
+                <!-- Logs subdir — daemon writes here via paths_windows.go
+                     LogDir. Same ACL inherited from parent. -->
+                <Directory Id="NexusAgentLogsDir" Name="Logs">
+                    <Component Id="NexusAgentLogsDirComp" Guid="*" Bitness="always64">
+                        <CreateFolder />
+                        <RegistryValue Root="HKLM"
+                                       Key="SOFTWARE\Nexus Gateway\Agent"
+                                       Name="LogsDirInstalled"
+                                       Type="integer" Value="1"
+                                       KeyPath="yes" />
+                    </Component>
+                </Directory>
+            </Directory>
+        </StandardDirectory>
+
+        <!-- ─── Trust env vars for non-system-keychain HTTPS clients ───
+             The Windows Root store covers WinHTTP / WinINet / browsers,
+             but Node.js / Python (requests) / Go HTTP clients ship their
+             own NSS-derived bundles and ignore the OS store. These four
+             env vars are the documented opt-ins each runtime checks:
+
+               NEXUS_DEVICE_CA_PEM   — our own marker (Dashboard reads it)
+               NODE_EXTRA_CA_CERTS   — Node.js (Electron, Claude CLI, etc.)
+               REQUESTS_CA_BUNDLE    — Python requests / boto3 / pip
+               SSL_CERT_FILE         — Go HTTP, curl, OpenSSL CLI
+
+             Action="set"   for our own var (always wins).
+             Action="create" for the three runtime vars (skip if user
+                             already pointed them at a corporate bundle —
+                             mirrors macOS postinstall.sh's `${VAR:-...}`
+                             form).
+             System="yes" writes to HKLM\System\...\Environment so every
+             user + service inherits at next logon / WM_SETTINGCHANGE.
+             Permanent="no" → MSI uninstall removes them. -->
+        <Component Id="NexusAgentTrustEnvVars" Guid="*" Bitness="always64"
+                   Directory="NexusAgentProgramData">
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\Nexus Gateway\Agent"
+                           Name="TrustEnvVarsInstalled"
+                           Type="integer" Value="1"
+                           KeyPath="yes" />
+
+            <Environment Id="NexusDeviceCAPem"
+                         Name="NEXUS_DEVICE_CA_PEM"
+                         Value="[CommonAppDataFolder]NexusAgent\device-ca.pem"
+                         Action="set" Part="all" System="yes"
+                         Permanent="no" />
+
+            <Environment Id="NodeExtraCACerts"
+                         Name="NODE_EXTRA_CA_CERTS"
+                         Value="[CommonAppDataFolder]NexusAgent\device-ca.pem"
+                         Action="create" System="yes"
+                         Permanent="no" />
+
+            <Environment Id="RequestsCABundle"
+                         Name="REQUESTS_CA_BUNDLE"
+                         Value="[CommonAppDataFolder]NexusAgent\device-ca.pem"
+                         Action="create" System="yes"
+                         Permanent="no" />
+
+            <Environment Id="SSLCertFile"
+                         Name="SSL_CERT_FILE"
+                         Value="[CommonAppDataFolder]NexusAgent\device-ca.pem"
+                         Action="create" System="yes"
+                         Permanent="no" />
+        </Component>
+
+        <!-- Start-menu shortcut — points at the Dashboard (user-facing app);
+             the tray runs in the background via the Run key above. -->
+        <StandardDirectory Id="ProgramMenuFolder">
+            <Directory Id="ApplicationProgramsFolder" Name="Nexus Agent">
+                <Component Id="StartMenuShortcut" Guid="*">
+                    <Shortcut
+                        Id="NexusAgentDashboardStartMenu"
+                        Name="Nexus Agent Dashboard"
+                        Description="Open the Nexus Agent Dashboard"
+                        Target="[#nexus_dashboard.exe]"
+                        WorkingDirectory="INSTALLFOLDER" />
+                    <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
+                    <RegistryValue
+                        Root="HKCU"
+                        Key="Software\Nexus Gateway\Agent"
+                        Name="installed"
+                        Type="integer"
+                        Value="1"
+                        KeyPath="yes" />
+                </Component>
+            </Directory>
+        </StandardDirectory>
+
+        <!-- ─── NexusWFP load-failure notification (E59 FR-W4.1) ───
+             Driver load failures are surfaced at RUNTIME, not via an
+             MSI custom-action dialog. Reasoning carried over from
+             E42: deferred CAs always run in session 0's window
+             station even with Impersonate="yes", so MessageBoxW
+             from a deferred CA targets a non-interactive desktop
+             and hangs forever. The robust alternatives (Type 19
+             Error CA + MSI Error table; Type 1 DLL CA calling
+             MsiProcessMessage) add disproportionate build/sign
+             complexity.
+
+             RUNTIME surface: when the agent service starts and
+             the NexusWFP driver isn't loadable (Secure-Boot
+             signature reject, AV block, etc.), the platform shim
+             transitions to InterceptionMode=SystemProxyFallback,
+             the tray icon turns yellow within ~5 seconds, and the
+             Dashboard's Diagnostics page surfaces the Win32 error
+             code + a KB link. Covers both interactive and silent
+             installs.
+
+             The `nexus-agent install-wfp-check` CLI subcommand
+             (cmd/agent/platformshim/install_wfp_check_windows.go)
+             is the operator-facing diagnostic — running it in
+             PowerShell after install reports the NexusWFP service
+             state and pops a friendly summary box. -->
+
+        <!-- Single feature aggregating everything -->
+        <Feature
+            Id="AgentCore"
+            Title="Nexus Agent"
+            Description="Nexus Agent service, tray applet, Dashboard, and start-menu integration."
+            Level="1"
+            ConfigurableDirectory="INSTALLFOLDER"
+            Display="expand">
+            <ComponentRef Id="NexusAgentExe" />
+            <ComponentRef Id="NexusAgentTrayExe" />
+            <ComponentRef Id="NexusDashboardExe" />
+            <ComponentRef Id="StartMenuShortcut" />
+            <!-- %ProgramData%\NexusAgent\ + Logs\ + trust env vars (E55-T34). -->
+            <ComponentRef Id="NexusAgentProgramDataDir" />
+            <ComponentRef Id="NexusAgentLogsDirComp" />
+            <ComponentRef Id="NexusAgentTrustEnvVars" />
+            <!-- NexusWFP kernel driver (E59). Defined in wfp.wxi
+                 (included above). The driver package ships both
+                 amd64 and arm64 .sys; only the matching arch's
+                 Component installs per its MsiAMD64 / MsiARM64
+                 condition. -->
+            <ComponentRef Id="WfpInfFile" />
+            <ComponentRef Id="WfpSysFileAmd64" />
+            <ComponentRef Id="WfpSysFileArm64" />
+            <ComponentRef Id="WfpCatFile" />
+        </Feature>
+
+    </Package>
+</Wix>

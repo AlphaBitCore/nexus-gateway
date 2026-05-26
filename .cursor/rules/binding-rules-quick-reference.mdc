@@ -1,0 +1,73 @@
+---
+description: Quick index of project binding rules (canonical text in CLAUDE.md)
+alwaysApply: true
+---
+
+# Binding rules — quick reference
+
+Canonical text lives in **`CLAUDE.md`** + the rule files listed below. This file is the **index** so the rules surface in the IDE without re-reading CLAUDE.md every time. When this index disagrees with CLAUDE.md, CLAUDE.md wins.
+
+## Top priority — read before any code change
+
+- **Pre-edit reading (3 docs)** → `pre-edit-reading.mdc`. Architecture doc + feature doc + conventions.
+- **Architecture doc triggers (per-module)** → `architecture-doc-triggers.mdc` (delegates to `docs/developers/architecture/README.md`).
+- **Mandatory workflow** → `sdd-workflow.mdc`. Plan + Todo + SDD pipeline.
+
+## Always-on rules (every change)
+
+- **English only** in repo files. Conversation may match user; files stay English.
+- **Plan + Todo list** before edits — required even for one-line fixes.
+- **Capture every user message as todos** — new requests don't interrupt, they queue.
+- **Complex tasks: Plan + Todo non-waivable** → `complex-task-plan-todo.mdc`.
+- **Goal-anchored execution** — one-line "Goal:" at top of plan; re-state on mid-stream constraint arrival.
+- **Self-audit before "done" — 4 questions × 2 rounds** → `completion-time-self-audit.mdc`.
+- **Adversarial product review + less-is-more** → `adversarial-product-review.mdc`. Steel-man and attack before building; delete instead of add.
+- **Real implementation only** in production code. Mocks only in tests.
+- **No backward compatibility** → `no-backward-compatibility.mdc`. Pre-GA greenfield. Delete obsolete code, no `@deprecated`.
+- **No silent skips / no silent forks** — ask the user with concrete options when ambiguous.
+- **Worktree per session** → `worktree-per-session.mdc`. Each parallel session runs in its own `git worktree` under `./worktrees/`.
+- **Sub-agent dispatch discipline** → `sub-agent-dispatch.mdc`. Goal+non-goals in first 3 lines; 2-round self-audit demanded; per-file touched-paths report required.
+- **Handoff at context-full** → `session-handoff.mdc`. Offer a handoff doc when auto-compact threshold near / multi-phase closeout / >~50 turns.
+- **Commit reminder** — ask before commit; never auto-commit.
+- **Unit test coverage ≥95% per Go package** → `unit-test-coverage-95.mdc`. Enforced by `scripts/check-go-coverage.sh` (pre-commit on staged Go files + `npm run check:coverage` + CI). Allowlist additions require user approval + category (cmd / test-helper / DB-bound / OS-bound / network-infra-bound / integration-only).
+
+## High-blast-radius scoped rules
+
+Triggered by file glob via separate rule files; read the listed doc before editing:
+
+- **Code / doc lockstep** → `code-doc-lockstep.mdc` (always-on). Any PR touching code in a doc-covered region MUST update every matching doc — architecture, feature, OpenAPI spec, runbook, SDD — in the **same** commit. Enforced by `scripts/check-doc-lockstep.mjs`; mapping at `scripts/doc-lockstep.config.mjs`.
+- **macOS NE fail-open** → `ne-fail-open.mdc` (5 binding rules, safety-critical). Doc: `docs/developers/architecture/services/agent/agent-ne-fail-open-architecture.md`.
+- **IAM impact review** → `iam-impact-review.mdc` (5-step audit for any admin endpoint / sidebar / route change). Doc: `docs/developers/architecture/services/control-plane/iam-identity-architecture.md`.
+- **Token-field stamp sweep** → `token-field-stamp-sweep.mdc` (5 stamp sites; missing the 4 cache sites = NULL prod cache traffic). Doc: `docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md` §5.
+- **AI Gateway / traffic_event smoke required before "done"** → `ai-gateway-smoke-mandatory.mdc` (run `tests/scripts/smoke-gateway.py` — full or scoped — for any edit under `packages/ai-gateway/**`, `packages/shared/transport/normalize/**|canonical*|traffic/**`, provider adapters, or the `TrafficEvent` schema/migrations). Cross-ingress asymmetry + cost/token correctness on `traffic_event` are only catchable end-to-end.
+- **Provider adapter canonical = OpenAI** → `provider-adapter-canonical-openai.mdc` (6 binding rules from §3a). Doc: `docs/developers/architecture/services/ai-gateway/provider-adapter-architecture.md` §3a.
+- **Text-first normalizer** → `text-first-normalizer.mdc` (consumer-surface adapters must produce text; usage stats optional).
+- **Redis cache-only** → `redis-cache-only.mdc` (no pub/sub; cross-service invalidation via Hub WS).
+- **NRN builder canonical** → `nrn-builder-canonical.mdc` (always use `iam.BuildRequestNRNForAction`; never hardcode resourceType).
+- **Agent runtime invariants** → `agent-runtime-invariants.mdc` (paths abstraction + traffic-upload-level filter + audit empty-string).
+- **Agent UI terminology** → `agent-ui-terminology.mdc` (traffic event not AI call; no quota concept).
+- **`ui-shared` boundary** → `ui-shared-boundary.mdc` (`ui-shared` is a leaf; no imports from consumer bundles).
+- **Migration timestamp uniqueness** → `migration-timestamp-unique.mdc` (duplicate `YYYYMMDDHHMMSS` prefix → Prisma silently skips one). Run `npm run check:migration-timestamps`.
+- **Use `build-agent` skill** for macOS Agent builds — never run wails / codesign / notarytool directly. Binding in CLAUDE.md.
+- **IoT terminology boundary** → `iot-terminology-boundary.mdc`. Thing / Shadow / desired / reported / drift are internal-only; user-facing surfaces use node / config sync / target config / applied config / out of sync. See `docs/developers/architecture/cross-cutting/foundation/thing-model.md` §10 for the full mapping table.
+- **VK org dual-join chain** → `vk-org-resolution.mdc`. `vkSelectSQL` resolves `VirtualKey → Organization` via TWO chains: application VK → Project → Org, personal VK → NexusUser → Org. Both must remain in COALESCE — pre-fix prod silently returned NULL org for personal-VK traffic. Doc: `docs/developers/architecture/services/control-plane/vk-org-resolution.md`.
+
+## Config + secrets + env (scoped)
+
+- **Configuration changes — 4-layer model** → `configuration-architecture.mdc`. YAML / env / configKey / `system_metadata` PRs conform to `docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md` + §6.5 14-layer rename checklist + §7 per-key catalog.
+- **Secrets are env-only** → `secrets-env-only.mdc`. No secret field in committed YAML; cross-service shared secrets tagged `[MUST MATCH]` in `.env.example`.
+- **Test / skill env files** → `test-env-files.mdc`. Tests + `prod-*` skills read `tests/.env.<target>` only; fail-closed on hostname leakage.
+
+## UI scoped rules (Control Plane UI)
+
+- **i18n mandatory** → `i18n-mandatory.mdc`. Every JSX user-visible string uses `t('namespace:section.key')`.
+- **Design-token strict** → `design-tokens.mdc`. Visual values via CSS variables; hex / rgb literals forbidden in `*.module.css`.
+- **`useApi` queryKey** → `useapi-querykey.mdc`. Shape: `['admin' | 'my' | 'user' | 'proxy', '<resource>', ...stateVars]`.
+
+## Go scoped rules
+
+- **Go conventions** → `go-conventions.mdc`. Idiomatic Go, module path conventions, slog DI pattern, no `sqlc`. **`replace` directives — workspace-sibling contract**: pin sibling require to `v0.0.0` + matching `replace … => ../<sibling>`; lint `npm run check:workspace-replace` enforces.
+
+## Skipping any rule
+
+Requires **explicit user approval** in chat. Never skip silently.

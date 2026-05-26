@@ -1,0 +1,386 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway Admin — Cache ROI new fields for E61 dual-tier cache
+  version: "1.0.0"
+  description: |
+    Field-addition only (no removals, no semantic changes) on the existing
+    Cache ROI endpoints. E61 introduces a Semantic L2 tier that costs
+    money to operate (embedding API calls); the ROI surface must show
+    BOTH the gross savings AND the net-of-embedding-cost contribution
+    so admins can verify the L2 tier is paying for itself.
+
+    Supersedes the E59 cache-savings field set on the same endpoints:
+    `e59-s1-cache-ui-fields.yaml` defined the L1+provider rollup; this
+    document adds the L2 + embedding columns on top. JSON shape is
+    additive — no E59 field is renamed or removed.
+
+    Source of truth: `docs/developers/specs/e61/e61-s7-smoke-and-docs.md` (acceptance);
+    `docs/developers/architecture/services/ai-gateway/response-cache-architecture.md` §7-§8 (ROI logic);
+    `docs/developers/specs/e61/e61-smart-response-cache.md` §FR-6.
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane dev server
+
+paths:
+  /api/admin/cost-summary:
+    get:
+      summary: Aggregate cost summary (E61 adds semantic + embedding fields)
+      description: |
+        Field additions on top of E59:
+
+        ```
+        E59 already returns:
+          totalGatewayCacheSavingsUsd               (UNCHANGED)
+          totalProviderPromptCacheNetSavingsUsd     (UNCHANGED)
+
+        E61 adds:
+          totalSemanticCacheSavingsUsd              -- gross L2 savings (full upstream cost avoided on L2 hits)
+          totalEmbeddingCostUsd                     -- cumulative embedding spend
+          netSemanticCacheSavingsUsd                -- = totalSemanticCacheSavingsUsd - totalEmbeddingCostUsd
+          totalGatewayCacheNetSavingsUsd            -- combined Extract + Semantic-net contribution
+        ```
+
+        `totalGatewayCacheSavingsUsd` continues to mean Extract-tier
+        savings only (the value clients already track); the combined
+        rollup lives in the new `totalGatewayCacheNetSavingsUsd`. This
+        avoids breaking any consumer who was reading the Extract-only
+        figure pre-E61.
+      operationId: getCostSummaryE61SemanticFields
+      tags: [Admin Analytics / Cache]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Aggregate with E61 additions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostSummaryE61'
+              examples:
+                positiveL2Contribution:
+                  summary: L2 paying for itself (savings > embedding spend)
+                  value:
+                    # E59 fields (unchanged):
+                    totalGatewayCacheSavingsUsd: 423.12
+                    totalProviderPromptCacheNetSavingsUsd: 89.40
+                    # E61 additions:
+                    totalSemanticCacheSavingsUsd: 156.80
+                    totalEmbeddingCostUsd: 18.42
+                    netSemanticCacheSavingsUsd: 138.38
+                    totalGatewayCacheNetSavingsUsd: 561.50    # 423.12 + 138.38
+                negativeL2Contribution:
+                  summary: |
+                    L2 is costing more than it saves — admin should
+                    consider raising the threshold, narrowing routes, or
+                    disabling L2 for now.
+                  value:
+                    totalGatewayCacheSavingsUsd: 12.40
+                    totalProviderPromptCacheNetSavingsUsd: 2.10
+                    totalSemanticCacheSavingsUsd: 0.85
+                    totalEmbeddingCostUsd: 4.30
+                    netSemanticCacheSavingsUsd: -3.45
+                    totalGatewayCacheNetSavingsUsd: 8.95     # 12.40 + (-3.45)
+                l2Disabled:
+                  summary: Cluster hasn't enabled L2 — embedding fields stay zero
+                  value:
+                    totalGatewayCacheSavingsUsd: 88.00
+                    totalProviderPromptCacheNetSavingsUsd: 18.00
+                    totalSemanticCacheSavingsUsd: 0
+                    totalEmbeddingCostUsd: 0
+                    netSemanticCacheSavingsUsd: 0
+                    totalGatewayCacheNetSavingsUsd: 88.00
+
+  /api/admin/cache-roi:
+    get:
+      summary: Per-day + per-route + per-adapter ROI rollup (E61 adds semantic + embedding columns)
+      description: |
+        Field additions per breakdown row (additive, no rename):
+
+        ```
+        E59 existing per-row:
+          gatewayCacheSavingsUsd                 (Extract savings only — unchanged)
+          providerPromptCacheNetSavingsUsd       (UNCHANGED)
+          requestsWithCacheHit                   (UNCHANGED — Extract hit count)
+
+        E61 adds per-row:
+          extractHits                            -- separate from `requestsWithCacheHit` for clarity going forward
+          semanticHits                           -- L2 KNN hits (cosine ≥ threshold)
+          semanticThresholdMisses                -- KNN found nearest but below threshold (signals "tune threshold")
+          embeddingCalls                         -- total embedding calls fired this period (=L1 misses where L2 was attempted)
+          embeddingCostUsd                       -- sum of per-call embedding cost this period
+          embeddingModelId                       -- which embedding model was active during this period (NULL if multiple — see note)
+          semanticCacheSavingsUsd                -- gross L2 savings this period
+          netSemanticCacheSavingsUsd             -- semanticCacheSavingsUsd - embeddingCostUsd
+          timeSensitiveSkips                     -- count of requests skipped because freshness rule matched
+        ```
+
+        Note on `embeddingModelId`: the embedding model is a fleet-wide
+        singleton, but admin may swap it mid-period. When a single
+        period (day, route, adapter) spans a model swap, the rollup
+        returns `null` for that period's `embeddingModelId` so
+        consumers don't show a stale value. Each `traffic_event` row
+        still carries its own `embedding_model_id` (added by S2
+        migration) so a finer-grained drill-down stays accurate.
+      operationId: getCacheRoiE61SemanticFields
+      tags: [Admin Analytics / Cache]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: breakdown
+          in: query
+          required: false
+          schema: { type: string, enum: [day, route, adapter, embedding_model] }
+        - name: embeddingModelId
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Filter rollup rows to a single embedding model. Useful for
+            comparing pre/post a model swap. Operates on the
+            traffic_event.embedding_model_id column added by E61-S2.
+      responses:
+        '200':
+          description: Per-period breakdown rows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheRoiResponseE61'
+
+  /api/admin/cache-roi/contribution-series:
+    get:
+      summary: L2 net-contribution time series (powers the "is L2 paying off?" chart)
+      description: |
+        Time-bucketed series of (semantic_savings, embedding_cost,
+        net_contribution). Powers the FR-6.4 chart on the Cache ROI
+        dashboard. Daily buckets by default; admin can request hourly
+        for short windows.
+
+        Cumulative variant: when ?cumulative=true is set, each bucket
+        reports the running total since the start of the window — makes
+        it easy to read "is the cumulative trend positive?" at a glance.
+      operationId: getCacheRoiL2ContributionSeriesE61
+      tags: [Admin Analytics / Cache]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: bucket
+          in: query
+          required: false
+          schema: { type: string, enum: [hour, day], default: day }
+        - name: cumulative
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Time series.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bucket, cumulative, series]
+                properties:
+                  bucket:
+                    type: string
+                    enum: [hour, day]
+                  cumulative:
+                    type: boolean
+                  series:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/L2ContributionPoint'
+              examples:
+                weeklyPositive:
+                  value:
+                    bucket: "day"
+                    cumulative: false
+                    series:
+                      - timestamp: "2026-05-13T00:00:00Z"
+                        semanticCacheSavingsUsd: 22.10
+                        embeddingCostUsd: 2.80
+                        netSemanticCacheSavingsUsd: 19.30
+                      - timestamp: "2026-05-14T00:00:00Z"
+                        semanticCacheSavingsUsd: 28.45
+                        embeddingCostUsd: 3.05
+                        netSemanticCacheSavingsUsd: 25.40
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CostSummaryE61:
+      type: object
+      description: |
+        E59 baseline + E61 additions. All E59 fields preserved verbatim.
+      required:
+        - totalGatewayCacheSavingsUsd
+        - totalProviderPromptCacheNetSavingsUsd
+        - totalSemanticCacheSavingsUsd
+        - totalEmbeddingCostUsd
+        - netSemanticCacheSavingsUsd
+        - totalGatewayCacheNetSavingsUsd
+      properties:
+        totalGatewayCacheSavingsUsd:
+          type: number
+          format: float
+          description: Extract-tier savings (unchanged from E59).
+        totalProviderPromptCacheNetSavingsUsd:
+          type: number
+          format: float
+          description: Provider prompt cache net savings (unchanged from E59).
+        totalSemanticCacheSavingsUsd:
+          type: number
+          format: float
+          description: |
+            Gross L2 savings — sum of (avoided upstream cost) for
+            requests that hit L2. Priced at the *requested* model's
+            cost, not the cached model's — see semantic.allow_cross_model
+            warning in the Cache Settings page.
+        totalEmbeddingCostUsd:
+          type: number
+          format: float
+          description: |
+            Cumulative embedding spend over the period. Includes
+            embedding calls that resulted in L2 hits, L2 threshold
+            misses, AND L2 misses (because the embedding cost is paid
+            regardless of L2 outcome — it's the entry cost of the
+            semantic phase).
+        netSemanticCacheSavingsUsd:
+          type: number
+          format: float
+          description: |
+            totalSemanticCacheSavingsUsd - totalEmbeddingCostUsd. May be
+            negative if L2 is misconfigured (threshold too low, embedding
+            model too expensive for traffic mix, etc.).
+        totalGatewayCacheNetSavingsUsd:
+          type: number
+          format: float
+          description: |
+            Combined Gateway Cache net contribution (Extract + L2 net).
+            = totalGatewayCacheSavingsUsd + netSemanticCacheSavingsUsd.
+
+    CacheRoiResponseE61:
+      type: object
+      required: [from, to, breakdown, rows]
+      properties:
+        from: { type: string, format: date-time }
+        to:   { type: string, format: date-time }
+        breakdown:
+          type: string
+          enum: [day, route, adapter, embedding_model]
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/CacheRoiRowE61'
+
+    CacheRoiRowE61:
+      type: object
+      description: |
+        One row per breakdown bucket. E59-shape fields preserved;
+        E61 adds the semantic + embedding columns. `embeddingModelId`
+        is `null` when the bucket spans a model swap.
+      required:
+        - bucketLabel
+        - gatewayCacheSavingsUsd
+        - providerPromptCacheNetSavingsUsd
+        - requestsWithCacheHit
+        - extractHits
+        - semanticHits
+        - semanticThresholdMisses
+        - embeddingCalls
+        - embeddingCostUsd
+        - semanticCacheSavingsUsd
+        - netSemanticCacheSavingsUsd
+        - timeSensitiveSkips
+      properties:
+        bucketLabel:
+          type: string
+          description: |
+            Day "2026-05-19", route name, adapter name, or
+            "<model name> (<dim>D)" depending on breakdown.
+        gatewayCacheSavingsUsd:
+          type: number
+          format: float
+        providerPromptCacheNetSavingsUsd:
+          type: number
+          format: float
+        requestsWithCacheHit:
+          type: integer
+        extractHits:
+          type: integer
+        semanticHits:
+          type: integer
+        semanticThresholdMisses:
+          type: integer
+          description: |
+            KNN found a nearest neighbour but cosine < threshold. A
+            steadily-rising number here usually means "lower the
+            threshold" or "the workload's prompt distribution doesn't
+            paraphrase enough to benefit from L2".
+        embeddingCalls:
+          type: integer
+        embeddingCostUsd:
+          type: number
+          format: float
+        embeddingModelId:
+          type: string
+          nullable: true
+          description: |
+            Active embedding model for the bucket. NULL when the bucket
+            spans a model swap; use the embedding_model breakdown to see
+            per-model contribution.
+        semanticCacheSavingsUsd:
+          type: number
+          format: float
+        netSemanticCacheSavingsUsd:
+          type: number
+          format: float
+        timeSensitiveSkips:
+          type: integer
+          description: |
+            Count of requests skipped because a time-sensitive freshness
+            rule matched. High count + low cache hit rate usually means
+            the workload is genuinely time-sensitive (e.g., financial /
+            news) and shouldn't be cached.
+
+    L2ContributionPoint:
+      type: object
+      required:
+        - timestamp
+        - semanticCacheSavingsUsd
+        - embeddingCostUsd
+        - netSemanticCacheSavingsUsd
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        semanticCacheSavingsUsd:
+          type: number
+          format: float
+        embeddingCostUsd:
+          type: number
+          format: float
+        netSemanticCacheSavingsUsd:
+          type: number
+          format: float

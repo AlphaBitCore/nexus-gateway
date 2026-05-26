@@ -1,0 +1,138 @@
+/* ── InfraOverridesPage ──────────────────────────────────────────── */
+
+/* Summary tile row */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-space-3);
+}
+
+/* Filter bar (above the data table) */
+.filterBar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  padding: var(--g-space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--g-space-2);
+}
+
+.filterLabel {
+  font-size: var(--g-font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  margin-right: var(--g-space-2);
+}
+
+/* Chip-style filter pill (toggleable) */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--g-font-size-xs);
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--g-radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.chip:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.chip[data-active='true'] {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 40%, transparent);
+  color: var(--color-info);
+}
+
+/* Free-text search input */
+.searchInput {
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.searchInput:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Two-line node-name cell */
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.3;
+}
+
+.nodeName {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.nodeId {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  font-family: var(--g-font-mono);
+}
+
+/* Override-key chip column */
+.keysCell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.actor {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text);
+}
+
+/* Per-row actions row */
+.actionsCell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  flex-wrap: wrap;
+}
+
+/* Break-glass status badge — emphatic red even when the Badge's
+ * `danger` variant is reused by callers for less alarming states. */
+.statusBreakGlass {
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.dim {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  white-space: nowrap;
+}

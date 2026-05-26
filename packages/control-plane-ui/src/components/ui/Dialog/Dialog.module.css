@@ -1,0 +1,175 @@
+/* ─── Dialog ─────────────────────────────────────────────────────────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay-strong);
+  z-index: var(--g-z-overlay);
+  animation: fadeIn var(--g-transition-fast);
+}
+
+.content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  padding: var(--g-space-6);
+  z-index: var(--g-z-modal);
+  box-shadow: var(--g-shadow-xl);
+  animation: scaleIn var(--g-transition-normal);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+/* ── Sizes ───────────────────────────────────────────────────────────────── */
+
+.sm {
+  max-width: 400px;
+  width: 90%;
+}
+
+.md {
+  max-width: 560px;
+  width: 90%;
+}
+
+.lg {
+  max-width: 720px;
+  width: 90%;
+}
+
+.xl {
+  max-width: 960px;
+  width: 92%;
+}
+
+/* ── Drawer variant ───────────────────────────────────────────────────────
+   Anchored to the right edge, full viewport height, slides in from the
+   right. `xl` (or other size class) still controls the max-width.        */
+
+.drawer.content {
+  top: 0;
+  left: auto;
+  right: 0;
+  bottom: 0;
+  transform: none;
+  border-radius: 0;
+  border-top-left-radius: var(--g-radius-lg);
+  border-bottom-left-radius: var(--g-radius-lg);
+  border-right: none;
+  width: 100%;
+  max-height: 100vh;
+  height: 100vh;
+  animation: slideInRight var(--g-transition-normal);
+  display: flex;
+  flex-direction: column;
+}
+
+.drawer.content > .body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  margin-top: var(--g-space-4);
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer.content {
+    animation: none;
+  }
+}
+
+/* ── Title ───────────────────────────────────────────────────────────────── */
+
+.title {
+  font-size: var(--g-font-size-lg);
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-text);
+}
+
+/* ── Description ─────────────────────────────────────────────────────────── */
+
+.description {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--g-space-1);
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+
+.body {
+  margin-top: var(--g-space-4);
+}
+
+/* ── Close button ────────────────────────────────────────────────────────── */
+
+.close {
+  position: absolute;
+  top: var(--g-space-4);
+  right: var(--g-space-4);
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: var(--g-radius-sm);
+  color: var(--color-text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.close:hover {
+  background: var(--color-muted);
+  color: var(--color-text);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .content {
+    animation: none;
+  }
+}

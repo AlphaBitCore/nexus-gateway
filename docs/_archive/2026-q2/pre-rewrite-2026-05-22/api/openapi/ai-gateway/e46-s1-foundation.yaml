@@ -1,0 +1,268 @@
+openapi: 3.1.0
+info:
+  title: E46 Foundation Schemas
+  version: "1.0.0"
+  description: |
+    Shared schema component definitions for the E46 Traffic Normalization
+    epic. Referenced by other E46 OpenAPI specs (s2, s4, s7). This document
+    does not define any HTTP paths — it is a schema-only spec.
+
+paths: {}
+
+components:
+  schemas:
+    NormalizedPayload:
+      type: object
+      required: [kind, normalizeVersion]
+      properties:
+        kind:
+          type: string
+          enum:
+            - ai-chat
+            - ai-completion
+            - ai-embedding
+            - ai-image
+            - http-json
+            - http-text
+            - http-form
+            - http-multipart
+            - http-binary
+            - unsupported
+          description: Discriminator for the payload structure.
+        normalizeVersion:
+          type: string
+          description: Schema version of this normalized payload (e.g. "1").
+        protocol:
+          type: string
+          description: |
+            Source protocol name (e.g. "openai-chat", "anthropic-messages",
+            "gemini-generate", "generic-http"). For diagnostics.
+        # AI-kind fields
+        model:
+          type: string
+        stream:
+          type: boolean
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/NormalizedMessage" }
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/ToolDefinition" }
+        params:
+          $ref: "#/components/schemas/SamplingParams"
+        usage:
+          $ref: "#/components/schemas/Usage"
+        finishReason:
+          type: string
+        # HTTP-kind fields
+        http:
+          $ref: "#/components/schemas/HttpPayload"
+
+    NormalizedMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          type: array
+          items: { $ref: "#/components/schemas/ContentBlock" }
+        finishReason:
+          type: string
+
+    ContentBlock:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [text, image_ref, tool_use, tool_result, reasoning]
+        text:
+          type: string
+          description: Present for type=text, tool_result(text payload), or reasoning.
+        imageRef:
+          $ref: "#/components/schemas/BinaryRef"
+        toolUse:
+          $ref: "#/components/schemas/ToolUse"
+        toolResult:
+          $ref: "#/components/schemas/ToolResult"
+
+    BinaryRef:
+      type: object
+      required: [size, contentType, sha256]
+      properties:
+        size:
+          type: integer
+          format: int64
+        contentType:
+          type: string
+        sha256:
+          type: string
+          description: Hex sha256 of the underlying binary blob.
+        spillKey:
+          type: string
+          description: Optional reference into the spill store.
+
+    ToolDefinition:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        parametersJsonSchema:
+          type: object
+          additionalProperties: true
+
+    ToolUse:
+      type: object
+      required: [name]
+      properties:
+        callId: { type: string }
+        name: { type: string }
+        input:
+          type: object
+          additionalProperties: true
+
+    ToolResult:
+      type: object
+      properties:
+        callId: { type: string }
+        output: { type: string }
+
+    SamplingParams:
+      type: object
+      additionalProperties: true
+      properties:
+        temperature: { type: number }
+        topP: { type: number }
+        topK: { type: integer }
+        maxTokens: { type: integer }
+        stop:
+          type: array
+          items: { type: string }
+
+    Usage:
+      type: object
+      properties:
+        promptTokens: { type: integer }
+        completionTokens: { type: integer }
+        totalTokens: { type: integer }
+        cacheReadTokens: { type: integer }
+        cacheCreationTokens: { type: integer }
+
+    HttpPayload:
+      type: object
+      properties:
+        method: { type: string }
+        url: { type: string }
+        headersFiltered:
+          type: object
+          additionalProperties:
+            type: string
+        bodyView:
+          $ref: "#/components/schemas/HttpBodyView"
+
+    HttpBodyView:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Pretty JSON / decoded text projection. May be empty for binary.
+        json:
+          description: Structured JSON tree when kind=http-json.
+        form:
+          type: object
+          additionalProperties:
+            type: string
+        binaryRef:
+          $ref: "#/components/schemas/BinaryRef"
+
+    TransformSpan:
+      type: object
+      required: [source, action, contentAddress, start, end]
+      description: |
+        Canonical byte-level modification record. Covers every transformation
+        Nexus made between the client and the upstream: hook redactions,
+        AI-Guard suggestions, cache-normaliser strips, cache_control injection.
+        A single span set drives both inflight rewrite and storage rewrite,
+        so an auditor can reconstruct the wire body from the normalized copy
+        plus the span set.
+      properties:
+        source:
+          type: string
+          enum: [hook, aiguard, cache-normaliser, cache-control-inject, cache-key-strip]
+        sourceId:
+          type: string
+          description: Rule id, hook id, normaliser-rule id — depending on source.
+        action:
+          type: string
+          enum: [redact, strip, inject, replace]
+        contentAddress:
+          type: string
+          description: |
+            Address of the content block:
+              AI kinds: "messages.<i>.content.<j>"
+              HTTP kinds: "http.bodyView" or "http.bodyView.form.<key>"
+        start:
+          type: integer
+          description: UTF-8 byte offset into the addressed content's text.
+        end:
+          type: integer
+          description: |
+            Exclusive end byte offset. For inject actions, start == end and
+            replacement carries the injected bytes.
+        replacement:
+          type: string
+        reason:
+          type: string
+
+    # RedactionSpan is retained as an alias for narrow APIs (hook results
+    # carrying only Source=hook spans). New consumers should reference
+    # TransformSpan directly.
+    RedactionSpan:
+      $ref: "#/components/schemas/TransformSpan"
+
+    OnMatchConfig:
+      type: object
+      required: [inflightAction, storageAction]
+      properties:
+        inflightAction:
+          type: string
+          enum: [approve, block-hard, block-soft, redact]
+          description: |
+            What the upstream copy of the request sees when this rule matches.
+        storageAction:
+          type: string
+          enum: [keep, redact, drop-content]
+          description: |
+            What the audit-log copy stored in traffic_event_normalized sees.
+        replacement:
+          type: string
+          description: |
+            Replacement template for redact modes. Supports the placeholder
+            <RULE_ID>. Defaults to "[REDACTED_<RULE_ID>]" when omitted.
+
+    HookDecision:
+      type: string
+      enum: [APPROVE, BLOCK_HARD, BLOCK_SOFT, MODIFY, ABSTAIN]
+      description: |
+        Pipeline-level decision after onMatch reconciliation. Note BLOCK_SOFT
+        (renamed from the legacy REJECT_SOFT) — both REJECT_* and BLOCK_*
+        variants map to HTTP 4xx; BLOCK_SOFT specifically maps to 246.
+
+    ReasonCode:
+      type: string
+      enum:
+        - PII_DETECTED
+        - PII_REDACTED
+        - KEYWORD_BLOCKED
+        - CONTENT_SAFETY_VIOLATION
+        - RULEPACK_MATCH
+        - RATE_LIMIT_EXCEEDED
+        - HOOK_ERROR_FAIL_OPEN
+        - HOOK_ERROR_FAIL_CLOSED
+        - REDACT_INFLIGHT_UNSUPPORTED
+        - REDACT_STORAGE_ONLY_BY_POLICY
+        - STORAGE_DROPPED_BY_POLICY
+        - AIGUARD_SUGGESTED_VS_POLICY

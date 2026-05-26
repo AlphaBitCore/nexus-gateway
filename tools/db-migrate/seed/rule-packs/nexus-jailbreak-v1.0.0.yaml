@@ -1,0 +1,91 @@
+name: nexus/jailbreak
+version: v1.0.0
+maintainer: nexus
+description: >-
+  Known jailbreak families — DAN variants, developer-mode, grandma/research
+  pretexts. Shares pattern substrings with nexus/prompt-injection but is
+  shipped as a distinct pack so admins can enable/disable independently.
+rules:
+  # --- DAN family ---
+  - id: jb-dan-001
+    category: jailbreak.dan
+    severity: hard
+    pattern: '(?i)\bDAN\b.{0,80}(do\s+anything\s+now|no\s+restrictions|unrestricted)'
+    description: Classic DAN jailbreak pattern.
+    labels: [detector:jailbreak, attack:dan]
+  - id: jb-dan-002
+    category: jailbreak.dan
+    severity: hard
+    pattern: '(?i)you\s+are\s+DAN,\s+which\s+stands\s+for'
+    labels: [detector:jailbreak, attack:dan]
+  - id: jb-dan-003
+    category: jailbreak.dan
+    severity: hard
+    pattern: '(?i)(stay\s+in\s+character\s+as\s+DAN|DAN\s+mode\s+(enabled|on))'
+    labels: [detector:jailbreak, attack:dan]
+  # --- Grandma exploit ---
+  - id: jb-gm-001
+    category: jailbreak.grandma
+    severity: hard
+    pattern: '(?i)my\s+(grandma|grandmother|grandpa|grandfather)\s+used\s+to\s+(read|recite|tell)\s+me\s+(the\s+)?(recipes?|formulas?|keys?|passwords?|instructions?)'
+    description: Grandma pretext exploit.
+    labels: [detector:jailbreak, attack:grandma]
+  # --- Research pretext ---
+  - id: jb-re-001
+    category: jailbreak.research
+    severity: soft
+    pattern: '(?i)for\s+(academic|research|educational)\s+(purposes?|only),?\s+(tell\s+me|explain|describe)\s+how\s+to'
+    labels: [detector:jailbreak, attack:research-pretext]
+  - id: jb-re-002
+    category: jailbreak.research
+    severity: soft
+    pattern: '(?i)i\s+am\s+a\s+(researcher|security\s+professional|red\s+teamer|penetration\s+tester)\s+and\s+(i\s+need|i\''?m\s+testing)'
+    labels: [detector:jailbreak, attack:research-pretext]
+  # --- Token-smuggling / character sandwich ---
+  - id: jb-ts-001
+    category: jailbreak.smuggle
+    severity: soft
+    pattern: '(?i)h\W*o\W*w\W+t\W*o\W+(make|build|create)\W+(a\s+)?(bomb|weapon|explosive|poison)'
+    description: Obfuscated how-to-harm via inserted delimiters.
+    labels: [detector:jailbreak, attack:smuggle]
+  # --- Developer mode pretext ---
+  - id: jb-dm-001
+    category: jailbreak.developer_mode
+    severity: hard
+    pattern: '(?i)(activate|enable|engage|enter)\s+(chatgpt\s+)?(developer|dev|dan|godmode|maker)\s+mode'
+    labels: [detector:jailbreak, attack:developer-mode]
+  - id: jb-dm-002
+    category: jailbreak.developer_mode
+    severity: hard
+    pattern: '(?i)(developer|dev)\s+mode.{0,40}(can|will|must)\s+(generate|produce|write|say)\s+(anything|any\s+content)'
+    labels: [detector:jailbreak, attack:developer-mode]
+  # --- Hypothetical shield ---
+  - id: jb-hs-001
+    category: jailbreak.hypothetical
+    severity: soft
+    pattern: '(?i)(hypothetically|in\s+a\s+fictional|in\s+a\s+story|for\s+a\s+novel),?\s+(how\s+would|describe|explain)'
+    labels: [detector:jailbreak, attack:hypothetical]
+  # --- Opposite-day / negation ---
+  - id: jb-od-001
+    category: jailbreak.negation
+    severity: soft
+    pattern: '(?i)(opposite\s+day|do\s+the\s+opposite\s+of|say\s+yes\s+to\s+everything)'
+    labels: [detector:jailbreak, attack:negation]
+  # --- Evil twin ---
+  - id: jb-et-001
+    category: jailbreak.evil_twin
+    severity: hard
+    pattern: '(?i)(you\s+have\s+an?\s+(evil|dark|shadow)\s+twin|act\s+as\s+if\s+you\s+were\s+(evil|malicious|uncensored))'
+    labels: [detector:jailbreak, attack:evil-twin]
+  # --- Reveal conditioning ---
+  - id: jb-rv-001
+    category: jailbreak.reveal
+    severity: warn
+    pattern: '(?i)(nothing\s+is\s+off\s+limits|all\s+topics\s+are\s+allowed|there\s+are\s+no\s+restrictions)'
+    labels: [detector:jailbreak, attack:reveal-conditioning]
+  # --- Override-via-format ---
+  - id: jb-fm-001
+    category: jailbreak.format
+    severity: soft
+    pattern: '(?i)respond\s+(only\s+)?in\s+(base64|hex|leet|rot13|backwards)'
+    labels: [detector:jailbreak, attack:format-override]

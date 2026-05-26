@@ -1,0 +1,618 @@
+{
+  "nav": {
+    "overview": "Overview",
+    "activity": "Activity",
+    "traffic": "Traffic Events",
+    "policies": "Policies",
+    "stats": "Stats",
+    "identity": "Identity",
+    "diagnostics": "Diagnostics",
+    "settings": "Settings"
+  },
+  "updateBanner": {
+    "message": "A newer version of Nexus Agent is available. Install to stay current with policies and fixes.",
+    "install": "Install",
+    "dismiss": "Remind me tomorrow"
+  },
+  "policies": {
+    "title": "Policies",
+    "subtitle": "Configuration your admin has pushed to this device — what gets intercepted, which hooks run, what's exempt, and the current sync status.",
+    "loading": "Loading…",
+    "empty": "Admin hasn't pushed any {{section}} yet.",
+    "refresh": {
+      "action": "Refresh now",
+      "refreshing": "Refreshing…",
+      "failed": "Refresh failed: {{error}}"
+    },
+    "breadcrumb": {
+      "root": "Policies"
+    },
+    "viewAll": "View all ({{n}}) →",
+    "notFound": "Item not found in the current snapshot. The admin may have removed it.",
+    "noMatch": "No items match your search.",
+    "toolbar": {
+      "count": "{{shown}} shown · {{filtered}} of {{total}}"
+    },
+    "paginator": {
+      "info": "Page {{page}} of {{total}}",
+      "prev": "Previous",
+      "next": "Next"
+    },
+    "detail": {
+      "attributes": "Attributes"
+    },
+    "hero": {
+      "inSync": "Configuration in sync",
+      "inSyncMeta": "All policies applied as of {{at}}.",
+      "drifted": "Drifted from admin",
+      "driftedMeta": "{{behind}} version{{s}} behind. Agent will catch up on next config sync.",
+      "killSwitchEngaged": "Kill switch engaged",
+      "killSwitchMeta": "Interception is paused by admin. Reason: {{reason}}.",
+      "diagActive": "Diagnostic mode active",
+      "diagActiveMeta": "Verbose telemetry until {{until}}.",
+      "desired": "desired"
+    },
+    "kpi": {
+      "domains": "Domains",
+      "hooks": "Hooks",
+      "exemptions": "Exemptions",
+      "rulePacks": "Rule packs",
+      "killSwitch": "Kill switch",
+      "diagMode": "Diag mode",
+      "on": "ON",
+      "off": "OFF"
+    },
+    "columns": {
+      "enforcement": "Enforcement",
+      "deviceControls": "Device controls"
+    },
+    "section": {
+      "count": "{{count}} item{{s}}"
+    },
+    "sync": {
+      "title": "Sync Status",
+      "desired": "Desired version",
+      "reported": "Reported version",
+      "inSync": "In sync",
+      "drifted": "Drifted ({{behind}} version{{s}} behind)",
+      "lastReportedAt": "Last reported"
+    },
+    "interceptionDomains": {
+      "title": "Interception Domains",
+      "subtitle": "Hostname patterns this agent inspects.",
+      "empty": "No domains pushed.",
+      "searchPlaceholder": "Search by pattern, name, or adapter…",
+      "cols": {
+        "name": "Name",
+        "pattern": "Pattern",
+        "matchType": "Match",
+        "priority": "Priority",
+        "defaultAction": "Default action",
+        "action": "Action",
+        "status": "Status",
+        "enabled": "enabled",
+        "disabled": "disabled"
+      },
+      "detail": {
+        "adapter": "Adapter",
+        "onAdapterError": "On adapter error",
+        "networkZone": "Network zone",
+        "paths": "Path overrides",
+        "pathPattern": "Path pattern",
+        "noPaths": "No per-path overrides — every request to this host follows the default action above."
+      }
+    },
+    "hooks": {
+      "title": "Active Hooks",
+      "subtitle": "Compliance hooks evaluated against intercepted traffic, in priority order.",
+      "empty": "No hooks configured.",
+      "searchPlaceholder": "Search by name, implementation, or stage…",
+      "cols": {
+        "priority": "Priority",
+        "name": "Name",
+        "stage": "Stage",
+        "implementation": "Implementation",
+        "failBehavior": "On failure",
+        "status": "Status",
+        "enabled": "enabled",
+        "disabled": "disabled"
+      },
+      "detail": {
+        "timeout": "Timeout",
+        "applicableIngress": "Applies to",
+        "config": "Hook configuration",
+        "noConfig": "No per-hook configuration set; the hook runs with implementation defaults."
+      },
+      "pipeline": {
+        "title": "Pipeline overview",
+        "summary": "{{enabled}}/{{total}} enabled across {{stages}} stages — click to expand",
+        "empty": "No hooks configured.",
+        "stageCount": "{{count}} hooks"
+      }
+    },
+    "exemptions": {
+      "title": "Exemptions",
+      "subtitle": "Hosts or users granted bypass from one or more hooks.",
+      "empty": "No exemptions granted.",
+      "searchPlaceholder": "Search by host, user, or reason…",
+      "cols": {
+        "hostUser": "Host / User",
+        "reason": "Reason"
+      }
+    },
+    "deviceDefaults": {
+      "title": "Device Defaults",
+      "subtitle": "Fleet-wide settings admin configured.",
+      "empty": "Using built-in defaults.",
+      "quitAllowed": "Quit allowed",
+      "heartbeat": "Heartbeat",
+      "auditDrain": "Audit upload",
+      "configSync": "Config sync",
+      "auditBatch": "Audit batch size",
+      "shutdownWarning": "Shutdown warning",
+      "autoUpdate": "Auto-update",
+      "logLevel": "Log level",
+      "seconds": "{{value}} s",
+      "rows": "{{value}} rows",
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "killSwitch": {
+      "title": "Kill Switch",
+      "subtitle": "Emergency shut-off admin can engage from CP UI.",
+      "status": "Status",
+      "engaged": "Engaged",
+      "disengaged": "Disengaged",
+      "reason": "Reason"
+    },
+    "quicFallback": {
+      "title": "QUIC fallback bundles",
+      "desc": "Browser & Electron bundle IDs whose UDP flows are closed so they fall back from HTTP/3 (QUIC) to HTTP/2 — required for the agent's TLS-bump path to actually inspect their traffic. Admin manages this list in the Control Plane.",
+      "empty": "No bundles configured — agent does not close any UDP flows."
+    },
+    "rulePacks": {
+      "title": "Rule Packs",
+      "subtitle": "Compliance rule packs admin installed into your hooks.",
+      "empty": "No rule packs installed.",
+      "searchPlaceholder": "Search by pack name, maintainer, or hook…",
+      "cols": {
+        "name": "Name",
+        "version": "Version",
+        "maintainer": "Maintainer",
+        "boundHook": "Bound hook",
+        "rules": "Rules",
+        "status": "Status",
+        "enabled": "enabled",
+        "disabled": "disabled"
+      },
+      "detail": {
+        "packId": "Pack ID",
+        "installedAt": "Installed at",
+        "installId": "Install ID",
+        "rules": "Rules",
+        "noRules": "This pack ships with no rules.",
+        "ruleCols": {
+          "ruleId": "Rule ID",
+          "category": "Category",
+          "severity": "Severity",
+          "pattern": "Pattern",
+          "description": "Description"
+        }
+      }
+    },
+    "deviceGroup": {
+      "title": "Device Group",
+      "subtitle": "Which fleet group admin assigned this device to.",
+      "empty": "Not assigned to a group.",
+      "id": "ID",
+      "name": "Name"
+    },
+    "diagMode": {
+      "title": "Diagnostic Mode",
+      "subtitle": "Verbose diagnostics window.",
+      "active": "Active until {{until}}",
+      "inactive": "Not active.",
+      "until": "Active until"
+    }
+  },
+  "traffic": {
+    "title": "Traffic Events",
+    "subtitle": "Outbound network connections this agent intercepted on this device — process, host/IP, action and latency. Data is read from the local audit log and never leaves this machine.",
+    "loading": "Loading…",
+    "empty": "No traffic captured yet.",
+    "emptyAi": "No AI traffic captured yet. Toggle off \"AI only\" to see every intercepted connection.",
+    "searchPlaceholder": "Search by host, IP, or process…",
+    "aiOnly": "AI only",
+    "pageSize": "Rows per page",
+    "previous": "Previous",
+    "next": "Next",
+    "pageInfo": "{{from}}–{{to}} of {{total}}",
+    "filter": {
+      "label": "Show",
+      "all": "All",
+      "ai": "AI only",
+      "blocked": "Blocked only",
+      "processed": "Processed only"
+    },
+    "refresh": {
+      "label": "Auto refresh",
+      "tooltip": "Re-fetch the page automatically with the same search and filter. Choose Off to freeze the view.",
+      "off": "Off",
+      "5s": "Every 5 s",
+      "15s": "Every 15 s",
+      "30s": "Every 30 s",
+      "1m": "Every 1 min",
+      "5m": "Every 5 min"
+    },
+    "since": {
+      "label": "Time range",
+      "1h": "Last 1 hour",
+      "24h": "Last 24 hours",
+      "7d": "Last 7 days",
+      "30d": "Last 30 days",
+      "all": "All time"
+    },
+    "col": {
+      "time": "Time",
+      "app": "App",
+      "site": "Site",
+      "process": "Process",
+      "target": "Target",
+      "provider": "Provider",
+      "model": "Model",
+      "tokens": "Tokens (prompt+completion)",
+      "latency": "Latency",
+      "action": "Action",
+      "status": "Status",
+      "tags": "Tags",
+      "compliance": "Hook"
+    },
+    "detail": {
+      "title": "Event Details",
+      "close": "Close",
+      "fieldId": "Event",
+      "fieldProcess": "Process",
+      "fieldTarget": "Target",
+      "fieldStatus": "Status",
+      "fieldMethod": "Method",
+      "fieldPath": "Path / URL",
+      "fieldDestIp": "Destination IP:Port",
+      "fieldBytes": "Bytes (in / out)",
+      "fieldProvider": "AI Provider / Model",
+      "hooksTitle": "Hook Pipeline",
+      "hookId": "Hook",
+      "hookStage": "Stage",
+      "hookDecision": "Decision",
+      "hookLatency": "Latency",
+      "hooksEmpty": "No hooks executed for this event.",
+      "hooksParseError": "Hook pipeline payload is unparseable.",
+      "waterfall": {
+        "title": "Phase Breakdown"
+      }
+    },
+    "waterfall": {
+      "reqHooks": "Request Hooks",
+      "ourOther": "Our Overhead",
+      "upstreamTtfb": "Upstream TTFB",
+      "upstreamBody": "Upstream Body",
+      "respHooks": "Response Hooks",
+      "noData": "No phase data available for this event."
+    }
+  },
+  "stats": {
+    "title": "Stats",
+    "subtitle": "Local rollup of this device's traffic, computed from your audit log. Never leaves this machine.",
+    "loading": "Loading rollup…",
+    "range": "Range",
+    "range1h": "Last 1 hour",
+    "range6h": "Last 6 hours",
+    "range24h": "Last 24 hours",
+    "range7d": "Last 7 days",
+    "range30d": "Last 30 days",
+    "granulePrefix": "Granule",
+    "cohort": {
+      "label": "Cohort",
+      "all": "All flows",
+      "ai": "AI only"
+    },
+    "trendTitle": "Requests over time",
+    "breakdownTitle": "Top by",
+    "breakdownDimension": "Breakdown dimension",
+    "breakdownEmpty": "No breakdown data in this window.",
+    "requestsColumn": "Requests",
+    "kpi": {
+      "requests": "Requests",
+      "successRate": "Success rate",
+      "avgLatency": "Avg latency",
+      "avgUs": "Avg Us",
+      "avgUpstream": "Avg Upstream",
+      "bytesIn": "Bytes in",
+      "bytesOut": "Bytes out",
+      "inspectRate": "Inspect rate",
+      "hookAllowRate": "Hook allow rate",
+      "bumpSuccessRate": "Bump success rate",
+      "naLabel": "n/a",
+      "naWhy": "Why?",
+      "emptyHint": {
+        "successRate": "No flows in this window — successRate becomes available once any request lands.",
+        "avgUs": "No agent-overhead samples yet — populates once any flow completes the local pipeline.",
+        "avgUpstream": "No upstream-total samples yet — populates from inspect flows that complete the upstream relay.",
+        "inspectRate": "No flows yet — inspect/passthrough/deny mix needs at least one decision.",
+        "hookAllowRate": "No hook decisions yet — needs at least one flow that ran the compliance pipeline.",
+        "bumpSuccessRate": "No bump events yet — needs at least one inspect flow with a TLS handshake."
+      }
+    },
+    "dim": {
+      "target_host": "Target host",
+      "source_process": "Source process",
+      "action": "Action"
+    },
+    "trendMetric": "Trend metric",
+    "metric": {
+      "requests": "Requests",
+      "our": "Our overhead",
+      "upstream": "Upstream"
+    },
+    "col": {
+      "avgUs": "Avg our (ms)",
+      "avgUpstream": "Avg upstream (ms)"
+    }
+  },
+  "agentNotRunning": {
+    "title": "Nexus Agent is not running",
+    "body": "The Dashboard couldn't reach the local agent. Make sure the Nexus Agent service is started, then retry.",
+    "retry": "Retry connection",
+    "troubleshootHint": "If the agent stays stopped, launchd may have unloaded it. From Terminal you can re-bootstrap it (requires admin password):",
+    "troubleshootCommand": "sudo launchctl kickstart system/com.nexus-gateway.agent",
+    "copyCommand": "Copy command",
+    "copyCommandSuccess": "Copied"
+  },
+  "overview": {
+    "title": "Overview",
+    "subtitle": "Live status from your device.",
+    "today": "Today",
+    "todayHeader": "Today's protection",
+    "inspected": "Inspected",
+    "passthrough": "Passthrough",
+    "denied": "Denied",
+    "recentActivity": "Recent activity",
+    "recentTopN": "Latest {{n}}",
+    "col": {
+      "time": "Time",
+      "process": "Process",
+      "dest": "Destination",
+      "action": "Action"
+    },
+    "hero": {
+      "activeTitle": "Protecting this device",
+      "activeMeta": "Agent {{device}} is active and applying the latest policy.",
+      "pausedTitle": "Protection paused",
+      "pausedUntil": "Resumes at {{until}}.",
+      "pausedIndefinite": "Indefinite pause — resume from the menu when ready.",
+      "errorTitle": "Agent not functional",
+      "errorMeta": "{{reason}}",
+      "degradedTitle": "Running with reduced functionality",
+      "degradedMeta": "{{reason}}",
+      "updateTitle": "Update available",
+      "updateMeta": "Install the new build to stay current with policies and fixes.",
+      "noSso": "Not signed in",
+      "identity": "Identity",
+      "version": "Build"
+    },
+    "tile": {
+      "hub": "Hub",
+      "heartbeat": "Heartbeat",
+      "queue": "Audit queue",
+      "cert": "Cert",
+      "update": "Update",
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "available": "Available",
+      "current": "Up to date",
+      "certDays": "{{days}}d left",
+      "latency": "Latency"
+    },
+    "age": {
+      "justNow": "just now",
+      "minutes": "{{n}}m ago",
+      "hours": "{{n}}h ago",
+      "days": "{{n}}d ago"
+    }
+  },
+  "activity": {
+    "title": "Activity",
+    "subtitle": "Agent lifecycle events on this device — when it started, was paused, signed in, or quit.",
+    "empty": "No lifecycle events yet.",
+    "col": {
+      "time": "Time",
+      "action": "Action",
+      "details": "Details"
+    },
+    "action": {
+      "agentStartup": "Started",
+      "agentShutdown": "Shut down",
+      "agentPaused": "Paused",
+      "agentResumed": "Resumed",
+      "agentSsoLogin": "Signed in",
+      "agentSsoLogout": "Signed out"
+    }
+  },
+  "identity": {
+    "title": "Identity",
+    "subtitle": "How this device is registered with the gateway.",
+    "deviceID": "Device ID",
+    "trustLevel": "Trust level",
+    "ssoEmail": "Signed in as",
+    "certExpiresAt": "Certificate expires",
+    "deviceAuthMode": "Auth mode",
+    "user": {
+      "displayName": "Name",
+      "email": "Email",
+      "status": "Account status"
+    },
+    "org": {
+      "title": "Organization",
+      "subtitle": "Your organization in the company hierarchy.",
+      "name": "Name",
+      "code": "Code",
+      "timezone": "Timezone",
+      "description": "Description",
+      "hierarchyAria": "Organization hierarchy"
+    }
+  },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "subtitle": "Tools to inspect the agent's connection to the gateway.",
+    "hubReachable": "Gateway reachable",
+    "logTail": "Recent log lines",
+    "certPath": "Certificate file",
+    "interceptionMode": {
+      "label": "Interception mode",
+      "fallbackWarning": "WinDivert kernel driver did not load; using system-proxy fallback. Some apps that ignore system proxy may bypass filtering. Contact support."
+    },
+    "actions": {
+      "title": "Recovery actions",
+      "subtitle": "Run these only when troubleshooting. The daemon stays running on a normal install."
+    },
+    "restartDaemon": {
+      "button": "Restart daemon",
+      "confirm": "Restart the Nexus Agent daemon? Traffic monitoring will pause for ~10 seconds while launchd respawns it.",
+      "inflight": "Restarting daemon…",
+      "success": "Daemon restart requested. It will be back in ~10 seconds.",
+      "blocked": "Restart blocked: {{error}}",
+      "failed": "Restart failed: {{error}}"
+    },
+    "copyBundle": {
+      "button": "Copy support bundle",
+      "success": "Support bundle ({{size}} chars) copied to clipboard.",
+      "failed": "Could not copy to clipboard."
+    },
+    "copyLogPath": {
+      "button": "Copy log path",
+      "success": "Log path copied. Paste it into Finder or Terminal.",
+      "failed": "Could not copy to clipboard."
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Per-device preferences.",
+    "accountTitle": "Account",
+    "accountSubtitle": "How this device is registered with the gateway.",
+    "groupAccount": "Account",
+    "groupPreferences": "Preferences",
+    "groupProtection": "Protection",
+    "groupDanger": "Danger zone",
+    "aboutConnected": "Connected",
+    "aboutDisconnected": "Disconnected",
+    "aboutTitle": "About",
+    "aboutVersion": "Version",
+    "aboutDeviceID": "Device ID",
+    "aboutGateway": "Gateway",
+    "pause": "Pause protection",
+    "resume": "Resume protection",
+    "pausedUntil": "Resumes at {{time}}",
+    "pauseDuration": {
+      "15min": "15 minutes",
+      "1hour": "1 hour",
+      "8hours": "8 hours",
+      "indefinite": "Until I resume"
+    },
+    "themeTitle": "Theme",
+    "themeDesc": "Choose the Dashboard's light or dark appearance.",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "languageTitle": "Language",
+    "languageDesc": "Change the interface language.",
+    "signOutTitle": "Sign out",
+    "signOutDesc": "Sign out of the current account on this device. The agent will unenroll and the next launch will prompt you to sign in again.",
+    "signOutAction": "Sign out",
+    "signOutConfirmTitle": "Sign out?",
+    "signOutConfirmBody": "This machine will erase its enrollment credentials and signed-in state. Traffic monitoring will stop until you sign in again.",
+    "signOutConfirmCancel": "Cancel",
+    "signOutConfirmAction": "Sign out",
+    "signOutInProgress": "Signing out…",
+    "signOutFailed": "Sign out failed: {{error}}",
+    "updates": {
+      "title": "Software updates",
+      "desc": "Check whether a newer Nexus Agent build is available from your gateway. Auto-update behaviour is admin-controlled (see Policies → Device defaults).",
+      "checkNow": "Check now",
+      "upToDate": "You're on the latest build.",
+      "foundNew": "Update available: {{version}}. The agent will install it on next idle window."
+    }
+  },
+  "onboarding": {
+    "welcomeTitle": "Welcome to Nexus Agent",
+    "welcomeSubtitle": "Your device needs to enroll with the company gateway before protection can start.",
+    "ssoTitle": "Sign in with your company SSO",
+    "ssoBody": "We'll open your browser so you can sign in. Your device will be registered automatically.",
+    "tokenTitle": "Paste your enrollment token",
+    "tokenBody": "Ask your IT admin for a single-use enrollment token, then paste it below.",
+    "tokenPlaceholder": "Enrollment token",
+    "tokenSubmit": "Enroll",
+    "tokenRunning": "Enrolling — this takes a few seconds…",
+    "tokenSuccess": "Enrolled — restarting agent",
+    "tokenFailure": "Enrollment failed",
+    "discoveringTitle": "Contacting the gateway…",
+    "discoveringHint": "Looking up how this device should sign in. This usually finishes in a few seconds.",
+    "errorUnknown": "Unknown error"
+  },
+  "reconnecting": {
+    "title": "Finishing setup",
+    "body": "The agent is restarting with your new device certificate. This usually takes a few seconds."
+  },
+  "normalized": {
+    "tabs": {
+      "normalized": "Normalized",
+      "raw": "Raw"
+    },
+    "tier": {
+      "tier1": "Tier 1",
+      "tier2": "Tier 2",
+      "hint": "Which normalizer claimed this row: Tier 1 = precise per-host parse; Tier 2 = multi-spec pattern probe; no badge = Tier 3 verbatim."
+    },
+    "modelLabel": "Model",
+    "finishReason": "Finish reason",
+    "role": {
+      "system": "System",
+      "user": "User",
+      "assistant": "Assistant",
+      "tool": "Tool"
+    },
+    "usage": {
+      "prompt": "Prompt",
+      "completion": "Completion",
+      "total": "Total",
+      "cacheRead": "Cache read",
+      "cacheCreate": "Cache create"
+    },
+    "banner": {
+      "failedTitle": "Normalize failed for this direction.",
+      "failedHint": "Switch to the Raw tab to see the original bytes.",
+      "partialTitle": "Partial normalize — some fields may be missing.",
+      "empty": "No normalized payload for this direction.",
+      "unsupported": "Unsupported kind. Switch to Raw to inspect."
+    },
+    "dropped": {
+      "title": "Content dropped per storage policy.",
+      "hint": "Operator set storageAction=drop-content for the hook that matched. The audit log retains decision + metadata only.",
+      "ruleIds": "Triggered by rules"
+    },
+    "binary": {
+      "title": "Binary content",
+      "size": "Size",
+      "contentType": "Content type",
+      "metadataOnly": "Metadata-only (no bytes captured)."
+    },
+    "embedding": {
+      "inputsLabel": "Embedding inputs",
+      "binaryInputNotStored": "Binary token-array input — not stored per audit policy.",
+      "vectorsNotStored": "Embedding vectors are not stored per audit policy.",
+      "noInputs": "No inputs captured."
+    }
+  },
+  "trafficDetail": {
+    "tabRaw": "Raw",
+    "tabNormalized": "Normalized"
+  }
+}

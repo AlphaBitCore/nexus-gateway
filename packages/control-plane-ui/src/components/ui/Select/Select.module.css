@@ -1,0 +1,100 @@
+/* ─── Select trigger ─────────────────────────────────────────────────────── */
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  background: var(--color-bg-input);
+  cursor: pointer;
+  transition:
+    border-color var(--g-transition-fast),
+    box-shadow var(--g-transition-fast);
+}
+
+.trigger:hover {
+  border-color: var(--color-border-strong);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.trigger[data-error] {
+  border-color: var(--color-danger);
+}
+
+.trigger[data-error]:focus-visible {
+  box-shadow: 0 0 0 1px var(--color-danger);
+}
+
+.trigger[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--color-muted);
+}
+
+/* ─── Icon ──────────────────────────────────────────────────────────────── */
+
+.icon {
+  margin-left: var(--g-space-2);
+  color: var(--color-text-muted);
+}
+
+/* ─── Dropdown content ──────────────────────────────────────────────────── */
+
+.content {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  box-shadow: var(--g-shadow-md);
+  /* Above modal overlay so Select works inside Dialog (modal z-index is lower in stack without this). */
+  z-index: calc(var(--g-z-modal) + 10);
+  overflow: hidden;
+}
+
+.viewport {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: var(--g-space-1) 0;
+}
+
+/* ─── Item ──────────────────────────────────────────────────────────────── */
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--g-space-2) var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.item[data-highlighted] {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.item[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ─── Check indicator ───────────────────────────────────────────────────── */
+
+.indicator {
+  margin-left: var(--g-space-2);
+}

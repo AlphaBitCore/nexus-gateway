@@ -1,0 +1,63 @@
+.label {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.packList {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.packButton {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: 14px;
+  background: var(--color-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.packButton[data-selected='true'] {
+  border-color: var(--color-primary-500);
+  background: var(--color-info-light);
+}
+
+.packButton small {
+  color: var(--color-text-secondary);
+}
+
+.select {
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: inherit;
+}
+
+.enabledRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.state {
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-surface);
+}
+

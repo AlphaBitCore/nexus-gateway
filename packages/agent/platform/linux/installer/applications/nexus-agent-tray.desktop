@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Nexus Agent
+GenericName=Compliance & Traffic Gateway Agent
+Comment=System tray applet for the Nexus Agent daemon
+Exec=/usr/lib/nexus-agent/nexus-agent-tray
+Icon=nexus-agent
+Categories=Network;Security;
+Terminal=false
+StartupNotify=false
+NoDisplay=false
+# Autostart on login as well as appear in the application menu so the
+# tray comes back even when the user-level systemd unit is not in use
+# (e.g. minimal desktop environments without graphical-session.target).
+X-GNOME-Autostart-enabled=true

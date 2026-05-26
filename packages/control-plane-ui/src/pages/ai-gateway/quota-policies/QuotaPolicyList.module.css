@@ -1,0 +1,35 @@
+.filterSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Two-line scope cell: scope label on top, qualifier + period below ── */
+
+.scopeCell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.scopeMain {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+.scopeSub {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}

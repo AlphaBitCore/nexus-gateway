@@ -1,0 +1,35 @@
+---
+description: Compliance / agent normalizer must produce readable text; usage stats optional
+globs:
+  - packages/compliance-proxy/internal/**
+  - packages/agent/internal/**
+  - packages/shared/transport/normalize/**
+  - packages/shared/traffic/extract/**
+  - packages/shared/traffic/adapters/**
+---
+
+# Text-first normalizer (binding)
+
+For **consumer-surface traffic** (`chatgpt-web`, `claude-web`, `cursor`, `gemini-web`, and any future consumer-side wire format), the normalizer's **only required output is readable text**. Losing token / usage stats at this stage is **acceptable**.
+
+Canonical memory: `feedback_compliance_proxy_text_first`.
+
+## What's required
+
+`ExtractText(raw []byte) (Extracted, error)` MUST produce the user's prompt + the assistant's response as plain UTF-8 text. Hooks evaluate against this text; audit captures this text. If text extraction fails, the request still flows but is recorded with `extract_error=...`.
+
+## What's optional
+
+Token counts, cost stats, role-by-role decomposition, tool-call structure — **nice-to-have**. Consumer wire formats are inconsistent and brittle; insisting on full canonical structure produces fragile adapters that break on every minor provider UI update.
+
+For **API-surface traffic** (the same provider hit via SDK / `/v1/*`), the same adapter typically produces both text AND structured usage; that's a bonus, not a contract.
+
+## What this rule prevents
+
+Adapter authors writing 200-line OpenAI-shape canonicalizers for `claude-web` just to satisfy "completeness". Brittle structural normalizers break on every consumer-surface UI update; keep adapters text-first.
+
+## Tier-2 NonJSONDetector
+
+For non-JSON wire formats (binary protocols, multipart, gRPC-Web, raw audio): add a `NonJSONDetector` in `packages/shared/traffic/extract/detector.go`. Tier-1 adapters delegate to the detector. Do **NOT** write a fresh per-host adapter for a new non-JSON format. Canonical memory: `feedback_tier2_nonjson_detector_framework`.
+
+Skipping this rule requires **explicit user approval** in chat.

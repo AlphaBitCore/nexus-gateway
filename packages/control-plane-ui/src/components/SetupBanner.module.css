@@ -1,0 +1,29 @@
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-bottom: 1px solid var(--color-info);
+  font-size: 0.875rem;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.link {
+  text-decoration: underline;
+  color: inherit;
+  font-weight: 600;
+}
+
+.dismissBtn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 0.25rem 0.5rem;
+}

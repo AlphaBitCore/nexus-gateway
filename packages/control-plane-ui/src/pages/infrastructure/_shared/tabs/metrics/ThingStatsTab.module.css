@@ -1,0 +1,113 @@
+/* ThingStatsTab — per-Thing stats dashboard layout.
+ *
+ * Two-section vertical stack:
+ *
+ *   [ Header: time range + granule + refresh ]
+ *   [ KPI card grid (responsive 2/3/6 columns) ]
+ *   [ Trend chart row (small multiples) ]
+ *   [ Breakdown tabs + table ]
+ *
+ * Tokenized against the shared scale so it slots into any tab container.
+ */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--g-space-3);
+}
+
+.headerLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.granuleBadge {
+  margin-left: auto;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.disabledBanner {
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-bg);
+  padding: var(--g-space-3) var(--g-space-4);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.kpiCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.kpiLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.kpiValue {
+  font-size: var(--g-font-size-xl);
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+.kpiSub {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  margin: var(--g-space-4) 0 var(--g-space-2) 0;
+}
+
+.trendGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.trendCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3);
+}
+
+.trendLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--g-space-2);
+}
+
+.breakdownRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  margin-bottom: var(--g-space-3);
+  flex-wrap: wrap;
+}
+
+.empty {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  font-style: italic;
+  padding: var(--g-space-4);
+  text-align: center;
+}

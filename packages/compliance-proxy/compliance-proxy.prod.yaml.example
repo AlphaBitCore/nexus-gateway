@@ -1,0 +1,154 @@
+# Production config for compliance-proxy.
+# Deploy: go run ./cmd/compliance-proxy/ -config compliance-proxy.prod.yaml
+#
+# Secrets are env-only per CLAUDE.md "Secrets are env-only" binding: they
+# NEVER appear in yaml. Provision them via systemd EnvironmentFile=,
+# Kubernetes Secrets → env, docker --env-file, or a repo-root .env in dev.
+# See `.env.example` at repo root for the full env-var contract; values
+# marked [MUST MATCH] in `.env.example` MUST be identical across all four
+# services.
+#
+# TLS CA: generate production CA with `make prod-certs` or supply your own.
+# The CA cert must be distributed to all managed endpoints via MDM/GPO.
+
+# Externally-reachable base URL. The compliance-proxy is a CONNECT
+# intercept reached directly by org-managed devices (NOT via public
+# nginx). Reported as staticInfo.publicURL so MDM-profile / PAC-file
+# UIs render the right host:port to push to fleets.
+publicURL: "http://compliance.example.com:3128"
+
+listener:
+  address: ":3128"
+
+ca:
+  certPath: "/var/lib/nexus/proxy-ca/ca.crt"
+  keyPath: "/var/lib/nexus/proxy-ca/ca.key"
+
+# PostgreSQL — provided via env DATABASE_URL. Used by hook configs,
+# rule packs, and audit writes (replaces the legacy audit.database.dsn).
+database:
+  url: ""
+
+redis:
+  # Universal Redis configuration. Replace yaml password / tls cert paths
+  # with real values per environment (or set env REDIS_PASSWORD /
+  # REDIS_TLS_*). See packages/shared/storage/redisfactory +
+  # docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6379"]
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 20
+  minIdleConns: 5
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+accessControl:
+  # Restrict proxy access to internal/corporate network ranges only
+  sourceIpAllowlist:
+    - "127.0.0.0/8"
+    - "::1/128"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  domainAllowlist: []
+  internalNetworkExceptions: []
+  # MUST be false in production — do not allow unlisted domains to pass through
+  allowUnlistedPassthrough: false
+
+connections:
+  maxConcurrentTunnels: 10000
+  maxStreamsPerConnection: 100
+  idleTimeout: "300s"
+  shutdownGracePeriod: "30s"
+
+upstream:
+  maxConnsPerHost: 100
+  idleConnTimeout: "90s"
+  dialTimeout: "10s"
+
+limits:
+  requestBodyLimit: "10MB"
+  responseBodyLimit: "10MB"
+  sseBufferLimit: "8MB"
+
+log:
+  level: "info"
+  format: "json"
+  file: "/var/log/nexus/compliance-proxy.log"
+  stackOnError: true
+
+metrics:
+  address: ":9092"
+  advertiseHost: "127.0.0.1"
+
+audit:
+  enabled: true
+  batch:
+    size: 50
+    flushIntervalMs: 500
+    channelBufferSize: 2000
+  ndjson:
+    enabled: false
+    dir: ""
+    maxFileSizeMB: 100
+    maxTotalSizeMB: 1000
+  pinning:
+    exemptions: []
+    autoExempt:
+      enabled: true
+      failureThreshold: 3
+      windowSeconds: 3600
+      exemptionDurationSeconds: 86400
+
+compliance:
+  enabled: true
+
+runtimeApi:
+  listenAddress: "127.0.0.1:3040"
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+registry:
+  # Hub is co-located on the same EC2
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+# auth.internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN). [MUST MATCH]
+# across all four services. Runtime-API tokens are also env-only and shared
+# with control-plane's BFF:
+#   COMPLIANCE_PROXY_API_TOKEN
+
+spill:
+  enabled: true
+  backend: s3
+  s3:
+    # [MUST MATCH] same bucket / region / prefix across nexus-hub, ai-gateway,
+    # compliance-proxy, control-plane. AuthN: EC2 instance IAM role.
+    bucket: nexus-payload-capture-bucket
+    region: us-east-1
+    prefix: prod/
+    perObjectCap: 268435456      # 256 MiB per object
+    totalSizeCap: 0              # unlimited; rely on retention + bucket lifecycle
+    retentionDays: 30

@@ -1,0 +1,30 @@
+---
+description: Tests and prod-* skills read config from tests/.env.<target> only; fail-closed on hostname leakage
+globs:
+  - tests/**
+  - .claude/skills/prod-login/**
+  - .claude/skills/prod-deploy/**
+  - .claude/skills/prod-debug/**
+---
+
+# Test / skill env files (binding)
+
+Tests and `prod-*` skills (`prod-login` / `prod-deploy` / `prod-debug`) read config from `tests/.env.<target>` where `target ∈ {local, dev, prod}`.
+
+## Required
+
+- Loader reads ONLY from `tests/.env.<target>` — never from process env, never from repo-root `.env`.
+- Target selected by `NEXUS_TEST_TARGET=local|dev|prod`. For non-TTY runs (CI / harness), the variable is mandatory; missing target = fail-closed.
+- Hostname allowlist per target — `local` allows localhost only; any prod hostname leaking into a `local` run is a fail-closed safety violation.
+
+## Adding a new variable
+
+1. Add the variable to `tests/.env.example` with a one-line comment describing its role.
+2. Add it to the loader's typed schema (so missing values fail loud, not silent).
+3. Cross-link from the consuming test / skill so reviewers can trace usage.
+
+## Source of truth
+
+Full loader contract + target selection + fail-closed safety guards + adding-new-var workflow are documented in `docs/developers/workflow/local-dev-debugging.md` "Test / skill env files" — that section carries the same binding force as this file.
+
+Skipping this rule requires **explicit user approval** in chat.

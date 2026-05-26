@@ -1,0 +1,44 @@
+/* ─── Stack ──────────────────────────────────────────────────────────────── */
+
+.stack {
+  display: flex;
+}
+
+/* ── Direction ──────────────────────────────────────────────────────────── */
+
+.vertical {
+  flex-direction: column;
+}
+
+.horizontal {
+  flex-direction: row;
+  align-items: center; /* sensible default for horizontal stacks */
+}
+
+/* ── Gap ────────────────────────────────────────────────────────────────── */
+
+.gap-xs { gap: var(--g-space-1); }
+.gap-sm { gap: var(--g-space-2); }
+.gap-md { gap: var(--g-space-4); }
+.gap-lg { gap: var(--g-space-6); }
+.gap-xl { gap: var(--g-space-8); }
+
+/* ── Align (cross-axis) ────────────────────────────────────────────────── */
+
+.align-start   { align-items: flex-start; }
+.align-center  { align-items: center; }
+.align-end     { align-items: flex-end; }
+.align-stretch { align-items: stretch; }
+
+/* ── Justify (main-axis) ───────────────────────────────────────────────── */
+
+.justify-start   { justify-content: flex-start; }
+.justify-center  { justify-content: center; }
+.justify-end     { justify-content: flex-end; }
+.justify-between { justify-content: space-between; }
+
+/* ── Full width ─────────────────────────────────────────────────────────── */
+
+.fullWidth {
+  width: 100%;
+}

@@ -1,0 +1,1 @@
+# Response cache architecture

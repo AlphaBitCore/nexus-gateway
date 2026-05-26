@@ -1,0 +1,27 @@
+[project]
+name = "nexus-tests-e2e-python"
+version = "0.0.0"
+description = "Phase 4 (AI-judge) and Phase 5 (protocol compat) end-to-end tests for Nexus Gateway."
+requires-python = ">=3.11"
+
+# Pinned to avoid surprise breakage. Bump intentionally when upgrading.
+dependencies = [
+  "openai>=1.55.0",        # used as the Kimi 128k client (OpenAI-compatible)
+  "anthropic>=0.40.0",     # Phase 5 protocol-compat tests
+  "httpx>=0.27.0",         # Phase 5 raw HTTP shape checks
+  "pytest>=8.0.0",
+  "pytest-timeout>=2.3.0", # cap LLM judge calls (default 60s per test)
+  "psycopg[binary]>=3.2.0",# DB cross-checks against traffic_event
+]
+
+[tool.pytest.ini_options]
+# Tests get a generous default timeout so flaky LLM calls don't hang CI.
+# Individual tests can override via @pytest.mark.timeout(...).
+timeout = 60
+# AI-judge tests are noisy by design (they print verdicts + reasoning).
+addopts = "-ra --tb=short"
+testpaths = ["ai_judge", "protocol"]
+markers = [
+  "ai_judge: tests that consult Kimi 128k via Nexus VK as an oracle (slow, costs tokens)",
+  "protocol: SDK protocol-compatibility tests (drop-in OpenAI / Anthropic)",
+]

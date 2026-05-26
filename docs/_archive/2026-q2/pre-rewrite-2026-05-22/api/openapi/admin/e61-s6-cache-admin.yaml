@@ -1,0 +1,623 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway Admin — Cache Settings Page Endpoints (E61-S5 + S6)
+  version: "1.0.0"
+  description: |
+    Admin endpoints the Cache Settings + Cache Embedding Settings UIs
+    consume that are NOT covered by the routing-rule policy CRUD
+    (`e61-s2-cache-policy.yaml`):
+
+    1. Fleet-wide embedding singleton — GET/PUT (Cache Embedding Settings page, mirror of AI Guard Settings).
+    2. List embedding providers (filter on endpointType).
+    3. Probe an embedding provider (test button on the UI).
+    4. Time-sensitive pattern list read (UI may surface the active rule
+       list for transparency; writes go through the Hub shadow, not this
+       admin API).
+
+    Source of truth: `docs/developers/specs/e61/e61-s3-valkey-switch-and-l2-write.md` T1a (singleton handler);
+    `docs/developers/specs/e61/e61-s5-embedding-provider.md` (probe);
+    `docs/developers/specs/e61/e61-s6c-embedding-settings-page.md` (singleton UI);
+    `docs/developers/specs/e61/e61-s6-cache-settings-ui.md` (per-route page wiring).
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane dev server
+
+paths:
+  /api/admin/semantic-cache/config:
+    get:
+      summary: Get fleet-wide semantic cache configuration (L1 singleton)
+      description: |
+        Returns the single row of the `semantic_cache_config` table —
+        the fleet-wide embedding model selection plus enabled toggle.
+        Mirror of GET /api/admin/ai-guard/config.
+      operationId: getSemanticCacheConfigE61
+      tags: [Admin / Cache]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current singleton configuration. May be partially populated when admin hasn't picked a model yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticCacheConfig'
+              examples:
+                configuredAndEnabled:
+                  value:
+                    id: "singleton"
+                    embeddingProviderId: "8e2f1b40-...-aabb"
+                    embeddingModelId: "01234567-...-9999"
+                    embeddingDimension: 1536
+                    embeddingFingerprint: "9c7a3f5b1e..."
+                    redisIndexName: "nexus:semantic-cache:v1"
+                    enabled: true
+                    updatedAt: "2026-05-19T14:30:00Z"
+                    updatedBy: "admin@nexus.ai"
+                empty:
+                  value:
+                    id: "singleton"
+                    embeddingProviderId: null
+                    embeddingModelId: null
+                    embeddingDimension: null
+                    embeddingFingerprint: ""
+                    redisIndexName: "nexus:semantic-cache:v1"
+                    enabled: false
+                    updatedAt: "2026-05-19T10:00:00Z"
+                    updatedBy: null
+
+    put:
+      summary: Update fleet-wide semantic cache configuration (triggers reindex on (provider, model) change)
+      description: |
+        IAM-gated on iam.ResourceSemanticCache.Action(iam.VerbUpdate).
+        When the (embedding_provider_id, embedding_model_id) pair changes
+        from the stored row, the server-side handler recomputes
+        embedding_fingerprint and emits a one-shot semantic_cache.invalidate_all
+        job that drops the current Redis Vector index and recreates it
+        with the new dimension. Mirror of PUT /api/admin/ai-guard/config.
+      operationId: updateSemanticCacheConfigE61
+      tags: [Admin / Cache]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SemanticCacheConfigUpdate'
+            examples:
+              setOpenAISmall:
+                summary: Configure cluster to use OpenAI text-embedding-3-small + enable
+                value:
+                  embeddingProviderId: "8e2f1b40-...-aabb"
+                  embeddingModelId: "01234567-...-9999"
+                  enabled: true
+              disableFleetWide:
+                summary: Kill switch — disable semantic cache cluster-wide without touching routes
+                value:
+                  enabled: false
+              swapModel:
+                summary: Swap to a different embedding model (triggers reindex)
+                value:
+                  embeddingProviderId: "8e2f1b40-...-aabb"
+                  embeddingModelId: "ffffffff-...-1234"      # text-embedding-3-large (3072D)
+                  enabled: true
+      responses:
+        '200':
+          description: Saved. Body shows the new fingerprint; reindex job has been enqueued if (provider, model) changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticCacheConfig'
+        '400':
+          description: Validation error (provider has no embedding endpointType, model doesn't belong to provider, enabling without a model selected, etc.).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminError'
+        '403':
+          description: IAM denied — caller lacks iam.ResourceSemanticCache.Update.
+        '409':
+          description: A reindex job is already in flight for this cluster; retry shortly.
+
+  /api/admin/providers:
+    get:
+      summary: List providers (endpointType filter added by E61)
+      description: |
+        Existing endpoint — E61 adds the `endpointType` query parameter so
+        the Cache Settings UI can populate the embedding-provider picker
+        with only embedding-type providers.
+      operationId: listAdminProvidersE61EmbeddingFilter
+      tags: [Admin / Providers]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: endpointType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [chat, completions, responses, embedding]
+          description: |
+            When present, return only providers whose default endpointType
+            matches. UI typically calls with `endpointType=embedding` for
+            the Cache Settings semantic-provider picker.
+      responses:
+        '200':
+          description: List of providers, optionally filtered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderSummary'
+
+  /api/admin/providers/{providerId}/embedding-probe:
+    post:
+      summary: Probe an embedding provider (test button)
+      description: |
+        Issues a synthetic embedding call (e.g., embed "test") through the
+        Provider's standard adapter path. Returns dimension + latency +
+        the model used. Useful for admins to verify a newly-configured
+        local server before enabling semantic cache on a real route.
+      operationId: probeEmbeddingProviderE61
+      tags: [Admin / Providers]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                modelId:
+                  type: string
+                  format: uuid
+                  description: |
+                    Optional. If omitted, probe the provider's default
+                    embedding model.
+                sampleText:
+                  type: string
+                  default: "test"
+                  description: |
+                    Optional. Synthetic text to embed. Defaults to "test"
+                    so the probe stays cheap.
+      responses:
+        '200':
+          description: Probe succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingProbeResult'
+              examples:
+                openaiCloud:
+                  value:
+                    ok: true
+                    providerId: "8e2f1b40-...-aabb"
+                    modelId: "01234567-...-9999"
+                    modelName: "text-embedding-3-small"
+                    dimension: 1536
+                    latencyMs: 42
+                    inputTokens: 1
+                    sampleEmbeddingFirst10: [-0.011, 0.034, -0.007, 0.052, -0.001, 0.018, -0.029, 0.044, 0.011, -0.063]
+                localServer:
+                  value:
+                    ok: true
+                    providerId: "bbbb-...-cccc"
+                    modelId: "dddd-...-eeee"
+                    modelName: "bge-small-en"
+                    dimension: 384
+                    latencyMs: 18
+                    inputTokens: 1
+                    sampleEmbeddingFirst10: [0.123, -0.045, 0.067, -0.012, 0.089, 0.034, -0.078, 0.011, 0.056, -0.023]
+        '400':
+          description: Provider not configured for embeddings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminError'
+        '404':
+          description: Provider not found.
+        '502':
+          description: Embedding upstream call failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingProbeFailure'
+
+  /api/admin/cache/time-sensitive-patterns:
+    get:
+      summary: Read the active time-sensitive pattern list (read-only)
+      description: |
+        Returns the time-sensitive pattern list currently effective on the
+        ai-gateway data plane. The list is Hub-shadow-pushed (configKey
+        `response_cache.time_sensitive_patterns`) — admin writes go
+        through the existing Hub config-update path, not through this
+        endpoint. This is a read-only convenience for the Cache Settings
+        UI to display the active rule set.
+      operationId: getTimeSensitivePatternsE61
+      tags: [Admin / Cache]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Active pattern list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [patterns, source]
+                properties:
+                  source:
+                    type: string
+                    enum: [shadow, seed]
+                    description: |
+                      Where the rule list came from. `shadow` = pushed
+                      via Hub change-signal; `seed` = boot-time default.
+                  patterns:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TimeSensitivePattern'
+
+  /api/admin/cache/time-sensitive-patterns/{id}:
+    put:
+      summary: Enable / disable / edit a single time-sensitive rule (Round-1 review)
+      description: |
+        Toggle a single rule's `enabled` flag or edit its keywords /
+        flags. Backend writes the full list (existing + this edit) back
+        to the Hub shadow which fans out to ai-gateway instances; the
+        in-process `*Detector` is atomically swapped via the singleton
+        wrapper from S1 T1.3.
+      operationId: updateTimeSensitivePatternE61
+      tags: [Admin / Cache]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimeSensitivePattern'
+      responses:
+        '200': { description: Updated. }
+        '404': { description: Rule id not found. }
+
+  /api/admin/cache/time-sensitive-patterns/test:
+    post:
+      summary: Test a prompt against the active rule list (Round-1 review)
+      description: |
+        Dry-run: takes a prompt + optional language hint, runs the
+        in-process detector, returns the matched rule (if any) without
+        side effects. Used by the Cache Settings UI's "Test rule" box.
+      operationId: testTimeSensitivePatternE61
+      tags: [Admin / Cache]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string }
+                language:
+                  type: string
+                  enum: [en, zh, es, ja, ko]
+                  description: Optional language hint; if absent the detector auto-detects.
+      responses:
+        '200':
+          description: Detection result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decision]
+                properties:
+                  decision:
+                    type: string
+                    enum: [match, no_match]
+                  matchedRuleId:
+                    type: string
+                    nullable: true
+                  matchedKeywords:
+                    type: array
+                    items: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SemanticCacheConfig:
+      type: object
+      description: |
+        Fleet-wide singleton row. Mirror of AIGuardConfig. Carries
+        infrastructure (embedding provider+model+dimension+fingerprint+
+        index name + fleet kill switch) and the four fleet-wide L2
+        tuning knobs (threshold + varyBy + embedStrategy +
+        allowCrossModel). Per-route policy was removed in the 2026-05-20
+        cleanup; L2 semantic cache is gated by this singleton's `enabled`
+        flag and runs with these fleet-wide defaults unless an admin
+        tunes them here.
+      required: [id, redisIndexName, enabled, threshold, varyBy, embedStrategy, allowCrossModel, updatedAt]
+      properties:
+        id:
+          type: string
+          enum: [singleton]
+        embeddingProviderId:
+          type: string
+          format: uuid
+          nullable: true
+        embeddingModelId:
+          type: string
+          format: uuid
+          nullable: true
+        embeddingDimension:
+          type: integer
+          nullable: true
+        embeddingFingerprint:
+          type: string
+          description: |
+            sha256(provider_id ':' model_id ':' dimension). Drives the
+            Redis Vector index lifecycle: when this value changes, the
+            old index is dropped and a fresh one is created with the new
+            dimension. Empty string when no model is selected.
+        redisIndexName:
+          type: string
+          default: "nexus:semantic-cache:v1"
+          description: |
+            Index name used in FT.CREATE / FT.SEARCH. Admin can override
+            on rare migration scenarios; the typical case never needs to
+            touch this.
+        enabled:
+          type: boolean
+          description: |
+            Fleet-wide kill switch. When false, semantic cache is
+            disabled cluster-wide. Used for incident response (instant
+            disable without touching any routing rule).
+        threshold:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          default: 0.96
+          description: |
+            Fleet-wide cosine similarity gate for L2 hits. Lower values
+            return more (but less precise) cache hits; higher values
+            return fewer (but more precise) hits. Tune up for RAG /
+            factual workloads (~0.98), tune down for paraphrase-tolerant
+            creative writing (~0.92). Out-of-range values fall back to
+            0.96 on save.
+        varyBy:
+          type: string
+          enum: [none, user, vk, org]
+          default: vk
+          description: |
+            L2 cache isolation scope. "vk" (default) isolates entries by
+            virtual key — appropriate for single-tenant deployments.
+            Multi-tenant deployments typically flip to "org" or "user"
+            to prevent cross-tenant leakage. "none" disables isolation
+            entirely (cross-tenant hits allowed; use with care).
+        embedStrategy:
+          type: string
+          enum: [last_user, system_plus_last_user, recent_turns, head_plus_tail, full_truncated]
+          default: system_plus_last_user
+          description: |
+            Embedding input shaping strategy. "last_user" suits single-
+            turn Q&A; "system_plus_last_user" (default) suits most
+            chat workloads; "recent_turns" suits multi-turn agent
+            dialogs; "head_plus_tail" suits long conversations where
+            both system prompt and recent turns matter;
+            "full_truncated" sends the full conversation truncated to
+            the embedding model's context limit. Unknown values fall
+            back to "system_plus_last_user" on save.
+        allowCrossModel:
+          type: boolean
+          default: false
+          description: |
+            When true, an L2 lookup may return an entry cached against a
+            different upstream model than the one currently being routed
+            to. Default false (model-specific isolation — a gpt-4o
+            request will never get a claude-cached response). Useful
+            with smart-routing where the same prompt can resolve to
+            different upstream models.
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+          nullable: true
+
+    SemanticCacheConfigUpdate:
+      type: object
+      description: |
+        Partial — server merges into the existing singleton row.
+        Send `enabled: false` to flip the kill switch without touching
+        the model selection. Send (embeddingProviderId, embeddingModelId)
+        to swap the embedding model (triggers reindex).
+      properties:
+        embeddingProviderId:
+          type: string
+          format: uuid
+          nullable: true
+        embeddingModelId:
+          type: string
+          format: uuid
+          nullable: true
+        enabled:
+          type: boolean
+        threshold:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: |
+            Optional. When provided, replaces the singleton row's
+            threshold. Out-of-range values are normalized to 0.96 by the
+            store rather than rejecting the save.
+        varyBy:
+          type: string
+          enum: [none, user, vk, org]
+          description: |
+            Optional. When provided, replaces the singleton row's
+            varyBy. Unknown values are normalized to "vk" by the store
+            rather than rejecting the save.
+        embedStrategy:
+          type: string
+          enum: [last_user, system_plus_last_user, recent_turns, head_plus_tail, full_truncated]
+          description: |
+            Optional. When provided, replaces the singleton row's
+            embedStrategy. Unknown values are normalized to
+            "system_plus_last_user" by the store rather than rejecting
+            the save.
+        allowCrossModel:
+          type: boolean
+          description: |
+            Optional. When provided, replaces the singleton row's
+            allowCrossModel.
+        redisIndexName:
+          type: string
+
+    ProviderSummary:
+      type: object
+      required: [id, name, endpointType, baseUrl, enabled]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        endpointType:
+          type: string
+          enum: [chat, completions, responses, embedding]
+        baseUrl:
+          type: string
+        enabled:
+          type: boolean
+        defaultModelId:
+          type: string
+          format: uuid
+          nullable: true
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelSummary'
+
+    ModelSummary:
+      type: object
+      required: [id, name, contextLimit]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        dimension:
+          type: integer
+          nullable: true
+          description: Vector dimension. Populated only on embedding models.
+        contextLimit:
+          type: integer
+          description: Maximum input tokens accepted by the model.
+        inputPricePerMillion:
+          type: number
+          format: float
+          description: USD per million input tokens.
+
+    EmbeddingProbeResult:
+      type: object
+      required: [ok, providerId, modelId, dimension, latencyMs]
+      properties:
+        ok:
+          type: boolean
+        providerId:
+          type: string
+          format: uuid
+        modelId:
+          type: string
+          format: uuid
+        modelName:
+          type: string
+        dimension:
+          type: integer
+        latencyMs:
+          type: integer
+        inputTokens:
+          type: integer
+        sampleEmbeddingFirst10:
+          type: array
+          items:
+            type: number
+            format: float
+          description: |
+            First 10 components of the returned vector — useful for the
+            UI to show "the provider works" without dumping a 1536-d
+            array on screen.
+
+    EmbeddingProbeFailure:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        statusCode:
+          type: integer
+          nullable: true
+        providerCode:
+          type: string
+          nullable: true
+
+    TimeSensitivePattern:
+      type: object
+      required: [id, keywords, requireQuestionMark, requireEntity, languages]
+      properties:
+        id:
+          type: string
+        keywords:
+          type: array
+          items:
+            type: string
+        requireQuestionMark:
+          type: boolean
+        requireEntity:
+          type: boolean
+        languages:
+          type: array
+          items:
+            type: string
+            enum: [en, zh, es, ja, ko]
+
+    AdminError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            type: string

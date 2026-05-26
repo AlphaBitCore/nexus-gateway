@@ -1,0 +1,23 @@
+-- Drop the dead AgentExemption table + AgentExemptionSource enum.
+--
+-- This table was the half-built E20 epic surface: it had admin CRUD
+-- endpoints + a status pending/approved/rejected workflow + source
+-- AUTO/ADMIN enum, but it was never connected to the Hub Cat B push
+-- pipeline. Hub catbagent loader reads compliance_exemption_grant —
+-- not AgentExemption — to feed the agent's local exemptionStore, so
+-- approving an AgentExemption row pushed nothing.
+--
+-- The actual agent-detected → admin-review → grant → push loop now
+-- flows through exemption_request (see ExemptionConsumer in
+-- packages/nexus-hub/internal/jobs/consumer/exemption.go, migration
+-- 20260609000002 partial unique index). exemption_request +
+-- compliance_exemption_grant are the single source of truth the
+-- /compliance/exemptions admin UI reads from, which is also what
+-- agent and compliance-proxy read through Cat B "exemptions" push.
+--
+-- AgentExemption was therefore stranded code with no consumer of any
+-- kind. Deleting per binding "Development-phase policy: no backward
+-- compatibility, no defer — Delete obsolete code outright when
+-- replacing them" (CLAUDE.md Mandatory rules).
+DROP TABLE IF EXISTS "AgentExemption";
+DROP TYPE  IF EXISTS "AgentExemptionSource";

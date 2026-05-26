@@ -1,0 +1,20 @@
+[Unit]
+# Nexus Agent — per-user tray applet. Started on login via the
+# `systemd --user` instance; lives under /usr/lib/systemd/user/.
+# Talks to the system daemon over its Unix socket (XDG_RUNTIME_DIR
+# fallback path).
+Description=Nexus Agent system tray
+Documentation=https://nexus-gateway.com/docs/agent
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/nexus-agent/nexus-agent-tray
+Restart=on-failure
+RestartSec=5
+# Don't restart on clean exits (e.g. user picked Quit from the menu).
+SuccessExitStatus=0
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,81 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Routing Rule MatchConditions (E34-S2)
+  version: "0.1.0"
+  description: |
+    Schema overlay for the `MatchConditions` block carried by every routing
+    rule (Create/Update/Read responses). E34-S2 narrows the contract on the
+    `models` field and introduces a sibling `requestedModelLiterals`.
+
+    This document overrides `MatchConditions` previously defined in
+    `e20-s1-routing-rule-match-conditions.yaml` and `e20-s2-routing-rule-crud.yaml`
+    while leaving every other property of those specs untouched.
+
+    Changes vs. E20-S2:
+
+    - `models` is now strictly an array of `Model.id` UUIDs. The routing
+      engine resolves the request's `model` field to a candidate set of
+      `Model.id` values via `Model.code` (exact) plus `Model.aliases`
+      (member), and matches when the candidate set intersects this list.
+      Strings that are not UUIDs (e.g. raw codes like `gpt-4o`) MUST be
+      rejected by the admin API.
+    - New `requestedModelLiterals` carries non-`Model.code` request
+      keywords (today only `auto`). It is matched against the raw request
+      string and is AND'd with `models` like every other dimension.
+
+components:
+  schemas:
+    MatchConditions:
+      type: object
+      additionalProperties: false
+      description: |
+        Per-rule filter block. A rule applies to a request iff every
+        dimension this block specifies matches. Empty / omitted fields
+        mean "no filter on this dimension". All dimensions are AND'd.
+      properties:
+        models:
+          type: array
+          description: |
+            Match only requests whose hydrated candidate set (resolved
+            from the request `model` field via `Model.code` exact match
+            plus `Model.aliases` membership) intersects this list. Each
+            item is a `Model.id` UUID — admin API rejects non-UUID
+            strings (no more code/UUID mixing as observed in E20-era
+            DB rows). Use `requestedModelLiterals` for non-`Model.code`
+            keywords like `auto`.
+          items:
+            type: string
+            format: uuid
+        requestedModelLiterals:
+          type: array
+          description: |
+            Match only requests whose raw `model` field equals one of
+            these literal strings. Carries request-side sentinels that
+            are not rows in the `Model` table — today only `auto` for
+            the smart router. AND's with `models`; both must match
+            when both are set.
+          items:
+            type: string
+          example: ["auto"]
+        modelTypes:
+          type: array
+          description: Match only requests whose hydrated `RequestedModel.Type` is in this list.
+          items:
+            type: string
+        providers:
+          type: array
+          description: Match only requests whose hydrated `RequestedModel.ProviderID` is in this list.
+          items:
+            type: string
+            format: uuid
+        projects:
+          type: array
+          description: Match only requests whose virtual key's ProjectID is in this list.
+          items:
+            type: string
+            format: uuid
+        virtualKeys:
+          type: array
+          description: Match only requests bearing a virtual key whose name matches one of these glob patterns.
+          items:
+            type: string

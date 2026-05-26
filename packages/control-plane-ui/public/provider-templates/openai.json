@@ -1,0 +1,248 @@
+{
+  "name": "openai",
+  "displayName": "OpenAI",
+  "description": "OpenAI API \u2014 GPT-5, GPT-4o, o-series reasoning, and embedding models.",
+  "baseUrl": "https://api.openai.com",
+  "adapterType": "openai",
+  "models": [
+    {
+      "code": "gpt-4o",
+      "name": "GPT-4o",
+      "description": "Most capable GPT-4 model. Great for complex tasks requiring advanced reasoning, vision, and tool use.",
+      "providerModelId": "gpt-4o",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 2.5,
+      "outputPricePerMillion": 10.0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 1.25,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gpt-4o-mini",
+      "name": "GPT-4o Mini",
+      "description": "Small, fast, and affordable. Best for lightweight tasks.",
+      "providerModelId": "gpt-4o-mini",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.15,
+      "outputPricePerMillion": 0.6,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 0.075,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gpt-4-turbo",
+      "name": "GPT-4 Turbo",
+      "description": "Previous generation GPT-4 with vision. Good balance of capability and cost.",
+      "providerModelId": "gpt-4-turbo",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 10.0,
+      "outputPricePerMillion": 30.0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 4096,
+      "cachedInputReadPricePerMillion": 5.0,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "o1",
+      "name": "o1",
+      "description": "Advanced reasoning model for complex math, science, and coding tasks.",
+      "providerModelId": "o1",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "function_calling"
+      ],
+      "inputPricePerMillion": 15.0,
+      "outputPricePerMillion": 60.0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000,
+      "cachedInputReadPricePerMillion": 7.5,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "o3-mini",
+      "name": "o3 Mini",
+      "description": "Reasoning model optimized for STEM and agentic workflows.",
+      "providerModelId": "o3-mini",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "inputPricePerMillion": 1.1,
+      "outputPricePerMillion": 4.4,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000,
+      "cachedInputReadPricePerMillion": 0.55,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "o3",
+      "name": "o3",
+      "description": "High-capability reasoning model.",
+      "providerModelId": "o3",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "inputPricePerMillion": 10.0,
+      "outputPricePerMillion": 40.0,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000,
+      "cachedInputReadPricePerMillion": 5.0,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "o4-mini",
+      "name": "o4 Mini",
+      "description": "Compact reasoning model in the o-series family.",
+      "providerModelId": "o4-mini",
+      "type": "chat",
+      "features": [
+        "streaming"
+      ],
+      "inputPricePerMillion": 0.6,
+      "outputPricePerMillion": 2.4,
+      "maxContextTokens": 200000,
+      "maxOutputTokens": 100000,
+      "cachedInputReadPricePerMillion": 0.3,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gpt-5.5",
+      "name": "GPT-5.5",
+      "description": "Latest flagship GPT-5 model for complex reasoning, coding, and professional work.",
+      "providerModelId": "gpt-5.5",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 15.0,
+      "outputPricePerMillion": 60.0,
+      "maxContextTokens": 256000,
+      "maxOutputTokens": 32768,
+      "cachedInputReadPricePerMillion": 7.5,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gpt-5.4",
+      "name": "GPT-5.4",
+      "description": "More affordable GPT-5 model for coding and professional work.",
+      "providerModelId": "gpt-5.4",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 5.0,
+      "outputPricePerMillion": 20.0,
+      "maxContextTokens": 256000,
+      "maxOutputTokens": 32768,
+      "cachedInputReadPricePerMillion": 2.5,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gpt-5.4-mini",
+      "name": "GPT-5.4 Mini",
+      "description": "Strongest mini model for coding, computer use, and subagents.",
+      "providerModelId": "gpt-5.4-mini",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.4,
+      "outputPricePerMillion": 1.6,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 0.2,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gpt-5.4-nano",
+      "name": "GPT-5.4 Nano",
+      "description": "Lowest-latency, lowest-cost GPT-5 variant for high-volume tasks.",
+      "providerModelId": "gpt-5.4-nano",
+      "type": "chat",
+      "features": [
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 0.15,
+      "outputPricePerMillion": 0.6,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 0.075,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "gpt-4.1",
+      "name": "GPT-4.1",
+      "description": "GPT-4.1 multimodal model.",
+      "providerModelId": "gpt-4.1",
+      "type": "chat",
+      "features": [
+        "vision",
+        "function_calling",
+        "streaming",
+        "json_mode"
+      ],
+      "inputPricePerMillion": 2.0,
+      "outputPricePerMillion": 8.0,
+      "maxContextTokens": 128000,
+      "maxOutputTokens": 16384,
+      "cachedInputReadPricePerMillion": 1.0,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "text-embedding-3-small",
+      "name": "Text Embedding 3 Small",
+      "description": "Most cost-effective embedding model. Good for most use cases.",
+      "providerModelId": "text-embedding-3-small",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.02,
+      "maxContextTokens": 8191,
+      "cachedInputReadPricePerMillion": 0.01,
+      "cachedInputWritePricePerMillion": null
+    },
+    {
+      "code": "text-embedding-3-large",
+      "name": "Text Embedding 3 Large",
+      "description": "Most capable embedding model. Best for high-accuracy retrieval.",
+      "providerModelId": "text-embedding-3-large",
+      "type": "embedding",
+      "features": [],
+      "inputPricePerMillion": 0.13,
+      "maxContextTokens": 8191,
+      "cachedInputReadPricePerMillion": 0.065,
+      "cachedInputWritePricePerMillion": null
+    }
+  ]
+}

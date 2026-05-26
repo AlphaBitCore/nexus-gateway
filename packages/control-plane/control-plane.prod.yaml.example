@@ -1,0 +1,144 @@
+# Production config for control-plane.
+# Deploy: go run ./cmd/control-plane/ -config control-plane.prod.yaml
+#
+# Secrets are env-only per CLAUDE.md "Secrets are env-only" binding:
+# they NEVER appear in yaml. Provision them via systemd EnvironmentFile=,
+# Kubernetes Secrets → env, docker --env-file, or a repo-root .env in dev.
+# See `.env.example` at repo root for the full env-var contract; values
+# marked [MUST MATCH] in `.env.example` MUST be identical across all four
+# services.
+
+# Externally-reachable base URL. Reported as staticInfo.publicURL.
+# This is where the SSO callback URL, browser-facing OAuth endpoints,
+# and admin UI all live.
+publicURL: "https://nexus.example.com"
+
+server:
+  port: 3001
+  shutdownTimeout: "30s"
+  # Internal — nginx proxies nexus.example.com → 127.0.0.1:3001
+  advertiseHost: "127.0.0.1"
+
+database:
+  # Provided via env DATABASE_URL
+  url: ""
+  maxConns: 50
+  minConns: 10
+  maxConnLifetime: "300s"
+
+redis:
+  # Universal Redis configuration. Replace yaml password / tls cert paths
+  # with real values per environment (or set env REDIS_PASSWORD /
+  # REDIS_TLS_*). See packages/shared/storage/redisfactory +
+  # docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md §9.
+  mode: standalone
+  addrs: ["localhost:6379"]
+  username: ""
+  password: ""        # env REDIS_PASSWORD overrides
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 20
+  minIdleConns: 5
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+log:
+  level: "info"
+  format: "json"
+  file: "/var/log/nexus/control-plane.log"
+  stackOnError: true
+
+bff:
+  # All services are co-located on the same EC2 — use loopback addresses
+  complianceProxyUrl: "http://127.0.0.1:3040"
+  complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
+  aiGatewayUrl: "http://127.0.0.1:3050"
+  # complianceProxyApiToken is env-only (COMPLIANCE_PROXY_API_TOKEN). Must
+  # match what compliance-proxy reads from the same env var.
+
+# Hub registration (thingclient). Symmetric with ai-gateway /
+# compliance-proxy. Env override: NEXUS_HUB_URL.
+registry:
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+auth:
+  # hmacSecret + internalServiceToken are env-only:
+  #   hmacSecret           → ADMIN_KEY_HMAC_SECRET    [MUST MATCH ai-gateway]
+  #   internalServiceToken → INTERNAL_SERVICE_TOKEN   [MUST MATCH all 4 services]
+  allowDevAuth: false
+
+crypto:
+  # encryptionKey / encryptionPassphrase / encryptionSalt / credentialKeyMap
+  # are env-only:
+  #   encryptionKey         → CREDENTIAL_ENCRYPTION_KEY    [MUST MATCH ai-gateway credentialMasterKey, 64 hex chars]
+  #   encryptionPassphrase  → CREDENTIAL_ENCRYPTION_PASSPHRASE
+  #   encryptionSalt        → CREDENTIAL_ENCRYPTION_SALT
+  #   credentialKeyMap      → CREDENTIAL_KEY_MAP
+  production: true
+
+retention:
+  auditLogDays: 90
+  adminAuditLogDays: 365
+  metricRollupDays: 365
+  agentAuditDays: 90
+
+agent:
+  caDir: "/var/lib/nexus/agent-ca"
+
+aiGuard:
+  dispatchTimeoutSec: 60
+
+httpClients:
+  hub:
+    timeoutSec: 30
+  hubProxy:
+    timeoutSec: 10
+  complianceProxyAdmin:
+    timeoutSec: 10
+
+authServer:
+  # Must match the public URL clients reach the auth server on
+  issuer: "https://nexus.example.com"
+  keystoreDir: "/var/lib/nexus/authkeys"
+
+otel:
+  endpoint: ""
+  serviceName: "nexus-control-plane"
+
+scheduler:
+  enabled: true
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://localhost:4222"
+
+spill:
+  enabled: true
+  backend: s3
+  s3:
+    # [MUST MATCH] same bucket / region / prefix across nexus-hub, ai-gateway,
+    # compliance-proxy, control-plane. AuthN: EC2 instance IAM role.
+    bucket: nexus-payload-capture-bucket
+    region: us-east-1
+    prefix: prod/
+    perObjectCap: 268435456      # 256 MiB per object
+    totalSizeCap: 0              # unlimited; rely on retention + bucket lifecycle
+    retentionDays: 30

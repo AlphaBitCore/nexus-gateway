@@ -1,0 +1,44 @@
+/* ─── Checkbox root ──────────────────────────────────────────────────────── */
+
+.root {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-surface);
+  cursor: pointer;
+  transition:
+    background var(--g-transition-fast),
+    border-color var(--g-transition-fast);
+}
+
+.root[data-state='checked'],
+.root[data-state='indeterminate'] {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.root:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.root[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Indicator ─────────────────────────────────────────────────────────── */
+
+.indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary-foreground);
+  font-size: 12px;
+  line-height: 1;
+}

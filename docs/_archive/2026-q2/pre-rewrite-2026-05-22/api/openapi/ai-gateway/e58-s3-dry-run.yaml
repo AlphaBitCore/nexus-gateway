@@ -1,0 +1,267 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — `nexus.dry_run` Pre-Flight Estimation (E58-S3)
+  version: "1.0.0"
+  description: |
+    The `nexus.dry_run: true` flag is a request-body extension that
+    short-circuits the gateway after canonicalize → route → cache
+    lookup and returns a cost estimate instead of forwarding to the
+    upstream. Works across all four ingresses (OpenAI Chat, OpenAI
+    Responses, Anthropic Messages, Gemini generateContent) with no
+    per-ingress wiring: the canonical extension namespace is preserved
+    by every ingress's canonicalization step.
+
+    Source of truth: `docs/developers/specs/e58/e58-s3-dry-run-flag.md`.
+    Architecture: `docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md` § 5.
+
+servers:
+  - url: http://localhost:3050
+    description: Local AI Gateway dev server
+
+paths:
+  /v1/chat/completions:
+    post:
+      summary: OpenAI Chat Completions — supports `nexus.dry_run`
+      operationId: chatCompletions
+      tags: [AI Gateway / Ingress / Dry-Run]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAIChatRequest'
+            examples:
+              dryRunSimple:
+                summary: Dry-run a gpt-5 request
+                value:
+                  model: "gpt-5"
+                  messages:
+                    - { role: "user", content: "Explain quantum entanglement in two paragraphs." }
+                  reasoning_effort: "high"
+                  nexus:
+                    dry_run: true
+              realRequest:
+                summary: Same request without dry_run (for comparison)
+                value:
+                  model: "gpt-5"
+                  messages:
+                    - { role: "user", content: "Explain quantum entanglement in two paragraphs." }
+                  reasoning_effort: "high"
+      responses:
+        '200':
+          description: |
+            On real requests: standard chat completion.
+            On dry-run requests: `choices: []`, `usage` populated from the estimator's expected anchor, and `x-nexus-estimate` header with full JSON breakdown.
+          headers:
+            x-nexus-estimate:
+              description: On dry-run requests only. Compact JSON with low/expected/high cost breakdown, cache benefit, assumptions, and resolved target.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIChatResponse'
+              examples:
+                dryRunResponse:
+                  summary: Response to the dryRunSimple example
+                  value:
+                    id: "estimate-7f3a..."
+                    object: "chat.completion"
+                    created: 1737049200
+                    model: "gpt-5"
+                    choices: []
+                    usage:
+                      prompt_tokens: 12
+                      completion_tokens: 3500
+                      total_tokens: 3512
+
+  /v1/messages:
+    post:
+      summary: Anthropic Messages — supports `nexus.dry_run`
+      operationId: anthropicMessages
+      tags: [AI Gateway / Ingress / Dry-Run]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnthropicRequest'
+            examples:
+              dryRunWithThinking:
+                summary: Dry-run a claude-sonnet-4-6 request with extended thinking
+                value:
+                  model: "claude-sonnet-4-6"
+                  max_tokens: 2000
+                  messages:
+                    - { role: "user", content: "Write a Go function that..." }
+                  thinking:
+                    type: "enabled"
+                    budget_tokens: 8000
+                  nexus:
+                    dry_run: true
+      responses:
+        '200':
+          description: Anthropic-shape response with empty `content` on dry-run.
+          content:
+            application/json:
+              examples:
+                dryRunResponse:
+                  value:
+                    id: "estimate-7f3a..."
+                    type: "message"
+                    role: "assistant"
+                    model: "claude-sonnet-4-6"
+                    content: []
+                    stop_reason: "estimate"
+                    usage:
+                      input_tokens: 25
+                      cache_read_input_tokens: 0
+                      cache_creation_input_tokens: 0
+                      output_tokens: 2500
+
+  /v1/responses:
+    post:
+      summary: OpenAI Responses API — supports `nexus.dry_run`
+      operationId: openaiResponses
+      tags: [AI Gateway / Ingress / Dry-Run]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            examples:
+              dryRunResponses:
+                value:
+                  model: "gpt-5"
+                  input: [{ role: "user", content: "..." }]
+                  reasoning: { effort: "medium" }
+                  nexus: { dry_run: true }
+      responses:
+        '200':
+          description: Responses-shape estimate.
+          content:
+            application/json:
+              examples:
+                dryRunResponse:
+                  value:
+                    id: "estimate-..."
+                    object: "response"
+                    model: "gpt-5"
+                    status: "completed"
+                    output: []
+                    usage:
+                      input_tokens: 12
+                      output_tokens: 1500
+                      total_tokens: 1512
+
+  /v1beta/models/{model}:generateContent:
+    post:
+      summary: Gemini generateContent — supports `nexus.dry_run`
+      operationId: geminiGenerateContent
+      tags: [AI Gateway / Ingress / Dry-Run]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: model
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            examples:
+              dryRunGemini:
+                value:
+                  contents:
+                    - { role: "user", parts: [{ text: "..." }] }
+                  thinking_config:
+                    thinking_budget: 8000
+                  nexus: { dry_run: true }
+      responses:
+        '200':
+          description: Gemini-shape estimate.
+          content:
+            application/json:
+              examples:
+                dryRunResponse:
+                  value:
+                    candidates: []
+                    usageMetadata:
+                      promptTokenCount: 12
+                      candidatesTokenCount: 3000
+                      cachedContentTokenCount: 0
+                      thoughtsTokenCount: 1500
+                      totalTokenCount: 3012
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: VK
+
+  schemas:
+    NexusExtension:
+      type: object
+      description: |
+        The `nexus.*` reserved canonical extension namespace. Fields
+        here are gateway-level controls, not provider-level data.
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+          description: |
+            When true, the gateway runs canonicalize → route → cache
+            lookup and returns an estimate instead of forwarding to the
+            upstream. Response shape matches the ingress; `choices` /
+            `content` / `output` / `candidates` arrays are empty; the
+            `usage` block is populated from the estimator's expected
+            anchor; `x-nexus-estimate` header carries the full
+            breakdown.
+
+    OpenAIChatRequest:
+      type: object
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          items: { type: object }
+        max_tokens: { type: integer }
+        reasoning_effort:
+          type: string
+          enum: [minimal, low, medium, high]
+        stream: { type: boolean }
+        nexus: { $ref: '#/components/schemas/NexusExtension' }
+
+    OpenAIChatResponse:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string }
+        created: { type: integer }
+        model: { type: string }
+        choices: { type: array, items: { type: object } }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+            total_tokens: { type: integer }
+
+    AnthropicRequest:
+      type: object
+      properties:
+        model: { type: string }
+        max_tokens: { type: integer }
+        messages: { type: array, items: { type: object } }
+        thinking:
+          type: object
+          properties:
+            type: { type: string, enum: [enabled, disabled] }
+            budget_tokens: { type: integer }
+        nexus: { $ref: '#/components/schemas/NexusExtension' }

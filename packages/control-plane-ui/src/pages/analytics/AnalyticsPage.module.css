@@ -1,0 +1,273 @@
+/* ── Filter bar ──────────────────────────────────────────────────────────── */
+.filterCard {
+  padding: 16px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px;
+  align-items: center;
+}
+
+.filterGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filterLabel {
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.filterSelect {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.filterInput {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  width: 180px;
+}
+
+.filterInput:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Chips ───────────────────────────────────────────────────────────────── */
+.chipBar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.chipClose {
+  background: none;
+  border: none;
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin-left: 2px;
+}
+
+/* ── KPI stat cards ─────────────────────────────────────────────────────── */
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px;
+}
+
+.statLabel {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.statValue {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.statSubtitle {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ── Section headings ───────────────────────────────────────────────────── */
+.sectionHeader {
+  margin-top: 32px;
+}
+
+.sectionTitle {
+  font-size: var(--g-font-size-lg);
+  font-family: var(--g-font-display);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.sectionSubtitle {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+/* ── Chart cards ────────────────────────────────────────────────────────── */
+.chartsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.chartCard {
+  padding: 24px;
+}
+
+.chartTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  font-family: var(--g-font-display);
+  letter-spacing: 0;
+  margin: 0 0 16px 0;
+}
+
+.emptyChart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+/* ── Breakdown table cards ──────────────────────────────────────────────── */
+.breakdownGrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.breakdownFull {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+.tableCard {
+  padding: 20px 24px;
+}
+
+.tableHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 16px;
+}
+
+.tableTitle {
+  font-size: var(--g-font-size-md);
+  font-weight: 600;
+  font-family: var(--g-font-display);
+  letter-spacing: 0;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.tableActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.searchInput {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  width: 220px;
+}
+
+/* ── Source filter button group ─────────────────────────────────────────── */
+.buttonGroup {
+  display: inline-flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.filterBtn {
+  padding: 4px 12px;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.8rem;
+  border-right: 1px solid var(--color-border);
+  transition: background 0.15s;
+}
+
+.filterBtn:last-child {
+  border-right: none;
+}
+
+.filterBtn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.filterBtnActive {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.filterBtnActive:hover {
+  background: var(--color-primary-hover);
+  color: var(--color-primary-foreground);
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-muted);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px var(--shadow-md);
+}
+
+.savingsValue {
+  color: var(--color-success);
+  font-weight: 600;
+}

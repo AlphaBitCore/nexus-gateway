@@ -1,0 +1,103 @@
+.viewport {
+  position: fixed;
+  top: var(--g-space-5);
+  right: var(--g-space-5);
+  z-index: var(--g-z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  width: min(400px, calc(100vw - 32px));
+}
+
+.toast {
+  background: var(--color-surface);
+  border-radius: var(--g-radius-xl);
+  box-shadow: var(--g-shadow-lg);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  position: relative;
+  animation: toastSpring 400ms var(--g-effect-toast-spring);
+}
+
+.accent {
+  width: 4px;
+  flex-shrink: 0;
+}
+
+.iconWrap {
+  display: flex;
+  align-items: center;
+  padding: 14px 0 14px 14px;
+  flex-shrink: 0;
+}
+
+.message {
+  flex: 1;
+  padding: 14px 12px;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text);
+  line-height: var(--g-line-height-normal);
+}
+
+.dismissBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color var(--g-transition-fast);
+  flex-shrink: 0;
+}
+
+.dismissBtn:hover {
+  color: var(--color-text);
+}
+
+.dismissBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  opacity: 0.4;
+  transition: width 50ms linear;
+}
+
+/* Per-type accent colors — drives .accent bar, .iconWrap svg stroke, and .progress bar */
+.toast[data-type="success"] .accent,
+.toast[data-type="success"] .progress { background: var(--color-success); }
+.toast[data-type="success"] .iconWrap { color: var(--color-success); }
+
+.toast[data-type="error"] .accent,
+.toast[data-type="error"] .progress { background: var(--color-danger); }
+.toast[data-type="error"] .iconWrap { color: var(--color-danger); }
+
+.toast[data-type="warning"] .accent,
+.toast[data-type="warning"] .progress { background: var(--color-warning); }
+.toast[data-type="warning"] .iconWrap { color: var(--color-warning); }
+
+.toast[data-type="info"] .accent,
+.toast[data-type="info"] .progress { background: var(--color-primary); }
+.toast[data-type="info"] .iconWrap { color: var(--color-primary); }
+
+@keyframes toastSpring {
+  0%   { opacity: 0; transform: translateY(-16px) scale(0.95); }
+  60%  { opacity: 1; transform: translateY(3px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

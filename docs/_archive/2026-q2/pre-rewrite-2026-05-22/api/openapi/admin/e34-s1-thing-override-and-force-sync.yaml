@@ -1,0 +1,400 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway — Thing Override + Force-Sync (E34-S1)
+  version: "1.0.0"
+  description: |
+    Per-Thing configuration override (whole config_key JSON replacement) on
+    top of the existing per-`(type, config_key)` template tier, plus an
+    explicit force-sync that bypasses the version-equality short-circuit.
+
+    Overrides are per-Thing only (no group / fleet / type-bulk). The
+    blacklist `{credentials, virtual_keys}` is non-overridable. Optional
+    TTL is server-enforced to `[5 m, 30 d]`. Setting an override on
+    `killswitch`, or with a `reason` starting with `break-glass:`, marks
+    the row `emergency_override = true` and is rendered as a red badge in
+    audit and admin UIs.
+
+    Type-scope RBAC: `super_admin` operates on any Thing type;
+    `provider_admin` only on service types (`ai-gateway`,
+    `compliance-proxy`, `control-plane`, `nexus-hub`); `compliance_officer`
+    only on `agent`. Mismatch returns 403.
+
+paths:
+
+  /api/admin/things/{id}/overrides:
+    get:
+      summary: List active overrides on one Thing
+      description: |
+        Returns every override currently set on the given Thing, with
+        per-row stale flag computed by JOINing `thing_config_template`.
+      tags: [infrastructure]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+      responses:
+        '200':
+          description: List response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListThingOverridesResponse'
+        '401': { description: Not authenticated. }
+        '403': { description: Missing `admin:ReadSettings`. }
+        '404': { description: Thing not found. }
+
+  /api/admin/things/{id}/overrides/{configKey}:
+    put:
+      summary: Set or update a per-Thing override
+      description: |
+        Whole-key JSON replacement. The override fully replaces the
+        template state for this `(thing, configKey)` pair.
+
+        Server validates: configKey not in `{credentials, virtual_keys}`;
+        `state` is a JSON object at top level (not array / scalar / null);
+        `reason` ≤ 500 chars; `expiresAt - NOW() ∈ [5 m, 30 d]` if set;
+        the `(thing.type, configKey)` template exists.
+
+        On success the Hub recomputes `thing.desired`, bumps
+        `thing.desired_ver`, writes `admin_audit_log` (action
+        `thing_override_set`), and force-pushes the affected key.
+      tags: [infrastructure]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+        - $ref: '#/components/parameters/ConfigKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOverrideBody'
+      responses:
+        '200':
+          description: Override persisted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThingOverride'
+        '400':
+          description: |
+            Validation failed. Possible `error` values:
+            `config key not overridable`, `state must be a JSON object`,
+            `reason exceeds 500 chars`, `expiresAt out of range [5m, 30d]`,
+            `no template exists for this key`.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401': { description: Not authenticated. }
+        '403': { description: Missing `admin:WriteThingOverride`, or role cannot operate on this Thing type. }
+        '404': { description: Thing not found. }
+
+    delete:
+      summary: Clear a per-Thing override
+      description: |
+        DELETE the override row; Hub recomputes `thing.desired` (key
+        reverts to template), bumps `desired_ver`, writes
+        `admin_audit_log` (action `thing_override_cleared`), and
+        force-pushes the affected key. Returns 404 (not idempotent 200)
+        when no override exists for the pair.
+      tags: [infrastructure]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+        - $ref: '#/components/parameters/ConfigKey'
+      responses:
+        '200':
+          description: Cleared.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '401': { description: Not authenticated. }
+        '403': { description: Missing `admin:WriteThingOverride`. }
+        '404': { description: Thing not found, or no active override for this key. }
+
+  /api/admin/things/overrides:
+    get:
+      summary: Global override registry
+      description: |
+        Lists every active override across the fleet. Powers
+        `/infrastructure/overrides` page. Read-mostly; no bulk mutation.
+      tags: [infrastructure]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { in: query, name: type, schema: { type: string }, description: "Filter by Thing type." }
+        - { in: query, name: actor, schema: { type: string }, description: "Filter by `set_by`." }
+        - { in: query, name: hasTtl, schema: { type: boolean }, description: "Only rows with non-NULL `expires_at`." }
+        - { in: query, name: stale, schema: { type: boolean }, description: "Only rows where current template version > `template_ver_at_set`." }
+        - { in: query, name: limit, schema: { type: integer, default: 50, minimum: 1, maximum: 500 } }
+        - { in: query, name: offset, schema: { type: integer, default: 0, minimum: 0 } }
+      responses:
+        '200':
+          description: Paged list with summary counters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalOverridesResponse'
+        '401': { description: Not authenticated. }
+        '403': { description: Missing `admin:ReadSettings`. }
+
+  /api/admin/things/{id}/resync:
+    post:
+      summary: Force-sync a Thing — single key or all keys
+      description: |
+        Hub redelivers `desired` state to the Thing with `Force = true` on
+        the wire, causing the Thing to re-run `OnConfigChanged` and emit
+        a fresh shadow_report regardless of `reported_ver` matching
+        `desired_ver`.
+
+        - Empty body or `{}` → replay every key in `thing.desired`. Returns
+          `{ ok, thingId, keyCount }`.
+        - `{ "configKey": "<key>" }` → replay only that key. Returns
+          `{ ok, thingId, configKey }`.
+
+        Writes `admin_audit_log` (`thing_force_resync_all` or
+        `thing_force_resync`). Does NOT write `config_change_event` —
+        force-sync is redelivery, not config change.
+      tags: [infrastructure]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResyncBody'
+      responses:
+        '200':
+          description: Force-sync triggered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResyncResponse'
+        '401': { description: Not authenticated. }
+        '403': { description: Missing `admin:ForceResyncThing`. }
+        '404': { description: Thing not found, or single-key form: configKey not present in `thing.desired`. }
+
+  /api/admin/things/{id}/applied-config:
+    get:
+      summary: Applied config (extended with override metadata)
+      description: |
+        Existing endpoint extended with per-entry `templateState`,
+        `templateVer`, and (when an override is active) the full
+        `override` object. Single endpoint serves all data the UI's
+        Configuration tab needs.
+      tags: [infrastructure]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ThingId'
+      responses:
+        '200':
+          description: Per-key applied config view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppliedConfigResponse'
+        '401': { description: Not authenticated. }
+        '403': { description: Missing `admin:ReadSettings`. }
+        '404': { description: Thing not found. }
+
+components:
+  parameters:
+    ThingId:
+      name: id
+      in: path
+      required: true
+      description: Thing/node id (e.g. `ai-gateway-prod-01`, `agent-uuid`).
+      schema: { type: string }
+    ConfigKey:
+      name: configKey
+      in: path
+      required: true
+      description: Configuration key (e.g. `routing_rules`, `hook_config`). Must NOT be in the blacklist `{credentials, virtual_keys}`.
+      schema: { type: string }
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nexus_session
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: "Human-readable error reason." }
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, const: true }
+
+    SetOverrideBody:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: object
+          additionalProperties: true
+          description: Whole-key JSON payload. Top-level type MUST be object.
+        reason:
+          type: string
+          maxLength: 500
+          description: Optional rationale. Prefix `break-glass:` flags `emergency_override = true`.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Optional ISO-8601 timestamp. If set, server requires `expiresAt - NOW() ∈ [5m, 30d]`.
+
+    ResyncBody:
+      type: object
+      properties:
+        configKey:
+          type: string
+          description: Optional. When omitted, all keys in `thing.desired` are replayed.
+
+    ResyncResponse:
+      type: object
+      required: [ok, thingId]
+      properties:
+        ok: { type: boolean, const: true }
+        thingId: { type: string }
+        configKey: { type: string, description: "Present when single-key form was used." }
+        keyCount: { type: integer, description: "Present when whole-Thing form was used." }
+
+    ThingOverride:
+      type: object
+      required:
+        - configKey
+        - state
+        - templateVerAtSet
+        - currentTemplateVer
+        - stale
+        - setBy
+        - setAt
+        - emergencyOverride
+      properties:
+        configKey: { type: string }
+        state:
+          type: object
+          additionalProperties: true
+        templateVerAtSet:
+          type: integer
+          format: int64
+          description: Snapshot of `thing_config_template.version` at the moment the override was set. Used for stale detection.
+        currentTemplateVer:
+          type: integer
+          format: int64
+          description: Current `thing_config_template.version` for the same `(type, configKey)` at read time.
+        stale:
+          type: boolean
+          description: Computed `currentTemplateVer > templateVerAtSet`.
+        setBy:
+          type: string
+          description: Actor identifier. `system:override-expiry-job` for auto-expiry-driven changes.
+        setAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          maxLength: 500
+        expiresAt:
+          type: string
+          format: date-time
+          description: NULL when permanent.
+        emergencyOverride:
+          type: boolean
+
+    ListThingOverridesResponse:
+      type: object
+      required: [overrides]
+      properties:
+        overrides:
+          type: array
+          items: { $ref: '#/components/schemas/ThingOverride' }
+
+    GlobalOverrideRow:
+      allOf:
+        - $ref: '#/components/schemas/ThingOverride'
+        - type: object
+          # JSON field names follow the admin terminology boundary (CLAUDE.md):
+          # admin-facing surfaces use "node", not the internal "thing".
+          required: [nodeId, nodeName, nodeType]
+          properties:
+            nodeId: { type: string }
+            nodeName: { type: string }
+            nodeType: { type: string }
+
+    GlobalOverridesResponse:
+      type: object
+      required: [overrides, total, summary]
+      properties:
+        overrides:
+          type: array
+          items: { $ref: '#/components/schemas/GlobalOverrideRow' }
+        total: { type: integer }
+        summary:
+          type: object
+          required: [totalNodes, totalOverrides, staleCount, expiringSoonCount]
+          properties:
+            totalNodes: { type: integer, description: "Distinct Things with at least one override." }
+            totalOverrides: { type: integer }
+            staleCount: { type: integer }
+            expiringSoonCount: { type: integer, description: "Rows with `expires_at` within the next 1 hour." }
+
+    AppliedConfigEntry:
+      type: object
+      required:
+        - desired
+        - reported
+        - desiredVer
+        - reportedVer
+        - inSync
+        - templateState
+        - templateVer
+      properties:
+        desired:
+          description: Effective desired state (template ⊕ override) sent on the wire.
+        reported:
+          description: Last state the Thing reported as applied.
+        desiredVer:
+          type: integer
+          format: int64
+        reportedVer:
+          type: integer
+          format: int64
+        inSync:
+          type: boolean
+        templateState:
+          description: Read-only template default (used by the editor drawer's left pane).
+        templateVer:
+          type: integer
+          format: int64
+        lastChange:
+          type: object
+          properties:
+            actor: { type: string }
+            action: { type: string }
+            timestamp: { type: string, format: date-time }
+            emergencyOverride: { type: boolean }
+        override:
+          $ref: '#/components/schemas/ThingOverride'
+          description: Present only when an override is active for this key.
+
+    AppliedConfigResponse:
+      type: object
+      required: [thingType, configs]
+      properties:
+        thingType: { type: string }
+        shadowDesiredVer:
+          type: integer
+          format: int64
+        shadowReportedVer:
+          type: integer
+          format: int64
+        configs:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/AppliedConfigEntry'

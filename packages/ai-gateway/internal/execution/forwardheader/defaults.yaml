@@ -1,0 +1,74 @@
+# Default forward-header allowlist shipped with the ai-gateway binary.
+#
+# Loaded at startup when the deployment YAML
+# (packages/ai-gateway/ai-gateway.dev.yaml) does not declare its own
+# forwardHeaders block. Operators wanting a different posture copy this
+# block into their YAML and edit it — yaml.Unmarshal then replaces the
+# block whole-cloth. There is no merge between this file and the
+# operator's YAML.
+#
+# Defaults reproduce the historical compile-time behavior exactly for
+# the request side, plus a small response-side opt-in covering the
+# two providers with the largest customer-support footprint
+# (request-id correlation, token-rate visibility for client-side
+# throttling).
+#
+# Hard denylist headers (authorization, cookie, set-cookie,
+# x-api-key, x-goog-api-key, api-key, x-amz-*, proxy-authorization,
+# x-forwarded-*, x-real-ip, x-nexus-*, www-authenticate,
+# strict-transport-security, content-security-policy, x-frame-options,
+# server, via, x-served-by, cf-ray, access-control-*, content-length,
+# transfer-encoding, connection, accept-encoding) are rejected at
+# config load with a fatal error regardless of which list they appear
+# in. See docs/developers/specs/e36/e36-s1-forward-header-yaml-request.md §4.2.
+
+request:
+  base:
+    - accept
+    - user-agent
+    - content-type
+  perAdapterType:
+    openai:
+      headers:
+        - openai-beta
+        - openai-organization
+        - openai-project
+    anthropic:
+      headers:
+        - anthropic-beta
+        - anthropic-version
+    gemini:
+      headers:
+        - x-goog-user-project
+    vertex:
+      headers:
+        - x-goog-user-project
+
+response:
+  base:
+    static: []
+    perRequest: []
+  perAdapterType:
+    openai:
+      static:
+        - openai-version
+      perRequest:
+        - x-request-id
+        - openai-processing-ms
+        - x-ratelimit-limit-tokens
+        - x-ratelimit-remaining-tokens
+        - x-ratelimit-reset-tokens
+        - x-ratelimit-limit-requests
+        - x-ratelimit-remaining-requests
+        - x-ratelimit-reset-requests
+    anthropic:
+      static:
+        - anthropic-version
+      perRequest:
+        - request-id
+        - anthropic-ratelimit-input-tokens-remaining
+        - anthropic-ratelimit-input-tokens-reset
+        - anthropic-ratelimit-output-tokens-remaining
+        - anthropic-ratelimit-output-tokens-reset
+        - anthropic-ratelimit-requests-remaining
+        - anthropic-ratelimit-requests-reset

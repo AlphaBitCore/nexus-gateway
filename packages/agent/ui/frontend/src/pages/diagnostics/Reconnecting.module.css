@@ -1,0 +1,34 @@
+.root {
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: var(--g-space-6);
+}
+
+.card {
+  max-width: 480px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--g-space-3);
+}
+
+.icon {
+  font-size: 36px;
+}
+
+.title {
+  font-size: var(--g-font-size-xl);
+  font-weight: 600;
+  margin: 0;
+}
+
+.body {
+  font-size: var(--g-font-size-base);
+  color: var(--color-text-muted);
+  margin: 0;
+}

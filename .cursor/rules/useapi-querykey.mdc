@@ -1,0 +1,40 @@
+---
+description: useApi queryKey must start with at least 2 string literals (domain + resource)
+globs:
+  - packages/control-plane-ui/src/**/*.tsx
+  - packages/control-plane-ui/src/**/*.ts
+---
+
+# `useApi` queryKey requires a domain prefix (binding)
+
+Every `useApi(fetcher, queryKey)` call must start `queryKey` with **at least two string literals** that uniquely identify the endpoint, followed by any state variables that affect the fetcher.
+
+## Required shape
+
+```tsx
+['admin' | 'my' | 'user' | 'proxy', '<resource>', '<variant?>', ...stateVars]
+```
+
+## Forbidden
+
+```tsx
+useApi(fetcher, [])                                          // ❌ empty
+useApi(fetcher, [debouncedSearch, offset, pageLimit])        // ❌ no domain prefix
+useApi(fetcher, [id])                                        // ❌ single var
+```
+
+## Correct
+
+```tsx
+useApi(fetcher, ['admin', 'routing-rules', 'list', search, enabled, offset, limit])
+useApi(fetcher, ['admin', 'policies', 'detail', id])
+useApi(fetcher, ['admin', 'providers', 'list', 'model-list-picker'])   // usage-suffix disambiguates
+```
+
+## Why
+
+React Query stores under `['api', ...queryKey]`. Pages with the same state shape (e.g. `['', '', 0, 20]`) collide in the cache. Navigating from one list to another shows the previous page's `data` with the new page's `columns` — a confusing class of UI bug.
+
+When the same API is fetched from multiple call sites intentionally (e.g., providers list used by `ModelList` and `CredentialList`), add a usage-site suffix to each call so the two callers dedupe only within themselves and do not leak stale data into unrelated pages.
+
+Skipping this rule requires **explicit user approval** in chat.

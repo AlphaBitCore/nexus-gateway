@@ -1,0 +1,44 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1-5);
+}
+
+.label {
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text);
+}
+
+.required {
+  color: var(--color-danger);
+}
+
+.error {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-danger);
+  margin: 0;
+}
+
+.helpText {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.tooltipIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  background: var(--color-muted);
+  border-radius: 50%;
+  cursor: help;
+  vertical-align: middle;
+  line-height: 1;
+}

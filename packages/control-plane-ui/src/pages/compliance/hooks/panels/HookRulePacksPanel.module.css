@@ -1,0 +1,70 @@
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.title {
+  margin: 0 0 0.35rem 0;
+  font-size: 1.1rem;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--color-text-secondary);
+  max-width: 46rem;
+}
+
+.state {
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-surface);
+}
+
+.tableWrap {
+  overflow: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: 14px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+}
+
+.table th,
+.table td {
+  padding: 0.85rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-light);
+  vertical-align: middle;
+}
+
+.table th {
+  background: var(--color-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr[data-selected] {
+  background: var(--color-info-light);
+}
+
+.rowActions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}

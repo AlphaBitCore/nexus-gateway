@@ -1,0 +1,64 @@
+.userCombobox {
+  min-width: 200px;
+  max-width: 260px;
+  flex: 1 1 200px;
+}
+
+.filterSelect {
+  height: 36px;
+  min-width: 148px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.dateInput {
+  flex: 1 1 200px;
+  min-width: 200px;
+  max-width: 260px;
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.paginationBar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--g-space-4);
+  margin-top: var(--g-space-4);
+}
+
+.paginationLabel {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.disabledHint {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.fileSinkHint {
+  margin: 0;
+  font-size: var(--g-font-size-sm);
+  line-height: 1.5;
+}
+
+.metaSubline {
+  display: block;
+  margin-top: var(--g-space-2);
+}

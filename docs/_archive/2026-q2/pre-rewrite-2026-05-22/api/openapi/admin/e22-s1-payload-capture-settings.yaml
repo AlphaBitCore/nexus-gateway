@@ -1,0 +1,272 @@
+openapi: 3.1.0
+info:
+  title: Nexus Gateway Admin — Payload Capture Settings (E22-S1)
+  version: "1.0.0"
+  description: |
+    Admin endpoints for the global payload capture configuration consumed
+    by `compliance-proxy` and `ai-gateway`. The config toggles whether
+    per-request and per-response body bytes are stored into
+    `traffic_event_payload` on the Hub, and sets a server-side read cap
+    on the per-request body read.
+
+    The authoritative store is `system_metadata["payload_capture.config"]`.
+    On every successful PUT the Control Plane fires
+    `InvalidateConfig("compliance-proxy", "payload_capture")` and
+    `InvalidateConfig("ai-gateway", "payload_capture")` at Nexus Hub so
+    the data-plane reducers re-read the row and swap their in-memory
+    atomic snapshot.
+
+    Source of truth: `docs/developers/specs/e22/e22-s1-payload-capture-end-to-end.md`.
+
+servers:
+  - url: http://localhost:3001
+    description: Local Control Plane dev server
+
+paths:
+  /api/admin/settings/payload-capture:
+    get:
+      summary: Get the current payload capture configuration
+      description: |
+        Returns the persisted config, or the conservative defaults
+        (`storeRequestBody=false`, `storeResponseBody=false`,
+        `maxBodyBytes=65536`, `maxRequestBytes=10485760`,
+        `maxResponseBytes=10485760`) when the system_metadata row is
+        absent.
+      operationId: getPayloadCaptureConfig
+      tags: [Admin Settings]
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayloadCaptureConfig'
+              examples:
+                defaultsWhenUnset:
+                  summary: No row persisted yet
+                  value:
+                    storeRequestBody: false
+                    storeResponseBody: false
+                    maxBodyBytes: 65536
+                    maxRequestBytes: 10485760
+                    maxResponseBytes: 10485760
+                previouslyConfigured:
+                  summary: Admin has previously enabled capture
+                  value:
+                    storeRequestBody: true
+                    storeResponseBody: false
+                    maxBodyBytes: 131072
+                    maxRequestBytes: 10485760
+                    maxResponseBytes: 10485760
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    put:
+      summary: Update the payload capture configuration
+      description: |
+        PATCH-style merge: any field omitted from the request body
+        preserves its current value. Server-side clamping rules:
+
+        - `maxBodyBytes` is clamped to `[0, 10 * 1024 * 1024]`
+          (10 MiB ceiling); explicit `0` coerces to the default
+          (64 KiB).
+        - `maxRequestBytes` and `maxResponseBytes` are clamped to
+          `[0, 100 * 1024 * 1024]` (100 MiB ceiling); explicit `0`
+          coerces to the default (10 MiB).
+
+        Requires `admin:UpdateSettings` IAM action. Emits an admin
+        audit entry `Action=update, EntityType=payloadCaptureConfig`
+        and fires shadow invalidations at both `compliance-proxy` and
+        `ai-gateway`.
+      operationId: updatePayloadCaptureConfig
+      tags: [Admin Settings]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayloadCaptureUpdateRequest'
+            examples:
+              enableRequestCapture:
+                summary: Enable request body capture with a 128 KiB audit cap
+                value:
+                  storeRequestBody: true
+                  maxBodyBytes: 131072
+              overLimitGetsClamped:
+                summary: 50 MB maxBodyBytes input is clamped to 10 MiB ceiling
+                value:
+                  storeRequestBody: true
+                  storeResponseBody: true
+                  maxBodyBytes: 52428800
+              raiseRequestNetworkCap:
+                summary: Raise the inbound request network cap to 25 MiB
+                value:
+                  maxRequestBytes: 26214400
+      responses:
+        '200':
+          description: Updated configuration (post-clamp)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayloadCaptureConfig'
+        '400':
+          description: Invalid request body (malformed JSON)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: Failed to persist the config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: nexus_session
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid admin session cookie
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Authenticated principal lacks `admin:ReadSettings` / `admin:UpdateSettings`
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    PayloadCaptureConfig:
+      type: object
+      required:
+        - storeRequestBody
+        - storeResponseBody
+        - maxBodyBytes
+        - maxRequestBytes
+        - maxResponseBytes
+      additionalProperties: false
+      properties:
+        storeRequestBody:
+          type: boolean
+          description: |
+            When true, the client-original request body bytes are
+            copied into the audit event for persistence in
+            traffic_event_payload.
+          default: false
+        storeResponseBody:
+          type: boolean
+          description: |
+            When true, non-streaming response body bytes are copied
+            into the audit event. Streaming (text/event-stream)
+            responses are intentionally not captured.
+          default: false
+        maxBodyBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10485760
+          description: |
+            Audit-truncation cap. Applied **only** when stamping the
+            captured body into the audit event; the truncated copy is
+            what lands in traffic_event_payload, and `request_truncated`
+            / `response_truncated` flips when the live body is longer.
+            This cap **never** bounds the bytes forwarded to the
+            upstream or back to the client. Inputs above 10 MiB are
+            clamped server-side. An explicit 0 is coerced to the
+            default (65536 = 64 KiB).
+          default: 65536
+        maxRequestBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 104857600
+          description: |
+            Inbound request body read cap on compliance-proxy /
+            ai-gateway proxy handlers. Overflow returns
+            `413 PAYLOAD_TOO_LARGE`; the request is not forwarded.
+            Inputs above 100 MiB are clamped server-side. An explicit
+            0 is coerced to the default (10485760 = 10 MiB).
+          default: 10485760
+        maxResponseBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 104857600
+          description: |
+            Upstream non-streaming response read cap on provider
+            adapters (`LimitedReadAll`). Overflow returns
+            `502 upstream_error`. Streaming responses are unaffected.
+            Inputs above 100 MiB are clamped server-side. An explicit
+            0 is coerced to the default (10485760 = 10 MiB).
+          default: 10485760
+
+    PayloadCaptureUpdateRequest:
+      type: object
+      description: |
+        PATCH-style merge. Fields omitted from the body preserve the
+        currently persisted value, so the UI may send only the knob it
+        intends to change.
+      additionalProperties: false
+      properties:
+        storeRequestBody:
+          type: boolean
+        storeResponseBody:
+          type: boolean
+        maxBodyBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Audit-truncation cap. Values above 10 MiB are clamped on
+            the server. Negative values are treated as zero and then
+            coerced to the default (65536).
+        maxRequestBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Inbound request network read cap. Values above 100 MiB are
+            clamped on the server. Negative values are treated as zero
+            and then coerced to the default (10485760).
+        maxResponseBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Upstream non-streaming response network read cap. Values
+            above 100 MiB are clamped on the server. Negative values
+            are treated as zero and then coerced to the default
+            (10485760).
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            code:
+              type: string

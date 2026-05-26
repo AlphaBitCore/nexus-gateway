@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Nexus Agent Dashboard",
+  "outputfilename": "nexus-dashboard",
+  "frontend:install": "npm install --prefix ../../../..",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "./bindings",
+  "version": "0.1.0",
+  "author": {
+    "name": "Nexus Gateway"
+  },
+  "info": {
+    "companyName": "Nexus Gateway",
+    "productName": "Nexus Agent Dashboard",
+    "productIdentifier": "com.nexus-gateway.agent.dashboard",
+    "comments": "End-user dashboard for the Nexus Agent. Connects to the local agent daemon over a Unix socket; never makes outbound network calls of its own."
+  }
+}

@@ -1,0 +1,333 @@
+openapi: 3.1.0
+info:
+  title: E27-S1 Compliance exemption grants (Control Plane)
+  version: "1.0.0"
+  description: |
+    Admin APIs under `/api/admin/compliance/exemption-grants`, single-row read
+    under `/api/admin/compliance/exemptions/{id}`, and approve/reject
+    under `/api/admin/compliance/exemptions/{exemptionRequestId}/(approve|reject)`.
+    Grants are persisted in PostgreSQL; Hub `active_exemptions` is a materialized snapshot.
+
+paths:
+  /api/admin/compliance/exemption-grants:
+    get:
+      operationId: listComplianceExemptionGrants
+      summary: Unified paginated list of grants + PENDING exemption requests
+      description: |
+        Returns a single status-filtered list combining compliance_exemption_grant
+        rows (in their effective / oncoming / expired lifecycle) with
+        exemption_request rows whose status is PENDING. Each row carries a
+        `kind` discriminator and the per-kind nullable fields. Ordered by
+        `createdAt` DESC. Default tab is `all`.
+      tags: [Compliance]
+      parameters:
+        - name: tab
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, effective, oncoming, expired, pending]
+            default: all
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Paginated unified list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rows, total]
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UnifiedExemptionRow"
+                  total:
+                    type: integer
+                    minimum: 0
+    post:
+      operationId: createComplianceExemptionGrant
+      summary: Create a grant (immediately persisted; Hub projection refreshed)
+      tags: [Compliance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateComplianceExemptionGrantRequest"
+      responses:
+        "200":
+          description: Grant created and Hub notified
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [grant, version, thingsNotified, thingsOnline]
+                properties:
+                  grant:
+                    $ref: "#/components/schemas/ComplianceExemptionGrant"
+                  version:
+                    type: integer
+                  thingsNotified:
+                    type: integer
+                  thingsOnline:
+                    type: integer
+
+  /api/admin/compliance/exemption-grants/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      operationId: patchComplianceExemptionGrant
+      summary: Set inactive (disable) or re-enable a grant
+      tags: [Compliance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inactive]
+              properties:
+                inactive:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated and Hub projection refreshed
+        "404":
+          description: Unknown grant id
+    delete:
+      operationId: deleteComplianceExemptionGrant
+      summary: Delete a grant only before activation (activated_at is null)
+      tags: [Compliance]
+      responses:
+        "200":
+          description: Deleted and Hub projection refreshed
+        "403":
+          description: Grant already activated — use PATCH inactive instead
+        "404":
+          description: Unknown grant id
+
+  /api/admin/compliance/exemptions/{id}:
+    get:
+      operationId: getComplianceExemption
+      summary: Get a single unified exemption row
+      description: |
+        Returns the same `UnifiedExemptionRow` shape as list items. `id` may be a
+        `compliance_exemption_grant` id or a PENDING `exemption_request` id.
+      tags: [Compliance]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Unified row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnifiedExemptionRow"
+        "404":
+          description: No grant or pending request with this id
+
+  /api/admin/compliance/exemptions/{id}/approve:
+    post:
+      operationId: approveComplianceExemptionRequest
+      summary: Approve a PENDING exemption request (creates grant, notifies Hub)
+      tags: [Compliance]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Exemption request row id (not grant id)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grantId:
+                    type: string
+                    format: uuid
+                  id:
+                    type: string
+                    description: Exemption request id
+                  status:
+                    type: string
+                    example: APPROVED
+                  version:
+                    type: integer
+                  thingsNotified:
+                    type: integer
+                  thingsOnline:
+                    type: integer
+
+components:
+  schemas:
+    ComplianceExemptionGrant:
+      type: object
+      required:
+        - id
+        - sourceIp
+        - targetHost
+        - reason
+        - durationMinutes
+        - effectiveFrom
+        - expiresAt
+        - approvedBy
+        - inactive
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        exemptionRequestId:
+          type: string
+          nullable: true
+        sourceIp:
+          type: string
+        targetHost:
+          type: string
+        reason:
+          type: string
+        durationMinutes:
+          type: integer
+        effectiveFrom:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        requestedBy:
+          type: string
+          nullable: true
+        approvedBy:
+          type: string
+        inactive:
+          type: boolean
+        activatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UnifiedExemptionRow:
+      type: object
+      description: |
+        One row in the unified exemption list. `kind` discriminates between
+        `grant` (a compliance_exemption_grant row) and `pending` (an
+        exemption_request row whose status is PENDING). `status` carries the
+        lifecycle bucket (`effective` / `oncoming` / `expired` for grants,
+        always `pending` for requests). Per-kind nullable fields are nulled
+        on the opposite kind.
+      required:
+        - kind
+        - status
+        - id
+        - sourceIp
+        - targetHost
+        - reason
+        - durationMinutes
+        - createdAt
+      properties:
+        kind:
+          type: string
+          enum: [grant, pending]
+        status:
+          type: string
+          enum: [effective, oncoming, expired, pending]
+        id:
+          type: string
+          format: uuid
+        sourceIp:
+          type: string
+        targetHost:
+          type: string
+        reason:
+          type: string
+        durationMinutes:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        effectiveFrom:
+          type: string
+          format: date-time
+          nullable: true
+          description: Grant only; null for pending rows
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Grant only; null for pending rows
+        approvedBy:
+          type: string
+          nullable: true
+          description: Grant only; null for pending rows
+        inactive:
+          type: boolean
+          nullable: true
+          description: Grant only; null for pending rows. true = soft-disabled grant
+        activatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Grant only; null for pending rows or grants not yet in their effective window
+        transactionId:
+          type: string
+          nullable: true
+          description: Pending only; null for grant rows
+        requestedBy:
+          type: string
+          nullable: true
+          description: Optional on grants, required on pending rows
+
+    CreateComplianceExemptionGrantRequest:
+      type: object
+      required: [sourceIP, targetHost, durationMinutes, reason]
+      properties:
+        sourceIP:
+          type: string
+        targetHost:
+          type: string
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 10080
+        reason:
+          type: string
+          minLength: 4
+          maxLength: 500
+        effectiveFrom:
+          type: string
+          format: date-time
+          description: Optional RFC3339; defaults to now if omitted

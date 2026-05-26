@@ -1,0 +1,410 @@
+/* ============================================================
+   Auth pages
+   LoginPage        → .page + .authInner  (frameless)
+   CallbackPage     → .page + .card
+   ForgotPassword   → .page + .card
+   ============================================================ */
+
+/* ── Full-page shell ───────────────────────────────────────────────────── */
+.page {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  font-family: var(--g-font-sans);
+  padding: var(--g-space-8) var(--g-space-6);
+  position: relative;
+  overflow: hidden;
+
+  /* One very subtle aurora at top-left, nothing else — keeps it clean */
+  background:
+    radial-gradient(
+      ellipse 70% 55% at -5% -10%,
+      color-mix(in srgb, var(--color-primary) 9%, transparent),
+      transparent 65%
+    ),
+    var(--color-bg);
+}
+
+/* ── Oversized watermark logo (decorative) ─────────────────────────────── */
+.watermark {
+  position: absolute;
+  right: -6%;
+  bottom: -8%;
+  width: min(52vw, 400px);
+  height: auto;
+  color: var(--color-primary);
+  opacity: 0.038;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── Frameless form wrapper ────────────────────────────────────────────── */
+.authInner {
+  width: 100%;
+  max-width: 360px;
+  position: relative; /* above watermark */
+  z-index: 1;
+}
+
+.authMounting {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.authMounted {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 380ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 380ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Brand lockup ──────────────────────────────────────────────────────── */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2-5);
+  margin-bottom: var(--g-space-1-5);
+}
+
+.brandMark {
+  color: var(--color-primary);
+  flex: 0 0 auto;
+}
+
+.brandName {
+  font-family: var(--g-font-display);
+  font-size: var(--g-font-size-lg);
+  font-weight: var(--g-font-weight-bold);
+  letter-spacing: 0;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.brandSlug {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin: 0 0 var(--g-space-10);
+  padding-left: calc(26px + var(--g-space-2-5)); /* indent under logo */
+  letter-spacing: 0;
+}
+
+/* ── Heading ───────────────────────────────────────────────────────────── */
+.header {
+  margin-bottom: var(--g-space-8);
+}
+
+.title {
+  font-family: var(--g-font-display);
+  font-size: clamp(1.875rem, 5vw, 2.25rem);
+  font-weight: 800;
+  letter-spacing: 0;
+  color: var(--color-text);
+  line-height: 1.1;
+  margin: 0;
+}
+
+.subtitle {
+  font-size: var(--g-font-size-base);
+  color: var(--color-text-muted);
+  margin: var(--g-space-2) 0 0;
+  line-height: var(--g-line-height-normal);
+}
+
+/* ── Loading spinner ───────────────────────────────────────────────────── */
+.redirecting {
+  display: flex;
+  justify-content: center;
+  padding: var(--g-space-8) 0 var(--g-space-4);
+}
+
+/* ── SSO buttons ───────────────────────────────────────────────────────── */
+.ssoList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2-5);
+}
+
+.ssoBtn {
+  width: 100%;
+  height: 44px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-medium);
+  cursor: pointer;
+  transition: background var(--g-transition-fast), border-color var(--g-transition-fast);
+}
+
+.ssoBtn:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.ssoBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Divider ───────────────────────────────────────────────────────────── */
+.ssoDivider {
+  position: relative;
+  margin: var(--g-space-6) 0 var(--g-space-5);
+  text-align: center;
+}
+
+.ssoDivider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--color-border);
+  transform: translateY(-50%);
+}
+
+.ssoDividerLabel {
+  position: relative;
+  display: inline-block;
+  background: var(--color-bg);
+  padding: 0 var(--g-space-3);
+  font-size: var(--g-font-size-xs);
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* ── Password form — flat, no wrapper ──────────────────────────────────── */
+.passwordForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-5);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.fieldLabelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.fieldLabel {
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text);
+}
+
+/* "Forgot password?" sits on the same row as the Password label */
+.forgotInline {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color var(--g-transition-fast);
+}
+
+.forgotInline:hover {
+  color: var(--color-primary);
+}
+
+.fieldInput {
+  height: 44px;
+  padding: 0 var(--g-space-4);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-base);
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color var(--g-transition-fast), box-shadow var(--g-transition-fast);
+}
+
+.fieldInput::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.65;
+}
+
+.fieldInput:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
+}
+
+/* ── Error ─────────────────────────────────────────────────────────────── */
+.inlineError {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger);
+  padding: var(--g-space-2-5) var(--g-space-3);
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  border-left: 2px solid var(--color-danger);
+  border-radius: var(--g-radius-sm);
+  line-height: var(--g-line-height-normal);
+  margin: 0;
+}
+
+/* CallbackPage alias */
+.error {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-danger);
+  margin-bottom: var(--g-space-4);
+  text-align: center;
+  line-height: var(--g-line-height-normal);
+}
+
+/* ── Submit button ─────────────────────────────────────────────────────── */
+.submitBtn {
+  width: 100%;
+  height: 44px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: none;
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  letter-spacing: 0;
+  cursor: pointer;
+  box-shadow:
+    0 1px 2px var(--shadow-md),
+    0 4px 12px -2px color-mix(in srgb, var(--color-primary) 30%, transparent);
+  transition:
+    opacity var(--g-transition-fast),
+    transform var(--g-transition-fast),
+    box-shadow var(--g-transition-fast);
+}
+
+.submitBtn:hover:not(:disabled) {
+  opacity: 0.92;
+  box-shadow:
+    0 1px 2px var(--shadow-md),
+    0 6px 20px -2px color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.submitBtn:active:not(:disabled) {
+  transform: translateY(1px);
+  opacity: 0.88;
+}
+
+.submitBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+.submitBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Language row ──────────────────────────────────────────────────────── */
+.langRow {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--g-space-10);
+}
+
+.langSelect {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-full);
+  padding: var(--g-space-1) var(--g-space-6) var(--g-space-1) var(--g-space-3);
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: border-color var(--g-transition-fast), color var(--g-transition-fast);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--g-space-2) center;
+}
+
+.langSelect:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.langSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Card — CallbackPage + ForgotPasswordPage
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-xl);
+  box-shadow: var(--g-shadow-md);
+  padding: var(--g-space-8);
+  transition: opacity 300ms ease-out, transform 300ms ease-out;
+}
+
+.cardMounting {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.cardMounted {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Shared across card pages */
+.langSwitcher {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--g-space-6);
+}
+
+.footer {
+  text-align: center;
+  margin-top: var(--g-space-3);
+  margin-bottom: 0;
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  letter-spacing: 0;
+}
+
+.forgotLink {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.forgotLink:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+.authHelpText {
+  margin: 0;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+  line-height: var(--g-line-height-relaxed);
+  text-align: left;
+}
+
+.authActions {
+  margin-top: var(--g-space-2);
+}
+
+.authActions button {
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .authMounted,
+  .card {
+    transition: none;
+  }
+}

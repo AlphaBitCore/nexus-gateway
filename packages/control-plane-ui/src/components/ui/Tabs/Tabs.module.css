@@ -1,0 +1,47 @@
+/* ─── Tabs list ──────────────────────────────────────────────────────────── */
+
+.list {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  gap: 0;
+}
+
+/* ─── Tab trigger ────────────────────────────────────────────────────────── */
+
+.trigger {
+  padding: var(--g-space-2) var(--g-space-4);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  color: var(--color-text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition:
+    color var(--g-transition-fast),
+    border-color var(--g-transition-fast);
+  cursor: pointer;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+
+.trigger[data-state='active'] {
+  color: var(--color-text);
+  border-bottom-color: var(--color-brand);
+}
+
+.trigger:hover {
+  color: var(--color-text-secondary);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+
+/* ─── Tab content ────────────────────────────────────────────────────────── */
+
+.content {
+  padding-top: var(--g-space-4);
+  outline: none;
+}

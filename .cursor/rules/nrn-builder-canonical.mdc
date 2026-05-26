@@ -1,0 +1,51 @@
+---
+description: Always use iam.BuildRequestNRNForAction — never hardcode resourceType strings in iamMW
+globs:
+  - packages/control-plane/internal/handler/**
+  - packages/control-plane/internal/iam/**
+  - packages/shared/identity/iam/**
+---
+
+# NRN builder is canonical (binding)
+
+`iamMW(action)` builds the request NRN as `nrn := iam.BuildRequestNRNForAction(action, c)`. The builder owns the action → resourceType derivation. **Never hardcode the resourceType string** in handler glue — hardcoded strings drift from the IAM catalog and produce silent 403s.
+
+Memory anchor: [[project_iam_resource_nrn_bug]].
+
+## Required
+
+```go
+e.GET("/api/admin/providers/:id", h.GetProvider, iamMW("admin:provider.read"))
+// inside iamMW:
+nrn := iam.BuildRequestNRNForAction(action, c)   // <- canonical builder
+```
+
+## Forbidden
+
+```go
+// ❌ hardcoded resource-type
+nrn := fmt.Sprintf("nrn:nexus:provider:%s:%s", orgID, id)
+
+// ❌ ad-hoc string concat
+nrn := "nrn:nexus:" + getResourceType(action) + ":" + scope + ":*"
+```
+
+Even when the hardcoded version "looks right", it skips the catalog lookup in `packages/shared/identity/iam/catalog_data.go`. When the catalog updates (new resource, renamed verb), the canonical builder picks it up; hardcoded strings rot.
+
+## When the action is new
+
+1. Add the action to `packages/shared/identity/iam/catalog_data.go`.
+2. Build via `iam.BuildRequestNRNForAction(action, c)`.
+3. Verify with the `simulator` IAM page in the dashboard.
+
+## When the action signature changes
+
+`BuildRequestNRNForAction` is the single seam. Update the catalog; every handler that uses the builder picks up the change automatically.
+
+## Related
+
+- IAM impact review (5-step audit) → `iam-impact-review.mdc`.
+- Architecture: `docs/developers/architecture/services/control-plane/iam-identity-architecture.md`.
+- Skill: `.claude/skills/iam-impact-review/`.
+
+Skipping this rule requires **explicit user approval** in chat.

@@ -1,0 +1,470 @@
+package audit
+
+import (
+	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+)
+
+// Record holds all fields for a single audit log entry.
+type Record struct {
+	RequestID       string
+	ClientRequestID string
+	// TraceID links this event to upstream agent/compliance-proxy events for the
+	// same request. Extracted from the X-Nexus-Request-Id header; falls back to
+	// RequestID when the header is absent (direct-to-gateway traffic).
+	TraceID    string
+	Timestamp  time.Time
+	Method     string
+	Path       string
+	// EndpointType classifies the request modality. Values are canonical
+	// typology.EndpointKind strings — "chat", "embeddings", "stt",
+	// "tts", "image_generation", "batch". Stamped at handler dispatch
+	// time from typology.KindFromWireShape(resolved.WireShape).
+	// Persisted onto traffic_event.endpoint_type via the MQ wire
+	// envelope. Empty for early-failure rows rejected before endpoint
+	// resolution.
+	EndpointType string
+	// TargetMethod and TargetPath are the HTTP method + path actually sent to
+	// the upstream provider. May differ from Method/Path when the gateway
+	// re-routes across formats (e.g. auto-upgrade routes a chat-completions
+	// request to OpenAI Responses API; or Anthropic ingress → Bedrock
+	// InvokeModel). Same as Method/Path for compliance-proxy / agent
+	// transparent traffic.
+	TargetMethod string
+	TargetPath   string
+	StatusCode int
+	LatencyMs  int
+	SourceIP   string
+	TargetHost string
+
+	UserID           string
+	UserDisplayName  string
+	OrganizationID   string
+	OrganizationName string
+	ProjectID        string
+	ProjectName      string
+	SourceApp        string
+	VirtualKeyID     string
+	VirtualKeyName   string
+	// VKType classifies the virtual key as "personal" (owned by a
+	// NexusUser, identity.user populated) or "application" (owned by a
+	// Project, identity.project populated, no NexusUser). Drives
+	// EntityType dispatch in recordToMessage so the analytics entity_id
+	// column carries the correct foreign key (user.id vs project.id)
+	// instead of the VK name. Empty when authentication didn't resolve a
+	// VK (raw API key / unknown caller).
+	VKType         string
+	CredentialID   string
+	CredentialName string
+
+	HookDecision   string
+	HookReason     string
+	HookReasonCode string
+
+	// PassthroughFlags is the canonical-order slice of bypass-kind
+	// strings (["bypassHooks", "bypassCache", "bypassNormalize"]) that
+	// fired for this request, sourced from passthrough.Config.Flags().
+	// Empty when no emergency passthrough is active for the routed
+	// primary target's provider.
+	PassthroughFlags []string
+
+	// PassthroughReason is the operator-supplied justification from
+	// the most-specific active passthrough tier. Empty unless
+	// PassthroughFlags is non-empty.
+	PassthroughReason string
+
+	// HookRewritten is true when a request-stage hook produced a Modify
+	// decision and the traffic adapter successfully rewrote the upstream
+	// body from hookResult.ModifiedContent. HookRewriteCount records the
+	// number of content slots the adapter actually overwrote. Both fields
+	// are zero/false for requests that were not rewritten (the majority).
+	// See packages/shared/traffic/Adapter.RewriteRequestBody.
+	HookRewritten    bool
+	HookRewriteCount int
+
+	ResponseHookDecision   string
+	ResponseHookReason     string
+	ResponseHookReasonCode string
+
+	// ResponseHookRewritten is true when a response-stage hook produced Modify
+	// and the gateway rewrote the outbound body (non-streaming) or the first
+	// held-back SSE buffer (streaming). ResponseHookRewriteCount counts
+	// adapter text slots overwritten for buffered responses, or 1 when a
+	// streaming buffer was replaced with a synthetic delta payload.
+	ResponseHookRewritten    bool
+	ResponseHookRewriteCount int
+
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+	// ReasoningTokens counts chain-of-thought / thinking tokens reported
+	// by the provider. int64 (not *int64) — 0 means "upstream did not
+	// report" which is byte-identical to "no reasoning happened" for
+	// billing purposes. The MQ message and DB column use omitempty /
+	// NULL respectively to keep payloads lean.
+	ReasoningTokens  int64
+	EstimatedCostUsd float64
+	// ReasoningCostUsd is the subset of EstimatedCostUsd attributable
+	// to ReasoningTokens (ReasoningTokens × OutputPricePerMillion / 1e6,
+	// since all three frontier providers bill reasoning at the output rate).
+	// Already counted inside EstimatedCostUsd; surfaced separately for the
+	// Cost dashboard's "reasoning ratio" widget. 0 when ReasoningTokens is 0.
+	ReasoningCostUsd float64
+
+	// ComplianceTags is the merged compliance tag set emitted by the hook
+	// pipeline (severity:*, detector:*, category:*, …). Persisted on
+	// traffic_event.compliance_tags (text[]); consumers of the MQ envelope
+	// read it as []string under the complianceTags key.
+	ComplianceTags []string
+
+	ProviderID   string
+	ProviderName string
+
+	ModelID   string
+	ModelName string
+
+	RoutingRuleID      string
+	RoutingRuleName    string
+	RoutedProviderID   string
+	RoutedProviderName string
+	RoutedModelID      string
+	RoutedModelName    string
+
+	// IngressFormat is the wire shape the client used on the request
+	// (`openai`, `anthropic`, `gemini`, ...). Captured at the earliest
+	// point in handler.ServeProxy from `resolved.BodyFormat`. ai-gateway
+	// re-encodes both directions through the codec, so the audit's
+	// RequestBody / ResponseBody always match the ingress format — EXCEPT
+	// when the gateway streams an upstream-native body straight to the
+	// audit log (stream-cache fill, passthrough, Gemini SSE) without
+	// a wire→canonical→wire round-trip. In those cases the bytes on
+	// disk are the upstream adapter's shape, not the ingress shape,
+	// so the response-side normalizer must key on UpstreamAdapterType
+	// instead. See normalizeAdapterType.
+	IngressFormat string
+
+	// UpstreamAdapterType is the routed target's adapter type (the
+	// `Provider.adapter_type` of the upstream actually called —
+	// "openai", "anthropic", "gemini", "moonshot", "deepseek", …).
+	// Stamped by proxy.handleNonStream / handleStreamWithSubscription
+	// when a target is resolved. Empty when the request failed before
+	// routing or before any target was selected.
+	//
+	// Used by normalizeAdapterType to pick the response-side normalizer
+	// for cross-format requests: when a /v1/responses (ingress format
+	// `openai-responses`) request is routed to an Anthropic / Gemini /
+	// Moonshot target, the response bytes on disk are in the target's
+	// shape after streaming captures, and the openai-responses
+	// normalizer would fail to unmarshal them.
+	UpstreamAdapterType string
+
+	// CacheStatus is the UNIFIED cache outcome (HIT | MISS) recorded on
+	// traffic_event.cache_status. Derived at audit-write time from
+	// GatewayCacheStatus + ProviderCacheStatus via DeriveCacheStatus.
+	// Callers that already know the unified value (e.g. ai-guard for its
+	// classify cache) may set this field directly and leave the four
+	// detail fields empty; the audit writer respects a pre-set value.
+	// Empty string is the zero value (cache phase didn't run / request
+	// rejected before Phase 5.5).
+	CacheStatus CacheStatus
+
+	// Four detail columns (drill-down only; never exposed to filter UIs).
+	// See cost-estimation-architecture.md § 6.4 for derivation + rendering.
+	GatewayCacheStatus     GatewayCacheStatus
+	GatewayCacheSkipReason GatewayCacheSkipReason
+	GatewayCacheKind       GatewayCacheKind
+	// GatewayCacheL2EntryKey is the Redis HASH key of the L2 semantic-cache
+	// entry that served this row. Stamped at L2 hit time from
+	// semantic.Entry.EntryKey; empty on extract-cache hits, MISS, SKIPPED,
+	// and on streams that fell back to the broker after a chunk-conversion
+	// error. Format: "<redis_index_name>:<sha256(EmbeddingInput)[:16]>".
+	// Persisted to traffic_event.gateway_cache_l2_entry_key so the audit
+	// drawer's "Mark as bad cache hit" thumbs-down can post the real key
+	// the gateway will check on future FT.SEARCH hits.
+	GatewayCacheL2EntryKey string
+	ProviderCacheStatus    ProviderCacheStatus
+
+	CacheKey string
+
+	// Gateway response cache savings.
+	// Set to estimatedCostUSD(...) on a cache HIT/HIT_LIVE; zero on miss.
+	// EstimatedCostUsd is 0 for these requests (no upstream call was made).
+	GatewayCacheSavingsUsd float64
+
+	// Provider-side prompt cache metrics. All zero when the provider
+	// did not report cache usage or the request did not reach the provider.
+	CacheCreationTokens int64   // tokens written to provider cache (write cost)
+	CacheReadTokens     int64   // tokens served from provider cache (savings)
+	CacheWriteCostUsd   float64 // cost of writing to cache
+	CacheReadSavingsUsd float64 // savings from reading from cache
+	CacheNetSavingsUsd  float64 // = CacheReadSavingsUsd - CacheWriteCostUsd
+
+	// Normaliser audit. Zero when the normaliser did not run.
+	NormalizedStripCount int // number of rule matches that stripped bytes
+	NormalizedStripBytes int // total bytes removed by normaliser
+	CacheMarkerInjected  int // cache_control markers injected by L4
+
+	// APIKeyFingerprint is a SHA256[:8] of the presented virtual key (not the
+	// real provider key) — it attributes spend to the internal caller, not
+	// the upstream account.
+	APIKeyClass           string
+	APIKeyFingerprint     string
+	UsageExtractionStatus string
+
+	// ErrorCode is the structured failure-reason classification populated
+	// by writeDetailedErr (RATE_LIMITED / QUOTA_EXCEEDED / ROUTING_NO_MATCH /
+	// AUTH_INVALID / AUTH_KEY_EXPIRED / etc.). Empty on success and on
+	// upstream-provider-side failures (where ai-gateway did not classify).
+	// Persisted to traffic_event.error_code via recordToMessage.
+	ErrorCode string
+	// ErrorReason is the human-readable failure description (the `message`
+	// arg to writeDetailedError). For ops to skim without looking up the
+	// code dictionary. Persisted to traffic_event.error_reason.
+	ErrorReason string
+
+	RoutingTrace    any
+	RoutingDecision any
+	// HooksPipeline is the per-hook execution trace persisted onto
+	// traffic_event.hooks_pipeline as JSON. Built by the proxy handler
+	// from each pipeline.Execute() result and grown across stages so a
+	// single audit row carries both the request-stage and the response-
+	// stage hook chain. Empty when no hook ran. The aggregate decision
+	// stays on rec.HookDecision / rec.ResponseHookDecision.
+	HooksPipeline   []HookExecRecord
+	QualitySignals  any
+	ComplianceFlags any
+	Metadata        any
+
+	// Latency phase fields. Pointer types so the audit Writer can
+	// distinguish "not measured" (nil → SQL NULL) from "measured zero"
+	// (non-nil 0). Populated by the proxy handler + executor via the
+	// shared/traffic PhaseTimer helper and an httptrace.ClientTrace
+	// wrapping the upstream RoundTrip.
+	//
+	//   UpstreamTtfbMs    — TTFB from the routed provider. Streaming:
+	//                       first SSE chunk arrival.
+	//   UpstreamTotalMs   — Full upstream round-trip (header + body / stream close).
+	//   RequestHooksMs    — Aggregate of per-hook request-side latency,
+	//                       computed from HooksPipeline at recordToMessage time.
+	//   ResponseHooksMs   — Aggregate of per-hook response-side latency.
+	//   LatencyBreakdown  — Long-tail per-source phase durations (ms).
+	//                       For ai-gateway: auth_ms, quota_ms, routing_ms,
+	//                       cache_lookup_ms, req_adapter_ms, resp_adapter_ms.
+	UpstreamTtfbMs   *int
+	UpstreamTotalMs  *int
+	RequestHooksMs   *int
+	ResponseHooksMs  *int
+	LatencyBreakdown map[string]int
+
+	// EmbeddingCostUsd is stamped on every L1 miss that triggered an embedding
+	// call — regardless of whether L2 hit or missed.
+	// EmbeddingModelID identifies the fleet-wide embedding model used for the
+	// embedding call (from semantic_cache_config.embedding_model_id).
+	// Both fields are 0/"" when no embedding call was made (time-sensitive skip,
+	// L2 disabled, oversize, or L1 HIT path).
+	EmbeddingCostUsd float64
+
+	// AIGuardCostUsd is the cost of the ai-guard classifier LLM call (in
+	// USD). Stamped on rows where internal_purpose='ai-guard' (the ai-guard
+	// emits its own row per classify) — the user request's row stays NULL
+	// unless the user request directly invoked an ai-guard hook. Same
+	// numeric(20,10) shape as embedding_cost_usd; same semantics: NULL on
+	// non-ai-guard rows, non-zero on ai-guard rows that ran a classifier.
+	AIGuardCostUsd float64
+	EmbeddingModelID string
+
+	// RequestBody and ResponseBody are optionally captured based on the
+	// runtime payload-capture config (see packages/shared/policy/payloadcapture).
+	// Populated by the proxy handler when the corresponding flag is
+	// enabled. The audit Writer feeds them straight into
+	// spillstore.EmitBody, which routes <= MaxInlineBodyBytes inline
+	// onto traffic_event_payload.inline_*_body and > MaxInlineBodyBytes
+	// to the spill backend with a *_spill_ref. Nil when capture is off.
+	//
+	// RequestTruncated / ResponseTruncated propagate the producer's
+	// "we capped streaming capture at perObjectCap" decision so the
+	// resulting traffic_event_payload row reflects reality. The bytes
+	// forwarded upstream are NOT affected by any of these caps — those
+	// are bounded independently by MaxRequestBytes / MaxResponseBytes.
+	RequestBody       []byte
+	RequestTruncated  bool
+	ResponseBody      []byte
+	ResponseTruncated bool
+
+	// RequestContentType / ResponseContentType travel with the captured
+	// bytes onto traffic_event_payload.{request,response}_content_type.
+	// Empty when not detected; consumers default to inferring from the
+	// body shape (raw JSON vs base64).
+	RequestContentType  string
+	ResponseContentType string
+
+	// InternalPurpose mirrors TrafficEventMessage.InternalPurpose. Set to
+	// "ai-guard" for classify calls issued by internal subsystems so the
+	// admin UI can hide those rows from customer billing views by default.
+	// Empty for customer-facing traffic.
+	InternalPurpose string
+
+	// OriginTZ is the IANA timezone of the owning org at the time of
+	// capture (e.g. "Asia/Shanghai"). The Timestamp field above is
+	// always a UTC instant; OriginTZ records what the local civil
+	// time was at the place the event was generated, so compliance
+	// reports can render in jurisdiction-local time without
+	// ambiguity. Empty when the event has no tenant binding (system
+	// rows).
+	OriginTZ string
+
+	// BlockingRule identifies which pack+version+rule triggered the block.
+	// Marshaled to TrafficEventMessage.BlockingRule (raw JSON) by the
+	// writer and persisted on traffic_event.blocking_rule. Nil for
+	// requests that were not rejected by a rule pack.
+	BlockingRule *rulepack.BlockingRule `json:"blockingRule,omitempty"`
+
+	// TransformSpan + storage policy carried from the compliance pipeline
+	// to recordToMessage. Populated by the proxy handler when a
+	// content-touching hook returned MODIFY (or matched with a storage
+	// policy set). recordToMessage applies the storage policy to the
+	// persisted NormalizedPayload before MQ send.
+	RequestTransformSpans  []normcore.TransformSpan
+	ResponseTransformSpans []normcore.TransformSpan
+	RequestStorageAction   string // "" | "keep" | "redact" | "drop-content"
+	ResponseStorageAction  string
+	// RequestRedactRuleIDs lists the rule IDs that triggered redaction
+	// on the request side. Used to populate the drop-content placeholder
+	// {redacted:true, kind, ruleIds}. Same shape for response.
+	RequestRedactRuleIDs  []string
+	ResponseRedactRuleIDs []string
+}
+
+// ApplyVKMeta populates identity fields from virtual key metadata.
+//
+// Branches on meta.VKType so the entity / identity fields carry the
+// correct foreign key for downstream analytics:
+//
+//   - "personal" VK (owned by a NexusUser): UserID = meta.OwnerID (the
+//     real NexusUser.id, not the VK's name). identity.user is populated.
+//   - "application" VK (owned by a Project): UserID stays empty so the
+//     analytics entity_id column doesn't pretend the caller is a user.
+//     identity.project carries Project.id/name instead.
+//
+// Pre-fix this method set `r.UserID = meta.Name` unconditionally,
+// which overloaded the column: for personal VKs whose name happened to
+// equal the owner's user.id (seed.ts convention) it worked by
+// coincidence, but for application VKs entity_id was a VK-name slug
+// that joined to no NexusUser row. The dispatch above eliminates the
+// coincidence and produces correct foreign keys in both cases.
+func (r *Record) ApplyVKMeta(meta *vkauth.VKMeta) {
+	r.VirtualKeyID = meta.ID
+	r.VirtualKeyName = meta.Name
+	r.VKType = meta.VKType
+	r.OrganizationID = meta.OrganizationID
+	r.OrganizationName = meta.OrganizationName
+	r.ProjectID = meta.ProjectID
+	r.ProjectName = meta.ProjectName
+	r.SourceApp = meta.SourceApp
+	// Personal VKs carry an owning NexusUser; application VKs don't.
+	// Only stamp user fields when the VK is personal so empty entity_id
+	// downstream signals "no user", not "lookup failure".
+	if meta.VKType == "personal" {
+		r.UserID = meta.OwnerID
+		r.UserDisplayName = meta.UserDisplayName
+	}
+	// Stamp the org's IANA timezone so audit/compliance reports
+	// can render in jurisdiction-local time even though the
+	// timestamp column is a UTC instant.
+	r.OriginTZ = meta.OrganizationTimezone
+}
+
+// filterHookStage returns a fresh slice of HookExecRecord rows whose Stage
+// matches one of `stages`. Used by recordToMessage to split the combined
+// rec.HooksPipeline into the dual `request_hooks_pipeline` /
+// `response_hooks_pipeline` columns on the wire.
+func filterHookStage(in []HookExecRecord, stages ...string) []HookExecRecord {
+	if len(in) == 0 || len(stages) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(stages))
+	for _, s := range stages {
+		want[s] = struct{}{}
+	}
+	out := make([]HookExecRecord, 0, len(in))
+	for _, r := range in {
+		if _, ok := want[r.Stage]; ok {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// nilIfEmpty returns nil for an empty string and a pointer to s otherwise.
+// Used by recordToMessage to map zero-value fields to SQL NULL.
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// firstNonNil returns the first non-nil int pointer from the arguments.
+// Used by recordToMessage to prefer an explicit Record field when set and
+// fall back to a derived aggregate otherwise (e.g. RequestHooksMs derived
+// from HooksPipeline if the proxy handler hasn't set it explicitly).
+func firstNonNil(ps ...*int) *int {
+	for _, p := range ps {
+		if p != nil {
+			return p
+		}
+	}
+	return nil
+}
+
+// sumHookLatenciesMs returns the aggregate per-hook latency (ms) for the
+// hook rows whose Stage matches one of `stages`. Returns nil when no hook
+// in the requested stages ran — distinguished from zero so the resulting
+// `request_hooks_ms` / `response_hooks_ms` columns stay NULL for bypass /
+// no-hook requests (P95 queries should not count those as 0ms).
+//
+// Used by recordToMessage to populate the hook-aggregate columns from
+// the existing per-hook latency data already in rec.HooksPipeline.
+func sumHookLatenciesMs(in []HookExecRecord, stages ...string) *int {
+	if len(in) == 0 || len(stages) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(stages))
+	for _, s := range stages {
+		want[s] = struct{}{}
+	}
+	var (
+		total int
+		ran   bool
+	)
+	for _, r := range in {
+		if _, ok := want[r.Stage]; !ok {
+			continue
+		}
+		ran = true
+		if r.LatencyMs > 0 {
+			total += r.LatencyMs
+		}
+	}
+	if !ran {
+		return nil
+	}
+	return &total
+}
+
+// firstNonEmptyStr returns a if non-empty, else b. Used for
+// target_method / target_path stamping to fall back to the request-side
+// value when the gateway didn't set a distinct target (transparent path
+// or no cross-format routing).
+func firstNonEmptyStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}

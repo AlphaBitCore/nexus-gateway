@@ -1,0 +1,80 @@
+.sectionTitle {
+  margin: 0 0 var(--g-space-3);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-4);
+}
+
+.switchRow label {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.footerActions {
+  justify-content: flex-end;
+}
+
+.secretRow {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: stretch;
+}
+
+.secretRow > :first-child {
+  flex: 1;
+}
+
+.headerRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--g-space-2);
+  align-items: center;
+}
+
+.headerRowHeader {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--g-space-2);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding-bottom: 4px;
+}
+
+.headerActionCell {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inlineCode {
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+  background: var(--color-surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+.twoColumn {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--g-space-4);
+}
+
+@media (max-width: 640px) {
+  .twoColumn {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,35 @@
+.justifyEnd {
+  justify-content: flex-end;
+}
+
+.fieldLabel {
+  display: block;
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  margin-bottom: var(--g-space-1);
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  color: var(--color-text-secondary);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.formGridFull {
+  grid-column: span 2;
+}
+
+.helpText {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}

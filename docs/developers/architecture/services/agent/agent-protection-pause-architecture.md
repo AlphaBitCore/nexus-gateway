@@ -1,0 +1,1 @@
+# Agent protection pause architecture

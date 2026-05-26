@@ -1,0 +1,46 @@
+---
+description: Configuration changes (yaml fields, env vars, configKeys, system_metadata) conform to the 4-layer model in configuration-architecture.md
+globs:
+  - "**/*.yaml"
+  - "**/*.yml"
+  - "packages/shared/schemas/configkey/**"
+  - "packages/**/config/**"
+  - "tools/db-migrate/schema.prisma"
+  - "tools/db-migrate/seed/**"
+---
+
+# Configuration changes — 4-layer model (binding)
+
+Any PR that adds / removes / renames a YAML field, env variable, `thing_config_template` configKey, `system_metadata` key, or publisher/receiver wiring MUST conform to the 4-layer model + R1–R5 invariants in `docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md`.
+
+**Read that doc BEFORE editing.**
+
+## What you MUST do
+
+### Adding a new configKey
+
+1. Add the constant to `packages/shared/schemas/configkey/` (constants + `ValidByThingType` + `TypedRegistry`) in the **same PR**.
+2. Update the `configuration-architecture.md` §7 per-key catalog row in the **same PR**.
+3. Wire the publisher / receiver path per the 4-layer model (see §4 of the doc).
+
+### Renaming a YAML field / env var / configKey
+
+1. Run `scripts/check-rename.sh OLD NEW` as the sweep gate — it covers all 14 layers listed in §6.5 of the architecture doc.
+2. Verify the negative grep returns zero: `git grep -E '\bOLD\b'` must be empty before shipping.
+3. Update `.env.example` and the per-key catalog in the same PR.
+
+### Removing a configKey
+
+Hard-delete it (pre-GA policy — see `no-backward-compatibility.mdc`). No `@deprecated`, no parallel paths.
+
+## What you MUST NOT do
+
+- Add a configKey only to the registry and forget the catalog — admins won't see it, runtime won't recognise it.
+- Add a configKey to the catalog only — runtime validation will reject it.
+- Add a field to one of `seed.ts` / `thing_config_template` / `configreconcile` but not the others — invariants drift silently.
+
+## Source of truth
+
+`docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md` (4-layer model + R1–R5 invariants + §6.5 14-layer rename checklist + §7 per-key catalog).
+
+Skipping this rule requires **explicit user approval** in chat.

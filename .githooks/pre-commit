@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Nexus Gateway pre-commit hook.
+#
+# Runs fast guards on the developer's machine to block bad commits before
+# they reach CI. Heavier checks (Vitest, full build, go test -race) stay
+# in CI. Each check is **scoped** — runs only when relevant files are
+# staged — to keep commits fast.
+#
+# Wiring: `npm install` runs the root `prepare` script which sets
+# `git config core.hooksPath .githooks`. No husky / no extra deps.
+#
+# Bypass (use sparingly, requires explicit user authorization): `git commit
+# --no-verify`. Per CLAUDE.md, agents must NOT pass --no-verify without an
+# explicit user waiver in chat.
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+staged="$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)"
+
+FAILED=0
+
+run_hard() {
+  # run_hard <label> <command...> — failure blocks commit.
+  local label=$1
+  shift
+  if ! "$@" >/dev/null 2>&1; then
+    echo ""
+    echo "✗ ${label} FAILED — blocking commit."
+    echo "  Reproduce: $*"
+    FAILED=1
+  else
+    echo "[pre-commit] ${label} ✓"
+  fi
+}
+
+run_soft() {
+  # run_soft <label> <command...> — failure prints a warning but does NOT block.
+  local label=$1
+  shift
+  local out
+  out="$("$@" 2>&1)" || true
+  if echo "$out" | grep -qE 'WARN|FAILED'; then
+    echo ""
+    echo "⚠ ${label} surfaced warnings:"
+    echo "$out" | sed 's/^/    /'
+    echo "  (warnings only; commit allowed. Fix in a follow-up PR.)"
+  else
+    echo "[pre-commit] ${label} ✓"
+  fi
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# HARD guards — failure blocks commit.
+# ──────────────────────────────────────────────────────────────────────
+
+# 1. Migration timestamp uniqueness (binding; 2026-05-14 16h audit-gap incident).
+if echo "$staged" | grep -qE '^tools/db-migrate/prisma/migrations/'; then
+  run_hard "migration timestamps unique" bash scripts/check-migration-timestamps.sh
+fi
+
+# 2. Arch-doc trigger-map lockstep (binding; every -architecture.md must be in the map).
+if echo "$staged" | grep -qE '^docs/developers/architecture/.*-architecture\.md|^docs/developers/architecture/README\.md|^docs/developers/architecture/core/thing-model\.md|^docs/developers/architecture/observability/admin-audit-log-coverage\.md'; then
+  run_hard "arch-doc-triggers lockstep" node scripts/check-arch-doc-triggers.mjs
+fi
+
+# 3. IoT terminology guard (binding; product surfaces must not leak Thing/Shadow/etc.).
+if echo "$staged" | grep -qE '^docs/users/product/|^packages/control-plane-ui/'; then
+  run_hard "IoT terminology guard" bash scripts/check-terminology.sh
+fi
+
+# 4. Design tokens (binding; only when UI files staged — scoped to staged files).
+if echo "$staged" | grep -qE '\.(tsx|module\.css|css)$|^scripts/check-design-tokens\.mjs$|^packages/ui-shared/src/styles/'; then
+  echo "[pre-commit] design-token compliance check…"
+  if ! echo "$staged" | node scripts/check-design-tokens.mjs --files=- >/dev/null 2>&1; then
+    echo ""
+    echo "✗ design-token guard failed on STAGED files."
+    echo "  Run \`echo \"\$(git diff --cached --name-only)\" | node scripts/check-design-tokens.mjs --files=-\` to see the report."
+    echo "  See CLAUDE.md → Conventions → \"Design-token strict\" for the binding."
+    FAILED=1
+  else
+    echo "[pre-commit] design-token compliance ✓"
+  fi
+fi
+
+# 5. JSON dup-key guard (locale files).
+if echo "$staged" | grep -qE '\.json$'; then
+  run_hard "JSON dup-key" node scripts/check-json-dupkeys.mjs
+fi
+
+# 6. i18n parity (only when locale files staged).
+if echo "$staged" | grep -qE '/locales/'; then
+  run_hard "i18n parity" node scripts/check-i18n-parity.mjs
+fi
+
+# 7. Workspace-replace contract (binding; protects sibling Go modules from
+# `go mod tidy` regressing v0.0.0 back to a real pseudo-version, which
+# under Go 1.25 silently pulls stale snapshots from GitHub).
+if echo "$staged" | grep -qE '^packages/[^/]+/(go\.mod|go\.sum)$'; then
+  run_hard "workspace-replace contract" node scripts/check-workspace-replace.mjs
+fi
+
+# 8. Jobs catalogue lockstep (binding; every JobID const in nexus-hub/jobs
+# must have a row in jobs-architecture.md §5. Prevents the 14→40 catalogue
+# drift surfaced by the 2026-05-16 open-source readiness review).
+if echo "$staged" | grep -qE '^packages/nexus-hub/internal/jobs/|^docs/developers/architecture/cross-cutting/foundation/jobs-architecture\.md$|^scripts/check-jobs-catalogue\.sh$'; then
+  run_hard "jobs-catalogue lockstep" bash scripts/check-jobs-catalogue.sh
+fi
+
+# 9. Unit test coverage ≥95% per Go package (binding; CLAUDE.md → Mandatory
+# rules). Scoped to packages with staged Go files. Allowlist:
+# scripts/.coverage-allowlist (entries require user approval + category).
+if echo "$staged" | grep -qE '\.go$'; then
+  run_hard "go coverage ≥95%" bash scripts/check-go-coverage.sh --staged
+fi
+
+# 10. Theme pack completeness (binding; new theme JSON must cover the
+# REQUIRED_THEME_TOKENS contract in both light + dark — otherwise the
+# previous theme's tokens silently bleed through customer screens).
+if echo "$staged" | grep -qE '/public/themes/.*\.json$|^packages/ui-shared/src/theme/completeness\.ts$|^packages/ui-shared/src/styles/light\.css$'; then
+  run_hard "theme completeness" node scripts/check-theme-completeness.mjs
+fi
+
+# 11. Hardcoded brand strings (binding; product name must reach UI via
+# theme.brand.productName, not as a baked-in 'Nexus Gateway' literal —
+# otherwise customer themes only partially rebrand).
+if echo "$staged" | grep -qE '^packages/(control-plane-ui|agent/ui/frontend|ui-shared)/src/.*\.(tsx|ts|json)$'; then
+  run_hard "brand-string guard" node scripts/check-brand-strings.mjs
+fi
+
+# 12. Effect token wiring (binding; every --g-effect-* in global.css must
+# have ≥1 consumer, and every var(--g-effect-*) reference must point at a
+# defined token — prevents dead theme-personality knobs and typos).
+if echo "$staged" | grep -qE '^packages/ui-shared/src/styles/global\.css$|\.module\.css$|^packages/.*/src/.*\.(tsx|css)$'; then
+  run_hard "effect-token wiring" node scripts/check-effect-tokens.mjs
+fi
+
+# 13. No placeholder markers in production Go (binding; CLAUDE.md → Mandatory
+# rules → "Real implementation only"). Scoped to staged Go files.
+if echo "$staged" | grep -qE '\.go$'; then
+  run_hard "no prod-code TODOs" node scripts/check-no-prod-todos.mjs --staged --strict
+fi
+
+# 14. No inline secrets in committed yaml (binding; CLAUDE.md → Mandatory
+# rules → "Secrets are env-only"). Scoped to staged yaml.
+if echo "$staged" | grep -qE '\.(ya?ml(\.example)?)$'; then
+  run_hard "no yaml secrets" node scripts/check-no-yaml-secrets.mjs --staged --strict
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# SOFT warnings — surface but do NOT block (existing prod has known violations).
+# ──────────────────────────────────────────────────────────────────────
+
+# useApi queryKey shape (binding; was warn-only, ratcheted to HARD on 2026-05-20
+# once known violations were fixed and CI strict mode is now zero-hit).
+if echo "$staged" | grep -qE '^packages/control-plane-ui/src/.*\.(tsx|ts)$'; then
+  run_hard "useApi queryKey" node scripts/check-useapi-querykey.mjs --strict
+fi
+
+# No-Redis-pubsub (binding; was warn-only, ratcheted to HARD on 2026-05-20
+# once the Hub WebSocket migration cleared the last legacy callers).
+if echo "$staged" | grep -qE '\.go$'; then
+  run_hard "no Redis pub/sub" node scripts/check-no-redis-pubsub.mjs --strict
+fi
+
+# 9. ui-shared boundary (warn; only when ui-shared staged).
+if echo "$staged" | grep -qE '^packages/ui-shared/'; then
+  run_soft "ui-shared boundary" node scripts/check-ui-shared-boundary.mjs
+fi
+
+# 10. Sidebar icon mapping (warn; 14 known dead arms).
+if echo "$staged" | grep -qE '^packages/control-plane-ui/src/(routes/shellRouteConfig|components/ui/Sidebar/)'; then
+  run_soft "Sidebar icon mapping" node scripts/check-sidebar-icon-mapping.mjs
+fi
+
+# 11. Hardcoded agent paths (warn; 2 known violations in trayipc/client.go).
+if echo "$staged" | grep -qE '^packages/agent/internal/.*\.go$'; then
+  run_soft "hardcoded agent paths" node scripts/check-hardcoded-agent-paths.mjs
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+
+if [ "$FAILED" -ne 0 ]; then
+  echo ""
+  echo "Pre-commit failed. Fix the issues above or, with user approval, use \`git commit --no-verify\`."
+  exit 1
+fi
+
+exit 0

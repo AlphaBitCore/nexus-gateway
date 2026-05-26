@@ -1,0 +1,83 @@
+# scripts/check-rename.manifest.tsv
+#
+# Tab-separated manifest of every rename committed in the 2026-05-20
+# configuration refactor (see docs/developers/architecture/configuration-
+# architecture.md §6 "Renames executed in this migration").
+#
+# Format: <OLD><TAB><NEW>   (real tab character, not spaces)
+#   - lines starting with # are comments
+#   - blank lines are skipped
+#   - "(deleted)" as NEW means OLD has no replacement (delete-only rename)
+#
+# Used by scripts/check-rename.sh --plan to verify every rename has
+# been fully swept across all 14 layers (Go, tests, yaml, env, SQL, UI,
+# i18n, prod EnvironmentFile, prod DB rows, docs, skills, rules, test
+# fixtures).
+#
+# Maintainer rule: when adding a rename to the migration, append a line
+# here in the SAME PR. Reviewers must reject the PR if the rename does
+# not appear in this manifest AND/OR `scripts/check-rename.sh --plan`
+# reports leftover references after the PR's sweep.
+#
+# CAVEATS — script limitations the operator must handle manually:
+#   1. Word-boundary fixed-string matching: short names like `PORT` will
+#      produce many false positives (e.g. inside `serverPort`, `support`).
+#      The operator must review each L1-L14 hit by hand for these.
+#   2. Multi-line yaml renames (e.g. `audit.database.dsn → database.url`
+#      where the path spans nested keys) cannot be detected by a single-
+#      line grep. Manually verify the yaml restructure for these.
+#   3. UI i18n keys may legitimately mention old configKey names inside
+#      translation values (e.g. "Cache Config" might be a label). Review
+#      L8 hits to distinguish "key references the old name" (must fix)
+#      vs "translation value happens to contain the word" (acceptable).
+
+# ─── configKey renames (L4 template layer) ────────────────────────────────
+aiguard_config	ai_guard
+cache_config	cache
+hook_config	hooks
+gateway_passthrough_config	gateway_passthrough
+active_exemptions	exemptions
+agentUpdateTarget	agent_update_target
+siem.config	siem
+streaming_compliance.config	streaming_compliance
+payload_capture.config	payload_capture
+gateway.credential_reliability.config	credential_reliability
+
+# ─── yaml renames (L2 layer) ──────────────────────────────────────────────
+# top-level key changes
+logging	log
+# leaf field renames inside nested yaml — script reports best-effort matches;
+# manually verify the surrounding nested structure was also moved
+redis.address	redis.addrs
+audit.database.dsn	database.url
+readTimeoutSec	readTimeout
+writeTimeoutSec	writeTimeout
+maxOpenConns	maxConns
+maxIdleConns	minConns
+connMaxLifetime	maxConnLifetime
+bff.nexusHubUrl	registry.nexusHubUrl
+auth.cpURL	authServer.url
+auth.cpJWKSURL	authServer.jwksURL
+auth.cpIssuer	authServer.issuer
+# delete-only renames
+bootstrapKey	(deleted)
+
+# ─── env renames (L3 layer) ───────────────────────────────────────────────
+CONTROL_PLANE_URL	NEXUS_HUB_URL
+PORT	CONTROL_PLANE_PORT
+NEXUS_HUB_CP_URL	AUTH_SERVER_URL
+NEXUS_HUB_CP_JWKS_URL	AUTH_SERVER_JWKS_URL
+NEXUS_HUB_CP_ISSUER	AUTH_SERVER_ISSUER
+NEXUS_HUB_AGENTCA_DIR	AGENT_CA_DIR
+NEXUS_HUB_AGENTCA_CERT_FILE	AGENT_CA_CERT_FILE
+NEXUS_HUB_AGENTCA_KEY_FILE	AGENT_CA_KEY_FILE
+CACHE_ENABLED	AI_GATEWAY_CACHE_ENABLED
+CACHE_TTL	AI_GATEWAY_CACHE_TTL
+CACHE_PREFIX	AI_GATEWAY_CACHE_PREFIX
+CORS_ENABLED	AI_GATEWAY_CORS_ENABLED
+CORS_ALLOWED_ORIGINS	AI_GATEWAY_CORS_ALLOWED_ORIGINS
+CRYPTO_PRODUCTION	CONTROL_PLANE_CRYPTO_PRODUCTION
+AI_GATEWAY_BASE_URL	AI_GATEWAY_URL
+# delete-only env renames (replaced by Redis universal schema in PR-3)
+REDIS_URL	(deleted)
+REDIS_ADDR	(deleted)

@@ -1,0 +1,85 @@
+/* Shared page-level utility classes used by Activity / Settings /
+ * Identity / Diagnostics. Extracting these inline styles (we said
+ * "avoid inline styles" in the Phase 2 review) keeps the JSX clean and
+ * gives a single place to tweak design tokens.
+ *
+ * Naming convention:
+ *   .cellLabel    — label column in 2-col definition tables (180px)
+ *   .cellValue    — value column in 2-col definition tables (mono)
+ *   .mutedSmall   — secondary text (muted color + small font)
+ *   .row          — horizontal flex, default gap
+ *   .rowJustified — horizontal flex, space-between, vertical-center
+ *   .gridCols4    — 4-column grid for buttons / cards
+ *   .formInput    — text input / search box
+ *   .formSelect   — dropdown
+ *   .logTail      — the diagnostics log <pre> block
+ *   .warnIcon     — yellow warning glyph
+ */
+
+.cellLabel {
+  color: var(--color-text-muted);
+  width: 180px;
+}
+
+.cellValue {
+  font-family: var(--g-font-mono);
+}
+
+.mutedSmall {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
+.row {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+}
+
+.rowJustified {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--g-space-3);
+}
+
+.gridCols4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--g-space-2);
+  max-width: 720px;
+}
+
+.formInput,
+.formSelect {
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-sm);
+}
+
+.formInput {
+  flex: 1;
+}
+
+.logTail {
+  background: var(--color-bg-subtle);
+  padding: var(--g-space-3);
+  border-radius: var(--g-radius-sm);
+  font-size: var(--g-font-size-xs);
+  font-family: var(--g-font-mono);
+  max-height: 480px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.warnIcon {
+  margin-left: var(--g-space-2);
+  color: var(--color-status-warning);
+}
+
+.h2 {
+  font-size: var(--g-font-size-lg);
+  font-weight: 600;
+  margin: 0 0 var(--g-space-2) 0;
+}

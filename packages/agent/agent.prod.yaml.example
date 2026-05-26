@@ -1,0 +1,56 @@
+# Production config for nexus-agent.
+# Deploy: nexus-agent run -config /Library/Application Support/com.nexus-gateway.agent/agent.yaml
+# Enroll first: nexus-agent enroll --hub-url https://hub.example.com --token <token>
+#
+# Filesystem paths (cert files, audit DB, log file) intentionally left
+# blank — applyDefaults() in internal/config/config.go fills them in
+# from platform.DefaultPaths(), which returns OS-idiomatic locations:
+#   macOS   → /Library/Application Support/com.nexus-gateway.agent/
+#             /Library/Logs/com.nexus-gateway.agent/
+#   Linux   → /var/lib/nexus-agent/, /var/log/nexus-agent/
+#   Windows → %ProgramData%\NexusAgent\
+
+log:
+  level: "info"
+  format: "json"
+  stackOnError: true
+
+# Hub WebSocket endpoint — agents connect from external networks
+hubURL: "wss://hub.example.com/ws"
+hubHTTPURL: "https://hub.example.com"
+
+# Control Plane base URL. Pinned out-of-band rather than relying on
+# Hub's /api/public/agent-bootstrap auto-discovery so SSO sign-in
+# works even before the Hub deployment catches up with that
+# endpoint. The CP is what serves the OAuth callback URL the
+# agent's browser-based enrollment flow redirects to, and what
+# returns the enrollment JWT.
+cpURL: "https://nexus.example.com"
+
+platformBridgeAddress: "127.0.0.1:19080"
+
+heartbeatIntervalSec: 60
+auditDrainIntervalSec: 30
+auditBatchSize: 200
+auditRetentionDays: 30
+configRefreshSec: 300
+
+defaultAction: "passthrough"
+policyRules: []
+
+updaterEnabled: true
+updaterCheckSec: 3600
+
+quitAllowed: false
+
+exemptionEnabled: true
+exemptionFailureThreshold: 3
+exemptionWindowSec: 3600
+exemptionDurationSec: 86400
+exemptionAllowlist: []
+exemptionDenylist: []
+
+otelEnabled: false
+otelEndpoint: ""
+otelServiceName: "nexus-agent"
+otelSamplingRate: 0.1

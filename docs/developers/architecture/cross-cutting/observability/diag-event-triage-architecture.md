@@ -1,0 +1,1 @@
+# Diag event triage architecture

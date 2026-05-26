@@ -1,0 +1,24 @@
+.subtitle {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.helpText {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.testResultOk {
+  background: var(--color-success-bg);
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.testResultError {
+  background: var(--color-danger-bg);
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}

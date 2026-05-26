@@ -1,0 +1,70 @@
+openapi: 3.1.0
+info:
+  title: Admin Traffic — cache_status migration (E31-S1, SUPERSEDED by E59-S1)
+  version: 1.0.0
+  description: |
+    **SUPERSEDED by `e59-s1-cache-ui-fields.yaml`** (state-model expansion
+    2026-05-19). The 5-value `cacheStatus` enum in this spec was further
+    extended by intermediate work and finally collapsed in E59-S1 to a
+    2-value unified enum (`HIT | MISS`) with 4 new detail columns for
+    drill-down. See e59-s1 for the current contract.
+
+    --- Original description (historical) ---
+
+    Replaces the boolean `cacheHit` query parameter and response field on
+    `GET /api/admin/traffic` with the 5-state string `cacheStatus`. Pre-GA
+    cut: the old `cacheHit` parameter is silently ignored after this
+    change (no compat shim).
+
+paths:
+  /api/admin/traffic:
+    get:
+      summary: List traffic events
+      description: |
+        Returns paginated traffic_event rows. Only the cache-related
+        parameter and response field are documented here; all other
+        filters are unchanged from the previous shape.
+      parameters:
+        - in: query
+          name: cacheStatus
+          description: |
+            Filter rows by exact match on `traffic_event.cache_status`.
+            Empty / unknown values silently drop the filter (no SQL
+            error, no empty result set).
+          required: false
+          schema:
+            type: string
+            enum: [HIT, MISS, DISABLED, SKIP_STREAM, SKIP_NO_CACHE]
+      responses:
+        '200':
+          description: Paginated list with cacheStatus on each row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrafficEventCacheFields'
+
+components:
+  schemas:
+    TrafficEventCacheFields:
+      type: object
+      description: |
+        Subset of TrafficEvent showing only the fields changed by E31-S1.
+        Other fields are unchanged.
+      properties:
+        cacheStatus:
+          type: string
+          nullable: true
+          enum: [HIT, MISS, DISABLED, SKIP_STREAM, SKIP_NO_CACHE, null]
+          description: |
+            Per-row cache outcome.
+              - **HIT**: served from Redis response cache.
+              - **MISS**: cache key built but not present; upstream call ran.
+              - **DISABLED**: ai-gateway `cache.enabled: false` (or no cache module).
+              - **SKIP_STREAM**: streaming response — cache not consulted.
+              - **SKIP_NO_CACHE**: client sent `X-Nexus-No-Cache` header.
+              - `null`: cache phase did not run (request rejected before Phase 5.5).

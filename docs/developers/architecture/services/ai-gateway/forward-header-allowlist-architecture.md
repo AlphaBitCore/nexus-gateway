@@ -1,0 +1,1 @@
+# Forward header allowlist architecture

@@ -1,0 +1,159 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay-strong);
+  opacity: 0;
+  transition: opacity 240ms ease;
+  z-index: 99;
+  pointer-events: none;
+}
+
+.overlayVisible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(640px, 100vw);
+  background: var(--color-bg);
+  box-shadow: -2px 0 8px var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 240ms ease;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.drawerVisible {
+  transform: translateX(0);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 1.125rem;
+  word-break: break-word;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 0.25rem;
+  line-height: 1;
+}
+
+.closeBtn:hover {
+  color: var(--color-text-primary);
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.chipRow {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.message {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+.metaRow {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.metaLabel {
+  font-weight: 600;
+  min-width: 140px;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.metaValue {
+  font-size: 0.875rem;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.sectionHeading {
+  margin: 1rem 0 0 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.detailsBlock {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-family: var(--g-font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  margin: 0;
+  overflow-x: auto;
+  max-height: 280px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dispatchTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.dispatchTable th,
+.dispatchTable td {
+  padding: 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.dispatchTable th {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.errorCell {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noData {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 1rem;
+}
+
+.errorText {
+  color: var(--color-danger);
+  font-size: 0.875rem;
+}

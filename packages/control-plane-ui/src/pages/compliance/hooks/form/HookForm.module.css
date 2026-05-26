@@ -1,0 +1,115 @@
+.pageWrap {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-xl);
+  box-shadow: var(--shadow-sm);
+  padding: 24px;
+  margin-bottom: var(--g-space-6);
+}
+
+.sectionCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-4);
+  margin-bottom: var(--g-space-3);
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: var(--g-space-3);
+}
+
+.monoTextarea {
+  width: 100%;
+  padding: var(--g-space-2) var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  font-family: monospace;
+  resize: vertical;
+  min-height: 120px;
+}
+
+.classificationBox {
+  margin-bottom: var(--g-space-3);
+  padding: var(--g-space-2) var(--g-space-3);
+  background: var(--color-muted);
+  border-radius: var(--g-radius-md);
+  font-size: var(--g-font-size-sm);
+  border: 1px solid var(--color-border);
+}
+
+.classificationTitle {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.classificationNote {
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+.hintText {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: -8px;
+  margin-bottom: var(--g-space-3);
+}
+
+.configEditorRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.footerActions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: var(--g-space-6);
+}
+
+.enabledRow {
+  align-items: center;
+}
+
+.enabledLabel {
+  font-weight: 500;
+  font-size: var(--g-font-size-sm);
+}
+
+.helpButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.registryError {
+  color: var(--color-danger);
+  font-size: var(--g-font-size-sm);
+}
+
+.noImplementations {
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.configRow {
+  align-items: center;
+  margin-top: var(--g-space-2);
+  margin-bottom: var(--g-space-2);
+}
+
+.categorySourceHint {
+  color: var(--color-text-muted);
+  margin-left: 8px;
+}
+
+.sectionTitleNoMargin {
+  composes: sectionTitle;
+  margin-top: 0;
+}

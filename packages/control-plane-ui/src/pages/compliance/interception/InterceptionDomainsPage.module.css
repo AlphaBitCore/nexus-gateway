@@ -1,0 +1,60 @@
+.filterSelect {
+  height: 36px;
+  padding: 0 var(--g-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
+  cursor: pointer;
+}
+
+.filterSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.noteBanner {
+  display: flex;
+  gap: var(--g-space-2);
+  padding: var(--g-space-3) var(--g-space-4);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  line-height: 1.5;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--g-space-3);
+}
+
+.summaryItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.summaryLabel {
+  font-size: var(--g-font-size-xs);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.summaryValue {
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.codeCell {
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-sm);
+}

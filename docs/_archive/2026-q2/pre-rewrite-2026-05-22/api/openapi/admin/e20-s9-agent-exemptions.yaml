@@ -1,0 +1,148 @@
+openapi: 3.1.0
+info:
+  title: E20-S9 Agent exemptions (Control Plane admin)
+  version: 1.0.0
+  description: >
+    Admin APIs under `/api/admin/agent-exemptions` for TLS bump exemption requests.
+    Creates are always `pending` until `approve` or `reject`.
+
+paths:
+  /api/admin/agent-exemptions:
+    get:
+      summary: List agent exemptions
+      parameters:
+        - name: source
+          in: query
+          schema: { type: string, enum: [AUTO, ADMIN] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, rejected] }
+        - name: host
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Paged list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentExemption' }
+                  total: { type: integer }
+    post:
+      summary: Submit a new exemption request (pending)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAgentExemptionRequest' }
+      responses:
+        '201':
+          description: Created pending exemption
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentExemption' }
+
+  /api/admin/agent-exemptions/{id}:
+    get:
+      summary: Get exemption by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentExemption' }
+        '404':
+          description: Not found
+
+    delete:
+      summary: Delete exemption
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Deleted
+
+  /api/admin/agent-exemptions/{id}/approve:
+    post:
+      summary: Approve a pending exemption
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentExemption' }
+        '404': { description: Not found }
+        '409':
+          description: Row is not pending
+
+  /api/admin/agent-exemptions/{id}/reject:
+    post:
+      summary: Reject a pending exemption
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentExemption' }
+        '404': { description: Not found }
+        '409':
+          description: Row is not pending
+
+components:
+  schemas:
+    AgentExemption:
+      type: object
+      required:
+        [id, host, reason, source, status, scope, denylist, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        host: { type: string }
+        reason: { type: string }
+        source: { type: string, enum: [AUTO, ADMIN] }
+        status: { type: string, enum: [pending, approved, rejected] }
+        scope: { type: string, enum: [global, device, group] }
+        deviceId: { type: [string, 'null'] }
+        groupId: { type: [string, 'null'] }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        denylist: { type: boolean }
+        createdBy: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateAgentExemptionRequest:
+      type: object
+      required: [host, reason]
+      properties:
+        host: { type: string }
+        reason: { type: string }
+        scope: { type: string, enum: [global, device, group], default: global }
+        deviceId: { type: string }
+        groupId: { type: string }
+        durationSec: { type: integer, minimum: 0 }
+        denylist: { type: boolean }
