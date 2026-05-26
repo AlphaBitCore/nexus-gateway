@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@nexus-gateway/ui-shared": "*",
-    "@tanstack/react-query": "^5.100.11",
+    "@tanstack/react-query": "^5.100.14",
     "clsx": "^2.1.1",
     "i18next": "^26.2.0",
     "react": "^19.2.6",
