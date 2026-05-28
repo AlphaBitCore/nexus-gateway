@@ -173,15 +173,15 @@ func TestS001_HelloWorld_FreshVK(t *testing.T) {
 		t.Fatalf("ScrapeMetrics ai-gw post: %v", err)
 	}
 	normDelta := helpers.Delta(preMetrics, postMetrics,
-		"nexus_ai_gateway_normalize_total", nil)
+		"nexus_normalize_total", nil)
 	if normDelta < 1 {
 		// Counter labels may vary by adapter; fall back to a sum across
 		// any label combination on the same name.
-		normDelta = postMetrics.CounterSum("nexus_ai_gateway_normalize_total", nil) -
-			preMetrics.CounterSum("nexus_ai_gateway_normalize_total", nil)
+		normDelta = postMetrics.CounterSum("nexus_normalize_total", nil) -
+			preMetrics.CounterSum("nexus_normalize_total", nil)
 	}
 	if normDelta < 1 {
-		t.Errorf("nexus_ai_gateway_normalize_total delta=%g (want ≥ 1) — chat did not exercise gateway normalize path", normDelta)
+		t.Errorf("nexus_normalize_total delta=%g (want ≥ 1) — chat did not exercise gateway normalize path", normDelta)
 	}
 
 	t.Logf("S-001 OK: HTTP 200, %d tokens, traffic_event=%s, audit=%s, normalize_delta=%.0f",

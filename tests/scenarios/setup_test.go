@@ -22,9 +22,12 @@ func TestMain(m *testing.M) {
 		_, _ = os.Stderr.WriteString("scenario harness: cannot load tests/.env.<target>: " + err.Error() + "\n")
 		os.Exit(1)
 	}
-	// Fail-closed env validation BEFORE any test body runs. Exits the
-	// process on any localhost-allowlist violation.
-	helpers.MustBeLocalTarget(env)
+	// Fail-closed env validation BEFORE any test body runs. Exits the process
+	// on any localhost-allowlist violation. The prod variant allows a curated
+	// read-only / own-object-lifecycle subset against prod ONLY when
+	// NEXUS_PROD_SAFE_E2E=1 is set, with shared-state mutations hard-blocked at
+	// the CPDoJSON choke point (see helpers/safety.go GuardProdSafeE2E).
+	helpers.MustBeLocalOrProdSafeE2E(env)
 	// Block until the local dev environment is ready. Loops every 60 s
 	// forever — the user explicitly authorized this pattern so a slow
 	// `./scripts/dev-start.sh` (parallel build, Docker boot) doesn't

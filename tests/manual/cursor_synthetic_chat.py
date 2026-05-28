@@ -27,13 +27,15 @@ Usage:
 
 By default: --insecure (skip TLS verify; the Nexus CA may not be
 trusted by Python's certifi bundle even when system trust accepts it),
-proxy=compliance.nexus.ai:3128, target=https://api2.cursor.sh/aiserver.v1.AiService/StreamUnifiedChatWithTools.
+proxy=localhost:3128 (override with --proxy or NEXUS_COMPLIANCE_PROXY_ADDR),
+target=https://api2.cursor.sh/aiserver.v1.AiService/StreamUnifiedChatWithTools.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import ssl
 import struct
 import sys
@@ -177,7 +179,7 @@ def post_via_proxy(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
-    ap.add_argument("--proxy", default="compliance.nexus.ai:3128")
+    ap.add_argument("--proxy", default=os.environ.get("NEXUS_COMPLIANCE_PROXY_ADDR", "localhost:3128"))
     ap.add_argument(
         "--target",
         default="https://api2.cursor.sh/aiserver.v1.AiService/StreamUnifiedChatWithTools",
@@ -265,7 +267,7 @@ def main() -> int:
     print("─" * 72)
     print(
         f"""
-  1. Go to  https://cp.nexus.ai/traffic
+  1. Go to  the Control Plane Traffic page (https://cp.<your-domain>/traffic)
      Filter: target_host = api2.cursor.sh:443
              (or grep by trace id {headers['X-Nexus-Request-Id']!r})
 

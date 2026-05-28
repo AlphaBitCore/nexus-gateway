@@ -31,7 +31,7 @@ import (
 //   4. Chat with the rule's VK → routing engine resolves the single
 //      target, stamps routing_rule_id on traffic_event.
 //   5. AdminAuditLog 'create' row appears with entityId=rule.ID.
-//   6. nexus_ai_gateway_normalize_total delta ≥ 1 across the chat call.
+//   6. nexus_normalize_total delta ≥ 1 across the chat call.
 //
 // Hermetic via matchConditions.virtualKeys=[vkName] (VK.Name glob).
 func TestS010_SingleStrategy(t *testing.T) {
@@ -158,8 +158,8 @@ func TestS010_SingleStrategy(t *testing.T) {
 	}
 	// Metric delta — chat must have left a counter trace.
 	postMetrics, _ := helpers.ScrapeMetrics(ctx, sc.Env.AIGwURL)
-	normDelta := postMetrics.CounterSum("nexus_ai_gateway_normalize_total", nil) -
-		preMetrics.CounterSum("nexus_ai_gateway_normalize_total", nil)
+	normDelta := postMetrics.CounterSum("nexus_normalize_total", nil) -
+		preMetrics.CounterSum("nexus_normalize_total", nil)
 	if normDelta < 1 {
 		t.Errorf("normalize_total delta=%g (want ≥ 1) — chat did not exercise gateway", normDelta)
 	}

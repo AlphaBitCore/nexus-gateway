@@ -50,7 +50,7 @@ import (
 // Cross-service path: AI Gw codec (openai/responses) → adapter →
 // upstream → response normalizer → MQ → DB (traffic_event with
 // path='/v1/responses'). Prometheus counter
-// nexus_ai_gateway_normalize_total{adapter="openai-responses",
+// nexus_normalize_total{adapter="openai-responses",
 // direction="request"} must grow by ≥ 2 across the three arms (Arms
 // A + B are guaranteed; Arm C is optional because the S6 stateless
 // guard may short-circuit before the normalize counter increments —
@@ -201,7 +201,7 @@ func TestS062_ResponsesAPI_NonStreamAndError(t *testing.T) {
 	// ------------------------------------------------------------------
 	// Metric delta — ≥ 3 requests counted across the three arms.
 	// The real per-request counter on this build is
-	// nexus_ai_gateway_normalize_total labelled by
+	// nexus_normalize_total labelled by
 	// adapter="openai-responses", direction="request". Arm C is
 	// rejected by the S6 stateless guard at the ingress codec, but
 	// the ingress increments the normalize counter on the way in
@@ -214,10 +214,10 @@ func TestS062_ResponsesAPI_NonStreamAndError(t *testing.T) {
 		t.Fatalf("ScrapeMetrics post: %v", err)
 	}
 	respReqDelta := postMetrics.CounterSum(
-		"nexus_ai_gateway_normalize_total",
+		"nexus_normalize_total",
 		map[string]string{"adapter": "openai-responses", "direction": "request"},
 	) - preMetrics.CounterSum(
-		"nexus_ai_gateway_normalize_total",
+		"nexus_normalize_total",
 		map[string]string{"adapter": "openai-responses", "direction": "request"},
 	)
 	if respReqDelta < 2 {
@@ -227,7 +227,7 @@ func TestS062_ResponsesAPI_NonStreamAndError(t *testing.T) {
 		// counter increment; we don't bind the test to that internal
 		// ordering. < 2 means the ingress codec never registered the
 		// successful arms.
-		t.Errorf("nexus_ai_gateway_normalize_total{adapter=openai-responses,direction=request} delta=%.0f, want ≥ 2 across arms A+B (Arm C optional) — Responses ingress counter did not advance",
+		t.Errorf("nexus_normalize_total{adapter=openai-responses,direction=request} delta=%.0f, want ≥ 2 across arms A+B (Arm C optional) — Responses ingress counter did not advance",
 			respReqDelta)
 	}
 

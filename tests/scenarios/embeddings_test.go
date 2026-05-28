@@ -9,9 +9,9 @@
 // the openai-embeddings adapter unconditionally — a 400 from arm A
 // is a regression in routing, codec, or seed, never an "env not
 // ready" state. The metric-delta assertion now binds the
-// `nexus_ai_gateway_normalize_total` counter directly (the real metric
+// `nexus_normalize_total` counter directly (the real metric
 // name on this build; see live /metrics probe) instead of the absent
-// nexus_aigw_requests_total.
+// nexus_requests_total.
 package scenarios_test
 
 import (
@@ -60,7 +60,7 @@ import (
 //     data[i].index == i in order.
 //  4. Per-arm: traffic_event row with path='/v1/embeddings'
 //     appears within 30 s (poll 5 × 6 s).
-//  5. Metric delta: nexus_aigw_requests_total{endpoint="embeddings"}
+//  5. Metric delta: nexus_requests_total{endpoint="embeddings"}
 //     grew by ≥ 3 across the three arms (or overall delta ≥ 3 if the
 //     label selector returns nothing — defensive against label-name
 //     drift).
@@ -228,7 +228,7 @@ func TestS063_EmbeddingsHappyPath(t *testing.T) {
 	pollTrafficEvent("C")
 
 	// ----- Hard assertion: metric advanced -----
-	// nexus_ai_gateway_normalize_total{adapter="openai-embeddings",
+	// nexus_normalize_total{adapter="openai-embeddings",
 	// direction="request"} must increment by ≥ 1 — proves the embeddings
 	// normalize codec path executed at all. The per-arm proof is the
 	// pollTrafficEvent loop above (each arm A/B/C polls for ≥ 1 row);
@@ -239,14 +239,14 @@ func TestS063_EmbeddingsHappyPath(t *testing.T) {
 		t.Fatalf("ScrapeMetrics post: %v", err)
 	}
 	embedReqDelta := postMetrics.CounterSum(
-		"nexus_ai_gateway_normalize_total",
+		"nexus_normalize_total",
 		map[string]string{"adapter": "openai-embeddings", "direction": "request"},
 	) - preMetrics.CounterSum(
-		"nexus_ai_gateway_normalize_total",
+		"nexus_normalize_total",
 		map[string]string{"adapter": "openai-embeddings", "direction": "request"},
 	)
 	if embedReqDelta < 1 {
-		t.Errorf("nexus_ai_gateway_normalize_total{adapter=openai-embeddings,direction=request} delta=%.0f, want ≥ 1 — embeddings normalize codec never executed",
+		t.Errorf("nexus_normalize_total{adapter=openai-embeddings,direction=request} delta=%.0f, want ≥ 1 — embeddings normalize codec never executed",
 			embedReqDelta)
 	}
 

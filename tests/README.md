@@ -6,9 +6,10 @@ Automated regression for Nexus Gateway. Master plan:
 ## Quick start
 
 ```bash
-cp tests/.env.test.example tests/.env.test
-# Edit .env.test — at minimum, set NEXUS_TEST_VK to a real Nexus VK
-# (research-all-models is fine for local dev).
+cp tests/.env.local.example tests/.env.local
+# Edit .env.local — at minimum, set NEXUS_TEST_VK to a real Nexus VK
+# (research-all-models is fine for local dev). The loader picks the file from
+# $NEXUS_TEST_TARGET (local | dev | prod), defaulting to local on a TTY.
 
 # Run every layer (preflight + smoke + go + ui + python).
 bash tests/run-all.sh --full
@@ -40,7 +41,7 @@ The runner writes a unified markdown report to
 The runner's preflight (`tests/lib/preflight.sh`) checks:
 
 1. Postgres up + `Provider` table seeded
-2. Hub `/health` returns 200
+2. Hub `/healthz` returns 200, and the Hub admin API answers on `/api/hub/things` with the service token
 3. Control Plane `/api/admin/auth/login` accepts seeded admin credentials
 4. AI Gateway `/v1/models` returns 200 with `NEXUS_TEST_VK` (only when set)
 5. Compliance Proxy is listening on its port
@@ -51,7 +52,8 @@ Bring services up via `./scripts/dev-start.sh` before running tests.
 
 | File | Purpose |
 |------|---------|
-| `lib/env.sh` | Loads `.env.test` and applies defaults; sourced first by every entry point. |
+| `lib/loadenv.sh` | Target-aware loader: reads `.env.<target>.example` then `.env.<target>` (local\|dev\|prod). |
+| `lib/env.sh` | Back-compat shim that delegates to `loadenv.sh`; sourced first by older entry points. |
 | `lib/assert.sh` | `pass` / `fail` / `assert_eq` / `assert_status` + summary at end. |
 | `lib/db.sh` | `db_query` / `db_scalar` / `db_count` / `db_exists` — wraps `docker exec psql`. |
 | `lib/auth.sh` | `cp_login` / `cp_curl` / `cp_curl_code` — Control Plane cookie auth. |

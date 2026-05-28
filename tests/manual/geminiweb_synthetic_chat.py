@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import ssl
 import sys
 import time
@@ -92,7 +93,7 @@ def post_via_proxy(target_url, body, proxy, headers, insecure, timeout=30):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
-    ap.add_argument("--proxy", default="compliance.nexus.ai:3128")
+    ap.add_argument("--proxy", default=os.environ.get("NEXUS_COMPLIANCE_PROXY_ADDR", "localhost:3128"))
     ap.add_argument(
         "--target",
         default="https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
@@ -152,7 +153,7 @@ def main():
     print("─" * 72)
     print(
         f"""
-  1. Open  https://cp.nexus.ai/traffic
+  1. Open  the Control Plane Traffic page (https://cp.<your-domain>/traffic)
      Filter: target_host = gemini.google.com:443
              OR grep trace id  {headers['X-Nexus-Request-Id']!r}
 

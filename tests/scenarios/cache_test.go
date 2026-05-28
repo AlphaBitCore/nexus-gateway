@@ -23,8 +23,8 @@ import (
 // cache" via either a response header or a stamp on the traffic_event
 // row (cache_status column). Cross-service: AI Gw (cache.Get/Set,
 // Redis L1) → MQ → DB (traffic_event with cache_status). The metric
-// nexus_aigw_cache_lookups_total should grow by ≥ 1 per request (miss
-// + hit). Specifically, after request 2, nexus_aigw_cache_writes_total
+// nexus_cache_lookups_total should grow by ≥ 1 per request (miss
+// + hit). Specifically, after request 2, nexus_cache_writes_total
 // should have ticked exactly once during the first call, AND the
 // total cache_lookups across the two calls should be ≥ 2.
 //
@@ -35,9 +35,9 @@ import (
 //      same upstream-issued ID). This is the strongest "served from
 //      cache" signal — different upstream calls produce different
 //      chat IDs.
-//   3. metric delta: nexus_aigw_cache_lookups_total grew by ≥ 2 across
+//   3. metric delta: nexus_cache_lookups_total grew by ≥ 2 across
 //      the two-request burst.
-//   4. metric delta: nexus_aigw_cache_writes_total grew by ≥ 1 (first
+//   4. metric delta: nexus_cache_writes_total grew by ≥ 1 (first
 //      request was a cache write).
 func TestS060_CacheHitOnRepeat(t *testing.T) {
 	sc := setupScenarioNoVK(t)
@@ -130,10 +130,10 @@ func TestS060_CacheHitOnRepeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeMetrics post: %v", err)
 	}
-	lookupsDelta := postMetrics.CounterSum("nexus_aigw_cache_lookups_total", nil) -
-		preMetrics.CounterSum("nexus_aigw_cache_lookups_total", nil)
-	writesDelta := postMetrics.CounterSum("nexus_aigw_cache_writes_total", nil) -
-		preMetrics.CounterSum("nexus_aigw_cache_writes_total", nil)
+	lookupsDelta := postMetrics.CounterSum("nexus_cache_lookups_total", nil) -
+		preMetrics.CounterSum("nexus_cache_lookups_total", nil)
+	writesDelta := postMetrics.CounterSum("nexus_cache_writes_total", nil) -
+		preMetrics.CounterSum("nexus_cache_writes_total", nil)
 	if lookupsDelta < 2 {
 		t.Errorf("cache_lookups delta=%g (want ≥ 2 across 2 requests)", lookupsDelta)
 	}

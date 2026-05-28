@@ -13,7 +13,7 @@ go 1.25.0
 
 require (
 	github.com/AlphaBitCore/nexus-gateway/tests/integration-go v0.0.0
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 )
 
 require (

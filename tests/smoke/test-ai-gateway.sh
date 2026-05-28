@@ -10,7 +10,7 @@
 #      we use for L3 AI-judge, so this run also validates the AI-judge path.
 #   4. DB cross-check: a traffic_event row appears with the request we just
 #      sent (matched by external_request_id or by recent timestamp + path).
-#   5. Prometheus counter delta: nexus_ai_gateway_requests_total goes up.
+#   5. Prometheus counter delta: nexus_requests_total goes up.
 #
 # Verification discipline (master plan §6): HTTP shape + DB row + counter
 # delta. No "did the binary respond" tests.
@@ -128,7 +128,7 @@ fi
 # strict delta around just this request. Sum across all label series so the
 # assertion survives label-set evolution (model, status, ingress, etc.).
 prom_messages_before=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
-  | awk '/^nexus_ai_gateway_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
+  | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
 
 messages_marker="SMOKE_MSG_$(date +%s%N)"
 messages_body=$(aigw_curl "$NEXUS_TEST_VK" /v1/messages \
@@ -205,12 +205,12 @@ fi
 # (messages_body + messages_status), so the realistic delta is >= 2;
 # we keep the assertion at >= 1 to stay tolerant of label churn / sampling.
 prom_messages_after=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
-  | awk '/^nexus_ai_gateway_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
+  | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
 prom_messages_delta=$((prom_messages_after - prom_messages_before))
 if [[ "$prom_messages_delta" -ge 1 ]]; then
-  pass "nexus_ai_gateway_requests_total delta = $prom_messages_delta (before=$prom_messages_before after=$prom_messages_after)"
+  pass "nexus_requests_total delta = $prom_messages_delta (before=$prom_messages_before after=$prom_messages_after)"
 else
-  fail "nexus_ai_gateway_requests_total delta" \
+  fail "nexus_requests_total delta" \
     "expected >=1, got $prom_messages_delta (before=$prom_messages_before after=$prom_messages_after)"
 fi
 
@@ -232,7 +232,7 @@ fi
 # strict delta around just this request. Sum across all label series so the
 # assertion survives label-set evolution (model, status, ingress, etc.).
 prom_embeddings_before=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
-  | awk '/^nexus_ai_gateway_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
+  | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
 
 # Use set +e around the embeddings calls so a skip-graceful 400/404 doesn't
 # abort the script under `set -eu` (top of file). Restore -eu after, not -e —
@@ -307,12 +307,12 @@ else
   # (embeddings_body + embeddings_status), so the realistic delta is >= 2;
   # we keep the assertion at >= 1 to stay tolerant of label churn / sampling.
   prom_embeddings_after=$(curl -sS "$NEXUS_AI_GW_URL/metrics" \
-    | awk '/^nexus_ai_gateway_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
+    | awk '/^nexus_requests_total[ {]/ { s += $NF } END { printf "%.0f", s+0 }')
   prom_embeddings_delta=$((prom_embeddings_after - prom_embeddings_before))
   if [[ "$prom_embeddings_delta" -ge 1 ]]; then
-    pass "nexus_ai_gateway_requests_total delta = $prom_embeddings_delta (before=$prom_embeddings_before after=$prom_embeddings_after)"
+    pass "nexus_requests_total delta = $prom_embeddings_delta (before=$prom_embeddings_before after=$prom_embeddings_after)"
   else
-    fail "nexus_ai_gateway_requests_total delta" \
+    fail "nexus_requests_total delta" \
       "expected >=1, got $prom_embeddings_delta (before=$prom_embeddings_before after=$prom_embeddings_after)"
   fi
 fi

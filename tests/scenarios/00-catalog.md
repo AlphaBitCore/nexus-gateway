@@ -23,7 +23,7 @@ Scenario tests are the **layer above** the existing L1–L4 test program (smoke 
 
 The harness (`tests/scenarios/helpers/safety.go`, called from every test's setup) enforces these rules **fail-closed**:
 
-1. **Single source of truth**: `tests/.env.test` only. Ambient shell `NEXUS_*` env vars are ignored unless `NEXUS_TEST_ALLOW_AMBIENT=1` is set (opt-in escape hatch, not the default).
+1. **Single source of truth**: `tests/.env.<target>` (`local` for scenarios), loaded via `loadenv.sh` / the scenario helpers. Process-env `NEXUS_*` values set before the run win over the file (non-overload semantics), so explicit `NEXUS_VAR=x go test …` overrides still work.
 
 2. **Hostname allowlist**: every `NEXUS_*_URL` parsed; allowed hosts are `localhost`, `127.0.0.1`, `::1`, `host.docker.internal`. Any other host (any remote production / staging target) causes the harness to **print the offending var + value and exit 1 before running any test**.
 

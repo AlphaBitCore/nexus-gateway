@@ -86,6 +86,18 @@ func TestS103_AdminAuditExport(t *testing.T) {
 			len(resp.Entries))
 	}
 
+	// Meta-audit row: the export must record itself. This is a DB cross-check
+	// against AdminAuditLog. In prod safe-e2e mode the runner cannot reach the
+	// prod Postgres directly (it is bound to localhost on the prod host, and
+	// tests/.env.prod carries no DATABASE_URL), so sc.DB is not a prod
+	// connection — skip the DB cross-check there. The export API contract above
+	// is still asserted against prod; the breadcrumb write itself is verified by
+	// the local run of this scenario.
+	if helpers.IsProdSafeE2E() {
+		t.Logf("S-103 OK (prod safe-e2e; DB cross-check skipped — prod Postgres not directly reachable): exportedAt=%s entries=%d truncated=%v",
+			resp.ExportedAt, len(resp.Entries), resp.Truncated)
+		return
+	}
 	// Meta-audit row: the export must record itself.
 	deadline := time.Now().Add(10 * time.Second)
 	var metaAuditID string

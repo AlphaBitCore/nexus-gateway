@@ -23,7 +23,7 @@
 //   5. traffic_event.routed_model_id is non-empty (engine resolved a
 //      concrete target — either the LLM's pick OR the fallback default
 //      configured on the rule).
-//   6. nexus_ai_gateway_requests_total delta ≥ 1 across the chat.
+//   6. nexus_requests_total delta ≥ 1 across the chat.
 //
 // Hermetic: matchConditions pins BOTH virtualKeys=[<this-test's-VK>]
 // AND requestedModelLiterals=["auto"] (AND semantics per matcher.go),

@@ -60,7 +60,7 @@ import (
 //      + this scenario + the compliance-proxy webhook plumbing to be
 //      updated in lockstep.
 //
-// Metric: nexus_ai_gateway_requests_total — per the same labelling
+// Metric: nexus_requests_total — per the same labelling
 // convention used by S-062, this counter ticks on every ingress request
 // regardless of the eventual HTTP status. We assert delta ≥ 3 across
 // the three arms via CounterSum (label-free, sums all label

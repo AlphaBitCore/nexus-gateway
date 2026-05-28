@@ -67,7 +67,7 @@ import (
 //  3. POST cache-feedback returns 200 (or 404/503 → graceful skip).
 //  4. Third request with the perturbed prompt returns a DIFFERENT chat
 //     ID than request 2 — L2 eviction via poison confirmed.
-//  5. nexus_aigw_cache_writes_total delta from before request 3 to
+//  5. nexus_cache_writes_total delta from before request 3 to
 //     after is ≥ 1 (the new write replacing the evicted entry).
 //     Metric absent → log warning instead of fail.
 func TestS066_CacheNegativeFeedback(t *testing.T) {
@@ -308,7 +308,7 @@ func TestS066_CacheNegativeFeedback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeMetrics post-eviction: %v", err)
 	}
-	const writesMetric = "nexus_aigw_cache_writes_total"
+	const writesMetric = "nexus_cache_writes_total"
 	writesDelta := postEvictMetrics.CounterSum(writesMetric, nil) -
 		preEvictMetrics.CounterSum(writesMetric, nil)
 	if writesDelta < 1 {

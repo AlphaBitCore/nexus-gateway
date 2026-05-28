@@ -23,6 +23,59 @@ func localEnv() *intg.Env {
 	}
 }
 
+// TestGuardProdSafeE2E pins the prod safe-e2e choke point: mode OFF is a no-op
+// for every method/path (local path untouched); mode ON permits reads and
+// own-object CRUD but blocks any mutating method aimed at a shared-state
+// surface. This is the guard that makes "safe e2e against prod" enforceable
+// rather than convention — a regression that lets a shared mutation through
+// (or that blocks own-object CRUD) fails here.
+func TestGuardProdSafeE2E(t *testing.T) {
+	// Mode OFF: nothing is ever guarded, even a shared-state DELETE.
+	prodSafeE2E = false
+	if err := GuardProdSafeE2E("DELETE", "/api/admin/settings/streaming-compliance"); err != nil {
+		t.Fatalf("mode off must be a no-op, got: %v", err)
+	}
+
+	prodSafeE2E = true
+	defer func() { prodSafeE2E = false }()
+
+	allowed := []struct{ method, path string }{
+		{"GET", "/api/admin/settings/streaming-compliance"}, // read of a shared surface is fine
+		{"HEAD", "/api/admin/nodes/abc"},
+		{"POST", "/api/admin/providers"},                 // own-object create
+		{"DELETE", "/api/admin/providers/my-test-id"},    // own-object delete
+		{"POST", "/api/admin/routing-rules"},             // own-object create
+		{"POST", "/api/my/virtual-keys"},                 // own-object create
+	}
+	for _, c := range allowed {
+		if err := GuardProdSafeE2E(c.method, c.path); err != nil {
+			t.Errorf("expected %s %s to be ALLOWED in prod-safe-e2e, got: %v", c.method, c.path, err)
+		}
+	}
+
+	blocked := []struct{ method, path string }{
+		{"PUT", "/api/admin/passthrough/adapter/openai"},
+		{"POST", "/api/admin/kill-switch"},
+		{"PUT", "/api/admin/settings/payload-capture"},
+		{"PUT", "/api/admin/semantic-cache/config"},
+		{"POST", "/api/admin/cache/time-sensitive-patterns"},
+		{"POST", "/api/admin/config-sync/force"},
+		{"DELETE", "/api/admin/nodes/node-1/override"},
+		{"PUT", "/api/admin/streaming-compliance"},
+		{"POST", "/api/admin/alerts/channels"},
+	}
+	for _, c := range blocked {
+		err := GuardProdSafeE2E(c.method, c.path)
+		if err == nil {
+			t.Errorf("expected %s %s to be BLOCKED in prod-safe-e2e, but it was allowed", c.method, c.path)
+			continue
+		}
+		if !strings.Contains(err.Error(), "prod-safe-e2e") {
+			t.Errorf("blocked error should name the mode, got: %v", err)
+		}
+	}
+}
+
 func TestCheckLocalTarget_AllLocalIsAccepted(t *testing.T) {
 	v := CheckLocalTarget(localEnv())
 	if len(v) != 0 {

@@ -53,17 +53,18 @@ readyz_code=$(hub_curl_code /readyz)
 assert_status 200 "$readyz_code" "readyz"
 
 # /metrics: Prometheus exposition is plain text starting with HELP/TYPE lines
-# and must contain at least one nexus_hub_* counter we know is registered.
+# and must contain at least one nexus_mq_* counter (the Hub's NATS JetStream
+# client registers these via packages/shared/transport/mq).
 metrics_body=$(hub_curl /metrics)
 if printf '%s' "$metrics_body" | grep -qE '^# HELP '; then
   pass "metrics exposes Prometheus HELP lines"
 else
   fail "metrics:HELP" "no '# HELP ' line in /metrics output"
 fi
-if printf '%s' "$metrics_body" | grep -qE '^nexus_hub_mq_'; then
-  pass "metrics has nexus_hub_mq_* counters"
+if printf '%s' "$metrics_body" | grep -qE '^nexus_mq_'; then
+  pass "metrics has nexus_mq_* counters"
 else
-  fail "metrics:nexus_hub" "no nexus_hub_mq_* counter in /metrics"
+  fail "metrics:nexus_mq" "no nexus_mq_* counter in /metrics"
 fi
 
 # ----------------------------------------------------------------------------

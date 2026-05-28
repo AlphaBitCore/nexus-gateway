@@ -226,7 +226,10 @@ func PKCEChallengeS256(verifier string) string {
 
 // assertLocalCP refuses to talk to a non-local CP even if MustBeLocalTarget
 // was somehow skipped. Defence-in-depth for cp_login: never authenticate
-// against production from the scenario harness.
+// against production from the scenario harness — EXCEPT in prod safe-e2e mode,
+// where logging in is required to run the curated read-only subset. Login is
+// auth, not a data mutation; any subsequent mutating admin call is still
+// hard-blocked at the CPDoJSON choke point (GuardProdSafeE2E).
 func assertLocalCP(env *intg.Env) error {
 	u, err := url.Parse(env.CPURL)
 	if err != nil {
@@ -234,6 +237,9 @@ func assertLocalCP(env *intg.Env) error {
 	}
 	host := u.Hostname()
 	if _, ok := allowedHosts[host]; !ok {
+		if prodSafeE2E {
+			return nil
+		}
 		return fmt.Errorf("cp_login refuses non-local NEXUS_CP_URL host %q", host)
 	}
 	return nil
@@ -242,6 +248,9 @@ func assertLocalCP(env *intg.Env) error {
 // CPDoJSON wraps DoJSON to call any /api/* path on the local CP with a
 // bearer token. Returns (status, body, err).
 func CPDoJSON(ctx context.Context, env *intg.Env, token, method, path string, body []byte) (int, []byte, error) {
+	if err := GuardProdSafeE2E(method, path); err != nil {
+		return 0, nil, err
+	}
 	client := intg.LocalHTTPClient()
 	return intg.DoJSON(client, ctx, method, env.CPURL+path, "Bearer "+token, body)
 }
@@ -250,6 +259,9 @@ func CPDoJSON(ctx context.Context, env *intg.Env, token, method, path string, bo
 // instead of a JWT bearer — exercises the personal API key auth path
 // (the user-self-service flow's "use" step). Returns (status, body, err).
 func CPDoWithKey(ctx context.Context, env *intg.Env, rawKey, method, path string) (int, []byte, error) {
+	if err := GuardProdSafeE2E(method, path); err != nil {
+		return 0, nil, err
+	}
 	client := intg.LocalHTTPClient()
 	req, err := http.NewRequestWithContext(ctx, method, env.CPURL+path, nil)
 	if err != nil {

@@ -3236,14 +3236,20 @@ def _embedding_supports_dimensions(model_entry: dict) -> bool:
 
 
 def _snapshot_prometheus_embedding(gw: GWClient, provider: str, model: str) -> dict:
-    """Snapshot nexus_traffic_events_total{endpoint=embeddings,...} counters."""
+    """Snapshot nexus_requests_total{endpoint="embeddings",...} counters.
+
+    The series carries endpoint + model(UUID) + provider + status labels; we sum
+    across all embeddings series (the model param is unused — the model label is
+    the UUID, not the slug, and the pool runs models concurrently, so the delta
+    is an aggregate "embeddings traffic incremented" signal, not per-model).
+    """
     try:
         metrics_text = gw.metrics()
     except Exception:
         return {}
     result: dict[str, float] = {}
     for line in metrics_text.splitlines():
-        if "nexus_traffic_events_total" not in line or "embeddings" not in line:
+        if "nexus_requests_total" not in line or 'endpoint="embeddings"' not in line:
             continue
         if line.startswith("#"):
             continue
@@ -3400,6 +3406,12 @@ def phase3e_embeddings(
 
         log_info(f"\n  [{mid}] P3E arms A-F")
 
+        # Arm E baseline — snapshot the embeddings request counter BEFORE this
+        # model's arms fire, so the post-arms delta reflects the requests this
+        # model made (the prior code snapshotted twice back-to-back AFTER the
+        # arms, so the delta was always 0 → spurious WARN).
+        snap_e0 = _snapshot_prometheus_embedding(gw, "", mid)
+
         # ─── Arm A — non-stream basic ─────────────────────────────────────────
         t_arm_a = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         log_info(f"  [{mid}] Arm A — non-stream basic …")
@@ -3543,27 +3555,23 @@ def phase3e_embeddings(
                 )
 
         # ─── Arm E — Prometheus delta ─────────────────────────────────────────
+        # Compare against snap_e0 taken BEFORE this model's arms (above). Arms
+        # A+C always fire (B is conditional), so this model contributed >= 2
+        # embeddings requests; the pool may add concurrent models' requests on
+        # top, which only raises the aggregate delta. delta=0 now means the
+        # counter genuinely didn't move — a real regression, not label timing.
         log_info(f"  [{mid}] Arm E — Prometheus delta …")
-        snap_e0 = _snapshot_prometheus_embedding(gw, "", mid)
-        # Arms A+B+C already ran; snapshot delta now vs before this model's
-        # arms. We expect delta >= 2 (A always runs; B skipped for ada-002;
-        # C always runs — so minimum is 2 for ada-002, 3 for others).
         snap_e1 = _snapshot_prometheus_embedding(gw, "", mid)
         delta_e = _prometheus_embedding_delta(snap_e0, snap_e1)
-        # Minimum: arm A + arm C = 2 embedding calls (arm B is conditional).
-        # We accept delta >= 2 as sufficient evidence.
-        if delta_e >= 0:
-            # Prometheus text format may not include the specific label combo
-            # until the first request fires; warn rather than fail if delta=0.
-            if delta_e == 0:
-                log_warn(f"  [{mid}] Arm E: delta=0 (counter may not yet carry label for this model)")
-                rec("P3E", f"{mid}/arm-e").warning("prometheus delta=0 — counter may lack label")
-            else:
-                log_ok(f"  [{mid}] Arm E OK delta={delta_e}")
-                rec("P3E", f"{mid}/arm-e").passed(f"delta={delta_e}")
-        else:
+        if not snap_e1:
             log_warn(f"  [{mid}] Arm E: metrics endpoint unavailable")
             rec("P3E", f"{mid}/arm-e").warning("metrics endpoint unavailable")
+        elif delta_e > 0:
+            log_ok(f"  [{mid}] Arm E OK delta={delta_e}")
+            rec("P3E", f"{mid}/arm-e").passed(f"delta={delta_e}")
+        else:
+            log_warn(f"  [{mid}] Arm E: embeddings request counter did not increment (delta=0)")
+            rec("P3E", f"{mid}/arm-e").warning("nexus_requests_total{endpoint=embeddings} delta=0")
 
         # ─── Arm F — cross-ingress consistency ───────────────────────────────
         log_info(f"  [{mid}] Arm F — cross-ingress consistency …")
@@ -4252,9 +4260,20 @@ def phase6b_normalize_check(db: DBClient, t0_iso: str):
             )
             continue
 
-        # Usage math sanity. Total should equal prompt + completion +
-        # (optional) cache_read + cache_creation. Tolerate the absent
-        # cache fields (None → 0).
+        # Usage math sanity. The canonical usage is reconciled against the
+        # provider's wire total via three accepted formulas — a drift WARN
+        # fires only when ALL THREE fail:
+        #   F1  total == prompt + completion + cache_read + cache_creation
+        #         (cache additive to total — providers that report it that way)
+        #   F2  total == prompt + completion
+        #         (cache_read folded into prompt by the normalizer — Anthropic;
+        #          and providers like DeepSeek/Moonshot that exclude cache from total)
+        #   F3  total == prompt + completion - reasoning
+        #         (the normalizer folds reasoning into completion, but the
+        #          provider's wire total EXCLUDES it — Gemini thoughtsTokenCount,
+        #          DeepSeek reasoning. Without F3 every reasoning response on
+        #          these providers false-WARNs by exactly `reasoning_tokens`.)
+        # See normalization-architecture.md §3 for the per-provider token mapping.
         p, c, t = (_int(row["prompt_tokens"]),
                    _int(row["completion_tokens"]),
                    _int(row["total_tokens"]))
@@ -4262,11 +4281,9 @@ def phase6b_normalize_check(db: DBClient, t0_iso: str):
         ccr = _int(row["cache_creation_tokens"])
         expected = p + c + crd + ccr
         if t > 0 and abs(t - expected) > 2:
-            # Some providers (DeepSeek, Moonshot) don't include
-            # cache_read in total. Try secondary formula.
-            if abs(t - (p + c)) > 2:
+            if abs(t - (p + c)) > 2 and abs(t - (p + c - rsn)) > 2:
                 log_warn(
-                    f"  [{model} {eid}] usage math drift: total={t} != prompt({p})+completion({c})+cache_read({crd})+cache_creation({ccr})={expected}"
+                    f"  [{model} {eid}] usage math drift: total={t} != prompt({p})+completion({c})+cache_read({crd})+cache_creation({ccr})={expected} (also != p+c and != p+c-reasoning({rsn}))"
                 )
                 rec("P6b", f"{model}/{eid}/usage-math").warning(
                     f"total={t} != {expected}")

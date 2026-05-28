@@ -45,7 +45,7 @@ import (
 // `semantic_cache_config` singleton + `TrafficEvent`. Metrics tick
 // `nexus_cache_l2_lookups_total{outcome=...}` for every lookup and
 // `nexus_cache_l2_writes_total{outcome=...}` for every write. The L1
-// `nexus_aigw_cache_lookups_total` counter also ticks because L1 is
+// `nexus_cache_lookups_total` counter also ticks because L1 is
 // consulted first; we still assert ≥ 2 on it as a sanity rail.
 //
 // Hardened-precondition rationale (2026-05-22): the scenario fails fast
@@ -77,7 +77,7 @@ import (
 //     dispatch only re-keyed on the embedding fingerprint, not on the
 //     index name). That bug shipped 2026-05-22 in index_lifecycle.go;
 //     the scenario now asserts the fix.
-//  8. Metric rails (always-on): nexus_aigw_cache_lookups_total delta
+//  8. Metric rails (always-on): nexus_cache_lookups_total delta
 //     ≥ 2 across the two requests (L1 lookups), and
 //     nexus_cache_l2_lookups_total delta ≥ 1 (the L2 lookup PATH must
 //     execute on each request).
@@ -320,8 +320,8 @@ func TestS064_SemanticCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeMetrics post: %v", err)
 	}
-	l1LookupsDelta := postMetrics.CounterSum("nexus_aigw_cache_lookups_total", nil) -
-		preMetrics.CounterSum("nexus_aigw_cache_lookups_total", nil)
+	l1LookupsDelta := postMetrics.CounterSum("nexus_cache_lookups_total", nil) -
+		preMetrics.CounterSum("nexus_cache_lookups_total", nil)
 	l2LookupsDelta := postMetrics.CounterSum("nexus_cache_l2_lookups_total", nil) -
 		preMetrics.CounterSum("nexus_cache_l2_lookups_total", nil)
 	l2WritesDelta := postMetrics.CounterSum("nexus_cache_l2_writes_total", nil) -
