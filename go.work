@@ -6,6 +6,7 @@ use (
 	./packages/ai-gateway
 	./packages/compliance-proxy
 	./packages/control-plane
+	./packages/nexus-cli
 	./packages/nexus-hub
 	./packages/shared
 	./tests/integration-go
