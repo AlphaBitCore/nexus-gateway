@@ -1,0 +1,32 @@
+[Unit]
+Description=Valkey 8 (Redis-wire-compatible cache with valkey-search module)
+Documentation=https://valkey.io/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=valkey
+Group=valkey
+ExecStart=/usr/local/bin/valkey-server /etc/valkey/valkey.conf --supervised systemd
+ExecStop=/usr/local/bin/valkey-cli -h 127.0.0.1 -p 6379 shutdown nosave
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# /run is tmpfs and is wiped on every boot — the /var/run/valkey directory
+# install-valkey.sh creates at AMI build time does NOT survive AMI snapshot +
+# fresh boot. Without RuntimeDirectory= here, systemd's namespace setup fails
+# 226/NAMESPACE because ReadWritePaths can't bind a missing directory. Hit on
+# 2026-05-28 first-launch test.
+RuntimeDirectory=valkey
+RuntimeDirectoryMode=0750
+ReadWritePaths=/var/lib/valkey /var/log/valkey
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,87 @@
+# Nexus AI Gateway — prod-shape config for AMI / appliance form factor.
+# Architecture: docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md
+# Secrets + DATABASE_URL loaded from /etc/nexus/ai-gateway.env at boot.
+
+server:
+  port: 3050
+  readTimeout: "30s"
+  writeTimeout: "360s"
+
+database:
+  url: ""                      # env DATABASE_URL
+
+redis:
+  mode: standalone
+  addrs: ["127.0.0.1:6379"]
+  username: ""
+  password: ""                 # env REDIS_PASSWORD
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+auth:
+  hmacSecret: ""               # env ADMIN_KEY_HMAC_SECRET
+  credentialMasterKey: ""      # env CREDENTIAL_ENCRYPTION_KEY (64 hex chars)
+  credentialKeyMap: ""
+  internalServiceToken: ""     # env INTERNAL_SERVICE_TOKEN
+
+log:
+  level: "info"
+  format: "json"
+  file: "/var/log/nexus/ai-gateway.log"
+
+registry:
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://127.0.0.1:4222"
+
+cors:
+  enabled: false
+  allowedOrigins: []
+  allowedMethods: ["GET", "POST", "OPTIONS"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-nexus-virtual-key", "x-request-id"]
+  maxAgeSec: 600
+
+cache:
+  enabled: true
+  ttl: 5m
+  prefix: "ai-gw:"
+  broker: true
+
+otel:
+  endpoint: ""
+  serviceName: "nexus-ai-gateway"
+
+observability:
+  latencyDetail: true
+
+routing:
+  defaultRetryPolicy:
+    maxAttemptsPerTarget: 1
+    retryOn: ["network", "timeout", "429", "5xx"]
+    backoffInitial: 250ms
+    backoffMax: 5s
+    backoffJitter: 0.2

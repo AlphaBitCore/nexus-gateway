@@ -1,0 +1,97 @@
+# Nexus Control Plane — prod-shape config for AMI / appliance form factor.
+# Architecture: docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md
+# Secrets + DATABASE_URL loaded from /etc/nexus/control-plane.env at boot.
+
+server:
+  port: 3001
+  shutdownTimeout: "10s"
+
+database:
+  url: ""                      # env DATABASE_URL
+  maxConns: 25
+  minConns: 5
+  maxConnLifetime: "300s"
+
+redis:
+  mode: standalone
+  addrs: ["127.0.0.1:6379"]
+  username: ""
+  password: ""                 # env REDIS_PASSWORD
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+log:
+  level: "info"
+  format: "json"
+  file: "/var/log/nexus/control-plane.log"
+
+bff:
+  complianceProxyUrl: "http://127.0.0.1:3040"
+  aiGatewayUrl: "http://127.0.0.1:3050"
+  complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
+  complianceProxyApiToken: ""  # env COMPLIANCE_PROXY_API_TOKEN
+
+registry:
+  nexusHubUrl: "http://127.0.0.1:3060"
+
+auth:
+  internalServiceToken: ""     # env INTERNAL_SERVICE_TOKEN
+
+crypto:
+  encryptionKey: ""            # env CREDENTIAL_ENCRYPTION_KEY (64 hex chars)
+  encryptionPassphrase: ""
+  encryptionSalt: ""
+  credentialKeyMap: ""
+  production: true
+
+retention:
+  auditLogDays: 90
+  adminAuditLogDays: 365
+  metricRollupDays: 365
+  agentAuditDays: 90
+
+agent:
+  caDir: "/var/lib/nexus/agentca"
+
+otel:
+  endpoint: ""
+  serviceName: "nexus-control-plane"
+
+scheduler:
+  enabled: true
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://127.0.0.1:4222"
+
+# OIDC issuer for tokens minted by this Control Plane. The issuer claim must
+# match the URL clients reach the CP on so JWKS fetch + iss-claim validation
+# work. Issuer value is per-instance — first-boot stamps AUTH_SERVER_ISSUER
+# into /etc/nexus/control-plane.env using the detected public IP. The empty
+# string here is a placeholder so the env override hook fires; see
+# configuration-architecture.md L3 > L2.
+authServer:
+  issuer: ""                   # env AUTH_SERVER_ISSUER
+  keystoreDir: "/var/lib/nexus/authkeys"

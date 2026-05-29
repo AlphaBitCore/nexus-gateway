@@ -1,0 +1,97 @@
+# Nexus Hub — prod-shape config for AMI / appliance form factor.
+# Architecture: docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md
+#
+# All secrets and infra URLs are blank here — first-boot generates per-instance
+# values into /etc/nexus/nexus-hub.env which systemd loads via EnvironmentFile=.
+# Env values override every blank field below (L3 > L2 per configuration-architecture.md).
+
+server:
+  port: 3060
+  readTimeout: 30s
+  writeTimeout: 30s
+  shutdownTimeout: 15s
+
+database:
+  url: ""                      # env DATABASE_URL
+  maxConns: 20
+  minConns: 5
+
+redis:
+  mode: standalone
+  addrs: ["127.0.0.1:6379"]
+  username: ""
+  password: ""                 # env REDIS_PASSWORD
+  db: 0
+  sentinel:
+    masterName: ""
+    username: ""
+    password: ""
+  cluster:
+    maxRedirects: 8
+    routeRandomly: false
+    readOnly: false
+  tls:
+    enabled: false
+    insecureSkipVerify: false
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    serverName: ""
+  poolSize: 200
+  minIdleConns: 50
+  maxRetries: 3
+  dialTimeout: 5s
+  readTimeout: 3s
+  writeTimeout: 3s
+  poolTimeout: 4s
+
+mq:
+  driver: "nats"
+  nats:
+    url: "nats://127.0.0.1:4222"
+
+consumers:
+  enabled: true
+  batchSize: 100
+  flushInterval: 5s
+  siem:
+    enabled: false
+    url: ""
+    headers: {}
+    format: "json"
+    batchSize: 200
+    flushInterval: 5s
+    eventTypes: []
+
+scheduler:
+  enabled: true
+  driftCheckInterval: 60s
+  identityEnrichInterval: 5m
+  enableAgentRollup: false
+
+auth:
+  internalServiceToken: ""     # env INTERNAL_SERVICE_TOKEN
+
+authServer:
+  url: "http://127.0.0.1:3001"
+  jwksURL: "http://127.0.0.1:3001/.well-known/jwks.json"
+  issuer: "http://127.0.0.1:3001"
+
+agentCA:
+  certFile: ""
+  keyFile: ""
+  dir: "/var/lib/nexus/agentca"
+
+otel:
+  enabled: false
+  endpoint: ""
+
+log:
+  level: "info"
+  format: "json"
+  file: "/var/log/nexus/nexus-hub.log"
+
+hub:
+  id: "hub-appliance-1"
+  advertiseAddr: "http://127.0.0.1:3060"
+  allowedOrigins: []

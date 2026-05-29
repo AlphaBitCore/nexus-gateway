@@ -115,6 +115,17 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 
 ---
 
+## Deployment
+
+| Form factor | How | Status |
+|---|---|---|
+| **AWS Marketplace AMI / single-instance appliance** | `cd nexus-ami && ./build.sh` — bakes binaries + UI + Prisma + nginx + Postgres + Valkey + NATS into one AL2023 image via Packer | [`nexus-ami/README.md`](./nexus-ami/README.md) for build steps, [`docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md`](./docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md) for design |
+| **Local development** | docker-compose + `./scripts/dev-start.sh` (Postgres + Valkey + NATS) and per-service `go run ./cmd/<svc>/` | See **Quick start** below |
+| **VMware / KVM image / bare-metal appliance** | Reuses the same `install.sh` + `harden.sh` from `nexus-ami/scripts/` under a different Packer builder | Future |
+| **Container / Kubernetes** | Out of scope for the appliance form factor — separate product line | Future |
+
+---
+
 ## Quick start (local development)
 
 ### Prerequisites

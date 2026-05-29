@@ -1,0 +1,25 @@
+[Unit]
+Description=Nexus Compliance Proxy (transparent TLS proxy, MITM, compliance pipeline)
+Documentation=https://github.com/AlphaBitCore/nexus-gateway
+After=network-online.target nexus-hub.service
+Requires=nexus-hub.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus/compliance-proxy.env
+ExecStart=/opt/nexus/bin/compliance-proxy -config /etc/nexus/compliance-proxy.config.yaml
+WorkingDirectory=/var/lib/nexus
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/nexus /var/log/nexus /etc/compliance-proxy
+
+[Install]
+WantedBy=multi-user.target

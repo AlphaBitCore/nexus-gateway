@@ -1,0 +1,25 @@
+[Unit]
+Description=Nexus Control Plane (admin API / BFF, IAM, SSO, analytics)
+Documentation=https://github.com/AlphaBitCore/nexus-gateway
+After=network-online.target nexus-hub.service
+Requires=nexus-hub.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus/control-plane.env
+ExecStart=/opt/nexus/bin/control-plane -config /etc/nexus/control-plane.config.yaml
+WorkingDirectory=/var/lib/nexus
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/nexus /var/log/nexus
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+[Unit]
+Description=Nexus Hub (control-plane kernel: Thing Registry, Device Shadow, config sync, agent CA)
+Documentation=https://github.com/AlphaBitCore/nexus-gateway
+After=network-online.target nexus-first-boot.service postgresql.service valkey.service nats.service
+Requires=nexus-first-boot.service postgresql.service valkey.service nats.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus/nexus-hub.env
+ExecStart=/opt/nexus/bin/nexus-hub -config /etc/nexus/nexus-hub.config.yaml
+WorkingDirectory=/var/lib/nexus
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/nexus /var/log/nexus
+
+[Install]
+WantedBy=multi-user.target

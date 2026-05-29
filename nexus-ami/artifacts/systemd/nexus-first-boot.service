@@ -1,0 +1,26 @@
+[Unit]
+Description=Nexus Gateway first-boot initialization (generates per-instance secrets, MITM CA, DB schema + seed, random admin password)
+Documentation=https://github.com/AlphaBitCore/nexus-gateway
+# NOTE: this unit does NOT Require=postgresql.service AND it does NOT
+# Before=postgresql.service. first-boot-db.sh calls `systemctl start
+# postgresql` from inside this unit; either dependency would deadlock
+# (systemd refuses to activate postgresql until first-boot finishes,
+# first-boot blocks waiting for postgresql to come up, TimeoutStartSec
+# kills first-boot 300 s later). Both keywords share the same hazard —
+# Before= alone deadlocks even without Requires=. Hit on 2026-05-28
+# first-launch test, fixed by dropping postgresql.service from Before=.
+After=network-online.target
+Wants=network-online.target
+Before=nexus-hub.service nexus-control-plane.service nexus-gateway.service nexus-proxy.service
+ConditionPathExists=!/etc/nexus/.initialized
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nexus-first-boot
+RemainAfterExit=yes
+TimeoutStartSec=300
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

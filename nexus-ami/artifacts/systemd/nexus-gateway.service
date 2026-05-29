@@ -1,0 +1,25 @@
+[Unit]
+Description=Nexus AI Gateway (/v1 SDK traffic, provider adapters, routing, quota)
+Documentation=https://github.com/AlphaBitCore/nexus-gateway
+After=network-online.target nexus-hub.service
+Requires=nexus-hub.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+EnvironmentFile=/etc/nexus/ai-gateway.env
+ExecStart=/opt/nexus/bin/ai-gateway -config /etc/nexus/ai-gateway.config.yaml
+WorkingDirectory=/var/lib/nexus
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/nexus /var/log/nexus
+
+[Install]
+WantedBy=multi-user.target

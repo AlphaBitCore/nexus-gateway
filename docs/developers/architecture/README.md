@@ -168,6 +168,12 @@ If you are about to edit code in an area that is genuinely **not** covered by an
 | i18n keys (`t('namespace:section.key')`), locale files (`packages/*/src/i18n/locales/**`), `packages/ui-shared/src/i18n/**` | `docs/developers/architecture/cross-cutting/ui/ui-i18n-architecture.md` |
 | `useApi` / `useApiMutation` hooks + queryKey shape, `shellRouteConfig.tsx` / `Sidebar.tsx` IA, `packages/ui-shared/**` cross-bundle components | `docs/developers/architecture/cross-cutting/ui/ui-shell-architecture.md` |
 
+## Cross-cutting — deployment
+
+| Editing area / file glob | Read FIRST |
+|---|---|
+| `nexus-ami/**` — Packer template, install / first-boot / harden scripts, prod-shape `*.config.yaml`, systemd unit files for the AMI / bare-metal appliance form factor | `docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md` |
+
 ## Adding a new arch doc
 
 When you ship a new `docs/developers/architecture/**/*-architecture.md`:

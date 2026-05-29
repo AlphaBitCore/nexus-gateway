@@ -6,7 +6,8 @@
        compliance-proxy-build compliance-proxy-test \
        agent-build agent-test \
        agent-build-macos agent-package-macos agent-clean-macos \
-       agent-build-windows agent-package-windows agent-clean-windows
+       agent-build-windows agent-package-windows agent-clean-windows \
+       ami-build ami-stage
 
 # ── Build output convention ────────────────────────────────────────────
 # All Go service binaries land in dist/bin/<service>/<binary> so they
@@ -132,3 +133,14 @@ agent-package-windows: agent-build-windows
 
 agent-clean-windows:
 	rm -rf dist/windows
+
+# ── AMI / appliance build (E-OSS marketplace) ────────────────────────
+# Wraps Go binaries + UI dist + Prisma bundle + Packer build into one
+# invocation. Architecture:
+# docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md
+
+ami-build:
+	bash nexus-ami/build.sh
+
+ami-stage:
+	bash nexus-ami/build.sh --skip-packer
