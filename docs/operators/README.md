@@ -6,7 +6,6 @@ Documentation for running Nexus Gateway in production.
 
 - [`ops/`](./ops/) — deployment and operations guides:
   - [`deployment.md`](./ops/deployment.md) — bring-up and topologies.
-  - [`ami-build.md`](./ops/ami-build.md) — build the single-instance appliance AMI (AWS Marketplace).
   - [`ec2-single-node.md`](./ops/ec2-single-node.md) — a single-node deployment.
   - [`install-test-env.md`](./ops/install-test-env.md) — a single-host test or staging install.
   - [`backup-dr.md`](./ops/backup-dr.md) — backup and disaster recovery.

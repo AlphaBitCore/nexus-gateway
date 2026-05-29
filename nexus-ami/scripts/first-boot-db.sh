@@ -17,7 +17,11 @@ set -euo pipefail
 export PATH=/opt/nexus/node/bin:$PATH
 
 PRISMA_DIR=/opt/nexus/prisma
-ADMIN_CREDS=/var/log/nexus/admin-credentials.txt
+# AWS Marketplace AMI policy: default admin credentials must be generated on
+# first boot (never baked into the AMI), and the read-once file must live
+# outside /var/log, be mode 0600, and be owned by root only. /root satisfies
+# this — see ami-appliance-architecture.md §5.
+ADMIN_CREDS=/root/nexus-admin-credentials.txt
 
 # Source the per-service env file written by first-boot-secrets.sh — the seed
 # requires CREDENTIAL_ENCRYPTION_KEY (re-encrypts seeded credential rows) and
@@ -153,9 +157,10 @@ Password:  $ADMIN_PASSWORD
 
 IMPORTANT
 ---------
-1. This file is mode 0640, root:nexus — root or members of the 'nexus' group
-   can read it. Remove this file once you have changed the admin password
-   from the UI:   sudo rm $ADMIN_CREDS
+1. This file is mode 0600, owned by root — only root can read it. It was
+   generated on first boot and is unique to this instance. Delete it as soon
+   as you have logged in and changed the admin password from the UI:
+       sudo rm $ADMIN_CREDS
 2. The TLS certificate at /etc/nexus/tls.crt is SELF-SIGNED. Replace it with
    a cert signed for your hostname before exposing the appliance publicly,
    then run: sudo systemctl reload nginx
@@ -169,17 +174,18 @@ For full operator documentation see:
   https://github.com/AlphaBitCore/nexus-gateway/blob/main/docs/operators/
 ================================================================================
 EOF
-chmod 0640 "$ADMIN_CREDS"
-chown root:nexus "$ADMIN_CREDS"
+chmod 0600 "$ADMIN_CREDS"
+chown root:root "$ADMIN_CREDS"
 
 cat > /etc/motd <<EOF
 
 Nexus Gateway appliance — first-boot complete.
 
 Admin credentials for this instance are saved at:
-  $ADMIN_CREDS (mode 0640, root:nexus)
+  $ADMIN_CREDS (mode 0600, root-only)
 
 Run:  sudo cat $ADMIN_CREDS
+Delete the file once you have changed the admin password:  sudo rm $ADMIN_CREDS
 
 EOF
 

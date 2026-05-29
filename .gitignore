@@ -3,8 +3,7 @@ dist/
 
 # nexus-ami staging artifacts populated by nexus-ami/build.sh — the binaries,
 # UI dist, and Prisma bundle are derived from the source tree on every build
-# and should never be committed. Architecture:
-# docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md
+# and should never be committed. See nexus-ami/README.md for the build flow.
 nexus-ami/artifacts/bin/
 nexus-ami/artifacts/ui-dist/
 nexus-ami/artifacts/prisma/

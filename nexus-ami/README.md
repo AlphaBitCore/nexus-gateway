@@ -54,8 +54,9 @@ Output: a registered AMI ID in your AWS account (region per
 # 2. SSH in with your EC2 key pair:
 ssh -i ~/.ssh/your-key.pem ec2-user@<public-ip>
 
-# 3. Read the per-instance admin credentials:
-sudo cat /var/log/nexus/admin-credentials.txt
+# 3. Read the per-instance admin credentials (generated on first boot,
+#    mode 0600, root-only — delete after first read):
+sudo cat /root/nexus-admin-credentials.txt
 
 # 4. Verify all 7 Nexus-related services are green:
 systemctl status nexus-first-boot postgresql valkey nats \
@@ -65,7 +66,7 @@ systemctl status nexus-first-boot postgresql valkey nats \
 #    log in with the credentials from step 3.
 
 # 6. Launch a SECOND instance from the same AMI and confirm
-#    /var/log/nexus/admin-credentials.txt contains a DIFFERENT password.
+#    /root/nexus-admin-credentials.txt contains a DIFFERENT password.
 #    Per-instance secret uniqueness is the most important first-boot invariant.
 ```
 

@@ -68,6 +68,11 @@ echo "==> [harden] clearing per-stateful service data accumulated during install
 # install-time content baked into the AMI is a leak / non-determinism source.
 rm -rf /var/lib/pgsql/data/* /var/lib/valkey/* /var/lib/nats/* 2>/dev/null || true
 rm -f  /etc/nexus/.initialized 2>/dev/null || true
+# Per-instance admin credentials are generated on first boot, never baked into
+# the AMI. Wipe both the current path and the legacy /var/log location so no
+# build-time test artifact can leak into the published image (AWS Marketplace
+# AMI policy: no hardcoded/shared credentials in the AMI).
+rm -f  /root/nexus-admin-credentials.txt 2>/dev/null || true
 rm -f  /var/log/nexus/admin-credentials.txt 2>/dev/null || true
 
 echo "==> [harden] zeroing free space (shrinks EBS snapshot)..."
