@@ -70,6 +70,49 @@ systemctl status nexus-first-boot postgresql valkey nats \
 #    Per-instance secret uniqueness is the most important first-boot invariant.
 ```
 
+## Service endpoints (nginx reverse proxy on :443)
+
+Everything is reached over HTTPS on port 443 (the self-signed cert from
+`first-boot-ca.sh`); only 443, 3128 (Compliance Proxy CONNECT), and 22 need
+to be open in the EC2 Security Group. `nginx-nexus.conf` maps:
+
+| Path | Backend | Purpose |
+|---|---|---|
+| `/` | UI (static) | Control Plane SPA |
+| `/api/`, `/oauth/`, `/authserver/`, `/.well-known/`, `/scim/` | Control Plane :3001 | Admin API, OAuth/OIDC, SCIM provisioning |
+| `/v1/`, `/v1beta/`, `/openai/deployments/`, `/api/paas/` | AI Gateway :3050 | LLM ingress — OpenAI / Gemini / Azure / GLM wire formats |
+| `/ws`, `/api/internal/things/` | Nexus Hub :3060 | Remote endpoint-agent enrollment + control WebSocket |
+| `/healthz`, `/ready` | Control Plane :3001 | Unauthenticated health / readiness |
+
+Verify the OpenAI provider you configured in the UI:
+
+```bash
+# List the models the gateway serves (OpenAI providers show owned_by:"openai"):
+curl -sk https://<public-ip>/v1/models | jq '.data[] | select(.owned_by=="openai")'
+
+# End-to-end round-trip through the gateway (needs a virtual key from the UI):
+curl -sk https://<public-ip>/v1/chat/completions \
+  -H "Authorization: Bearer <virtual-key>" -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
+```
+
+The admin UI's **Simulator** page and the per-credential **Test** button
+(which probes the provider's real `/v1/models` with your stored key) also work
+without any client-side setup.
+
+Remote agents enroll against the Hub over the same 443 endpoint:
+
+```bash
+nexus-agent enroll --hub-url https://<public-ip> --token <enrollment-token> \
+  --hub-ca <appliance-tls-cert.pem>
+```
+
+**Security note:** `/v1/*`, `/ws`, and `/api/internal/things/*` are now
+internet-reachable. They are not anonymous — `/v1/*` requires a virtual key,
+and the Hub agent surface is gated by per-device / enrollment / internal-service
+tokens. The Hub admin API (`/api/hub/*`), Prometheus `/metrics`, and
+`/debug/runtime` are deliberately NOT proxied and stay loopback-only.
+
 ## Self-Service AMI Scan iteration
 
 Run AWS's Self-Service Scan from the Partner Central → Marketplace
