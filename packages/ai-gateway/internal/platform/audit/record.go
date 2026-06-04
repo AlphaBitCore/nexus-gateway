@@ -15,10 +15,10 @@ type Record struct {
 	// TraceID links this event to upstream agent/compliance-proxy events for the
 	// same request. Extracted from the X-Nexus-Request-Id header; falls back to
 	// RequestID when the header is absent (direct-to-gateway traffic).
-	TraceID    string
-	Timestamp  time.Time
-	Method     string
-	Path       string
+	TraceID   string
+	Timestamp time.Time
+	Method    string
+	Path      string
 	// EndpointType classifies the request modality. Values are canonical
 	// typology.EndpointKind strings — "chat", "embeddings", "stt",
 	// "tts", "image_generation", "batch". Stamped at handler dispatch
@@ -35,10 +35,10 @@ type Record struct {
 	// transparent traffic.
 	TargetMethod string
 	TargetPath   string
-	StatusCode int
-	LatencyMs  int
-	SourceIP   string
-	TargetHost string
+	StatusCode   int
+	LatencyMs    int
+	SourceIP     string
+	TargetHost   string
 
 	UserID           string
 	UserDisplayName  string
@@ -273,7 +273,7 @@ type Record struct {
 	// unless the user request directly invoked an ai-guard hook. Same
 	// numeric(20,10) shape as embedding_cost_usd; same semantics: NULL on
 	// non-ai-guard rows, non-zero on ai-guard rows that ran a classifier.
-	AIGuardCostUsd float64
+	AIGuardCostUsd   float64
 	EmbeddingModelID string
 
 	// RequestBody and ResponseBody are optionally captured based on the

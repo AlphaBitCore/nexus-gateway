@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,10 +26,14 @@ type fakeStore struct {
 	puts     []spillstore.PutOptions // observed Put calls (order = upload order)
 	putDelay time.Duration
 	putErr   error
-	gets     int32
-	deletes  int32
-	sweeps   int32
-	stats    int32
+	// putGate, when non-nil, blocks every Put until it receives (or the channel is
+	// closed). Lets a test hold the uploader goroutine deterministically so the
+	// bounded queue fills and the drop path fires without relying on timing.
+	putGate chan struct{}
+	gets    int32
+	deletes int32
+	sweeps  int32
+	stats   int32
 }
 
 func (f *fakeStore) Backend() string { return "fake" }
@@ -39,6 +44,13 @@ func (f *fakeStore) PresignPut(ctx context.Context, key string, sizeBytes int64,
 	return "", spillstore.ErrPresignNotSupported
 }
 func (f *fakeStore) Put(ctx context.Context, content io.Reader, size int64, opts spillstore.PutOptions) (audit.SpillRef, error) {
+	if f.putGate != nil {
+		select {
+		case <-f.putGate:
+		case <-ctx.Done():
+			return audit.SpillRef{}, ctx.Err()
+		}
+	}
 	if f.putDelay > 0 {
 		select {
 		case <-time.After(f.putDelay):
@@ -220,6 +232,66 @@ func TestPut_QueueFullDrops(t *testing.T) {
 	// Tighter check than == not needed; range is fine.
 	if d := store.Drops(); d < 3 {
 		t.Errorf("Drops = %d, want >= 3", d)
+	}
+}
+
+// discardLogger is a non-nil slog.Logger writing nowhere — used to drive the
+// logger-guarded Warn branches in the drop / failure paths deterministically.
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// TestPut_QueueFullDrops_LogsWarn deterministically fills the bounded queue by
+// holding the uploader on putGate, then asserts the queue-full DROP path runs its
+// logger.Warn branch (covered only when a logger is set). Deterministic — no timing
+// dependence — unlike TestPut_QueueFullDrops which relies on a putDelay race.
+func TestPut_QueueFullDrops_LogsWarn(t *testing.T) {
+	gate := make(chan struct{})
+	inner := &fakeStore{putGate: gate}
+	store, err := New(inner, Options{QueueCapacity: 1, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The uploader picks the first job and blocks inside inner.Put on the gate; the
+	// queue (cap 1) then holds one job and every further Put hits the drop branch.
+	for i := range 6 {
+		if _, err := store.Put(context.Background(), strings.NewReader("x"), 1, spillstore.PutOptions{
+			EventID: fmt.Sprintf("ev-%d", i), Direction: "request",
+		}); err != nil {
+			t.Errorf("Put %d: %v", i, err)
+		}
+	}
+	if d := store.Drops(); d < 3 {
+		t.Errorf("Drops = %d, want >= 3 (queue held full via gate)", d)
+	}
+	// Release the uploader so Close can drain cleanly.
+	close(gate)
+	if err := store.Close(context.Background()); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
+// TestPut_UploadFailure_LogsWarn drives the runJob failure path WITH a logger set,
+// covering the logger.Warn branch (TestPut_UploadFailureCounted runs with a nil
+// logger and so leaves that branch uncovered).
+func TestPut_UploadFailure_LogsWarn(t *testing.T) {
+	inner := &fakeStore{putErr: errors.New("S3 exploded")}
+	store, err := New(inner, Options{Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close(context.Background()) }()
+
+	if _, err := store.Put(context.Background(), strings.NewReader("x"), 1, spillstore.PutOptions{
+		EventID: "ev-fail", Direction: "request",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := store.Flush(flushCtx); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Failures(); got != 1 {
+		t.Errorf("Failures = %d, want 1", got)
 	}
 }
 

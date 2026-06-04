@@ -24,14 +24,14 @@ import "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputsta
 // PayloadKind is an optional hint (e.g. "ai-chat") so the judge can
 // adjust its expectations; ignored when empty.
 type Request struct {
-	DetectorType string                  `json:"detector_type"`
-	Content      string                  `json:"content"`
+	DetectorType string `json:"detector_type"`
+	Content      string `json:"content"`
 	// Messages is an optional structured message list. When non-empty it
 	// takes precedence over Content for inputstaging. After Plan() the
 	// staged messages are joined with "\n" and used as Content.
-	Messages     []inputstaging.Message  `json:"messages,omitempty"`
-	PayloadKind  string                  `json:"payload_kind,omitempty"`
-	Context      Context                 `json:"context"`
+	Messages    []inputstaging.Message `json:"messages,omitempty"`
+	PayloadKind string                 `json:"payload_kind,omitempty"`
+	Context     Context                `json:"context"`
 }
 
 // Context carries the caller-supplied metadata used by the judge prompt

@@ -107,3 +107,30 @@ func TestLookupOutputBudget_UnknownModel_ReturnsZeroFalse(t *testing.T) {
 		t.Errorf("anchor=%d; want 0", anchor)
 	}
 }
+
+// TestLookupOutputBudget_DeepSeekKimiReasoners asserts the DeepSeek V4 and
+// Kimi thinking models are recognised reasoners with the registered anchors,
+// and that an empty effort falls to the "low" anchor (these providers do not
+// expose graduated effort upstream).
+func TestLookupOutputBudget_DeepSeekKimiReasoners(t *testing.T) {
+	cases := []struct {
+		model, effort string
+		wantAnchor    int
+	}{
+		{"deepseek-v4-pro", "high", 8000},
+		{"deepseek-v4-pro", "", 600}, // effort="" → low
+		{"deepseek-v4-flash", "medium", 1200},
+		{"kimi-k2.6", "high", 10000},
+		{"kimi-k2.6", "", 600}, // effort="" → low
+		{"kimi-k2.5", "medium", 2500},
+	}
+	for _, c := range cases {
+		anchor, supports := lookupOutputBudget(c.model, c.effort)
+		if !supports {
+			t.Errorf("%s/%q: supports=false; want true (reasoner)", c.model, c.effort)
+		}
+		if anchor != c.wantAnchor {
+			t.Errorf("%s/%q: anchor=%d; want %d", c.model, c.effort, anchor, c.wantAnchor)
+		}
+	}
+}

@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // testAdapter wires a [provcore.Adapter] over the spec returned by
@@ -281,7 +281,7 @@ func TestOpenAI_Execute_Passthrough(t *testing.T) {
 
 	a := testAdapter(t)
 	resp, err := a.Execute(context.Background(), provcore.Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{"model":"gpt"}`),
 		Target: provcore.CallTarget{
@@ -309,7 +309,7 @@ func TestOpenAI_Execute_ErrorNormalized(t *testing.T) {
 
 	a := testAdapter(t)
 	_, err := a.Execute(context.Background(), provcore.Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{"model":"gpt"}`),
 		Target:     provcore.CallTarget{BaseURL: server.URL, APIKey: "bad"},

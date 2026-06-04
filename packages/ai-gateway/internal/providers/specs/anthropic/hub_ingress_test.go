@@ -2,9 +2,9 @@ package anthropic
 
 import (
 	"encoding/json"
-	"testing"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
+	"testing"
 )
 
 func TestMessagesRequestToOpenAIChatCompletion_Basic(t *testing.T) {

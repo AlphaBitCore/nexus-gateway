@@ -92,6 +92,24 @@ func (f fakeUsers) GetByID(_ context.Context, id string) (*store.User, error) {
 	return u, nil
 }
 
+// defaultTokenTestClients is the shared fakeClients registration used by the
+// token-handler test suite. Every client_id the suite invokes is registered
+// here as a public client with PKCE; tests that need a confidential client
+// replace the fixture's clients field before building the handler.
+func defaultTokenTestClients() fakeClients {
+	return fakeClients{
+		"test-client":     {ID: "test-client", Type: "public", RequirePKCE: true},
+		"web-console":     {ID: "web-console", Type: "public", RequirePKCE: true},
+		"attacker-client": {ID: "attacker-client", Type: "public", RequirePKCE: true},
+		"agent-desktop":   {ID: "agent-desktop", Type: "public", RequirePKCE: true},
+		"other-client":    {ID: "other-client", Type: "public", RequirePKCE: true},
+		"cp-ui":           {ID: "cp-ui", Type: "public", RequirePKCE: true},
+		"any":             {ID: "any", Type: "public", RequirePKCE: true},
+		"refresh-test":    {ID: "refresh-test", Type: "public", RequirePKCE: true},
+		"confidential-c":  {ID: "confidential-c", Type: "confidential", RequirePKCE: true},
+	}
+}
+
 // tokFixture bundles the collaborators token-handler tests need. Each test
 // builds its own fixture so AuthCodeStore state never leaks between cases.
 type tokFixture struct {
@@ -100,6 +118,7 @@ type tokFixture struct {
 	refresh  *fakeRefresh
 	signer   *token.Signer
 	keystore *token.Keystore
+	clients  fakeClients
 	deps     oauth.TokenDeps
 	echo     *echo.Echo
 }
@@ -137,9 +156,19 @@ func newTokenFixture(t *testing.T) *tokFixture {
 // buildHandler returns an Echo with the token handler mounted, using the
 // fixture's concrete stores and an in-memory user loader. Callers mutate
 // fixture fields before calling this.
+//
+// The default Clients fake registers every client_id used across the
+// existing test suite as a public client with PKCE — that mirrors the
+// pre-client-secret-auth contract these tests were written against. Tests
+// that need a confidential client (e.g. covering the new verifyClientAuth
+// paths) replace f.clients before calling buildHandler.
 func (f *tokFixture) buildHandler(users fakeUsers) *echo.Echo {
+	if f.clients == nil {
+		f.clients = defaultTokenTestClients()
+	}
 	f.deps = oauth.TokenDeps{
 		Issuer:    "https://cp.nexus.ai",
+		Clients:   f.clients,
 		AuthCodes: f.codes,
 		Users:     users,
 		Refresh:   f.refresh,
@@ -518,6 +547,7 @@ func TestToken_Refresh_HappyPath(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-old"},
+		"client_id":     {"agent-desktop"},
 	}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -556,6 +586,7 @@ func TestToken_Refresh_ReplayRejected(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-compromised"},
+		"client_id":     {"web-console"},
 	}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -574,6 +605,7 @@ func TestToken_Refresh_ExpiredRejected(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-expired"},
+		"client_id":     {"web-console"},
 	}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d", rec.Code)
@@ -606,6 +638,7 @@ func TestToken_Refresh_DisabledUser(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-any"},
+		"client_id":     {"web-console"},
 	}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())

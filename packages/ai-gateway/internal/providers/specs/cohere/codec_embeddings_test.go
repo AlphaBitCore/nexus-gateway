@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/cohere"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
 
@@ -452,7 +452,6 @@ func TestCohereEmbed_FlatArray_NoReturnedTypeField(t *testing.T) {
 		t.Errorf("returned_embedding_type must NOT be present for flat-array responses, got %q", typ.Str)
 	}
 }
-
 
 func TestCohereSpec_RequestShapesContainsEmbeddings(t *testing.T) {
 	spec := cohere.NewSpec(nil)

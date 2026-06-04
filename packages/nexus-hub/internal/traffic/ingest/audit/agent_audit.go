@@ -40,25 +40,25 @@ type AgentAuditAPI struct {
 
 // AgentAuditEvent is the event format uploaded by the Agent.
 type AgentAuditEvent struct {
-	ID             string   `json:"id"`
-	TraceID        string   `json:"traceId,omitempty"`
-	Timestamp      string   `json:"timestamp"`
-	SourceIP       string   `json:"sourceIp,omitempty"`
-	TargetHost     string   `json:"targetHost,omitempty"`
-	Method         string   `json:"method,omitempty"`
-	Path           string   `json:"path,omitempty"`
-	StatusCode     int      `json:"statusCode,omitempty"`
-	LatencyMs      int      `json:"latencyMs,omitempty"`
-	SourceProcess  string   `json:"sourceProcess,omitempty"`
-	Action         string   `json:"action,omitempty"`
+	ID            string `json:"id"`
+	TraceID       string `json:"traceId,omitempty"`
+	Timestamp     string `json:"timestamp"`
+	SourceIP      string `json:"sourceIp,omitempty"`
+	TargetHost    string `json:"targetHost,omitempty"`
+	Method        string `json:"method,omitempty"`
+	Path          string `json:"path,omitempty"`
+	StatusCode    int    `json:"statusCode,omitempty"`
+	LatencyMs     int    `json:"latencyMs,omitempty"`
+	SourceProcess string `json:"sourceProcess,omitempty"`
+	Action        string `json:"action,omitempty"`
 	// #71: wire keys are requestHookDecision/Reason/ReasonCode (agent
 	// AuditEventToMap stamps the request-stage hook decision under those
 	// keys; emit envelope below also uses the request* prefix for
 	// consumer alignment). Old hookDecision tag silently dropped the
 	// field on bind → cp-ui Detail showed empty.
-	HookDecision   string `json:"requestHookDecision,omitempty"`
-	HookReason     string `json:"requestHookReason,omitempty"`
-	HookReasonCode string `json:"requestHookReasonCode,omitempty"`
+	HookDecision   string   `json:"requestHookDecision,omitempty"`
+	HookReason     string   `json:"requestHookReason,omitempty"`
+	HookReasonCode string   `json:"requestHookReasonCode,omitempty"`
 	BumpStatus     string   `json:"bumpStatus,omitempty"`
 	ComplianceTags []string `json:"complianceTags,omitempty"`
 

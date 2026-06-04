@@ -34,10 +34,10 @@ var sha256Fn = sha256.New
 // syscalls). Production code never reassigns them. This mirrors the
 // `randReader`/`newGCM` pattern in packages/control-plane/internal/crypto.
 var (
-	newCipherFn = aes.NewCipher
-	newGCMFn    = cipher.NewGCM
-	randReadFn  = rand.Read
-	mkdirAllFn  = os.MkdirAll
+	newCipherFn  = aes.NewCipher
+	newGCMFn     = cipher.NewGCM
+	randReadFn   = rand.Read
+	mkdirAllFn   = os.MkdirAll
 	createTempFn = func(dir, pattern string) (osFile, error) {
 		return os.CreateTemp(dir, pattern)
 	}

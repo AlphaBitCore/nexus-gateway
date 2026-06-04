@@ -40,7 +40,6 @@ func TestRegistry_All(t *testing.T) {
 	}
 }
 
-
 // TestBuiltinRulesHaveValidParamsSchema makes sure every ParamsSchema parses
 // as valid JSON (not just that mustJSON didn't panic — we also want to see
 // that the default Params is itself valid against the schema, or at least

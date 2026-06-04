@@ -36,15 +36,15 @@ type embeddingProbeRequest struct {
 
 // embeddingProbeResponse is the JSON body returned by POST /internal/embedding-probe.
 type embeddingProbeResponse struct {
-	OK                    bool      `json:"ok"`
-	ProviderID            string    `json:"providerId"`
-	ModelID               string    `json:"modelId"`
-	ModelName             string    `json:"modelName"`
-	Dimension             int       `json:"dimension"`
-	LatencyMs             int64     `json:"latencyMs"`
-	PromptTokens          int       `json:"promptTokens"`
+	OK                     bool      `json:"ok"`
+	ProviderID             string    `json:"providerId"`
+	ModelID                string    `json:"modelId"`
+	ModelName              string    `json:"modelName"`
+	Dimension              int       `json:"dimension"`
+	LatencyMs              int64     `json:"latencyMs"`
+	PromptTokens           int       `json:"promptTokens"`
 	SampleEmbeddingFirst10 []float32 `json:"sampleEmbeddingFirst10"`
-	Error                 string    `json:"error,omitempty"`
+	Error                  string    `json:"error,omitempty"`
 }
 
 // EmbeddingProbeHandler returns an http.HandlerFunc that issues a
@@ -121,13 +121,13 @@ func EmbeddingProbeHandler(httpClient *http.Client, logger *slog.Logger) http.Ha
 			"latencyMs", latencyMs)
 
 		writeJSON(w, http.StatusOK, embeddingProbeResponse{
-			OK:                    true,
-			ProviderID:            req.ProviderID,
-			ModelID:               req.ModelID,
-			ModelName:             resp.Model,
-			Dimension:             len(resp.Embedding),
-			LatencyMs:             latencyMs,
-			PromptTokens:          resp.PromptTokens,
+			OK:                     true,
+			ProviderID:             req.ProviderID,
+			ModelID:                req.ModelID,
+			ModelName:              resp.Model,
+			Dimension:              len(resp.Embedding),
+			LatencyMs:              latencyMs,
+			PromptTokens:           resp.PromptTokens,
 			SampleEmbeddingFirst10: sample,
 		})
 	}

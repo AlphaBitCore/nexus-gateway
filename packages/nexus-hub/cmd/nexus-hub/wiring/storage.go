@@ -8,9 +8,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/compliance/catbagent"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/compliance/catbagent"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"

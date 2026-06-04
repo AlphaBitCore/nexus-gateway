@@ -41,7 +41,7 @@ func TestStrictestDecision_AllPairs(t *testing.T) {
 		{Approve, Modify, Modify},
 		{Approve, Approve, Approve},
 		{RejectHard, RejectHard, RejectHard},
-		{Decision("unknown"), Approve, Approve},      // unknown rank=0 < Approve rank=1
+		{Decision("unknown"), Approve, Approve},                         // unknown rank=0 < Approve rank=1
 		{Decision("unknown"), Decision("unknown"), Decision("unknown")}, // both unknown: a returned
 	}
 	for _, c := range cases {

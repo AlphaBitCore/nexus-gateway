@@ -13,7 +13,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/rewrites"
 )
 
-
 func TestIsReasoningModel_gpt5Variants(t *testing.T) {
 	for _, model := range []string{"gpt-5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"} {
 		if !rewrites.IsReasoningModel(model) {
@@ -43,7 +42,6 @@ func TestIsReasoningModel_emptyString_false(t *testing.T) {
 		t.Error("IsReasoningModel('') should return false")
 	}
 }
-
 
 func TestApplyReasoningRewrites_nonReasoningModel_noOp(t *testing.T) {
 	payload := map[string]any{
@@ -147,8 +145,8 @@ func TestApplyReasoningRewrites_oSeries_allThreeParams(t *testing.T) {
 func TestApplyReasoningRewrites_maxCompletionTokensAlreadySet_maxTokensDeletedWithoutOverwrite(t *testing.T) {
 	// Rule: when max_completion_tokens already present, max_tokens deleted but NOT overwritten.
 	payload := map[string]any{
-		"max_tokens":             512,
-		"max_completion_tokens":  1024,
+		"max_tokens":            512,
+		"max_completion_tokens": 1024,
 	}
 	rewrites.ApplyReasoningRewrites(payload, "gpt-5")
 	if _, ok := payload["max_tokens"]; ok {

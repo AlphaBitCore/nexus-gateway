@@ -4,47 +4,47 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/access"
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/tls/cache"
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/access"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/exemption"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/conn"
 	proxyserver "github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/server"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/killswitch"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/tls/cache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
+	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
 )
 
 // ListenerDeps bundles all dependencies for building the proxy server.
 type ListenerDeps struct {
-	Cfg                   *config.Config
-	Logger                *slog.Logger
-	AccessChecker         *access.Checker
-	ConnManager           *conn.Manager
-	IdleTimeout           time.Duration
-	ShutdownCord          *conn.ShutdownCoordinator
-	PinningTracker        *tlsbump.PinningTracker
-	ExemptionStore        *exemption.Store
-	KillSwitch            *killswitch.KillSwitch
-	PayloadCaptureStore   *payloadcapture.Store
-	DomainEngine          *domain.Engine
-	AdapterRegistry       *traffic.AdapterRegistry
-	NormalizeRegistry     *normalizecore.Registry
-	UpstreamTransport     *tlsbump.UpstreamTransport
-	CertCache             *cache.CertCache
-	ComplianceResolver    *compliance.PolicyResolver
-	AuditEmitter          *compliance.AuditEmitter
-	StreamingLiveConfig   streaming.LiveConfig
-	PerHookTimeout        time.Duration
-	TotalTimeout          time.Duration
-	ParallelHooks         bool
-	StreamingPolicyStore  *streampolicy.Store
+	Cfg                  *config.Config
+	Logger               *slog.Logger
+	AccessChecker        *access.Checker
+	ConnManager          *conn.Manager
+	IdleTimeout          time.Duration
+	ShutdownCord         *conn.ShutdownCoordinator
+	PinningTracker       *tlsbump.PinningTracker
+	ExemptionStore       *exemption.Store
+	KillSwitch           *killswitch.KillSwitch
+	PayloadCaptureStore  *payloadcapture.Store
+	DomainEngine         *domain.Engine
+	AdapterRegistry      *traffic.AdapterRegistry
+	NormalizeRegistry    *normalizecore.Registry
+	UpstreamTransport    *tlsbump.UpstreamTransport
+	CertCache            *cache.CertCache
+	ComplianceResolver   *compliance.PolicyResolver
+	AuditEmitter         *compliance.AuditEmitter
+	StreamingLiveConfig  streaming.LiveConfig
+	PerHookTimeout       time.Duration
+	TotalTimeout         time.Duration
+	ParallelHooks        bool
+	StreamingPolicyStore *streampolicy.Store
 	// AttestationVerifier is wired by wiring/attestation.go when attestation
 	// is enabled in ComplianceConfig.AttestationEnabled. Nil disables the feature.
 	AttestationVerifier *proxyserver.AttestationVerifier

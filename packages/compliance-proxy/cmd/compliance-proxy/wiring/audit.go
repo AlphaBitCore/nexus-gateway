@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 

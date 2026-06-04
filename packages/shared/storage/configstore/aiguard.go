@@ -29,10 +29,10 @@ type AIGuardConfig struct {
 	// sent to the classifier. One of: last_user, system_plus_last_user,
 	// recent_turns, head_plus_tail, full_truncated. Defaults to
 	// "system_plus_last_user".
-	InputStrategy     string `json:"inputStrategy"`
+	InputStrategy string `json:"inputStrategy"`
 	// ModelContextLimit is the judge model's context window in tokens.
 	// 0 = unknown / not configured; classify falls back to 8192 when zero.
-	ModelContextLimit int    `json:"modelContextLimit"`
+	ModelContextLimit int `json:"modelContextLimit"`
 }
 
 // PgxPool is the minimum pgx pool surface AIGuardStore needs. The

@@ -5,8 +5,8 @@ import (
 	"log/slog"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/sjson"
 )
 
@@ -33,9 +33,9 @@ type codec struct {
 }
 
 // EncodeRequest translates canonical OpenAI → Bedrock wire body.
-// - EndpointChatCompletions: delegates to the Anthropic codec + post-processes.
-// - EndpointEmbeddings: dispatches to the Titan or Cohere embed codec via
-//   embeddingEncodeRequest based on CallTarget.ProviderModelID prefix.
+//   - EndpointChatCompletions: delegates to the Anthropic codec + post-processes.
+//   - EndpointEmbeddings: dispatches to the Titan or Cohere embed codec via
+//     embeddingEncodeRequest based on CallTarget.ProviderModelID prefix.
 func (c codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, target provcore.CallTarget) (provcore.EncodeResult, error) {
 	if endpoint == typology.WireShapeBedrockEmbeddings {
 		return embeddingEncodeRequest(canonicalBody, target)
@@ -68,12 +68,12 @@ func (c codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, 
 }
 
 // DecodeResponse dispatches by endpoint:
-// - EndpointEmbeddings: dispatches to Titan or Cohere embed decoder by
-//   probing the response body shape. Titan returns `embedding` (singular,
-//   a flat float array) while Cohere returns `embeddings` (plural, an array
-//   of arrays). This shape-based dispatch avoids the need for a modelID in
-//   the codec interface (SchemaCodec.DecodeResponse does not carry CallTarget).
-// - EndpointChatCompletions: delegates to the Anthropic codec.
+//   - EndpointEmbeddings: dispatches to Titan or Cohere embed decoder by
+//     probing the response body shape. Titan returns `embedding` (singular,
+//     a flat float array) while Cohere returns `embeddings` (plural, an array
+//     of arrays). This shape-based dispatch avoids the need for a modelID in
+//     the codec interface (SchemaCodec.DecodeResponse does not carry CallTarget).
+//   - EndpointChatCompletions: delegates to the Anthropic codec.
 func (c codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, contentType string) (provcore.DecodeResult, error) {
 	if endpoint == typology.WireShapeBedrockEmbeddings {
 		return decodeBedrockEmbedResponseByShape(nativeBody)

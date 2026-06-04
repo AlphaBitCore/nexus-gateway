@@ -105,6 +105,51 @@ func TestEntryForLeavesActorEmptyWhenContextHasNoAdminAuth(t *testing.T) {
 	}
 }
 
+// TestEntryForStampsViaFromInProcessContext covers the E90 I5 stamp as of the P2b
+// in-process self-call (#16): the web assistant's transport dispatches its admin
+// calls with an UNFORGEABLE initiator context value (WithInitiator), and EntryFor
+// copies it onto the entry so the audit row — and the tamper-evident hash chain
+// downstream — records that the write was AI-initiated.
+func TestEntryForStampsViaFromInProcessContext(t *testing.T) {
+	c := newTestEcho("203.0.113.9:4444")
+	req := c.Request()
+	c.SetRequest(req.WithContext(WithInitiator(req.Context(), ViaAssistant)))
+
+	e := EntryFor(c, iam.ResourceVirtualKey, iam.VerbCreate)
+
+	if e.Via != ViaAssistant {
+		t.Errorf("Via = %q; want %q", e.Via, ViaAssistant)
+	}
+}
+
+// TestEntryForIgnoresForgedHeader pins the #18b H1 forgery defense: an inbound
+// X-Nexus-Initiated-By header (a value a malicious admin could set on a manual API
+// call) must NOT stamp Via — only the in-process context value does. The header is
+// no longer read by EntryFor (and is stripped at ingress by StripInitiatorHeader),
+// so a human write can never be mis-attributed as AI-initiated.
+func TestEntryForIgnoresForgedHeader(t *testing.T) {
+	c := newTestEcho("203.0.113.9:4444")
+	c.Request().Header.Set(InitiatedByHeader, ViaAssistant) // forged by a client
+
+	e := EntryFor(c, iam.ResourceVirtualKey, iam.VerbCreate)
+
+	if e.Via != "" {
+		t.Errorf("Via = %q; want empty (a forged header must not stamp the AI-initiated channel)", e.Via)
+	}
+}
+
+// TestEntryForLeavesViaEmptyForHumanRequest pins the negative branch: a direct
+// human/UI admin request has no in-process initiator value, so Via stays empty — which
+// the hash chain treats (via omitempty) exactly as the pre-via recipe, leaving human
+// rows byte-identical to before this feature.
+func TestEntryForLeavesViaEmptyForHumanRequest(t *testing.T) {
+	c := newTestEcho("203.0.113.9:4444")
+	e := EntryFor(c, iam.ResourceVirtualKey, iam.VerbCreate)
+	if e.Via != "" {
+		t.Errorf("Via = %q; want empty for a human/UI request", e.Via)
+	}
+}
+
 func TestEntryForActionMatchesCatalogActionBody(t *testing.T) {
 	// AC-3 alignment at the audit layer: the (EntityType, Action) pair
 	// produced by EntryFor must compose into the same SIEM eventType the
@@ -124,5 +169,29 @@ func TestEntryForActionMatchesCatalogActionBody(t *testing.T) {
 					r.Name, v, siemKey, actionBody)
 			}
 		}
+	}
+}
+
+// TestStripInitiatorHeader verifies the ingress edge scrubs any inbound
+// X-Nexus-Initiated-By header before handlers run (#18b H1): the wrapped handler
+// must never observe a client-supplied value, and the middleware passes through to
+// the next handler regardless.
+func TestStripInitiatorHeader(t *testing.T) {
+	c := newTestEcho("203.0.113.9:4444")
+	c.Request().Header.Set(InitiatedByHeader, ViaAssistant) // forged inbound copy
+
+	called := false
+	h := StripInitiatorHeader(func(c echo.Context) error {
+		called = true
+		if got := c.Request().Header.Get(InitiatedByHeader); got != "" {
+			t.Errorf("handler saw %s = %q; want stripped", InitiatedByHeader, got)
+		}
+		return nil
+	})
+	if err := h(c); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("middleware did not call the next handler")
 	}
 }

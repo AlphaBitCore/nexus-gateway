@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/token"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )

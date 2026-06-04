@@ -16,9 +16,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/proxy"
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
@@ -29,44 +26,19 @@ import (
 
 const defaultWinAddr = "127.0.0.1:19080"
 
-// iphlpapi.dll functions for TCP table queries
-var (
-	iphlpapi                = windows.NewLazySystemDLL("iphlpapi.dll")
-	procGetExtendedTcpTable = iphlpapi.NewProc("GetExtendedTcpTable")
-
-	kernel32DLL                    = windows.NewLazySystemDLL("kernel32.dll")
-	procQueryFullProcessImageNameW = kernel32DLL.NewProc("QueryFullProcessImageNameW")
-)
-
-// TCP_TABLE_OWNER_PID_CONNECTIONS = 4 requests connections with owning PID.
-const (
-	tcpTableOwnerPidConnections = 4
-	afINET                      = 2 // AF_INET
-)
-
-// mibTCPRowOwnerPID maps to MIB_TCPROW_OWNER_PID.
-type mibTCPRowOwnerPID struct {
-	State      uint32
-	LocalAddr  [4]byte
-	LocalPort  uint32 // network byte order, only low 16 bits used
-	RemoteAddr [4]byte
-	RemotePort uint32 // network byte order, only low 16 bits used
-	OwningPid  uint32
-}
-
 // WindowsPlatform implements api.Platform for Windows via CONNECT proxy +
 // iphlpapi PID resolution + Win32 process metadata.
 const maxConcurrentConns = 512
 
 type WindowsPlatform struct {
-	handler     api.ConnectionHandler
-	listener    net.Listener
-	wg          sync.WaitGroup
-	done        chan struct{}
-	stopOnce    sync.Once
-	sem         chan struct{} // bounds concurrent connection handlers
-	tlsEngine   *agentTLS.Engine
-	addr        string
+	handler   api.ConnectionHandler
+	listener  net.Listener
+	wg        sync.WaitGroup
+	done      chan struct{}
+	stopOnce  sync.Once
+	sem       chan struct{} // bounds concurrent connection handlers
+	tlsEngine *agentTLS.Engine
+	addr      string
 
 	// NexusWFP client when the kernel driver loaded successfully;
 	// nil in SystemProxyFallback mode. handleConn branches on this
@@ -108,9 +80,9 @@ func NewPlatform(addr string) api.Platform {
 		addr = defaultWinAddr
 	}
 	return &WindowsPlatform{
-		done:        make(chan struct{}),
-		sem:         make(chan struct{}, maxConcurrentConns),
-		addr:        addr,
+		done: make(chan struct{}),
+		sem:  make(chan struct{}, maxConcurrentConns),
+		addr: addr,
 	}
 }
 
@@ -459,17 +431,17 @@ func (p *WindowsPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
 	// emitted per-HTTP-request rows (mirrors the macOS NE bridge).
 	if auditor, ok := p.handler.(api.FlowAuditor); ok && !bumpedViaTLSBump {
 		auditor.OnFlowComplete(api.FlowResult{
-			FlowID:          intercepted.FlowID,
-			SrcIP:           intercepted.SrcIP,
-			DstHost:         dstHost,
-			DstPort:         dstPort,
-			Process:         procMeta,
-			Decision:        decision,
-			BytesIn:         bytesIn,
-			BytesOut:        bytesOut,
-			DurationMs:      int(time.Since(startedAt).Milliseconds()),
-			BumpStatus:      bumpStatus,
-			StartedAt:       startedAt,
+			FlowID:     intercepted.FlowID,
+			SrcIP:      intercepted.SrcIP,
+			DstHost:    dstHost,
+			DstPort:    dstPort,
+			Process:    procMeta,
+			Decision:   decision,
+			BytesIn:    bytesIn,
+			BytesOut:   bytesOut,
+			DurationMs: int(time.Since(startedAt).Milliseconds()),
+			BumpStatus: bumpStatus,
+			StartedAt:  startedAt,
 			// A Windows raw relay has no distinct upstream call to time, so
 			// UpstreamTtfbMs/TotalMs stay nil; LatencyBreakdown carries the
 			// agent's own intercept overhead (intercept_ms).
@@ -495,107 +467,4 @@ func mergeInterceptMsWindows(breakdown map[string]int, startedAt, interceptDoneA
 	}
 	breakdown["intercept_ms"] = ms
 	return breakdown
-}
-
-// ProcessInfo resolves process metadata using Win32 APIs.
-func (p *WindowsPlatform) ProcessInfo(pid int) (api.ProcessMeta, error) {
-	meta := api.ProcessMeta{PID: pid}
-
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if err != nil {
-		return meta, fmt.Errorf("OpenProcess(%d): %w", pid, err)
-	}
-	defer windows.CloseHandle(h)
-
-	// Executable path via QueryFullProcessImageNameW
-	meta.Path = queryProcessImageName(h)
-	if meta.Path != "" {
-		meta.Name = filepath.Base(meta.Path)
-	}
-
-	// Process owner via OpenProcessToken + GetTokenUser
-	var token windows.Token
-	if err := windows.OpenProcessToken(h, windows.TOKEN_QUERY, &token); err == nil {
-		defer token.Close()
-		if tokenUser, err := token.GetTokenUser(); err == nil {
-			account, domain, _, err := tokenUser.User.Sid.LookupAccount("")
-			if err == nil {
-				meta.User = domain + `\` + account
-			}
-		}
-	}
-
-	if meta.Path == "" {
-		return meta, fmt.Errorf("cannot resolve image name for pid %d", pid)
-	}
-	return meta, nil
-}
-
-func queryProcessImageName(h windows.Handle) string {
-	var buf [windows.MAX_PATH]uint16
-	size := uint32(len(buf))
-	r, _, _ := procQueryFullProcessImageNameW.Call(
-		uintptr(h),
-		0,
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-	)
-	if r == 0 {
-		return ""
-	}
-	return windows.UTF16ToString(buf[:size])
-}
-
-// findOwnerPID looks up the PID owning a local TCP endpoint via
-// GetExtendedTcpTable (iphlpapi.dll).
-func findOwnerPID(localIP net.IP, localPort int) int {
-	ip4 := localIP.To4()
-	if ip4 == nil {
-		return 0
-	}
-
-	// First call to determine buffer size
-	var size uint32
-	procGetExtendedTcpTable.Call(0, uintptr(unsafe.Pointer(&size)), 1,
-		uintptr(afINET), uintptr(tcpTableOwnerPidConnections), 0)
-	if size == 0 {
-		return 0
-	}
-
-	buf := make([]byte, size)
-	r, _, _ := procGetExtendedTcpTable.Call(
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		1,
-		uintptr(afINET),
-		uintptr(tcpTableOwnerPidConnections),
-		0,
-	)
-	if r != 0 {
-		return 0
-	}
-
-	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
-	const rowSize = unsafe.Sizeof(mibTCPRowOwnerPID{})
-	offset := unsafe.Sizeof(uint32(0)) // skip dwNumEntries
-	bufLen := uintptr(len(buf))
-
-	for i := uint32(0); i < numEntries; i++ {
-		if offset+rowSize > bufLen {
-			break // guard against TOCTOU: table grew between sizing and data calls
-		}
-		row := (*mibTCPRowOwnerPID)(unsafe.Pointer(&buf[offset]))
-		offset += rowSize
-
-		// Compare local address and port (port stored in network byte order)
-		rowPort := int(row.LocalPort>>8 | (row.LocalPort&0xFF)<<8)
-		if rowPort == localPort &&
-			row.LocalAddr[0] == ip4[0] &&
-			row.LocalAddr[1] == ip4[1] &&
-			row.LocalAddr[2] == ip4[2] &&
-			row.LocalAddr[3] == ip4[3] {
-			return int(row.OwningPid)
-		}
-	}
-	return 0
 }

@@ -98,11 +98,11 @@ func (h *Handler) OpsMetricsFleet(c echo.Context) error {
 	if gran == "" || gran == "auto" {
 		gran = opsstore.SelectGranularity(from, to)
 		if gran == "raw" {
-			gran = "1h" // raw has no fleet aggregate
+			gran = "5m" // raw has no fleet aggregate; smallest fleet tier is 5m
 		}
 	}
-	if gran != "1h" && gran != "1d" && gran != "1mo" {
-		return c.JSON(http.StatusBadRequest, errJSON("invalid granularity for fleet (need 1h|1d|1mo)", "validation_error", "VALIDATION_ERROR"))
+	if gran != "5m" && gran != "1h" && gran != "1d" && gran != "1mo" {
+		return c.JSON(http.StatusBadRequest, errJSON("invalid granularity for fleet (need 5m|1h|1d|1mo)", "validation_error", "VALIDATION_ERROR"))
 	}
 
 	var dim *string
@@ -190,9 +190,9 @@ func parseOpsTimeseriesParams(c echo.Context) (opsstore.OpsTimeseriesParams, *ht
 		gran = opsstore.SelectGranularity(from, to)
 	}
 	switch gran {
-	case "raw", "1h", "1d", "1mo":
+	case "raw", "5m", "1h", "1d", "1mo":
 	default:
-		return opsstore.OpsTimeseriesParams{}, badReq("invalid granularity (need auto|raw|1h|1d|1mo)")
+		return opsstore.OpsTimeseriesParams{}, badReq("invalid granularity (need auto|raw|5m|1h|1d|1mo)")
 	}
 
 	var dim *string

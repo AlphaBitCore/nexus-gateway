@@ -6,10 +6,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/exemption"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/killswitch"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 )
 
@@ -63,19 +63,19 @@ func TestInitProxyServerFull_ComplianceEnabledPath(t *testing.T) {
 	cfg.Compliance.Enabled = true
 
 	d := ProxyServerDeps{
-		Cfg:                   cfg,
-		Logger:                testLogger(),
-		AccessChecker:         infra.AccessChecker,
-		ConnManager:           infra.ConnManager,
-		ShutdownCoord:         infra.ShutdownCoord,
-		UpstreamTransport:     infra.UpstreamTransport,
-		CertResult:            certRes,
-		CompRes:               compRes,
-		DomainEngine:          domainEngineFor(t),
-		AdapterRegistry:       infra.AdapterRegistry,
-		KillSwitch:            newKS(t),
-		ExemptionStore:        newExemptionStore(t),
-		PayloadCaptureStore:   newPayloadCaptureStore(),
+		Cfg:                  cfg,
+		Logger:               testLogger(),
+		AccessChecker:        infra.AccessChecker,
+		ConnManager:          infra.ConnManager,
+		ShutdownCoord:        infra.ShutdownCoord,
+		UpstreamTransport:    infra.UpstreamTransport,
+		CertResult:           certRes,
+		CompRes:              compRes,
+		DomainEngine:         domainEngineFor(t),
+		AdapterRegistry:      infra.AdapterRegistry,
+		KillSwitch:           newKS(t),
+		ExemptionStore:       newExemptionStore(t),
+		PayloadCaptureStore:  newPayloadCaptureStore(),
 		StreamingPolicyStore: streampolicy.NewStore(streampolicy.DefaultPolicy()),
 	}
 	srv := InitProxyServerFull(d)

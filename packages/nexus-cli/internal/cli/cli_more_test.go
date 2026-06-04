@@ -11,7 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
 
 func TestMain_Entry(t *testing.T) {
@@ -66,7 +67,7 @@ func TestLogin_Browser(t *testing.T) {
 	defer srv.Close()
 	store := fakeStore{m: map[string]string{}}
 	a := &App{
-		Cfg:   &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
+		Cfg:   &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
 		Env:   core.Env{Name: "local", CPBaseURL: srv.URL, OAuthClientID: "cp-ui"},
 		Store: store,
 		BrowserOpener: func(authURL string) error {
@@ -89,7 +90,7 @@ func TestLogin_Browser(t *testing.T) {
 func TestLogin_AdminKey_Errors(t *testing.T) {
 	mk := func(stdin string, setErr error) error {
 		a := &App{
-			Cfg:    &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
+			Cfg:    &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
 			Env:    core.Env{Name: "local"},
 			Store:  fakeStore{m: map[string]string{}, setErr: setErr},
 			Out:    io.Discard,
@@ -115,7 +116,7 @@ func TestLogin_AdminKey_Errors(t *testing.T) {
 
 func TestLogin_BrowserError(t *testing.T) {
 	a := &App{
-		Cfg:           &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
+		Cfg:           &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
 		Env:           core.Env{Name: "local", CPBaseURL: "http://unused", OAuthClientID: "cp-ui"},
 		Store:         fakeStore{m: map[string]string{}},
 		BrowserOpener: func(string) error { return errors.New("no browser here") },
@@ -232,7 +233,7 @@ func TestEnvUse_SaveError(t *testing.T) {
 func TestRoot_InteractiveLaunchesTUI(t *testing.T) {
 	launched := false
 	a := &App{
-		Cfg:         &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
+		Cfg:         &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
 		Env:         core.Env{Name: "local"},
 		Store:       fakeStore{m: map[string]string{}},
 		Interactive: func() bool { return true },

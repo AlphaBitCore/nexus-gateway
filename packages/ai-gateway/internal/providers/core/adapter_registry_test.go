@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"testing"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+	"testing"
 )
 
 // stubOpenAIAdapter implements [Adapter] with a fixed Format for
@@ -11,8 +11,10 @@ import (
 // irrelevant here.
 type stubOpenAIAdapter struct{}
 
-func (stubOpenAIAdapter) Format() Format                  { return FormatOpenAI }
-func (stubOpenAIAdapter) SupportsShape(shape typology.WireShape) bool { return shape == typology.WireShapeOpenAIChat }
+func (stubOpenAIAdapter) Format() Format { return FormatOpenAI }
+func (stubOpenAIAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 func (stubOpenAIAdapter) Execute(context.Context, Request) (*Response, error) {
 	return &Response{StatusCode: 200}, nil
 }
@@ -76,7 +78,7 @@ func TestRegistry_InvalidFormatRejected(t *testing.T) {
 
 type invalidFormatAdapter struct{}
 
-func (invalidFormatAdapter) Format() Format                  { return Format("bogus") }
+func (invalidFormatAdapter) Format() Format                              { return Format("bogus") }
 func (invalidFormatAdapter) SupportsShape(shape typology.WireShape) bool { return false }
 func (invalidFormatAdapter) Execute(context.Context, Request) (*Response, error) {
 	return nil, nil

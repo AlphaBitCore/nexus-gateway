@@ -10,9 +10,9 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // TestRunRequestHooks_ModifyOrder_HookRewritePrecedesCodecEncode
@@ -62,7 +62,7 @@ func TestRunRequestHooks_ModifyOrder_HookRewritePrecedesCodecEncode(t *testing.T
 	auditRec := &audit.Record{RequestID: "req-order"}
 
 	anthropicIngress := Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatAnthropic,
 	}
 

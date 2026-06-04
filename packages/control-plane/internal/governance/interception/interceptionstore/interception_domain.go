@@ -18,27 +18,27 @@ import (
 // control-plane store layer; any new admin/agent surface that consumes
 // domains + paths should keep the JSON tags below stable.
 type InterceptionDomainRow struct {
-	ID                string                `json:"id"`
-	Name              string                `json:"name"`
-	Description       *string               `json:"description,omitempty"`
-	HostPattern       string                `json:"hostPattern"`
-	HostMatchType     string                `json:"hostMatchType"`
-	AdapterID         string                `json:"adapterId"`
-	AdapterConfig     json.RawMessage       `json:"adapterConfig,omitempty"`
-	Enabled           bool                  `json:"enabled"`
-	Priority          int                   `json:"priority"`
-	DefaultPathAction string                `json:"defaultPathAction"`
-	OnAdapterError    string                `json:"onAdapterError"`
-	NetworkZone       string                `json:"networkZone"`
-	Source            string                `json:"source,omitempty"`
+	ID                string          `json:"id"`
+	Name              string          `json:"name"`
+	Description       *string         `json:"description,omitempty"`
+	HostPattern       string          `json:"hostPattern"`
+	HostMatchType     string          `json:"hostMatchType"`
+	AdapterID         string          `json:"adapterId"`
+	AdapterConfig     json.RawMessage `json:"adapterConfig,omitempty"`
+	Enabled           bool            `json:"enabled"`
+	Priority          int             `json:"priority"`
+	DefaultPathAction string          `json:"defaultPathAction"`
+	OnAdapterError    string          `json:"onAdapterError"`
+	NetworkZone       string          `json:"networkZone"`
+	Source            string          `json:"source,omitempty"`
 	// ApplicableEndpoints is the endpoint filter. When non-empty, CP only
 	// applies this domain rule to traffic whose classified EndpointType is
 	// in the list. Empty list = all endpoints.
-	ApplicableEndpoints []string             `json:"applicableEndpoints,omitempty"`
-	CreatedAt         time.Time             `json:"createdAt,omitempty"`
-	UpdatedAt         time.Time             `json:"updatedAt,omitempty"`
-	CreatedBy         *string               `json:"createdBy,omitempty"`
-	Paths             []InterceptionPathRow `json:"paths"`
+	ApplicableEndpoints []string              `json:"applicableEndpoints,omitempty"`
+	CreatedAt           time.Time             `json:"createdAt,omitempty"`
+	UpdatedAt           time.Time             `json:"updatedAt,omitempty"`
+	CreatedBy           *string               `json:"createdBy,omitempty"`
+	Paths               []InterceptionPathRow `json:"paths"`
 }
 
 // InterceptionPathRow represents a path rule within an InterceptionDomain.

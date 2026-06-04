@@ -59,7 +59,6 @@ func echoCtx(method, path string, body []byte, aa *authn.AdminAuth) (echo.Contex
 	return c, rec
 }
 
-
 // stubMeUserStore satisfies meUserStore.
 type stubMeUserStore struct {
 	findResult   *userstore.NexusUser
@@ -129,7 +128,6 @@ func buildHandler(us meUserStore, is meIAMStore, ts meTrafficStore) *Handler {
 		logger:  silentLogger(),
 	}
 }
-
 
 func TestGetMyProfile_NoAuth_Returns401(t *testing.T) {
 	h := buildHandler(&stubMeUserStore{}, &stubMeIAMStore{}, &stubMeTrafficStore{})
@@ -210,7 +208,6 @@ func TestGetMyProfile_NonAdminPrincipalType_FetchesGroups(t *testing.T) {
 		t.Errorf("code=%d want 200", rec.Code)
 	}
 }
-
 
 func TestUpdateMyProfile_NoAuth_Returns401(t *testing.T) {
 	h := buildHandler(&stubMeUserStore{}, &stubMeIAMStore{}, &stubMeTrafficStore{})
@@ -358,7 +355,6 @@ func TestUpdateMyProfile_UsernameAlias_Returns200(t *testing.T) {
 	}
 }
 
-
 func TestListMyActivity_NoAuth_Returns401(t *testing.T) {
 	h := buildHandler(&stubMeUserStore{}, &stubMeIAMStore{}, &stubMeTrafficStore{})
 	c, rec := echoCtx(http.MethodGet, "/api/my/activity", nil, nil)
@@ -395,7 +391,6 @@ func TestListMyActivity_Success_Returns200(t *testing.T) {
 		t.Errorf("code=%d want 200; body=%s", rec.Code, rec.Body)
 	}
 }
-
 
 func TestListUserAPIKeys_NoAuth_Returns401(t *testing.T) {
 	h := buildHandler(&stubMeUserStore{}, &stubMeIAMStore{}, &stubMeTrafficStore{})
@@ -434,7 +429,6 @@ func TestListUserAPIKeys_Success_Returns200(t *testing.T) {
 		t.Errorf("code=%d want 200; body=%s", rec.Code, rec.Body)
 	}
 }
-
 
 func TestCreateUserAPIKey_NoAuth_Returns401(t *testing.T) {
 	h := buildHandler(&stubMeUserStore{}, &stubMeIAMStore{}, &stubMeTrafficStore{})
@@ -521,7 +515,6 @@ func TestCreateUserAPIKey_Success_Returns201(t *testing.T) {
 	}
 }
 
-
 func TestDeleteUserAPIKey_NoAuth_Returns401(t *testing.T) {
 	h := buildHandler(&stubMeUserStore{}, &stubMeIAMStore{}, &stubMeTrafficStore{})
 	c, rec := echoCtx(http.MethodDelete, "/api/user/api-keys/k1", nil, nil)
@@ -596,7 +589,6 @@ func TestDeleteUserAPIKey_Success_Returns200(t *testing.T) {
 		t.Errorf("code=%d want 200; body=%s", rec.Code, rec.Body)
 	}
 }
-
 
 func TestRegenerateUserAPIKey_NoAuth_Returns401(t *testing.T) {
 	h := buildHandler(&stubMeUserStore{}, &stubMeIAMStore{}, &stubMeTrafficStore{})
@@ -689,6 +681,7 @@ func TestNew_NilPool_DoesNotPanic(t *testing.T) {
 	})
 	if h == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if h.users != nil || h.iam != nil || h.traffic != nil {
 		t.Error("expected nil stores with nil pool")

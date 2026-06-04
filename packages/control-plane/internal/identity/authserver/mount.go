@@ -42,12 +42,16 @@ type StoreFactory interface {
 // stores so connection accounting stays correct.
 type defaultStoreFactory struct{ pool *pgxpool.Pool }
 
-func (f defaultStoreFactory) Clients() *store.ClientStore         { return store.NewClientStore(f.pool) }
-func (f defaultStoreFactory) Users() *store.UserStore             { return store.NewUserStore(f.pool) }
-func (f defaultStoreFactory) IdPs() *store.IdPStore               { return store.NewIdPStore(f.pool) }
-func (f defaultStoreFactory) Refresh() *store.RefreshStore        { return store.NewRefreshStore(f.pool) }
-func (f defaultStoreFactory) Assignments() *store.AssignmentStore { return store.NewAssignmentStore(f.pool) }
-func (f defaultStoreFactory) Federated() *store.FederatedStore    { return store.NewFederatedStore(f.pool) }
+func (f defaultStoreFactory) Clients() *store.ClientStore  { return store.NewClientStore(f.pool) }
+func (f defaultStoreFactory) Users() *store.UserStore      { return store.NewUserStore(f.pool) }
+func (f defaultStoreFactory) IdPs() *store.IdPStore        { return store.NewIdPStore(f.pool) }
+func (f defaultStoreFactory) Refresh() *store.RefreshStore { return store.NewRefreshStore(f.pool) }
+func (f defaultStoreFactory) Assignments() *store.AssignmentStore {
+	return store.NewAssignmentStore(f.pool)
+}
+func (f defaultStoreFactory) Federated() *store.FederatedStore {
+	return store.NewFederatedStore(f.pool)
+}
 
 // Mounted holds references to the wired auth-server collaborators that
 // MountWithFactory chooses to expose. Today only RefreshHelper is surfaced
@@ -252,6 +256,26 @@ func mountCore(e *echo.Echo, d Deps, f StoreFactory) *Mounted {
 		Limiter:   login.NewLimiter(),
 		Audit:     d.Audit,
 	}))
+
+	// /authserver/approve completes a pending OAuth authorize request using the
+	// caller's existing bearer session — the path the SPA takes when the
+	// operator hits the auth dance already signed in (e.g. nexus-cli's PKCE flow
+	// hitting /oauth/authorize while a CP-UI tab is open in the same browser).
+	// Without this, the SPA navigates the operator away to "/" the moment its
+	// status flips to authenticated and the loopback listener on the CLI side
+	// hangs until its 3-minute timeout.
+	if d.JWTVerifier != nil {
+		e.POST("/authserver/approve",
+			login.ApproveHandler(login.ApproveDeps{
+				Pending:   pending,
+				AuthCodes: authcodes,
+				Audit:     d.Audit,
+			}),
+			d.JWTVerifier.Middleware(),
+		)
+	} else {
+		logger.Warn("authserver: JWTVerifier not configured; skipping /authserver/approve")
+	}
 
 	// External-IdP SSO routes — registered regardless of whether any OIDC/SAML
 	// IdP is currently enabled; the handlers self-check and bounce the browser

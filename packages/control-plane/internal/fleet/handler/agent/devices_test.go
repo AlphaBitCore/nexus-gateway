@@ -63,7 +63,6 @@ func TestRegisterAdminAgentDeviceRoutes_MountsAll(t *testing.T) {
 	}
 }
 
-
 func TestListAgentDevices_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	h := newHandlerForTest(mock, &fakeHub{}, nil)
@@ -103,7 +102,6 @@ func TestListAgentDevices_DBError(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestListAgentDevices_ScanError(t *testing.T) {
 	mock := newMockPool(t)
@@ -192,7 +190,6 @@ func TestGetAgentDevice_DBError(t *testing.T) {
 	}
 }
 
-
 func TestListDeviceEvents_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	h := newHandlerForTest(mock, &fakeHub{}, nil)
@@ -228,7 +225,6 @@ func TestListDeviceEvents_DBError(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestGenerateEnrollToken_NoAuth(t *testing.T) {
 	h := newHandlerForTest(nil, &fakeHub{}, nil)
@@ -325,7 +321,6 @@ func TestGenerateEnrollToken_HubError(t *testing.T) {
 	}
 }
 
-
 func TestUnenrollDevice_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	spy := &auditSpy{}
@@ -403,7 +398,6 @@ func TestUnenrollDevice_UpdateError(t *testing.T) {
 	}
 }
 
-
 func TestListDeviceAssignments_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	h := newHandlerForTest(mock, &fakeHub{}, nil)
@@ -454,7 +448,6 @@ func TestListDeviceAssignments_DBError(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestForceRefreshAgentDevice_Happy(t *testing.T) {
 	mock := newMockPool(t)
@@ -563,7 +556,6 @@ func TestForceRefreshAgentDevice_HubError(t *testing.T) {
 	}
 }
 
-
 func TestRotateAgentCert_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	spy := &auditSpy{}
@@ -670,7 +662,6 @@ func TestRotateAgentCert_HubError(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestAgentFleetHealth_Happy(t *testing.T) {
 	mock := newMockPool(t)

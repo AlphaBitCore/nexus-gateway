@@ -12,23 +12,23 @@ import (
 
 // VirtualKey represents a row from the VirtualKey table.
 type VirtualKey struct {
-	ID             string          `json:"id"`
-	Name           string          `json:"name"`
-	KeyHash        *string         `json:"keyHash,omitempty"`
-	KeyPrefix      *string         `json:"keyPrefix,omitempty"`
-	ProjectID      *string         `json:"projectId"`
-	SourceApp      *string         `json:"sourceApp"`
-	Enabled        bool            `json:"enabled"`
-	ExpiresAt      *time.Time      `json:"expiresAt"`
-	RateLimitRpm   *int            `json:"rateLimitRpm"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	KeyHash      *string    `json:"keyHash,omitempty"`
+	KeyPrefix    *string    `json:"keyPrefix,omitempty"`
+	ProjectID    *string    `json:"projectId"`
+	SourceApp    *string    `json:"sourceApp"`
+	Enabled      bool       `json:"enabled"`
+	ExpiresAt    *time.Time `json:"expiresAt"`
+	RateLimitRpm *int       `json:"rateLimitRpm"`
 	// Separate /v1/estimate compare-endpoint RPM cap.
 	// nil → 30/min default applied at the AI gateway.
-	CompareEndpointRateLimitRpm *int `json:"compareEndpointRateLimitRpm"`
-	AllowedModels  json.RawMessage `json:"allowedModels"`
-	OwnerID        *string         `json:"ownerId"`
-	CreatedBy      *string         `json:"createdBy"`
-	CreatedAt      time.Time       `json:"createdAt"`
-	UpdatedAt      time.Time       `json:"updatedAt"`
+	CompareEndpointRateLimitRpm *int            `json:"compareEndpointRateLimitRpm"`
+	AllowedModels               json.RawMessage `json:"allowedModels"`
+	OwnerID                     *string         `json:"ownerId"`
+	CreatedBy                   *string         `json:"createdBy"`
+	CreatedAt                   time.Time       `json:"createdAt"`
+	UpdatedAt                   time.Time       `json:"updatedAt"`
 	// Quota-system fields (nullable — populated once migration adds the columns).
 	VKType       *string    `json:"vkType"`
 	VKStatus     *string    `json:"vkStatus"`

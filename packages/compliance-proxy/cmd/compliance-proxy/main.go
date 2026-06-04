@@ -20,11 +20,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/config/cache"
 	proxyserver "github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/server"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/killswitch"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/wiring"
@@ -137,7 +137,7 @@ func run() int {
 		CompRes: compRes, DomainEngine: domainEngine,
 		AdapterRegistry:   infra.AdapterRegistry,
 		NormalizeRegistry: normalizeRegistry,
-		KillSwitch: killSwitch, ExemptionStore: exemptionStore,
+		KillSwitch:        killSwitch, ExemptionStore: exemptionStore,
 		PayloadCaptureStore: payloadCaptureStore, StreamingPolicyStore: streamingPolicyStore,
 	})
 

@@ -14,31 +14,31 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
+	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	creddecrypt "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/decrypt"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/proxy/classify"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/rstokenauth"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
+	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
-	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )
 
@@ -86,28 +86,30 @@ func InitMQProducer(cfg *config.Config, logger *slog.Logger) (mq.Producer, error
 // --- Thing Client ---
 
 type TCInitDeps struct {
-	Cfg              *config.Config
-	DB               *store.DB
-	CacheLayer       *cachelayer.Layer
-	CredManager      *credmanager.Manager
-	GeminiMgrSet     *geminicache.ManagerSet
-	HookConfigCache  interface{ Reload(ctx context.Context) error }
-	Tp               *telemetry.SwappableTracerProvider
-	ObsState         *atomic.Pointer[telemetry.Config]
-	PayloadCapture   *payloadcapture.Store
-	StreamingPolicy  *streampolicy.Store
-	Reliability      ReliabilityReloader
-	PolicyCache      *quota.PolicyCache
-	AiguardGetter    func() *aiguard.ConfigCache
-	NormEngine       *wirerewrite.Engine
-	PassthroughCache *passthrough.Cache
-	AuditWriter      *audit.Writer
+	Cfg             *config.Config
+	DB              *store.DB
+	CacheLayer      *cachelayer.Layer
+	CredManager     *credmanager.Manager
+	GeminiMgrSet    *geminicache.ManagerSet
+	HookConfigCache interface {
+		Reload(ctx context.Context) error
+	}
+	Tp                *telemetry.SwappableTracerProvider
+	ObsState          *atomic.Pointer[telemetry.Config]
+	PayloadCapture    *payloadcapture.Store
+	StreamingPolicy   *streampolicy.Store
+	Reliability       ReliabilityReloader
+	PolicyCache       *quota.PolicyCache
+	AiguardGetter     func() *aiguard.ConfigCache
+	NormEngine        *wirerewrite.Engine
+	PassthroughCache  *passthrough.Cache
+	AuditWriter       *audit.Writer
 	ConfigKeyRecorder *runtimeintrospect.KeyStateRecorder
-	OpsReg           *registry.Registry
-	ProcessStartTime time.Time
-	MqProducer       mq.Producer
-	Logger           *slog.Logger
-	BuildVersion     string
+	OpsReg            *registry.Registry
+	ProcessStartTime  time.Time
+	MqProducer        mq.Producer
+	Logger            *slog.Logger
+	BuildVersion      string
 	// CfgLoaderBuilder constructs the config loader once the thingclient agID and
 	// OutcomeTracker are known. Built by main.go via configdispatch.BuildConfigLoader
 	// so that wiring stays free of configdispatch imports (circular: configdispatch
@@ -325,10 +327,10 @@ func MountRoutes(
 		AgID: agID, BuildVersion: buildVersion, CacheLayer: d.CacheLayer,
 		PolicyCache:         d.PolicyCache,
 		PayloadCaptureStore: d.PayloadCapture,
-		HookConfigCache: d.HookConfigCache,
-		AIGuardConfigCache: func() *aiguard.ConfigCache { return d.AiguardConfigCache },
-		ObservabilityGet:   func() *telemetry.Config { return d.ObsState.Load() },
-		ConfigKeyRecorder: d.ConfigKeyRecorder, AuthToken: cfg.Auth.InternalServiceToken,
+		HookConfigCache:     d.HookConfigCache,
+		AIGuardConfigCache:  func() *aiguard.ConfigCache { return d.AiguardConfigCache },
+		ObservabilityGet:    func() *telemetry.Config { return d.ObsState.Load() },
+		ConfigKeyRecorder:   d.ConfigKeyRecorder, AuthToken: cfg.Auth.InternalServiceToken,
 	}, mux)
 	if d.AiguardConfigCache != nil {
 		MountAIGuardRoutes(mux, cfg, d.Rdb, d.CredManager, d.AdapterReg, d.PtResolver,
@@ -341,12 +343,12 @@ func MountRoutes(
 		HookConfigCache: d.HookConfigCache, GWHookRegistry: d.GwHookRegistry,
 		ProviderReg: d.AdapterReg, HealthTracker: d.HealthTracker,
 		AuditWriter: d.AuditWriter, NormalizeReg: d.NormalizeReg,
-		Metrics: d.MetricsRecorder,
+		Metrics:     d.MetricsRecorder,
 		QuotaEngine: d.QuotaEngine, ResponseCache: d.ResponseCache,
-		UpstreamClient:   d.UpstreamClient,
-		PayloadCapture:   d.PayloadCapture,
-		StreamingPolicy:  d.StreamingPolicy,
-		FormatBridge: d.FormatBridge, Allowlist: d.Allowlist,
+		UpstreamClient:  d.UpstreamClient,
+		PayloadCapture:  d.PayloadCapture,
+		StreamingPolicy: d.StreamingPolicy,
+		FormatBridge:    d.FormatBridge, Allowlist: d.Allowlist,
 		NormEngine: d.NormEngine, GeminiCacheMgrSet: d.GeminiMgrSet,
 		PassthroughCache: d.PassthroughCache, Logger: logger,
 		Semantic: d.Semantic,

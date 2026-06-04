@@ -17,15 +17,15 @@ func TestQueryEventsFiltered_AIOnly_FiltersToInspect(t *testing.T) {
 	q := newTestQueue(t)
 	now := time.Now().UTC()
 	mustRecord(t, q, event.Event{
-		ID:         "ai-by-inspect", Timestamp: now,
+		ID: "ai-by-inspect", Timestamp: now,
 		TargetHost: "openai.com", Action: "inspect",
 	})
 	mustRecord(t, q, event.Event{
-		ID:         "ai-by-rule", Timestamp: now,
+		ID: "ai-by-rule", Timestamp: now,
 		TargetHost: "x.com", Action: "passthrough", DomainRuleID: "rule-7",
 	})
 	mustRecord(t, q, event.Event{
-		ID:         "non-ai", Timestamp: now,
+		ID: "non-ai", Timestamp: now,
 		TargetHost: "apple.com", Action: "passthrough",
 	})
 

@@ -6,16 +6,16 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/backpressure"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/diag"
-	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/localrollup"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/spilluploader"
-	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/hub"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	sharedintro "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 

@@ -24,7 +24,6 @@ func makeRuntimeCtx(t *testing.T, id string) (echo.Context, *httptest.ResponseRe
 	return c, rec
 }
 
-
 func TestResolveIntrospectURL_HubSelf(t *testing.T) {
 	got, err := resolveIntrospectURL("hub-1", "hub-1", "http://localhost:3060", "http://host:9100/metrics")
 	if err != nil {

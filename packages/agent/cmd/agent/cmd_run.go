@@ -701,8 +701,8 @@ func cmdRun(args []string) int {
 	defer plat.Stop() //nolint:errcheck
 
 	bridgeCloser := platformshim.WireDarwinBridge(context.Background(), plat, platformshim.DarwinBridgeArgs{
-		Logger:               logger,
-		BridgeAddr:           cfg.MitmBridgeAddr,
+		Logger:            logger,
+		BridgeAddr:        cfg.MitmBridgeAddr,
 		AgentPipeline:     comp.AgentPipeline,
 		NormalizeRegistry: normalizeRegistry,
 		// Local capture store (always-on by default) gates body capture in the

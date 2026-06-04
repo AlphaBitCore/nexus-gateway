@@ -1,10 +1,10 @@
 package codecs
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"strings"
 )
 
@@ -144,10 +144,10 @@ type cohereResponse struct {
 }
 
 type cohereRespMsg struct {
-	Role      string             `json:"role"`
+	Role      string              `json:"role"`
 	Content   []cohereContentPart `json:"content,omitempty"`
-	ToolPlan  string             `json:"tool_plan,omitempty"`
-	ToolCalls json.RawMessage    `json:"tool_calls,omitempty"`
+	ToolPlan  string              `json:"tool_plan,omitempty"`
+	ToolCalls json.RawMessage     `json:"tool_calls,omitempty"`
 }
 
 type cohereContentPart struct {

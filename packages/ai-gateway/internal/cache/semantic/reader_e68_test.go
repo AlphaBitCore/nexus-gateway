@@ -200,7 +200,6 @@ func (alwaysErrPoison) Add(_ context.Context, _, _ string, _ time.Duration) erro
 	return fmt.Errorf("simulated add error")
 }
 
-
 func TestNewReaderWithPoison_NilPoisonUsesNop(t *testing.T) {
 	cc := NewConfigCache()
 	_, rdb, cleanup := testredis.NewMiniValkey(t)

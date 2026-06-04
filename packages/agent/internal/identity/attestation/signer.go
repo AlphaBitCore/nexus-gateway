@@ -54,11 +54,11 @@ var signerRandReader = rand.Reader
 // at any time), so disabling attestation in CP UI takes effect on the
 // next outbound request.
 type Signer struct {
-	keyPath       string                  // PEM file on disk; e.g. <certDir>/attestation-key.pem
-	agentID       string                  // immutable for the agent's lifetime
-	enabledLookup func() bool             // returns the current AttestationEnabled toggle
+	keyPath       string      // PEM file on disk; e.g. <certDir>/attestation-key.pem
+	agentID       string      // immutable for the agent's lifetime
+	enabledLookup func() bool // returns the current AttestationEnabled toggle
 	logger        *slog.Logger
-	failedWarnAt  atomic.Int64            // unix-second of last fail-open warn (rate limiter)
+	failedWarnAt  atomic.Int64 // unix-second of last fail-open warn (rate limiter)
 
 	mu        sync.RWMutex
 	cachedKey ed25519.PrivateKey

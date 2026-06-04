@@ -16,7 +16,7 @@ import (
 // scan, filter, and error paths are exercised with no live database — the
 // pattern the coverage program uses to retire the CP store-layer exemptions.
 
-func strptr(s string) *string  { return &s }
+func strptr(s string) *string   { return &s }
 func f64ptr(f float64) *float64 { return &f }
 func intptr(i int) *int         { return &i }
 
@@ -175,13 +175,13 @@ func TestCreateModel_AppliesDefaults(t *testing.T) {
 	mock.ExpectQuery(`INSERT INTO "Model"`).
 		WithArgs(
 			pgxmock.AnyArg(), "new-model", "New", (*string)(nil), "prov1", "pm", "chat",
-			[]string{},            // Features defaulted
+			[]string{}, // Features defaulted
 			(*float64)(nil), (*float64)(nil), (*float64)(nil), (*float64)(nil),
 			(*int)(nil), (*int)(nil),
-			[]string{},            // Aliases defaulted
-			[]string{"text"},      // InputModalities defaulted
-			[]string{"text"},      // OutputModalities defaulted
-			"ga",                  // Lifecycle defaulted
+			[]string{},       // Aliases defaulted
+			[]string{"text"}, // InputModalities defaulted
+			[]string{"text"}, // OutputModalities defaulted
+			"ga",             // Lifecycle defaulted
 			(*json.RawMessage)(nil),
 			false,
 		).

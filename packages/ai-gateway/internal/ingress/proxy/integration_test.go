@@ -21,8 +21,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // stubResolver lets the handler integration tests exercise
@@ -82,7 +82,7 @@ func testDeps(upstreamURL string) *proxy.Deps {
 func TestProxyHandler_MissingModel(t *testing.T) {
 	deps := testDeps("")
 	h := proxy.NewHandler(deps).ServeProxy(proxy.Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 	})
 
@@ -108,7 +108,7 @@ func TestProxyHandler_MissingVK(t *testing.T) {
 	// For this test, we verify the missing-model check fires before auth.
 	deps := testDeps("")
 	h := proxy.NewHandler(deps).ServeProxy(proxy.Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 	})
 

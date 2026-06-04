@@ -46,6 +46,7 @@ func TestDecodeOIDCConfig_FieldsRoundTrip(t *testing.T) {
 	got := store.DecodeOIDCConfig(idp)
 	if got == nil {
 		t.Fatal("oidc idp should decode to non-nil cfg")
+		return
 	}
 	if got.Issuer != "https://idp.example" || got.JwksURI != "https://idp.example/.well-known/jwks" {
 		t.Fatalf("issuer/jwksUri not round-tripped: %+v", got)
@@ -86,6 +87,7 @@ func TestDecodeOIDCConfig_EmailClaimDefaultsToEmail(t *testing.T) {
 	got := store.DecodeOIDCConfig(idp)
 	if got == nil {
 		t.Fatal("expected non-nil cfg")
+		return
 	}
 	if got.EmailClaim != "email" {
 		t.Fatalf("emailClaim default = %q, want %q", got.EmailClaim, "email")
@@ -101,6 +103,7 @@ func TestDecodeOIDCConfig_EmptyConfigJustLiftsParent(t *testing.T) {
 	got := store.DecodeOIDCConfig(idp)
 	if got == nil {
 		t.Fatal("expected non-nil cfg")
+		return
 	}
 	if got.Issuer != "" {
 		t.Fatalf("issuer should be empty; got %q", got.Issuer)

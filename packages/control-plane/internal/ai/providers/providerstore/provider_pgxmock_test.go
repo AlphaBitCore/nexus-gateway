@@ -53,6 +53,7 @@ func modelRow(id, code string) []any {
 		(*float64)(nil), (*float64)(nil), (*int)(nil), (*int)(nil), "active", (*time.Time)(nil), (*string)(nil), []string(nil),
 		[]string{"text"}, []string{"text"}, "ga", (*[]byte)(nil), true, tNow, tNow}
 }
+
 // credRow returns the 30 CredMetadataColumns values in scan order with the
 // exact field types credstore.Credential expects (the column drift this test
 // guards — BUGS-FOUND #5 — is precisely a count/type mismatch here).

@@ -36,7 +36,6 @@ func newMockStore(t *testing.T) (pgxmock.PgxPoolIface, *rulepack.Store) {
 	return mock, rulepack.NewStoreWithPgxPool(mock)
 }
 
-
 func TestImportPack_HappyPath_InsertsPackAndRules(t *testing.T) {
 	mock, store := newMockStore(t)
 	mock.ExpectBeginTx(pgx.TxOptions{})
@@ -370,7 +369,6 @@ func TestUpsertOverrides_EmptyList_NoOp(t *testing.T) {
 		t.Errorf("empty overrides should be no-op; got: %v", err)
 	}
 }
-
 
 func TestUpdatePack_MetadataOnly_HappyPath(t *testing.T) {
 	mock, store := newMockStore(t)

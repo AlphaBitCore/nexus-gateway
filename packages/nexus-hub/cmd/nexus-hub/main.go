@@ -19,9 +19,9 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/cmd/nexus-hub/wiring"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/config"
-	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
+	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 )
 
 var buildVersion = "dev"
@@ -55,17 +55,20 @@ func run() int {
 
 	dbPool, err := wiring.InitDB(ctx, cfg, logger)
 	if err != nil {
-		logger.Error("database init failed", "error", err); return 1
+		logger.Error("database init failed", "error", err)
+		return 1
 	}
 	defer dbPool.Close()
 
 	redisClient, err := wiring.InitRedis(ctx, cfg, logger)
 	if err != nil {
-		logger.Error("invalid redis URL", "error", err); return 1
+		logger.Error("invalid redis URL", "error", err)
+		return 1
 	}
 	mqRes, err := wiring.InitMQ(ctx, cfg, logger)
 	if err != nil {
-		logger.Error("MQ init failed", "error", err); return 1
+		logger.Error("MQ init failed", "error", err)
+		return 1
 	}
 	defer wiring.CloseMQAndRedis(mqRes, redisClient)
 
@@ -73,7 +76,8 @@ func run() int {
 
 	storageRes, err := wiring.InitStorage(ctx, cfg, dbPool, redisClient, logger)
 	if err != nil {
-		logger.Error("storage init failed", "error", err); return 1
+		logger.Error("storage init failed", "error", err)
+		return 1
 	}
 
 	// One-shot startup audit: WARN on any thing_config_template row whose
@@ -88,7 +92,8 @@ func run() int {
 	}
 	identityRes, err := wiring.InitIdentity(ctx, cfg, storageRes.Store, logger)
 	if err != nil {
-		logger.Error("identity init failed", "error", err); return 1
+		logger.Error("identity init failed", "error", err)
+		return 1
 	}
 	if identityRes.JWKSCache != nil {
 		defer identityRes.JWKSCache.Close()
@@ -101,7 +106,8 @@ func run() int {
 
 	selfReg, err := wiring.InitSelfReg(ctx, cfg, buildVersion, storageRes.Store, logger)
 	if err != nil {
-		logger.Error("hub self-registration failed", "error", err); return 1
+		logger.Error("hub self-registration failed", "error", err)
+		return 1
 	}
 	otelRes := wiring.InitOTEL(ctx, cfg, logger)
 	if otelRes.Provider != nil {
@@ -116,7 +122,8 @@ func run() int {
 	sched, err := wiring.InitScheduler(ctx, cfg, dbPool, redisClient, mqRes.Consumer, mqRes.Producer,
 		storageRes.Store, tmRes.Mgr, opsReg, alertsRes.Store, alertsRes.Raiser, siemBridge, logger)
 	if err != nil {
-		logger.Error("scheduler init failed", "error", err); return 1
+		logger.Error("scheduler init failed", "error", err)
+		return 1
 	}
 	if sched != nil {
 		defer sched.Stop()

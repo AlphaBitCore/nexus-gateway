@@ -28,7 +28,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/responses"
 )
 
-
 func TestDecodeResponsesRequest_emptyBody_returnsError(t *testing.T) {
 	_, err := responses.DecodeResponsesRequest(nil)
 	if err == nil {
@@ -270,7 +269,6 @@ func TestDecodeResponsesRequest_noInput_noInstructions_noMessages(t *testing.T) 
 	}
 }
 
-
 func TestEncodeResponsesRequest_emptyBody_returnsError(t *testing.T) {
 	_, err := responses.EncodeResponsesRequest(nil)
 	if err == nil {
@@ -436,7 +434,6 @@ func TestEncodeResponsesRequest_emptyMessages_noInput(t *testing.T) {
 	}
 }
 
-
 func TestDecodeResponsesResponse_emptyBody_returnsError(t *testing.T) {
 	_, _, err := responses.DecodeResponsesResponse(nil)
 	if err == nil {
@@ -594,7 +591,6 @@ func TestDecodeResponsesResponse_missingId_syntheticId(t *testing.T) {
 		t.Errorf("synthetic id: got %q, want chatcmpl-*", id)
 	}
 }
-
 
 func TestEncodeResponsesResponse_emptyBody_returnsError(t *testing.T) {
 	_, err := responses.EncodeResponsesResponse(nil, "", "")
@@ -914,7 +910,6 @@ func TestDecodeResponsesRequest_inputStringContent_directString(t *testing.T) {
 		t.Errorf("content: got %q, want simple string", msgs[0].Get("content").String())
 	}
 }
-
 
 func TestIsResponsesBuiltinTool_knownTypes_true(t *testing.T) {
 	known := []string{

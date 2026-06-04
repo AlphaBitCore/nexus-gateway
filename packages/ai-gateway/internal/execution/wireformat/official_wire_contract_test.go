@@ -3,16 +3,16 @@ package wireformat
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
-	"strings"
-	"testing"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
+	"io"
+	"log/slog"
+	"strings"
+	"testing"
 )
 
 // Fixtures are minimal shapes aligned with vendor streaming documentation

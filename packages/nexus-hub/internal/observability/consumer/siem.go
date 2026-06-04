@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/siem"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
 // SIEMForwarderConfig holds configuration for the SIEM forwarder consumer.

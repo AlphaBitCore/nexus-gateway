@@ -20,8 +20,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/exemption"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/metrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/connect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/conn"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/connect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/forward"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -110,7 +110,6 @@ type ProxyConfig struct {
 	// (kill switch, pinning, hook pipeline). On any non-Valid outcome the
 	// request flows through the normal MITM path — fail-open.
 	AttestationVerifier *AttestationVerifier
-
 }
 
 // ProxyServer handles incoming CONNECT requests, enforces access control,
@@ -539,29 +538,29 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	forward.Run(r.Context(), tunnelConn, forward.Config{
-		SourceAddr:            sourceAddr,
-		TargetHost:            targetHost,
-		Host:                  host,
-		ConnID:                connID,
-		ConnStart:             connStart,
-		KillSwitchChecker:     p.killSwitchChecker,
-		GetCert:               p.getCert,
-		Upstream:              p.upstream,
-		PinningTracker:        p.pinningTracker,
-		CompliancePipeline:    p.compliancePipeline,
-		AuditEmitter:          p.auditEmitter,
-		StreamingTuning:       forward.StreamingTuning{PerHookTimeout: st.PerHookTimeout, TotalTimeout: st.TotalTimeout},
-		StreamingConfig:       p.streamingConfig,
-		ParallelHooks:         p.parallelHooks,
-		StreamingPolicyStore:  p.streamingPolicyStore,
-		ExemptionStore:        p.exemptionStore,
-		RejectConfig:          p.rejectConfig,
-		PayloadCaptureStore:   p.payloadCaptureStore,
-		DomainEngine:          p.domainEngine,
-		AdapterRegistry:       p.adapterRegistry,
-		NormalizeRegistry:     p.normalizeRegistry,
-		AttestationVerifier:   attestationVerifierFn,
-		Logger:                connLogger,
+		SourceAddr:           sourceAddr,
+		TargetHost:           targetHost,
+		Host:                 host,
+		ConnID:               connID,
+		ConnStart:            connStart,
+		KillSwitchChecker:    p.killSwitchChecker,
+		GetCert:              p.getCert,
+		Upstream:             p.upstream,
+		PinningTracker:       p.pinningTracker,
+		CompliancePipeline:   p.compliancePipeline,
+		AuditEmitter:         p.auditEmitter,
+		StreamingTuning:      forward.StreamingTuning{PerHookTimeout: st.PerHookTimeout, TotalTimeout: st.TotalTimeout},
+		StreamingConfig:      p.streamingConfig,
+		ParallelHooks:        p.parallelHooks,
+		StreamingPolicyStore: p.streamingPolicyStore,
+		ExemptionStore:       p.exemptionStore,
+		RejectConfig:         p.rejectConfig,
+		PayloadCaptureStore:  p.payloadCaptureStore,
+		DomainEngine:         p.domainEngine,
+		AdapterRegistry:      p.adapterRegistry,
+		NormalizeRegistry:    p.normalizeRegistry,
+		AttestationVerifier:  attestationVerifierFn,
+		Logger:               connLogger,
 	})
 }
 

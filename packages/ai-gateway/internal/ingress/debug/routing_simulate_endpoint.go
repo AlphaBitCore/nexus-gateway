@@ -88,18 +88,18 @@ type branchEntry struct {
 
 // simulateResponse is the full decision trace returned to callers.
 type simulateResponse struct {
-	Request          simulateRequestEcho         `json:"request"`
-	OriginalModelID  string                      `json:"originalModelId"`
-	Substituted      bool                        `json:"substituted"`
-	RuleID           string                      `json:"ruleId,omitempty"`
-	RuleName         string                      `json:"ruleName,omitempty"`
+	Request          simulateRequestEcho              `json:"request"`
+	OriginalModelID  string                           `json:"originalModelId"`
+	Substituted      bool                             `json:"substituted"`
+	RuleID           string                           `json:"ruleId,omitempty"`
+	RuleName         string                           `json:"ruleName,omitempty"`
 	Stages           []routingcore.PipelineTraceEntry `json:"stages"`
 	Trace            []routingcore.TraceEntry         `json:"trace"`
-	Targets          []targetEntry               `json:"targets"`
-	RecoveryTargets  []targetEntry               `json:"recoveryTargets"`
-	Branches         []branchEntry               `json:"branches"`
+	Targets          []targetEntry                    `json:"targets"`
+	RecoveryTargets  []targetEntry                    `json:"recoveryTargets"`
+	Branches         []branchEntry                    `json:"branches"`
 	NarrowingSummary *routingcore.NarrowingSummary    `json:"narrowingSummary,omitempty"`
-	Warnings         []string                    `json:"warnings,omitempty"`
+	Warnings         []string                         `json:"warnings,omitempty"`
 }
 
 // simulateMessagesToNormalizedPayload builds a synthetic

@@ -1,9 +1,12 @@
 // Package handler — observability_retention.go: GET + PUT
 // /api/admin/observability/retention.
 //
-// Eleven layers (per spec §5.5) live in metric_ops_retention_config and are
+// Twelve layers (per spec §5.5) live in metric_ops_retention_config and are
 // re-read by the Hub ops-retention job on every tick. The PUT here is purely
-// a config write; the next retention job sweep applies the new horizons.
+// a config write; the next retention job sweep applies the new horizons. The
+// raw layers were dropped (metric_ops_raw is partition-managed, not row-purged);
+// the 5-minute rollup tier (runtime_5m / business_5m) takes their place as the
+// smallest chunked-DELETE tier, and diag_info covers info-level lifecycle events.
 package observability
 
 import (
@@ -35,14 +38,15 @@ type retentionRange struct {
 // layer's range is rejected with 400 BEFORE any DB write — keeping the
 // metric_ops_retention_config table in a known-good state.
 var retentionLayerRanges = map[string]retentionRange{
-	"runtime_raw":  {Min: 1, Max: 30},
-	"business_raw": {Min: 1, Max: 30},
+	"runtime_5m":   {Min: 1, Max: 30},
+	"business_5m":  {Min: 1, Max: 30},
 	"runtime_1h":   {Min: 30, Max: 365},
 	"business_1h":  {Min: 30, Max: 365},
 	"runtime_1d":   {Min: 90, Max: 1095},
 	"business_1d":  {Min: 90, Max: 1095},
 	"runtime_1mo":  {Min: 365, Max: 3650},
 	"business_1mo": {Min: 365, Max: 3650},
+	"diag_info":    {Min: 1, Max: 90},
 	"diag_warn":    {Min: 7, Max: 90},
 	"diag_error":   {Min: 30, Max: 730},
 	"diag_fatal":   {Min: 90, Max: 1825},
@@ -99,7 +103,7 @@ func (h *Handler) GetRetention(c echo.Context) error {
 
 // PutRetention atomically updates one or more layers. Body schema:
 //
-//	{ "runtime_raw": 7, "business_raw": 30, ... }
+//	{ "runtime_5m": 7, "business_5m": 30, ... }
 //
 // Unknown layer keys are rejected with 400. Out-of-range values are rejected
 // with 400. The whole payload is applied in a single transaction.

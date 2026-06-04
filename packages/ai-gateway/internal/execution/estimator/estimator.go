@@ -49,11 +49,11 @@ type EstimateInput struct {
 // to. The caller resolves this via the routing engine before calling
 // Estimate; the estimator does not invoke routing itself.
 type ResolvedTarget struct {
-	ProviderID    string
-	ModelID       string
-	ModelCode     string
-	AdapterType   string
-	MaxOutput     int // model.maxOutputTokens for clamping the high envelope
+	ProviderID  string
+	ModelID     string
+	ModelCode   string
+	AdapterType string
+	MaxOutput   int // model.maxOutputTokens for clamping the high envelope
 }
 
 // EstimateResult is the structured output. Tokens come in low/expected/

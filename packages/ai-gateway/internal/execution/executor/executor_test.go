@@ -9,11 +9,11 @@ import (
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	configtypes "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // scripted is the per-attempt outcome the mock adapter replays.
@@ -43,8 +43,10 @@ type mockAdapter struct {
 	lastRewrites []string
 }
 
-func (m *mockAdapter) Format() provcore.Format         { return m.format }
-func (m *mockAdapter) SupportsShape(shape typology.WireShape) bool { return shape == typology.WireShapeOpenAIChat }
+func (m *mockAdapter) Format() provcore.Format { return m.format }
+func (m *mockAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 
 func (m *mockAdapter) Execute(ctx context.Context, req provcore.Request) (*provcore.Response, error) {
 	m.lastReq = req
@@ -128,7 +130,7 @@ func target(providerName string) routingcore.RoutingTarget {
 
 func baseReq() provcore.Request {
 	return provcore.Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{}`),
 	}

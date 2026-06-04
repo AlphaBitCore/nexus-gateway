@@ -13,16 +13,16 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	epMetrics "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillsweep"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
+	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
 )
 
 // InitOtelConfig builds a telemetry.Config from file config and system_metadata.

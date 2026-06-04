@@ -44,8 +44,10 @@ type stubProbeAdapter struct {
 	detail    string
 }
 
-func (s *stubProbeAdapter) Format() provcore.Format         { return s.format }
-func (s *stubProbeAdapter) SupportsShape(shape typology.WireShape) bool { return shape == typology.WireShapeOpenAIChat }
+func (s *stubProbeAdapter) Format() provcore.Format { return s.format }
+func (s *stubProbeAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 func (s *stubProbeAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore.ProbeResult, error) {
 	if s.probeErr != nil {
 		return nil, s.probeErr

@@ -21,8 +21,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/thingstats/thingstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
 // RegisterAdminThingStatsRoutes wires the per-Thing stats endpoint.

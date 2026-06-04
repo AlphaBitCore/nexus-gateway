@@ -45,6 +45,7 @@ var (
 //     than returning err.
 //   - auth.HashPassword only errors on bcrypt parameter-validation,
 //     not possible with the fixed 32-byte input here.
+//
 // Kept as guards; tests drive both branches by swapping randReadFn /
 // hashPasswordFn (see local_extra_test.go).
 func mustDummyHash() string {

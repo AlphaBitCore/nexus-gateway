@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/vertex"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 func TestVertex_BuildURL(t *testing.T) {
@@ -99,7 +99,7 @@ func TestVertex_Execute_Stream_WiresGeminiDecoder(t *testing.T) {
 
 	a := provdispatch.NewSpecAdapter(vertex.NewSpec(slog.Default()), slog.Default())
 	resp, err := a.Execute(context.Background(), provcore.Request{
-		WireShape:   typology.WireShapeVertexGenerateContent,
+		WireShape:  typology.WireShapeVertexGenerateContent,
 		BodyFormat: provcore.FormatVertex,
 		Body:       []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
 		Stream:     true,

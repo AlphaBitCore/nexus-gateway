@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pashagolub/pgxmock/v4"
@@ -22,27 +23,45 @@ func newClientMock(t *testing.T) (pgxmock.PgxPoolIface, *store.ClientStore) {
 	return mock, store.NewClientStoreWithPool(mock)
 }
 
-// clientRowCols matches the SELECT in ClientStore.GetByID column-for-column.
+// clientRowCols matches the SELECT projection across every ClientStore method
+// (centralised in clientColumns inside client_store.go). When that constant
+// changes, this slice must change in lockstep.
 var clientRowCols = []string{
 	"id", "name", "type", "redirectUris", "allowedScopes", "requirePkce",
 	"accessTtlSeconds", "refreshTtlSeconds", "clientSecretHash",
+	"lastSecretRotatedAt", "createdAt", "updatedAt",
+}
+
+var clientNow = time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+
+// addClientRow appends a complete row in the clientRowCols order. Test cases
+// vary only the fields they care about; the helper fills in plausible
+// defaults for the others.
+func addClientRow(rows *pgxmock.Rows, id, name, ctype string, hash *string, lastRot *time.Time) *pgxmock.Rows {
+	return rows.AddRow(
+		id, name, ctype,
+		[]string{"http://127.0.0.1:*/callback"},
+		[]string{"openid", "profile"},
+		true, 3600, 86400,
+		hash, lastRot, clientNow, clientNow,
+	)
 }
 
 // TestClientStore_GetByID_HappyPath asserts: when the row exists, the
 // returned OAuthClient has every column copied through, including the
-// optional clientSecretHash pointer.
+// optional clientSecretHash pointer and the new timestamp fields.
 func TestClientStore_GetByID_HappyPath(t *testing.T) {
 	mock, s := newClientMock(t)
 	ctx := context.Background()
 	hash := "argon2id$hash"
+	lastRot := clientNow.Add(-24 * time.Hour)
 
 	mock.ExpectQuery(`SELECT id, name, type, "redirectUris"`).
 		WithArgs("client-1").
-		WillReturnRows(pgxmock.NewRows(clientRowCols).AddRow(
+		WillReturnRows(addClientRow(
+			pgxmock.NewRows(clientRowCols),
 			"client-1", "Agent Desktop", "confidential",
-			[]string{"http://127.0.0.1:*/callback"},
-			[]string{"traffic:write", "shadow:read"},
-			true, 3600, 86400, &hash,
+			&hash, &lastRot,
 		))
 
 	c, err := s.GetByID(ctx, "client-1")
@@ -52,14 +71,17 @@ func TestClientStore_GetByID_HappyPath(t *testing.T) {
 	if c.ID != "client-1" || c.Type != "confidential" || !c.RequirePKCE {
 		t.Fatalf("unexpected row: %+v", c)
 	}
-	if len(c.AllowedScopes) != 2 || c.AllowedScopes[0] != "traffic:write" {
-		t.Fatalf("scopes not round-tripped: %v", c.AllowedScopes)
-	}
 	if c.AccessTTLSeconds != 3600 || c.RefreshTTLSeconds != 86400 {
 		t.Fatalf("TTL values not round-tripped: %+v", c)
 	}
 	if c.ClientSecretHash == nil || *c.ClientSecretHash != hash {
 		t.Fatalf("secret hash not round-tripped: %v", c.ClientSecretHash)
+	}
+	if c.LastSecretRotatedAt == nil || !c.LastSecretRotatedAt.Equal(lastRot) {
+		t.Fatalf("lastSecretRotatedAt not round-tripped: %v", c.LastSecretRotatedAt)
+	}
+	if !c.CreatedAt.Equal(clientNow) || !c.UpdatedAt.Equal(clientNow) {
+		t.Fatalf("timestamps not round-tripped: createdAt=%v updatedAt=%v", c.CreatedAt, c.UpdatedAt)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)

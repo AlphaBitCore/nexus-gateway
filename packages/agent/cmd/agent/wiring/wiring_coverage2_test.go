@@ -29,13 +29,13 @@ import (
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/spilluploader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
-	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	policy "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/core"
 	schema "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/schema"
 	shadow "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/shadow"
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	hookscore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	thingclient "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 

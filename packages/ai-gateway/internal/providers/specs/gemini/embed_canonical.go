@@ -137,7 +137,6 @@ func EmbedContentRequestToCanonical(body []byte, providerModelID string) ([]byte
 // enforces this constraint early (HTTP 400) and produces an actionable
 // error message listing the differing values so callers can split the
 // request rather than guessing which field caused the upstream 400.
-//
 func BatchEmbedContentsRequestToCanonical(body []byte, providerModelID string) ([]byte, error) {
 	if !gjson.ValidBytes(body) {
 		return nil, &provcore.ProviderError{
@@ -231,8 +230,8 @@ func BatchEmbedContentsRequestToCanonical(body []byte, providerModelID string) (
 	}
 	if taskTypeMixed {
 		return nil, &provcore.ProviderError{
-			Status:  http.StatusBadRequest,
-			Code:    provcore.CodeInvalidRequest,
+			Status: http.StatusBadRequest,
+			Code:   provcore.CodeInvalidRequest,
 			Message: fmt.Sprintf(
 				"Gemini :batchEmbedContents requires all sub-requests to share the same taskType and outputDimensionality. Got: mixed taskType=%v in batch of %d items. Split into separate requests.",
 				seenTaskTypes, len(inputs),
@@ -241,8 +240,8 @@ func BatchEmbedContentsRequestToCanonical(body []byte, providerModelID string) (
 	}
 	if dimMixed || dimSeenZero {
 		return nil, &provcore.ProviderError{
-			Status:  http.StatusBadRequest,
-			Code:    provcore.CodeInvalidRequest,
+			Status: http.StatusBadRequest,
+			Code:   provcore.CodeInvalidRequest,
 			Message: fmt.Sprintf(
 				"Gemini :batchEmbedContents requires all sub-requests to share the same taskType and outputDimensionality. Got: mixed outputDimensionality in batch of %d items. Split into separate requests.",
 				len(inputs),

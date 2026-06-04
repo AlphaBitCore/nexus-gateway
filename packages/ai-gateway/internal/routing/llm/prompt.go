@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputstaging"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // DefaultSystemPrompt is the built-in system message template used when

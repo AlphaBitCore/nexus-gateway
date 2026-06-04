@@ -15,30 +15,30 @@ import (
 type Model struct {
 	ID string `json:"id"`
 	// Code is the customer-facing model identifier (e.g. "gpt-4o"). Globally unique.
-	Code                           string           `json:"code"`
-	Name                           string           `json:"name"`
-	Description                    *string          `json:"description"`
-	ProviderID                     string           `json:"providerId"`
-	ProviderModelID                string           `json:"providerModelId"`
-	Type                           string           `json:"type"`
-	Features                       []string         `json:"features"`
-	InputPricePerMillion           *float64         `json:"inputPricePerMillion"`
-	OutputPricePerMillion          *float64         `json:"outputPricePerMillion"`
+	Code                            string           `json:"code"`
+	Name                            string           `json:"name"`
+	Description                     *string          `json:"description"`
+	ProviderID                      string           `json:"providerId"`
+	ProviderModelID                 string           `json:"providerModelId"`
+	Type                            string           `json:"type"`
+	Features                        []string         `json:"features"`
+	InputPricePerMillion            *float64         `json:"inputPricePerMillion"`
+	OutputPricePerMillion           *float64         `json:"outputPricePerMillion"`
 	CachedInputReadPricePerMillion  *float64         `json:"cachedInputReadPricePerMillion,omitempty"`
 	CachedInputWritePricePerMillion *float64         `json:"cachedInputWritePricePerMillion,omitempty"`
-	MaxContextTokens               *int             `json:"maxContextTokens"`
-	MaxOutputTokens                *int             `json:"maxOutputTokens"`
-	Status                         string           `json:"status"`
-	DeprecationDate                *time.Time       `json:"deprecationDate"`
-	ReplacedBy                     *string          `json:"replacedBy"`
-	Aliases                        []string         `json:"aliases"`
-	InputModalities                []string         `json:"inputModalities"`
-	OutputModalities               []string         `json:"outputModalities"`
-	Lifecycle                      string           `json:"lifecycle"`
-	CapabilityJson                 *json.RawMessage `json:"capabilityJson,omitempty"`
-	Enabled                        bool             `json:"enabled"`
-	CreatedAt                      time.Time        `json:"createdAt"`
-	UpdatedAt                      time.Time        `json:"updatedAt"`
+	MaxContextTokens                *int             `json:"maxContextTokens"`
+	MaxOutputTokens                 *int             `json:"maxOutputTokens"`
+	Status                          string           `json:"status"`
+	DeprecationDate                 *time.Time       `json:"deprecationDate"`
+	ReplacedBy                      *string          `json:"replacedBy"`
+	Aliases                         []string         `json:"aliases"`
+	InputModalities                 []string         `json:"inputModalities"`
+	OutputModalities                []string         `json:"outputModalities"`
+	Lifecycle                       string           `json:"lifecycle"`
+	CapabilityJson                  *json.RawMessage `json:"capabilityJson,omitempty"`
+	Enabled                         bool             `json:"enabled"`
+	CreatedAt                       time.Time        `json:"createdAt"`
+	UpdatedAt                       time.Time        `json:"updatedAt"`
 }
 
 // ModelListParams holds filter/pagination for listing models.
@@ -204,25 +204,25 @@ func (store *Store) ListModelsByProvider(ctx context.Context, providerID string)
 // CreateModelParams holds fields for creating a model. The DB
 // primary key (id) is auto-generated UUID — callers don't supply it.
 type CreateModelParams struct {
-	Code                           string // customer-facing identifier; unique
-	Name                           string
-	Description                    *string
-	ProviderID                     string
-	ProviderModelID                string
-	Type                           string
-	Features                       []string
-	InputPricePerMillion           *float64
-	OutputPricePerMillion          *float64
+	Code                            string // customer-facing identifier; unique
+	Name                            string
+	Description                     *string
+	ProviderID                      string
+	ProviderModelID                 string
+	Type                            string
+	Features                        []string
+	InputPricePerMillion            *float64
+	OutputPricePerMillion           *float64
 	CachedInputReadPricePerMillion  *float64
 	CachedInputWritePricePerMillion *float64
-	MaxContextTokens               *int
-	MaxOutputTokens                *int
-	Aliases                        []string
-	InputModalities                []string         // defaults to ["text"] when nil
-	OutputModalities               []string         // defaults to ["text"] when nil
-	Lifecycle                      string           // defaults to "ga" when empty
-	CapabilityJson                 *json.RawMessage // nil = no capability data
-	Enabled                        bool
+	MaxContextTokens                *int
+	MaxOutputTokens                 *int
+	Aliases                         []string
+	InputModalities                 []string         // defaults to ["text"] when nil
+	OutputModalities                []string         // defaults to ["text"] when nil
+	Lifecycle                       string           // defaults to "ga" when empty
+	CapabilityJson                  *json.RawMessage // nil = no capability data
+	Enabled                         bool
 }
 
 // CreateModel inserts a new model. The id column defaults to
@@ -269,27 +269,27 @@ func (store *Store) CreateModel(ctx context.Context, p CreateModelParams) (*Mode
 
 // UpdateModelParams holds optional fields for updating a model. nil = no change.
 type UpdateModelParams struct {
-	Code                           *string
-	ProviderModelID                *string
-	Name                           *string
-	Description                    *string
-	Type                           *string
-	InputPricePerMillion           *float64
-	OutputPricePerMillion          *float64
+	Code                            *string
+	ProviderModelID                 *string
+	Name                            *string
+	Description                     *string
+	Type                            *string
+	InputPricePerMillion            *float64
+	OutputPricePerMillion           *float64
 	CachedInputReadPricePerMillion  *float64
 	CachedInputWritePricePerMillion *float64
-	MaxContextTokens               *int
-	MaxOutputTokens                *int
-	Status                         *string
-	DeprecationDate                *time.Time
-	ReplacedBy                     *string
-	Aliases                        []string         // nil = no change; empty = clear
-	Enabled                        *bool
-	Features                       []string         // nil = no change; empty = clear
-	InputModalities                *[]string        // nil = no change
-	OutputModalities               *[]string        // nil = no change
-	Lifecycle                      *string          // nil = no change
-	CapabilityJson                 *json.RawMessage // nil = no change; explicit null = clear
+	MaxContextTokens                *int
+	MaxOutputTokens                 *int
+	Status                          *string
+	DeprecationDate                 *time.Time
+	ReplacedBy                      *string
+	Aliases                         []string // nil = no change; empty = clear
+	Enabled                         *bool
+	Features                        []string         // nil = no change; empty = clear
+	InputModalities                 *[]string        // nil = no change
+	OutputModalities                *[]string        // nil = no change
+	Lifecycle                       *string          // nil = no change
+	CapabilityJson                  *json.RawMessage // nil = no change; explicit null = clear
 }
 
 // UpdateModel updates a model using COALESCE — nil params preserve existing values.

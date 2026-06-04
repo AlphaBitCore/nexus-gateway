@@ -48,7 +48,6 @@ func ptrTime(t time.Time) *time.Time {
 	return &t
 }
 
-
 func TestExpireOverdueVirtualKeys_Happy(t *testing.T) {
 	mock := newMock(t)
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
@@ -79,7 +78,6 @@ func TestExpireOverdueVirtualKeys_ExecErr(t *testing.T) {
 		t.Errorf("want 0 on err, got %d", got)
 	}
 }
-
 
 var vkExpiryCols = []string{"id", "name", "expiresAt"}
 
@@ -150,7 +148,6 @@ func TestListExpiringVirtualKeys_ScanErr(t *testing.T) {
 	}
 }
 
-
 var overrideCols = []string{"id", "targetType", "targetId", "costLimitUsd"}
 
 func TestListActiveQuotaOverrides_Happy(t *testing.T) {
@@ -202,7 +199,6 @@ func TestListActiveQuotaOverrides_ScanErr(t *testing.T) {
 		t.Errorf("missing prefix: %v", err)
 	}
 }
-
 
 var policyCols = []string{"id", "scope", "organizationId", "costLimitUsd", "alertThresholds"}
 
@@ -262,7 +258,6 @@ func TestListEnabledQuotaPolicies_ScanErr(t *testing.T) {
 	}
 }
 
-
 func TestUpsertQuotaAlert_Happy(t *testing.T) {
 	mock := newMock(t)
 	expires := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -321,7 +316,6 @@ func TestUpsertQuotaAlert_ExecErr(t *testing.T) {
 	}
 }
 
-
 var credCols = []string{"id", "name", "providerId", "expiresAt"}
 
 func TestListExpiringCredentials_Happy(t *testing.T) {
@@ -373,7 +367,6 @@ func TestListExpiringCredentials_ScanErr(t *testing.T) {
 	}
 }
 
-
 func TestListOverdueCredentials_Happy(t *testing.T) {
 	mock := newMock(t)
 	exp := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -417,7 +410,6 @@ func TestListOverdueCredentials_ScanErr(t *testing.T) {
 		t.Errorf("missing prefix: %v", err)
 	}
 }
-
 
 func TestMarkCredentialsPendingRotation_EmptyFastPath(t *testing.T) {
 	// No mock expectations — empty slice must short-circuit before any

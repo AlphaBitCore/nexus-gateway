@@ -163,11 +163,12 @@ func expectStateRow(mock pgxmock.PgxPoolIface, st lastReindexedState) {
 func expectConfigRow(mock pgxmock.PgxPoolIface, fp, indexName string, dim *int) {
 	provID := "p1"
 	modelID := "m1"
-	// 17-col SELECT shape per configstore.SemanticCacheStore.Get. Joined columns
-	// (provider.baseUrl, model.providerModelId, model.inputPricePerMillion) at the
-	// end were added when Get/Save started JOINing Provider + Model so the gateway
-	// snapshot carries embedding-call wire + cost-per-token directly. Keep in
-	// sync with semantic_cache.go's Scan.
+	// 18-col SELECT shape per configstore.SemanticCacheStore.Get. Joined columns
+	// (provider.baseUrl, model.providerModelId, model.inputPricePerMillion,
+	// model.capabilityJson) at the end were added when Get/Save started JOINing
+	// Provider + Model so the gateway snapshot carries embedding-call wire,
+	// cost-per-token, and max-input-tokens capability directly. Keep in sync with
+	// semantic_cache.go's Scan.
 	rows := pgxmock.NewRows([]string{
 		"id", "embedding_provider_id", "embedding_model_id", "embedding_dimension",
 		"embedding_fingerprint", "redis_index_name", "enabled",
@@ -175,6 +176,7 @@ func expectConfigRow(mock pgxmock.PgxPoolIface, fp, indexName string, dim *int) 
 		"updated_at", "updated_by",
 		"time_sensitive_overrides",
 		"provider_base_url", "provider_model_id", "provider_input_price_per_m",
+		"model_capability_json",
 	}).AddRow(
 		"singleton", &provID, &modelID, dim,
 		fp, indexName, true,
@@ -182,6 +184,7 @@ func expectConfigRow(mock pgxmock.PgxPoolIface, fp, indexName string, dim *int) 
 		time.Now().UTC(), nil,
 		[]byte(`{"rules":[]}`),
 		"", "", 0.0,
+		"",
 	)
 	mock.ExpectQuery(`FROM semantic_cache_config sc.*WHERE sc.id = 'singleton'`).WillReturnRows(rows)
 }

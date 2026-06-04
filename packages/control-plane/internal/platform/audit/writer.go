@@ -23,6 +23,13 @@ type Entry struct {
 	BeforeState    any
 	AfterState     any
 	NexusRequestID string
+	// Via is the request channel ("assistant" for AI-initiated web-assistant
+	// writes, empty for direct human/UI actions). EntryFor populates it from the
+	// unforgeable in-process initiator context value (WithInitiator), set only by the
+	// assistant self-call transport; it flows to the Hub consumer and into the
+	// tamper-evident audit hash chain so AI writes are distinguishable from human
+	// ones (E90 I5).
+	Via string
 }
 
 // FailureObserver is called by Writer.Log on every failure to publish an
@@ -92,6 +99,7 @@ func (w *Writer) Log(_ context.Context, e Entry) error {
 		BeforeState:    e.BeforeState,
 		AfterState:     e.AfterState,
 		NexusRequestID: e.NexusRequestID,
+		Via:            e.Via,
 	}
 
 	data, err := json.Marshal(msg)

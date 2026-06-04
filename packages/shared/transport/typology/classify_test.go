@@ -146,8 +146,8 @@ func TestClassifyPath_Unclassified(t *testing.T) {
 	}{
 		{"POST", "/unknown/path"},
 		{"POST", "/v1/embed/extra/suffix"},
-		{"POST", "/v1/chat"},                // missing /completions
-		{"POST", "/v2/chat/completions"},    // wrong version prefix
+		{"POST", "/v1/chat"},             // missing /completions
+		{"POST", "/v2/chat/completions"}, // wrong version prefix
 		{"GET", "/some/other/route"},
 		{"POST", ""},
 		{"", "/v1/chat/completions"}, // method required for POST patterns

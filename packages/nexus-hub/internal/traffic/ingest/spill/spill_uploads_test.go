@@ -60,11 +60,13 @@ func (m *mockSpill) Put(_ context.Context, content io.Reader, size int64, _ spil
 	}
 	return sharedaudit.SpillRef{Backend: "localfs", Key: "k", Size: size}, nil
 }
-func (m *mockSpill) Get(context.Context, sharedaudit.SpillRef) (io.ReadCloser, error) { return nil, nil }
-func (m *mockSpill) Delete(context.Context, sharedaudit.SpillRef) error                { m.deleted = true; return nil }
-func (m *mockSpill) Sweep(context.Context, time.Time) (int, error)                     { return 0, nil }
-func (m *mockSpill) Stat(context.Context) (spillstore.Stats, error)                    { return spillstore.Stats{}, nil }
-func (m *mockSpill) Backend() string                                                   { return "localfs" }
+func (m *mockSpill) Get(context.Context, sharedaudit.SpillRef) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (m *mockSpill) Delete(context.Context, sharedaudit.SpillRef) error { m.deleted = true; return nil }
+func (m *mockSpill) Sweep(context.Context, time.Time) (int, error)      { return 0, nil }
+func (m *mockSpill) Stat(context.Context) (spillstore.Stats, error)     { return spillstore.Stats{}, nil }
+func (m *mockSpill) Backend() string                                    { return "localfs" }
 func (m *mockSpill) PresignPut(_ context.Context, _ string, _ int64, _ string, _ time.Duration) (string, error) {
 	if m.presignErr != nil {
 		return "", m.presignErr

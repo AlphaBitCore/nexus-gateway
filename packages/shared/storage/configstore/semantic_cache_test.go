@@ -36,6 +36,7 @@ var scColumns = []string{
 	// — added when Get/Save started JOINing Provider + Model so the gateway
 	// snapshot carries them directly. Tests append the three values to AddRow.
 	"provider_base_url", "provider_model_id", "provider_input_price_per_m",
+	"model_capability_json",
 }
 
 func newSemanticMockStore(t *testing.T) (pgxmock.PgxPoolIface, *configstore.SemanticCacheStore) {
@@ -45,6 +46,11 @@ func newSemanticMockStore(t *testing.T) (pgxmock.PgxPoolIface, *configstore.Sema
 		t.Fatalf("pgxmock.NewPool: %v", err)
 	}
 	t.Cleanup(mock.Close)
+	// Save now issues the Provider/Model join BEFORE the upsert (it needs the
+	// model capability to validate/derive the dimension). Match by SQL pattern
+	// rather than call order so adding the join expectation doesn't require
+	// reordering every existing Save test.
+	mock.MatchExpectationsInOrder(false)
 	return mock, configstore.NewSemanticCacheStoreWithPgxPool(mock)
 }
 
@@ -70,7 +76,7 @@ func TestSemanticGet_HappyPath_SeededRow(t *testing.T) {
 			"singleton", &prov, &model, &dim,
 			"abc123fingerprint", "nexus:semantic-cache:v1", true, 0.96, "vk", "system_plus_last_user", false, now, &by,
 			emptyOverridesJSON(),
-			"https://api.openai.com", "text-embedding-3-small", 0.02,
+			"https://api.openai.com", "text-embedding-3-small", 0.02, "",
 		))
 
 	got, err := store.Get(context.Background())
@@ -168,7 +174,7 @@ func TestSemanticSave_NoFingerprintChange_IndexStable(t *testing.T) {
 			"singleton", &prov, &model, &dim,
 			existingFP, "nexus:semantic-cache:v1", false, 0.96, "vk", "system_plus_last_user", false, now, &by,
 			emptyOverridesJSON(),
-			"https://api.openai.com", "text-embedding-3-small", 0.02,
+			"https://api.openai.com", "text-embedding-3-small", 0.02, "",
 		))
 
 	// Save with same (prov, model, dim) but enabled=true — fingerprint
@@ -222,7 +228,7 @@ func TestSemanticSave_FingerprintChange_IndexBumped(t *testing.T) {
 			"singleton", &oldProv, &oldModel, &oldDim,
 			oldFP, "nexus:semantic-cache:v1", true, 0.96, "vk", "system_plus_last_user", false, now, &oldBy,
 			emptyOverridesJSON(),
-			"https://api.openai.com", "text-embedding-3-small", 0.02,
+			"https://api.openai.com", "text-embedding-3-small", 0.02, "",
 		))
 
 	// Save with a new model (different fingerprint) — index name MUST be bumped.
@@ -279,7 +285,7 @@ func TestSemanticSave_NilProvider_EmptyFingerprint_IndexUnchanged(t *testing.T) 
 			"singleton", (*string)(nil), (*string)(nil), (*int)(nil),
 			existingFP, oldIdx, true, 0.96, "vk", "system_plus_last_user", false, now, (*string)(nil),
 			emptyOverridesJSON(),
-			"https://api.openai.com", "text-embedding-3-small", 0.02,
+			"https://api.openai.com", "text-embedding-3-small", 0.02, "",
 		))
 
 	// Save with nil provider — fingerprint = "" → index stays at v3.
@@ -386,7 +392,7 @@ func TestSemanticSave_ReturnsPostSaveRow(t *testing.T) {
 			"singleton", (*string)(nil), (*string)(nil), (*int)(nil),
 			"", "nexus:semantic-cache:v1", false, 0.96, "vk", "system_plus_last_user", false, now, (*string)(nil),
 			emptyOverridesJSON(),
-			"https://api.openai.com", "text-embedding-3-small", 0.02,
+			"https://api.openai.com", "text-embedding-3-small", 0.02, "",
 		))
 
 	prov := "prov-a"
@@ -444,7 +450,7 @@ func TestSemanticGetOverrides_EmptyBlob(t *testing.T) {
 			"singleton", (*string)(nil), (*string)(nil), (*int)(nil),
 			"", "nexus:semantic-cache:v1", false, 0.96, "vk", "system_plus_last_user", false, now, (*string)(nil),
 			emptyOverridesJSON(),
-			"https://api.openai.com", "text-embedding-3-small", 0.02,
+			"https://api.openai.com", "text-embedding-3-small", 0.02, "",
 		))
 
 	blob, err := store.GetOverrides(context.Background())
@@ -474,7 +480,7 @@ func TestSemanticGetOverrides_WithRules(t *testing.T) {
 			"singleton", (*string)(nil), (*string)(nil), (*int)(nil),
 			"", "nexus:semantic-cache:v1", false, 0.96, "vk", "system_plus_last_user", false, now, (*string)(nil),
 			rawOverrides,
-			"", "", 0.0,
+			"", "", 0.0, "",
 		))
 
 	blob, err := store.GetOverrides(context.Background())
@@ -571,5 +577,73 @@ func TestSemanticSaveOverrides_ExecError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "configstore: save time_sensitive_overrides") {
 		t.Errorf("missing prefix: %v", err)
+	}
+}
+
+// TestSemanticSave_DerivesDimensionAndMaxTokens: nil dimension + a model whose
+// capability declares a default_dimension → Save derives it and populates
+// EmbeddingMaxInputTokens from the same capability.
+func TestSemanticSave_DerivesDimensionAndMaxTokens(t *testing.T) {
+	mock, store := newSemanticMockStore(t)
+	prov := "p"
+	model := "m"
+	by := "admin@nexus.ai"
+	now := time.Now().UTC()
+	capJSON := `{"embeddings":{"max_input_tokens":8191,"default_dimension":1536,"supported_dimensions":[512,1024,1536]}}`
+
+	mock.ExpectQuery(`FROM semantic_cache_config sc.*WHERE sc.id = 'singleton'`).
+		WillReturnRows(pgxmock.NewRows(scColumns).AddRow(
+			"singleton", (*string)(nil), (*string)(nil), (*int)(nil),
+			"", "nexus:semantic-cache:v1", false, 0.96, "vk", "system_plus_last_user", false, now, (*string)(nil),
+			emptyOverridesJSON(), "", "", 0.0, "",
+		))
+	mock.ExpectQuery(`FROM "Provider" p, "Model" m`).WithArgs(prov, model).
+		WillReturnRows(pgxmock.NewRows([]string{"b", "pm", "price", "cap"}).
+			AddRow("https://api.openai.com", "text-embedding-3-small", 0.02, capJSON))
+	mock.ExpectExec(`INSERT INTO semantic_cache_config`).
+		WithArgs(&prov, &model, pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), true,
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	saved, err := store.Save(context.Background(), configstore.SaveInput{
+		EmbeddingProviderID: &prov, EmbeddingModelID: &model, EmbeddingDimension: nil, Enabled: true, UpdatedBy: by,
+	})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if saved.EmbeddingDimension == nil || *saved.EmbeddingDimension != 1536 {
+		t.Fatalf("dimension should derive to default 1536; got %v", saved.EmbeddingDimension)
+	}
+	if saved.EmbeddingMaxInputTokens != 8191 {
+		t.Fatalf("EmbeddingMaxInputTokens not populated from capability: %d", saved.EmbeddingMaxInputTokens)
+	}
+}
+
+// TestSemanticSave_RejectsUnsupportedDimension: a supplied dimension the model
+// cannot produce → ErrUnsupportedEmbeddingDimension, NO upsert.
+func TestSemanticSave_RejectsUnsupportedDimension(t *testing.T) {
+	mock, store := newSemanticMockStore(t)
+	prov := "p"
+	model := "m"
+	now := time.Now().UTC()
+	capJSON := `{"embeddings":{"default_dimension":1536,"supported_dimensions":[512,1024,1536]}}`
+
+	mock.ExpectQuery(`FROM semantic_cache_config sc.*WHERE sc.id = 'singleton'`).
+		WillReturnRows(pgxmock.NewRows(scColumns).AddRow(
+			"singleton", (*string)(nil), (*string)(nil), (*int)(nil),
+			"", "nexus:semantic-cache:v1", false, 0.96, "vk", "system_plus_last_user", false, now, (*string)(nil),
+			emptyOverridesJSON(), "", "", 0.0, "",
+		))
+	mock.ExpectQuery(`FROM "Provider" p, "Model" m`).WithArgs(prov, model).
+		WillReturnRows(pgxmock.NewRows([]string{"b", "pm", "price", "cap"}).
+			AddRow("https://api.openai.com", "text-embedding-3-small", 0.02, capJSON))
+	// No ExpectExec — validation must fail before the upsert.
+
+	d3072 := 3072
+	_, err := store.Save(context.Background(), configstore.SaveInput{
+		EmbeddingProviderID: &prov, EmbeddingModelID: &model, EmbeddingDimension: &d3072, Enabled: true,
+	})
+	if !errors.Is(err, configstore.ErrUnsupportedEmbeddingDimension) {
+		t.Fatalf("expected ErrUnsupportedEmbeddingDimension, got %v", err)
 	}
 }

@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
+	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/catrust"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
-	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 )
 
 // cmdInstallCA is the one-shot install-time helper for Windows. It mirrors
@@ -28,7 +28,7 @@ import (
 //     the device-ca.pem (or evicted the cert from the Root store via
 //     `certutil -delstore Root`) can run:
 //
-//         nexus-agent.exe install-ca
+//     nexus-agent.exe install-ca
 //
 //     from an elevated PowerShell to regenerate + re-trust without
 //     restarting the service or reinstalling the MSI.

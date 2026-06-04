@@ -41,9 +41,9 @@ type ConfigStore interface {
 // because ai-gateway/internal/aiguard is not reachable from this
 // module.
 type DryRunRequest struct {
-	DetectorType string         `json:"detector_type"`
-	Content      string         `json:"content"`
-	Context      DryRunContext  `json:"context"`
+	DetectorType string        `json:"detector_type"`
+	Content      string        `json:"content"`
+	Context      DryRunContext `json:"context"`
 }
 
 // DryRunContext mirrors aiguard.Context.
@@ -57,12 +57,12 @@ type DryRunContext struct {
 
 // DryRunResponse mirrors aiguard.Response.
 type DryRunResponse struct {
-	Decision   string             `json:"decision"`
-	Confidence float64            `json:"confidence,omitempty"`
-	Reason     string             `json:"reason,omitempty"`
-	Labels     []string           `json:"labels,omitempty"`
-	Redactions []DryRunRedaction  `json:"redactions,omitempty"`
-	Metadata   DryRunMetadata     `json:"metadata"`
+	Decision   string            `json:"decision"`
+	Confidence float64           `json:"confidence,omitempty"`
+	Reason     string            `json:"reason,omitempty"`
+	Labels     []string          `json:"labels,omitempty"`
+	Redactions []DryRunRedaction `json:"redactions,omitempty"`
+	Metadata   DryRunMetadata    `json:"metadata"`
 }
 
 // DryRunRedaction mirrors aiguard.Redaction.

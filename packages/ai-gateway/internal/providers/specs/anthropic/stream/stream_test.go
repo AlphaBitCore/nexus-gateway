@@ -29,8 +29,8 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	antstream "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/stream"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // sseFrame builds a single Anthropic SSE frame (event + data).
@@ -50,7 +50,6 @@ func openSession(t *testing.T, body string) provcore.StreamSession {
 	t.Cleanup(func() { sess.Close() })
 	return sess
 }
-
 
 func TestNewStreamDecoder_nilLog_usesDefault(t *testing.T) {
 	d := antstream.NewStreamDecoder(nil)
@@ -75,7 +74,6 @@ func TestStreamDecoder_nilBody_returnsError(t *testing.T) {
 	}
 }
 
-
 func TestStreamDecoder_messageStart_usageExtracted(t *testing.T) {
 	// message_start carries usage inside message.usage.
 	data := `{"type":"message_start","message":{"id":"msg_01","type":"message","role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":25,"output_tokens":0}}}`
@@ -92,7 +90,6 @@ func TestStreamDecoder_messageStart_usageExtracted(t *testing.T) {
 		t.Errorf("PromptTokens: got %v, want 25", chunk.Usage.PromptTokens)
 	}
 }
-
 
 func TestStreamDecoder_contentBlockStart_toolUse_toolCallDeltaEmitted(t *testing.T) {
 	data := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu_1","name":"search"}}`
@@ -128,7 +125,6 @@ func TestStreamDecoder_contentBlockStart_textType_noToolCallDelta(t *testing.T) 
 		t.Errorf("text content_block_start should not emit ToolCallDeltas: %+v", chunk.ToolCallDeltas)
 	}
 }
-
 
 func TestStreamDecoder_contentBlockDelta_textDelta(t *testing.T) {
 	data := `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello world"}}`
@@ -215,7 +211,6 @@ func TestStreamDecoder_contentBlockDelta_inputJsonDelta_noMatchingTool_noDelta(t
 	}
 }
 
-
 func TestStreamDecoder_contentBlockStop_toolMapEntryDeleted(t *testing.T) {
 	// content_block_stop clears tool state; subsequent input_json_delta at same
 	// index should produce no ToolCallDeltas.
@@ -240,7 +235,6 @@ func TestStreamDecoder_contentBlockStop_toolMapEntryDeleted(t *testing.T) {
 		t.Errorf("expected no ToolCallDeltas after content_block_stop, got: %+v", chunk.ToolCallDeltas)
 	}
 }
-
 
 func TestStreamDecoder_ping_chunkReturnedNoError(t *testing.T) {
 	data := `{"type":"ping"}`
@@ -290,7 +284,6 @@ func TestStreamDecoder_errorEvent_afterDone_returnsEOF(t *testing.T) {
 	}
 }
 
-
 func TestStreamDecoder_messageDelta_usageExtracted(t *testing.T) {
 	// message_delta may carry root-level usage (Anthropic / Bedrock pattern).
 	data := `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":42}}`
@@ -306,7 +299,6 @@ func TestStreamDecoder_messageDelta_usageExtracted(t *testing.T) {
 		t.Errorf("CompletionTokens: got %v, want 42", chunk.Usage.CompletionTokens)
 	}
 }
-
 
 func TestStreamDecoder_messageStop_emitsDoneTrue(t *testing.T) {
 	data := `{"type":"message_stop"}`
@@ -512,5 +504,45 @@ func TestStreamDecoder_nativeEvent_populated(t *testing.T) {
 	}
 	if chunk.NativeEvent != "ping" {
 		t.Errorf("NativeEvent: got %q, want ping", chunk.NativeEvent)
+	}
+}
+
+// TestStreamDecoder_messageStop_carriesAccumulatedUsage guards the cross-format
+// usage drop: Anthropic reports input_tokens on message_start and the final
+// output_tokens on message_delta — never on the terminal message_stop — but every
+// canonical egress encoder reads chunk.Usage only on the Done chunk. The session
+// must therefore stamp the accumulated usage onto message_stop, or the OpenAI /
+// Responses stream silently omits the trailing usage frame (include_usage shows
+// nothing, and the operator agent's context gauge never populates).
+func TestStreamDecoder_messageStop_carriesAccumulatedUsage(t *testing.T) {
+	body := sseFrame("message_start", `{"type":"message_start","message":{"usage":{"input_tokens":40,"output_tokens":1}}}`) +
+		sseFrame("message_delta", `{"type":"message_delta","usage":{"output_tokens":123}}`) +
+		sseFrame("message_stop", `{"type":"message_stop"}`)
+	sess := openSession(t, body)
+
+	var done provcore.Chunk
+	for {
+		c, err := sess.Next(context.Background())
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if c.Done {
+			done = c
+		}
+	}
+	if !done.Done {
+		t.Fatal("expected a Done chunk from message_stop")
+	}
+	if done.Usage == nil {
+		t.Fatal("Done chunk must carry accumulated usage, else the egress drops the usage frame")
+	}
+	if done.Usage.PromptTokens == nil || *done.Usage.PromptTokens != 40 {
+		t.Errorf("Done PromptTokens: got %v, want 40 (carried from message_start)", done.Usage.PromptTokens)
+	}
+	if done.Usage.CompletionTokens == nil || *done.Usage.CompletionTokens != 123 {
+		t.Errorf("Done CompletionTokens: got %v, want 123 (final output_tokens from message_delta)", done.Usage.CompletionTokens)
 	}
 }

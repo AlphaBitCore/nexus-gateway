@@ -41,8 +41,8 @@ func TestOpsRetention_Run_DisabledLayersSkipped(t *testing.T) {
 	defer mock.Close()
 	mock.ExpectQuery(`FROM metric_ops_retention_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"layer", "retention_days"}).
-			AddRow("runtime_raw", int(0)).
-			AddRow("business_raw", int(-1)))
+			AddRow("runtime_5m", int(0)).
+			AddRow("business_5m", int(-1)))
 
 	j := &OpsRetentionJob{pool: mock, logger: testLogger()}
 	if err := j.Run(context.Background()); err != nil {
@@ -70,8 +70,8 @@ func TestOpsRetention_Run_AllLayersHappy(t *testing.T) {
 	// rows so the per-layer loop exits immediately (single iteration).
 	mock.ExpectQuery(`FROM metric_ops_retention_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"layer", "retention_days"}).
-			AddRow("runtime_raw", int(7)).
-			AddRow("business_raw", int(7)).
+			AddRow("runtime_5m", int(7)).
+			AddRow("business_5m", int(7)).
 			AddRow("runtime_1h", int(7)).
 			AddRow("business_1h", int(7)).
 			AddRow("runtime_1d", int(7)).
@@ -109,14 +109,14 @@ func TestOpsRetention_Run_LayerPurgeErrorJoinedAndOthersContinue(t *testing.T) {
 	defer mock.Close()
 	mock.ExpectQuery(`FROM metric_ops_retention_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"layer", "retention_days"}).
-			AddRow("runtime_raw", int(7)).
-			AddRow("business_raw", int(7)))
+			AddRow("runtime_5m", int(7)).
+			AddRow("business_5m", int(7)))
 
 	sentinel := errors.New("delete boom")
-	mock.ExpectExec(`DELETE FROM metric_ops_raw`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), opsRetentionDeleteLimit).
 		WillReturnError(sentinel)
-	mock.ExpectExec(`DELETE FROM metric_ops_raw`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), opsRetentionDeleteLimit).
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 
@@ -156,7 +156,7 @@ func TestOpsRetention_LoadLayers_RowsErr(t *testing.T) {
 	sentinel := errors.New("iter boom")
 	mock.ExpectQuery(`FROM metric_ops_retention_config`).
 		WillReturnRows(pgxmock.NewRows([]string{"layer", "retention_days"}).
-			AddRow("runtime_raw", int(7)).RowError(0, sentinel))
+			AddRow("runtime_5m", int(7)).RowError(0, sentinel))
 
 	j := &OpsRetentionJob{pool: mock, logger: testLogger()}
 	_, err := j.loadLayers(context.Background())

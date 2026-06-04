@@ -43,6 +43,9 @@ type semanticCachePolicy struct {
 	EmbedStrategy   string
 	VaryBy          string
 	AllowCrossModel bool
+	// MaxInputTokens is the embedding model's context window, used to truncate
+	// the embed input. 0 → buildEmbeddingInput falls back to a default.
+	MaxInputTokens int
 }
 
 // fleetSemanticPolicy returns the L2 policy assembled from the fleet-wide
@@ -59,6 +62,7 @@ func fleetSemanticPolicy(cc *semantic.ConfigCache) (semanticCachePolicy, bool) {
 		EmbedStrategy:   snap.EmbedStrategy,
 		VaryBy:          snap.VaryBy,
 		AllowCrossModel: snap.AllowCrossModel,
+		MaxInputTokens:  snap.EmbeddingMaxInputTokens,
 	}, true
 }
 
@@ -123,7 +127,7 @@ func joinTextBlocksL2(blocks []normcore.ContentBlock) string {
 // buildEmbeddingInput runs inputstaging.Plan on the canonical messages and
 // joins the result into a single string.  Returns ("", false) when the
 // messages are empty or the plan produces no output.
-func buildEmbeddingInput(msgs []normcore.Message, strategy inputstaging.Strategy) (string, bool) {
+func buildEmbeddingInput(msgs []normcore.Message, strategy inputstaging.Strategy, maxInputTokens int) (string, bool) {
 	stagingMsgs := canonicalMsgsToInputStaging(msgs)
 	if len(stagingMsgs) == 0 {
 		return "", false
@@ -131,13 +135,19 @@ func buildEmbeddingInput(msgs []normcore.Message, strategy inputstaging.Strategy
 	if !strategy.Valid() {
 		strategy = inputstaging.StrategySystemPlusLastUser
 	}
-	// EmbeddingDimension from the ConfigCache informs model context limit.
-	// Use a generous fallback (8192) when the fleet singleton is not yet
-	// configured; inputstaging.Plan hard-fails only on ModelContextLimit<1.
-	const fallbackContextLimit = 8192
+	// Truncate the embed input to the embedding model's real context window
+	// (capabilityJson.embeddings.max_input_tokens, carried on the snapshot).
+	// A large chat context is trimmed to fit so the embedding call never 400s
+	// on a token-limit. Fall back to a conservative 8192 when the model
+	// declares no limit (or the fleet singleton is not configured yet);
+	// inputstaging.Plan hard-fails only on ModelContextLimit < 1.
+	contextLimit := maxInputTokens
+	if contextLimit < 1 {
+		contextLimit = 8192
+	}
 	plan, planErr := inputstaging.Plan(inputstaging.PlanInput{
 		Messages:          stagingMsgs,
-		ModelContextLimit: fallbackContextLimit,
+		ModelContextLimit: contextLimit,
 		Strategy:          strategy,
 	})
 	if planErr != nil || len(plan.Messages) == 0 {
@@ -150,7 +160,10 @@ func buildEmbeddingInput(msgs []normcore.Message, strategy inputstaging.Strategy
 		}
 		sb.WriteString(m.Content)
 	}
-	return sb.String(), true
+	// Last-resort hard cut: Plan drops whole messages but never cuts within one,
+	// so a single oversized message would still exceed the embedding model's
+	// limit and 400. Keep the newest content (tail) within the model's window.
+	return inputstaging.TruncateToTokens(sb.String(), contextLimit), true
 }
 
 // l2ReadParams bundles the parameters for tryL2Lookup so the call site stays
@@ -196,7 +209,7 @@ func (h *Handler) tryL2Lookup(p l2ReadParams) (hit bool) {
 	}
 
 	// Build the embedding input via inputstaging.Plan.
-	embInput, ok2 := buildEmbeddingInput(p.canonicalMsgs, inputstaging.Strategy(pol.EmbedStrategy))
+	embInput, ok2 := buildEmbeddingInput(p.canonicalMsgs, inputstaging.Strategy(pol.EmbedStrategy), pol.MaxInputTokens)
 	if !ok2 {
 		// No text content or plan failed — skip L2.
 		p.rec.GatewayCacheSkipReason = audit.GatewayCacheSkipReasonOversizeForEmbedding
@@ -335,7 +348,7 @@ func (h *Handler) scheduleL2Write(
 		return
 	}
 
-	embInput, ok2 := buildEmbeddingInput(canonicalMsgs, inputstaging.Strategy(pol.EmbedStrategy))
+	embInput, ok2 := buildEmbeddingInput(canonicalMsgs, inputstaging.Strategy(pol.EmbedStrategy), pol.MaxInputTokens)
 	if !ok2 {
 		return
 	}
@@ -378,7 +391,6 @@ func (h *Handler) scheduleL2Write(
 		}
 	}()
 }
-
 
 // provcoreUsageToMap converts a provcore.Usage to the map[string]any shape
 // the semantic Writer persists into Valkey. Without this conversion the L2

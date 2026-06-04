@@ -42,7 +42,7 @@ func TestEgressReshapeNonStream_RoutesByIngressShape(t *testing.T) {
 		wire         typology.WireShape
 		body         provcore.Format
 		target       routingcore.RoutingTarget
-		wantReshaped bool          // expect ResponseCanonicalToIngress invoked
+		wantReshaped bool // expect ResponseCanonicalToIngress invoked
 		wantFormat   provcore.Format
 	}{
 		// OpenAI-family ingress: canonical already IS the caller's shape → identity, no call.

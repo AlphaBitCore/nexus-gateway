@@ -36,8 +36,10 @@ func (c *BufferConfig) withDefaults() BufferConfig {
 // #90 wiring: sse.go's buffer-mode branch installs a callback (built
 // by shared/transport/normalize/responseprehook.Builder) that runs
 // the body through Registry.Normalize and stamps both
-//   (a) ci.Normalized — so hooks see the real claim
-//   (b) auditInfo.ResponseNormalized — so the audit row carries it
+//
+//	(a) ci.Normalized — so hooks see the real claim
+//	(b) auditInfo.ResponseNormalized — so the audit row carries it
+//
 // before BufferPipeline.Process kicks off the hook executor. Without
 // this, hooks always saw a flat-text Normalized (built from
 // extractDeltaText concat in buildCheckpointInput), which kept the

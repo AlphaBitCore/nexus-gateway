@@ -229,7 +229,6 @@ func TestPrewarm_NoAIGatewayURL_503(t *testing.T) {
 	}
 }
 
-
 // TestPrewarm_TooManyEntries_413 locks the 500-entry cap: sending 501 entries
 // returns 413 Request Entity Too Large.
 func TestPrewarm_TooManyEntries_413(t *testing.T) {
@@ -462,7 +461,6 @@ func TestPrewarm_RegistersRoute(t *testing.T) {
 		t.Fatal("POST /api/admin/semantic-cache/prewarm not registered")
 	}
 }
-
 
 // testSemanticCacheConfigRow creates a SemanticCacheConfigRow with the given
 // enabled state for use in store doubles.

@@ -43,7 +43,8 @@ func TestScimToken_GenerateAndHash(t *testing.T) {
 	if err != nil || len(tok) < 20 || prefix != tok[:20] {
 		t.Fatalf("GenerateScimToken: tok=%q prefix=%q err=%v", tok, prefix, err)
 	}
-	if HashScimToken("x") != HashScimToken("x") || HashScimToken("x") == HashScimToken("y") {
+	hx1, hx2 := HashScimToken("x"), HashScimToken("x")
+	if hx1 != hx2 || HashScimToken("x") == HashScimToken("y") {
 		t.Fatal("HashScimToken must be deterministic + collision-distinct")
 	}
 }

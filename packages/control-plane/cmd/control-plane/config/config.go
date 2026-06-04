@@ -29,21 +29,21 @@ type Config struct {
 	// agent-setup page (and any other page that needs an
 	// environment-aware URL) renders from real config rather than
 	// hardcoded hostnames.
-	PublicURL   string            `yaml:"publicURL"`
-	Server      ServerConfig      `yaml:"server"`
-	Database    DatabaseConfig    `yaml:"database"`
+	PublicURL   string              `yaml:"publicURL"`
+	Server      ServerConfig        `yaml:"server"`
+	Database    DatabaseConfig      `yaml:"database"`
 	Redis       redisfactory.Config `yaml:"redis"`
-	Log         LogConfig         `yaml:"log"`
-	BFF         BFFConfig         `yaml:"bff"`
-	Registry    RegistryConfig    `yaml:"registry"`
-	Auth        AuthConfig        `yaml:"auth"`
-	Crypto      CryptoConfig      `yaml:"crypto"`
-	Agent       AgentConfig       `yaml:"agent"`
-	Otel        OtelConfig        `yaml:"otel"`
-	MQ          MQConfig          `yaml:"mq"`
-	AuthServer  AuthServerConfig  `yaml:"authServer"`
-	AIGuard     AIGuardConfig     `yaml:"aiGuard"`
-	HTTPClients HTTPClientsConfig `yaml:"httpClients"`
+	Log         LogConfig           `yaml:"log"`
+	BFF         BFFConfig           `yaml:"bff"`
+	Registry    RegistryConfig      `yaml:"registry"`
+	Auth        AuthConfig          `yaml:"auth"`
+	Crypto      CryptoConfig        `yaml:"crypto"`
+	Agent       AgentConfig         `yaml:"agent"`
+	Otel        OtelConfig          `yaml:"otel"`
+	MQ          MQConfig            `yaml:"mq"`
+	AuthServer  AuthServerConfig    `yaml:"authServer"`
+	AIGuard     AIGuardConfig       `yaml:"aiGuard"`
+	HTTPClients HTTPClientsConfig   `yaml:"httpClients"`
 	// Spill is the YAML-side spillstore configuration. CP reads this so
 	// the GetTrafficEvent detail handler can resolve out-of-band body
 	// payloads (large captured request/response bodies that were spilled
@@ -204,10 +204,10 @@ type AuthConfig struct {
 // EncryptionKey / EncryptionPassphrase / EncryptionSalt / CredentialKeyMap
 // are secrets (env-only). Production is a feature flag — stays in yaml.
 type CryptoConfig struct {
-	EncryptionKey        string `yaml:"-"` // env CREDENTIAL_ENCRYPTION_KEY
-	EncryptionPassphrase string `yaml:"-"` // env CREDENTIAL_ENCRYPTION_PASSPHRASE
-	EncryptionSalt       string `yaml:"-"` // env CREDENTIAL_ENCRYPTION_SALT
-	CredentialKeyMap     string `yaml:"-"` // env CREDENTIAL_KEY_MAP — "v1:hex,v2:hex"; precedence over single key
+	EncryptionKey        string `yaml:"-"`          // env CREDENTIAL_ENCRYPTION_KEY
+	EncryptionPassphrase string `yaml:"-"`          // env CREDENTIAL_ENCRYPTION_PASSPHRASE
+	EncryptionSalt       string `yaml:"-"`          // env CREDENTIAL_ENCRYPTION_SALT
+	CredentialKeyMap     string `yaml:"-"`          // env CREDENTIAL_KEY_MAP — "v1:hex,v2:hex"; precedence over single key
 	Production           bool   `yaml:"production"` // feature flag; safe in yaml
 }
 

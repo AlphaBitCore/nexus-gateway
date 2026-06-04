@@ -9,10 +9,10 @@ import routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/in
 type routingAuditTrace struct {
 	Stages          []routingcore.PipelineTraceEntry `json:"stages,omitempty"`
 	Trace           []routingcore.TraceEntry         `json:"trace,omitempty"`
-	Targets         []routingAuditTarget        `json:"targets,omitempty"`
-	RecoveryTargets []routingAuditTarget        `json:"recoveryTargets,omitempty"`
-	Substituted     bool                        `json:"substituted,omitempty"`
-	OriginalModelID string                      `json:"originalModelId,omitempty"`
+	Targets         []routingAuditTarget             `json:"targets,omitempty"`
+	RecoveryTargets []routingAuditTarget             `json:"recoveryTargets,omitempty"`
+	Substituted     bool                             `json:"substituted,omitempty"`
+	OriginalModelID string                           `json:"originalModelId,omitempty"`
 }
 
 type routingAuditTarget struct {

@@ -40,6 +40,7 @@ func expectCascadeWatermarkAndMin(mock pgxmock.PgxPoolIface, oldest time.Time) {
 // (empty → early return) → SetWatermark → commit.
 func TestOpsRollupCascade_ProcessOneBucket_FullPath_NoHistograms(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -79,6 +80,7 @@ func TestOpsRollupCascade_ProcessOneBucket_FullPath_NoHistograms(t *testing.T) {
 
 func TestOpsRollupCascade_ProcessOneBucket_DeleteError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -102,6 +104,7 @@ func TestOpsRollupCascade_ProcessOneBucket_DeleteError(t *testing.T) {
 
 func TestOpsRollupCascade_ProcessOneBucket_InsertScalarsError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -128,6 +131,7 @@ func TestOpsRollupCascade_ProcessOneBucket_InsertScalarsError(t *testing.T) {
 
 func TestOpsRollupCascade_ProcessOneBucket_HistogramQueryError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -160,6 +164,7 @@ func TestOpsRollupCascade_ProcessOneBucket_HistogramQueryError(t *testing.T) {
 // non-nil) and a fleet row (thingID nil) in the source.
 func TestOpsRollupCascade_ProcessOneBucket_WithHistogramData(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -221,6 +226,7 @@ func TestOpsRollupCascade_ProcessOneBucket_WithHistogramData(t *testing.T) {
 // with a sealed past month: resolveCalendarCursor → bootstrap → processOneBucket.
 func TestOpsRollupCascade_RunCalendarMonth_FullPath(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	// Use 2 months ago so the bucket is before the current month.
@@ -286,6 +292,7 @@ func TestOpsRollupCascade_RunCalendarMonth_FullPath(t *testing.T) {
 // bucket is older → advance-from-watermark wins.
 func TestOpsRollupCascade_ResolveCalendarCursor_AdvanceFromWatermark(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	// Watermark = 2 months ago. Bootstrap = firstOfMonth(3 months ago) = 3mo ago.
@@ -335,6 +342,7 @@ func TestOpsRollupCascade_ResolveCalendarCursor_AdvanceFromWatermark(t *testing.
 // branch where advance-from-watermark takes precedence over bootstrap.
 func TestOpsRollupCascade_ResolveFixedCursor_AdvanceFromWatermark(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	// Watermark = 2 days ago. Oldest = also 2 days ago.
@@ -376,6 +384,7 @@ func TestOpsRollupCascade_ResolveFixedCursor_AdvanceFromWatermark(t *testing.T) 
 // without calling processOneBucket.
 func TestOpsRollupCascade_RunFixed_CursorNotBeforeLatestSealed(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	// Set watermark and oldest to the current (unsealed) day so cursor =
@@ -402,6 +411,7 @@ func TestOpsRollupCascade_RunFixed_CursorNotBeforeLatestSealed(t *testing.T) {
 // cursor = start of current month no buckets are processed.
 func TestOpsRollupCascade_RunCalendarMonth_CursorAtCurrentMonth(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	now := time.Now().UTC()

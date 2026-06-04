@@ -341,6 +341,7 @@ func TestInitVault_ExplicitHexKey_Success(t *testing.T) {
 	}
 	if v == nil {
 		t.Fatal("expected non-nil Vault for valid hex key")
+		return
 	}
 
 	// Round-trip to confirm the decoded master key actually drives AES-GCM.
@@ -392,6 +393,7 @@ func TestInitVault_Passphrase_DefaultSalt(t *testing.T) {
 	}
 	if v == nil {
 		t.Fatal("expected non-nil Vault for valid passphrase")
+		return
 	}
 
 	// The default salt is "nexus-gateway-default-salt"; verify by deriving
@@ -428,6 +430,7 @@ func TestInitVault_Passphrase_CustomSalt(t *testing.T) {
 	}
 	if v == nil {
 		t.Fatal("expected non-nil Vault")
+		return
 	}
 
 	// Must equal HKDF(passphrase, customSalt), not the default-salt derivation.

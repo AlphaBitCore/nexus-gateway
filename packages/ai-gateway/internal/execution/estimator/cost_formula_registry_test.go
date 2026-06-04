@@ -34,11 +34,11 @@ func TestLookup_knownEndpoints(t *testing.T) {
 	}
 
 	cases := []struct {
-		endpoint         string
-		units            estimator.BillableUnits
-		prices           metrics.ModelPrices
-		wantTotalApprox  float64
-		desc             string
+		endpoint        string
+		units           estimator.BillableUnits
+		prices          metrics.ModelPrices
+		wantTotalApprox float64
+		desc            string
 	}{
 		{
 			endpoint: "chat",
@@ -57,9 +57,9 @@ func TestLookup_knownEndpoints(t *testing.T) {
 			desc:            "embeddings: prompt-only; completion tokens ignored",
 		},
 		{
-			endpoint: "embeddings",
-			units:    estimator.BillableUnits{PromptTokens: 0},
-			prices:   embPrices,
+			endpoint:        "embeddings",
+			units:           estimator.BillableUnits{PromptTokens: 0},
+			prices:          embPrices,
 			wantTotalApprox: 0.0,
 			desc:            "embeddings zero tokens → zero cost",
 		},
@@ -92,7 +92,7 @@ func TestLookup_knownEndpoints(t *testing.T) {
 // populate only PromptTokens; completion tokens must be zero from codec).
 func TestEmbeddingsCostFormula_completionIgnored(t *testing.T) {
 	prices := metrics.ModelPrices{
-		InputUsdPerM:  ptr64(0.13), // text-embedding-3-small pricing
+		InputUsdPerM:  ptr64(0.13),  // text-embedding-3-small pricing
 		OutputUsdPerM: ptr64(100.0), // very high — must not appear in result
 	}
 	units := estimator.BillableUnits{PromptTokens: 1000, CompletionTokens: 9999}
@@ -132,8 +132,8 @@ func TestRegisterFormula_overridesBuiltin(t *testing.T) {
 // This function is the hook point for future cache-cost extensions that need
 // cache-aware cost calculation from BillableUnits.
 func TestCostForUnits_cacheAware(t *testing.T) {
-	inPM := 2.5   // $2.50 / 1M input
-	outPM := 10.0 // $10.00 / 1M output
+	inPM := 2.5         // $2.50 / 1M input
+	outPM := 10.0       // $10.00 / 1M output
 	cacheReadPM := 1.25 // 50% discount
 	prices := metrics.ModelPrices{
 		InputUsdPerM:           &inPM,

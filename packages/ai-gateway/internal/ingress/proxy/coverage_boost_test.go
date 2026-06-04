@@ -20,10 +20,10 @@ import (
 	metricspkg "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // routing_audit_trace.go — buildRoutingAuditTrace nil + empty paths
@@ -598,7 +598,7 @@ func TestExtractIngressModel_GeminiBadSegment(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(""))
 	r.SetPathValue("model", "gemini-pro:unknownOp")
 	_, _, err := ExtractIngressModel(Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatGemini,
 	}, r, nil)
 	if err == nil {
@@ -610,7 +610,7 @@ func TestExtractIngressModel_GeminiEmptyModelID(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(""))
 	r.SetPathValue("model", ":generateContent") // model prefix is empty
 	_, _, err := ExtractIngressModel(Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatGemini,
 	}, r, nil)
 	if err == nil {
@@ -621,7 +621,7 @@ func TestExtractIngressModel_GeminiEmptyModelID(t *testing.T) {
 func TestExtractIngressModel_AzureMissingDeployment(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(""))
 	_, _, err := ExtractIngressModel(Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatAzureOpenAI,
 	}, r, nil)
 	if err == nil {
@@ -632,7 +632,7 @@ func TestExtractIngressModel_AzureMissingDeployment(t *testing.T) {
 func TestExtractIngressModel_UnsupportedBedrock(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(""))
 	_, _, err := ExtractIngressModel(Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatBedrock,
 	}, r, nil)
 	if err == nil {
@@ -702,7 +702,7 @@ func TestContentBlocksToNormalized_FiltersNonText(t *testing.T) {
 func TestExtractIngressModel_UnknownFormat(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(""))
 	_, _, err := ExtractIngressModel(Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.Format("xyzzy"),
 	}, r, nil)
 	if err == nil {

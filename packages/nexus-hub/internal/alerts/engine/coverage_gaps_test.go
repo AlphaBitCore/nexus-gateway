@@ -124,7 +124,6 @@ func TestStoreHelpers(t *testing.T) {
 	}
 }
 
-
 func TestStore_InsertAlert_Mock(t *testing.T) {
 	t.Run("happy", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
@@ -155,7 +154,6 @@ func TestStore_InsertAlert_Mock(t *testing.T) {
 		}
 	})
 }
-
 
 func TestStore_UpdateFiringDuplicate_Mock(t *testing.T) {
 	t.Run("happy", func(t *testing.T) {
@@ -191,7 +189,6 @@ func TestStore_UpdateFiringDuplicate_Mock(t *testing.T) {
 		}
 	})
 }
-
 
 func TestStore_FindLatestByRuleTarget_Mock(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
@@ -245,7 +242,6 @@ func TestStore_FindLatestByRuleTarget_Mock(t *testing.T) {
 		}
 	})
 }
-
 
 func TestStore_GetAlert_Mock(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
@@ -363,7 +359,6 @@ func TestStore_AcknowledgeAndResolve_Mock(t *testing.T) {
 	})
 }
 
-
 func TestStore_ResolveByRuleTarget_Mock(t *testing.T) {
 	t.Run("happy returns count", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
@@ -469,7 +464,6 @@ func TestStore_ListAlerts_Mock(t *testing.T) {
 		}
 	})
 }
-
 
 func TestStore_ListRules_Mock(t *testing.T) {
 	t.Run("no filter happy + default limit", func(t *testing.T) {
@@ -682,7 +676,6 @@ func TestStore_UpdateRule_Mock(t *testing.T) {
 		}
 	})
 }
-
 
 func TestStore_InsertChannel_Mock(t *testing.T) {
 	t.Run("happy", func(t *testing.T) {
@@ -906,7 +899,6 @@ func TestStore_DeleteChannel_Mock(t *testing.T) {
 	})
 }
 
-
 func TestStore_InsertDispatch_Mock(t *testing.T) {
 	t.Run("happy", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
@@ -1022,7 +1014,6 @@ func TestStore_FindLatestByRuleTargetAnyStateTx_Mock(t *testing.T) {
 	})
 }
 
-
 // fakeDispatcher counts Dispatch calls.
 type fakeDispatcher struct {
 	mu    sync.Mutex
@@ -1038,27 +1029,6 @@ func (f *fakeDispatcher) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.calls)
-}
-
-// fakeProducer satisfies mq.Producer minimally.
-type fakeProducer struct {
-	mu        sync.Mutex
-	enqueued  []string
-	enqueueEr error
-}
-
-func (f *fakeProducer) Publish(_ context.Context, _ string, _ []byte) error { return nil }
-func (f *fakeProducer) Enqueue(_ context.Context, subject string, _ []byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.enqueued = append(f.enqueued, subject)
-	return f.enqueueEr
-}
-func (f *fakeProducer) Close() error { return nil }
-func (f *fakeProducer) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.enqueued)
 }
 
 func TestRaiser_NewRaiserConstructors(t *testing.T) {
@@ -1411,7 +1381,6 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not met within 2s")
 }
-
 
 // dispatchTestSender is a tiny Sender used in dispatcher tests.
 type dispatchTestSender struct {
@@ -2871,7 +2840,6 @@ func TestAdminChannelTest(t *testing.T) {
 		}
 	})
 }
-
 
 func TestParseFlexibleTime(t *testing.T) {
 	if _, ok := parseFlexibleTime("2026-01-01T00:00:00.000Z"); !ok {

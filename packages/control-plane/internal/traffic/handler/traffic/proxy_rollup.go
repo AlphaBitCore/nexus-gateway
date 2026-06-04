@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/compliancestore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 )
 
 // tryRollupComplianceCoverage attempts to serve compliance coverage stats from

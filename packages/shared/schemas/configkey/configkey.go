@@ -21,7 +21,6 @@
 // "gateway.settings", and "agent.settings" are system_metadata row keys
 // and are NOT covered by this package — they keep their local string
 // literals at their owning sites.
-//
 package configkey
 
 // Type A keys (config blob — state IS the config)

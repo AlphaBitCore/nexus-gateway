@@ -41,5 +41,4 @@
 // log. This makes byte-identical output across the three data-plane
 // services a provable property (verified by cross-service integration
 // tests in tests/integration/normalize_consistency_test.go).
-//
 package core

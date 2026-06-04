@@ -5,8 +5,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/matcher"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"fmt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
 
 // ConditionalStrategy evaluates branches in order and recurses into

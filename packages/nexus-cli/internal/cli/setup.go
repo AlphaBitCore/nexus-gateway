@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 )
 
 // newSetupCmd is the friendly interactive environment setup. `nexus setup [name]`
@@ -53,7 +53,7 @@ func newSetupCmd(a *App) *cobra.Command {
 				Name:             name,
 				CPBaseURL:        ask("Control Plane base URL", cur.CPBaseURL),
 				AIGatewayBaseURL: ask("AI Gateway base URL", orDefault(cur.AIGatewayBaseURL, cur.CPBaseURL)),
-				OAuthClientID:    ask("OAuth client id", orDefault(cur.OAuthClientID, "cp-ui")),
+				OAuthClientID:    ask("OAuth client id", orDefault(cur.OAuthClientID, "tui")),
 				OAuthRedirectURI: ask("OAuth redirect URI", orDefault(cur.OAuthRedirectURI, "http://localhost:3000/auth/callback")),
 				IsProd:           askYesNo(ask, "Production environment? (red banner + confirmations)", cur.IsProd),
 				// Preserve the remembered model/VK selection when editing.

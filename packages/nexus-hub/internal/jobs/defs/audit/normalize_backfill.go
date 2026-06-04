@@ -57,14 +57,14 @@ type NormalizeRegistry interface {
 // against the spill backend; this job logs them as `skipped_spill`
 // without failing the batch so future iterations can add backend access.
 type NormalizeBackfill struct {
-	pool      normalizeBackfillQueryer
-	registry  NormalizeRegistry
-	interval  time.Duration
-	logger    *slog.Logger
-	scanned   *opsmetrics.Counter
-	filled    *opsmetrics.Counter
-	skipped   *opsmetrics.Counter
-	errors    *opsmetrics.Counter
+	pool     normalizeBackfillQueryer
+	registry NormalizeRegistry
+	interval time.Duration
+	logger   *slog.Logger
+	scanned  *opsmetrics.Counter
+	filled   *opsmetrics.Counter
+	skipped  *opsmetrics.Counter
+	errors   *opsmetrics.Counter
 }
 
 // NewNormalizeBackfill wires the job. interval defaults to 5 minutes when
@@ -345,4 +345,3 @@ func nilIfEmpty(s string) any {
 	}
 	return s
 }
-

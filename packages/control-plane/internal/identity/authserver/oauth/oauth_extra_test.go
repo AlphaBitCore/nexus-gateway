@@ -473,6 +473,7 @@ func TestToken_CustomTTL_PropagatesToResponse_AndClaims(t *testing.T) {
 	f := newTokenFixture(t)
 	f.deps = oauth.TokenDeps{
 		Issuer:     "https://cp.nexus.ai",
+		Clients:    defaultTokenTestClients(),
 		AuthCodes:  f.codes,
 		Users:      fakeUsers{},
 		Refresh:    f.refresh,
@@ -519,6 +520,7 @@ func TestToken_AuthCode_NewChainErrorReturns500(t *testing.T) {
 	buf := &bytes.Buffer{}
 	f.deps = oauth.TokenDeps{
 		Issuer:    "https://cp.nexus.ai",
+		Clients:   defaultTokenTestClients(),
 		AuthCodes: f.codes,
 		Users:     fakeUsers{},
 		Refresh:   f.refresh,
@@ -571,6 +573,7 @@ func TestToken_AuthCode_AccessMintErrorReturns500(t *testing.T) {
 
 	f.deps = oauth.TokenDeps{
 		Issuer:    "https://cp.nexus.ai",
+		Clients:   defaultTokenTestClients(),
 		AuthCodes: f.codes,
 		Users:     fakeUsers{},
 		Refresh:   f.refresh,
@@ -647,6 +650,7 @@ func TestToken_AuthCode_AssignmentsWriteRecorded_AgentDesktop(t *testing.T) {
 	assn := newFakeAssignments()
 	f.deps = oauth.TokenDeps{
 		Issuer:      "https://cp.nexus.ai",
+		Clients:     defaultTokenTestClients(),
 		AuthCodes:   f.codes,
 		Users:       fakeUsers{},
 		Refresh:     f.refresh,
@@ -713,6 +717,7 @@ func TestToken_AuthCode_AssignmentsWriteErrorDoesNotBlockResponse(t *testing.T) 
 	assn.retErr = errors.New("postgres deadlock")
 	f.deps = oauth.TokenDeps{
 		Issuer:      "https://cp.nexus.ai",
+		Clients:     defaultTokenTestClients(),
 		AuthCodes:   f.codes,
 		Users:       fakeUsers{},
 		Refresh:     f.refresh,
@@ -784,6 +789,7 @@ func TestToken_AuthCode_AssignmentsLoginMethodEmptyAMR(t *testing.T) {
 	assn := newFakeAssignments()
 	f.deps = oauth.TokenDeps{
 		Issuer:      "https://cp.nexus.ai",
+		Clients:     defaultTokenTestClients(),
 		AuthCodes:   f.codes,
 		Users:       fakeUsers{},
 		Refresh:     f.refresh,
@@ -834,6 +840,7 @@ func TestToken_AuthCode_AssignmentsSkippedWhenDeviceIDEmpty(t *testing.T) {
 	assn := newFakeAssignments()
 	f.deps = oauth.TokenDeps{
 		Issuer:      "https://cp.nexus.ai",
+		Clients:     defaultTokenTestClients(),
 		AuthCodes:   f.codes,
 		Users:       fakeUsers{},
 		Refresh:     f.refresh,
@@ -879,6 +886,7 @@ func TestToken_Refresh_RotateGenericErrorReturns500(t *testing.T) {
 	buf := &bytes.Buffer{}
 	f.deps = oauth.TokenDeps{
 		Issuer:    "https://cp.nexus.ai",
+		Clients:   defaultTokenTestClients(),
 		AuthCodes: f.codes,
 		Users:     fakeUsers{},
 		Refresh:   f.refresh,
@@ -892,6 +900,7 @@ func TestToken_Refresh_RotateGenericErrorReturns500(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-x"},
+		"client_id":     {"web-console"},
 	}, nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s, want 500", rec.Code, rec.Body.String())
@@ -935,6 +944,7 @@ func TestToken_Refresh_UserNotFoundReturns400(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-any"},
+		"client_id":     {"web-console"},
 	}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s, want 400", rec.Code, rec.Body.String())
@@ -966,6 +976,7 @@ func TestToken_Refresh_UserLookupGenericErrorReturns500(t *testing.T) {
 	buf := &bytes.Buffer{}
 	f.deps = oauth.TokenDeps{
 		Issuer:    "https://cp.nexus.ai",
+		Clients:   defaultTokenTestClients(),
 		AuthCodes: f.codes,
 		Users:     erroringUsers{err: errors.New("pg ConnPool exhausted")},
 		Refresh:   f.refresh,
@@ -979,6 +990,7 @@ func TestToken_Refresh_UserLookupGenericErrorReturns500(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-x"},
+		"client_id":     {"web-console"},
 	}, nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s, want 500", rec.Code, rec.Body.String())
@@ -1019,6 +1031,7 @@ func TestToken_Refresh_AccessMintErrorReturns500(t *testing.T) {
 	buf := &bytes.Buffer{}
 	f.deps = oauth.TokenDeps{
 		Issuer:    "https://cp.nexus.ai",
+		Clients:   defaultTokenTestClients(),
 		AuthCodes: f.codes,
 		Users:     users,
 		Refresh:   f.refresh,
@@ -1032,6 +1045,7 @@ func TestToken_Refresh_AccessMintErrorReturns500(t *testing.T) {
 	rec := f.post(url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {"rt-x"},
+		"client_id":     {"web-console"},
 	}, nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s, want 500", rec.Code, rec.Body.String())
@@ -1054,6 +1068,7 @@ func TestToken_NilLoggerSafeOnErrorPath(t *testing.T) {
 	// Logger left nil -- must not panic.
 	f.deps = oauth.TokenDeps{
 		Issuer:    "https://cp.nexus.ai",
+		Clients:   defaultTokenTestClients(),
 		AuthCodes: f.codes,
 		Users:     fakeUsers{},
 		Refresh:   f.refresh,

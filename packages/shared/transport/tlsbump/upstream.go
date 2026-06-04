@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/responseio"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 )
 
 // clientHelloKey is the per-request context key under which the raw TLS

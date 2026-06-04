@@ -486,7 +486,7 @@ type EmbeddingsRequest struct {
 // on the embedding path so this field exists for internal post-processing
 // only.
 type EmbeddingDataItem struct {
-	Object    string    `json:"object"`     // "embedding"
+	Object    string    `json:"object"` // "embedding"
 	Embedding []float32 `json:"embedding,omitempty"`
 	Base64    string    `json:"-"`
 	Index     int       `json:"index"`

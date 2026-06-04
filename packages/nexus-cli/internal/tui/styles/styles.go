@@ -3,7 +3,12 @@
 // Accent is the AlphaBitCore brand blue, matching the web Control Plane theme.
 package styles
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
+)
 
 // Palette. Brand accent is #3b518a (institutional blue). Text/sub adapt to the
 // terminal background so the UI is legible in light and dark themes.
@@ -14,9 +19,9 @@ var (
 	Amber   = lipgloss.Color("#d39e00")
 	Red     = lipgloss.Color("#c0392b")
 
-	Text = lipgloss.AdaptiveColor{Light: "#1a1a2e", Dark: "#e6e9f0"}
-	Sub  = lipgloss.AdaptiveColor{Light: "#5b6172", Dark: "#9aa2b1"}
-	Line = lipgloss.AdaptiveColor{Light: "#c8cdda", Dark: "#3a4151"}
+	Text color.Color = compat.AdaptiveColor{Light: lipgloss.Color("#1a1a2e"), Dark: lipgloss.Color("#e6e9f0")}
+	Sub  color.Color = compat.AdaptiveColor{Light: lipgloss.Color("#5b6172"), Dark: lipgloss.Color("#9aa2b1")}
+	Line color.Color = compat.AdaptiveColor{Light: lipgloss.Color("#c8cdda"), Dark: lipgloss.Color("#3a4151")}
 )
 
 // Shared styles.
@@ -25,9 +30,8 @@ var (
 	StatusBar  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffffff")).Background(Brand).Padding(0, 1)
 	ProdBanner = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffffff")).Background(Red).Padding(0, 1)
 
-	// Tabs.
-	Tab       = lipgloss.NewStyle().Foreground(Sub).Padding(0, 1)
-	ActiveTab = lipgloss.NewStyle().Bold(true).Foreground(Brand).Underline(true).Padding(0, 1)
+	// Crumb is the breadcrumb trail under the status bar ("nexus › traffic › …").
+	Crumb = lipgloss.NewStyle().Foreground(Brand).Bold(true).Padding(0, 1)
 
 	// Tile is a bordered "card" for a big-number metric.
 	Tile      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Line).Padding(0, 1).Margin(0, 1, 0, 0)
@@ -39,10 +43,13 @@ var (
 
 	// Panel wraps a scrollable region (event bodies, etc.).
 	Panel = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Line).Padding(0, 1)
+
+	// PanelFocused is Panel with a brand-colored border, marking the focused pane.
+	PanelFocused = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Brand).Padding(0, 1)
 )
 
 // StatusColor maps an HTTP status code to a semantic color (RAG).
-func StatusColor(code int) lipgloss.Color {
+func StatusColor(code int) color.Color {
 	switch {
 	case code >= 500:
 		return Red
@@ -56,7 +63,7 @@ func StatusColor(code int) lipgloss.Color {
 }
 
 // DeltaColor returns green for non-negative deltas, red for negative.
-func DeltaColor(delta float64) lipgloss.Color {
+func DeltaColor(delta float64) color.Color {
 	if delta < 0 {
 		return Red
 	}

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 )
 
 // ComplianceDashboardKPIs holds the four headline numbers for the global

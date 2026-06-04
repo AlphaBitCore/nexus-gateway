@@ -29,17 +29,17 @@ type Config struct {
 	// Prod: "https://api.example.com"; dev: "http://localhost:3050".
 	// Reported to the Thing Registry as part of staticInfo so the CP
 	// admin API can surface the real endpoint to UI pages.
-	PublicURL string         `yaml:"publicURL"`
-	Server    ServerConfig   `yaml:"server"`
-	Database  DatabaseConfig `yaml:"database"`
+	PublicURL string              `yaml:"publicURL"`
+	Server    ServerConfig        `yaml:"server"`
+	Database  DatabaseConfig      `yaml:"database"`
 	Redis     redisfactory.Config `yaml:"redis"`
-	Auth      AuthConfig     `yaml:"auth"`
-	Log       LogConfig      `yaml:"log"`
-	Registry  RegistryConfig `yaml:"registry"`
-	MQ        MQConfig       `yaml:"mq"`
-	CORS      CORSConfig     `yaml:"cors"`
-	Cache     CacheConfig    `yaml:"cache"`
-	Otel      OtelConfig     `yaml:"otel"`
+	Auth      AuthConfig          `yaml:"auth"`
+	Log       LogConfig           `yaml:"log"`
+	Registry  RegistryConfig      `yaml:"registry"`
+	MQ        MQConfig            `yaml:"mq"`
+	CORS      CORSConfig          `yaml:"cors"`
+	Cache     CacheConfig         `yaml:"cache"`
+	Otel      OtelConfig          `yaml:"otel"`
 	// Spill configures out-of-band body storage for audit captures: bodies
 	// at/above the inline threshold are written to the configured backend
 	// instead of inline'd onto traffic_event_payload. Disabled by default

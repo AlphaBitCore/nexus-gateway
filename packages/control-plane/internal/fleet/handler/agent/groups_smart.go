@@ -10,8 +10,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/device"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/device"
 )
 
 // Smart-group admin endpoints. Wire-up in admin_device_groups.go

@@ -125,11 +125,11 @@ func TestCompiledRule_RequireQuestionMark(t *testing.T) {
 		text string
 		want bool
 	}{
-		{"What's the weather?", true},             // ASCII question mark
-		{"天气怎么样？", false},                          // has full-width ? but no keyword "weather"
-		{"The weather is nice today.", false},      // no question mark
-		{"Tell me about weather.", false},          // no question mark
-		{"What about the weather today?", true},    // has question mark
+		{"What's the weather?", true},           // ASCII question mark
+		{"天气怎么样？", false},                       // has full-width ? but no keyword "weather"
+		{"The weather is nice today.", false},   // no question mark
+		{"Tell me about weather.", false},       // no question mark
+		{"What about the weather today?", true}, // has question mark
 	}
 	for _, tc := range cases {
 		if got := cr.matches(tc.text); got != tc.want {

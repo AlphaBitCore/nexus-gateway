@@ -23,7 +23,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
 
-
 // logWarnCapture captures Warn calls for the Apply logger interface.
 type logWarnCapture struct {
 	warns []string

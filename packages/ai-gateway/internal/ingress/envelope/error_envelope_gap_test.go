@@ -85,7 +85,6 @@ func TestEncodeErrorEnvelopeForIngress_sameShapeSyntheticError_fallsThrough(t *t
 	}
 }
 
-
 func TestSynthesizeSSEErrorFrame_openAIIngress_dataPrefix(t *testing.T) {
 	pe := &provcore.ProviderError{Code: provcore.CodeUpstreamError, Message: "fail"}
 	frame := SynthesizeSSEErrorFrame(provcore.FormatOpenAI, pe)

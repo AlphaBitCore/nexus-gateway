@@ -31,16 +31,16 @@ type AgentConfig struct {
 	CACertFile string    `yaml:"caCertFile"`
 	// Platform bridge listen address (Linux/Windows transparent-proxy
 	// port). Ignored on Darwin (uses Unix socket). Default 127.0.0.1:19080.
-	PlatformBridgeAddress string             `yaml:"platformBridgeAddress"`
-	AuditDBPath           string             `yaml:"auditDBPath"`
-	HeartbeatIntervalSec  int                `yaml:"heartbeatIntervalSec"`
-	AuditDrainIntervalSec int                `yaml:"auditDrainIntervalSec"`
-	AuditBatchSize        int                `yaml:"auditBatchSize"`
-	AuditRetentionDays    int                `yaml:"auditRetentionDays"`
-	DefaultAction         string             `yaml:"defaultAction"`
-	UpdaterEnabled        bool               `yaml:"updaterEnabled"`
-	UpdaterCheckSec       int                `yaml:"updaterCheckSec"`
-	QuitAllowed           *bool              `yaml:"quitAllowed"`
+	PlatformBridgeAddress string `yaml:"platformBridgeAddress"`
+	AuditDBPath           string `yaml:"auditDBPath"`
+	HeartbeatIntervalSec  int    `yaml:"heartbeatIntervalSec"`
+	AuditDrainIntervalSec int    `yaml:"auditDrainIntervalSec"`
+	AuditBatchSize        int    `yaml:"auditBatchSize"`
+	AuditRetentionDays    int    `yaml:"auditRetentionDays"`
+	DefaultAction         string `yaml:"defaultAction"`
+	UpdaterEnabled        bool   `yaml:"updaterEnabled"`
+	UpdaterCheckSec       int    `yaml:"updaterCheckSec"`
+	QuitAllowed           *bool  `yaml:"quitAllowed"`
 	// TrafficUploadLevel controls which FlowResult events are uploaded
 	// to Hub in audit batches. Enum (closed set, validated in MergeConfig):
 	//   - "all"       — every flow including silent passthrough TCP

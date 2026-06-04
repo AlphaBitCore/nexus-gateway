@@ -157,9 +157,9 @@ func decodeOpenAIEmbeddingInput(raw json.RawMessage) ([]string, bool, error) {
 // We only parse metadata; the data[].embedding float vectors are intentionally
 // ignored per SDD §T2.3.
 type openAIEmbeddingsResponse struct {
-	Object string              `json:"object"`
-	Model  string              `json:"model"`
-	Usage  *openAIEmbedUsage   `json:"usage,omitempty"`
+	Object string            `json:"object"`
+	Model  string            `json:"model"`
+	Usage  *openAIEmbedUsage `json:"usage,omitempty"`
 }
 
 type openAIEmbedUsage struct {

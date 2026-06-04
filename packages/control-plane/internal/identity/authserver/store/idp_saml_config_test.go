@@ -31,6 +31,7 @@ func TestDecodeSAMLConfig(t *testing.T) {
 		cfg := DecodeSAMLConfig(idp)
 		if cfg == nil {
 			t.Fatal("expected non-nil config")
+			return
 		}
 		if cfg.EntityID != "https://idp.acme.test/metadata" || cfg.SSOURL != "https://idp.acme.test/sso" {
 			t.Errorf("entityID/ssoURL not decoded: %+v", cfg)

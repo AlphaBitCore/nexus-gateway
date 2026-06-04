@@ -43,15 +43,15 @@ type Deps struct {
 // Handler is the per-domain admin handler for /api/admin/traffic*
 // + /api/admin/proxy* + /api/admin/admin-audit-logs* endpoints.
 type Handler struct {
-	traffic            *trafficstore.Store
-	dsar               *dsarstore.Store
-	metrics            *metricsstore.Store
-	compliance         *compliancestore.Store
-	meta               *systemmetastore.Store
-	audit              *audit.Writer
-	logger             *slog.Logger
-	spillStore         spillstore.SpillStore
-	proxy              ProxyConfig
+	traffic    *trafficstore.Store
+	dsar       *dsarstore.Store
+	metrics    *metricsstore.Store
+	compliance *compliancestore.Store
+	meta       *systemmetastore.Store
+	audit      *audit.Writer
+	logger     *slog.Logger
+	spillStore spillstore.SpillStore
+	proxy      ProxyConfig
 	httpClient *http.Client
 }
 

@@ -483,7 +483,7 @@ func (b *Bridge) queryAdminEvents(ctx context.Context, since time.Time, batchSiz
 		SELECT id, timestamp,
 		       "actorId", "actorLabel", "actorRole",
 		       "sourceIp", action, "entityType", "entityId",
-		       "beforeState", "afterState"
+		       "beforeState", "afterState", "via"
 		FROM "AdminAuditLog"
 		WHERE timestamp > $1
 		ORDER BY timestamp ASC
@@ -510,13 +510,14 @@ func (b *Bridge) queryAdminEvents(ctx context.Context, since time.Time, batchSiz
 			entityID    *string
 			beforeState *json.RawMessage
 			afterState  *json.RawMessage
+			via         *string
 		)
 
 		if err := rows.Scan(
 			&id, &ts,
 			&actorID, &actorLabel, &actorRole,
 			&sourceIP, &action, &entityType, &entityID,
-			&beforeState, &afterState,
+			&beforeState, &afterState, &via,
 		); err != nil {
 			return nil, time.Time{}, fmt.Errorf("scan AdminAuditLog: %w", err)
 		}
@@ -534,6 +535,10 @@ func (b *Bridge) queryAdminEvents(ctx context.Context, since time.Time, batchSiz
 		setIfNotNil(evt, "actorRole", actorRole)
 		setIfNotNil(evt, "sourceIp", sourceIP)
 		setIfNotNil(evt, "entityId", entityID)
+		// via = "assistant" marks an AI-initiated admin write (E90 I5). Exporting it
+		// is what makes AI-vs-human writes distinguishable in the external SIEM — the
+		// surface a security team actually triages on. Omitted (not "") for human rows.
+		setIfNotNil(evt, "via", via)
 
 		if beforeState != nil {
 			var parsed any

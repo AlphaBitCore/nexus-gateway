@@ -67,7 +67,6 @@ func TestSummarize(t *testing.T) {
 	}
 }
 
-
 func TestBulkForceRefreshGroup_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	spy := &auditSpy{}
@@ -232,7 +231,6 @@ func TestBulkForceRefreshGroup_MembersDBError(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestBulkRotateCertGroup_Happy(t *testing.T) {
 	mock := newMockPool(t)

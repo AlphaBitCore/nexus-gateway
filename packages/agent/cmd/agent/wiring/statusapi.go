@@ -7,12 +7,12 @@ import (
 
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/enrollment"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/protectionpause"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/policies"
 	config "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/schema"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/status"
-	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/policies"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
@@ -44,21 +44,21 @@ func InitStatusCollector(cfg StatusCollectorConfig) *status.Collector {
 		statusThingClient = cfg.ThingClient
 	}
 	return status.NewCollector(status.CollectorConfig{
-		Version:      cfg.Version,
-		DeviceID:     cfg.ThingID,
-		DashboardURL: cfg.HubHTTPURL,
-		DownloadURL:  ComposeAgentDownloadURL(cfg.CpURL),
-		CertExpiresAt: ReadCertExpiry(cfg.CertFile),
-		HeartbeatSec: cfg.HeartbeatSec,
-		UnsyncedCountFn: cfg.AuditQueue.UnsyncedCount,
-		TodayStatsFn: buildTodayStatsFn(cfg.AuditQueue),
-		ThingClient:  statusThingClient,
-		TrustLevelFn: cfg.EnrollMgr.TrustLevel,
+		Version:          cfg.Version,
+		DeviceID:         cfg.ThingID,
+		DashboardURL:     cfg.HubHTTPURL,
+		DownloadURL:      ComposeAgentDownloadURL(cfg.CpURL),
+		CertExpiresAt:    ReadCertExpiry(cfg.CertFile),
+		HeartbeatSec:     cfg.HeartbeatSec,
+		UnsyncedCountFn:  cfg.AuditQueue.UnsyncedCount,
+		TodayStatsFn:     buildTodayStatsFn(cfg.AuditQueue),
+		ThingClient:      statusThingClient,
+		TrustLevelFn:     cfg.EnrollMgr.TrustLevel,
 		DeviceAuthModeFn: buildDeviceAuthModeFn(cfg.BootstrapClient),
-		SSOEmailFn:    cfg.EnrollMgr.SSOEmail,
-		PausedFn:      cfg.Pauser.IsPaused,
-		PausedUntilFn: cfg.Pauser.ResumesAt,
-		QuitAllowedFn: func() bool { q := cfg.ConfigMgr.Get().QuitAllowed; return q == nil || *q },
+		SSOEmailFn:       cfg.EnrollMgr.SSOEmail,
+		PausedFn:         cfg.Pauser.IsPaused,
+		PausedUntilFn:    cfg.Pauser.ResumesAt,
+		QuitAllowedFn:    func() bool { q := cfg.ConfigMgr.Get().QuitAllowed; return q == nil || *q },
 	})
 }
 
@@ -140,13 +140,13 @@ type PendingStatusCollectorConfig struct {
 // pre-enrollment (pending-enrollment mode) path.
 func InitPendingStatusCollector(cfg PendingStatusCollectorConfig) *status.Collector {
 	return status.NewCollector(status.CollectorConfig{
-		Version:         cfg.Version,
-		DeviceID:        "",
-		DashboardURL:    cfg.HubHTTPURL,
-		DownloadURL:     ComposeAgentDownloadURL(cfg.CpURL),
-		HeartbeatSec:    cfg.HeartbeatSec,
-		UnsyncedCountFn: func() int { return 0 },
-		TrustLevelFn:    cfg.EnrollMgr.TrustLevel,
+		Version:          cfg.Version,
+		DeviceID:         "",
+		DashboardURL:     cfg.HubHTTPURL,
+		DownloadURL:      ComposeAgentDownloadURL(cfg.CpURL),
+		HeartbeatSec:     cfg.HeartbeatSec,
+		UnsyncedCountFn:  func() int { return 0 },
+		TrustLevelFn:     cfg.EnrollMgr.TrustLevel,
 		DeviceAuthModeFn: buildDeviceAuthModeFn(cfg.BootstrapClient),
 		QuitAllowedFn:    func() bool { q := cfg.QuitAllowed; return q == nil || *q },
 	})

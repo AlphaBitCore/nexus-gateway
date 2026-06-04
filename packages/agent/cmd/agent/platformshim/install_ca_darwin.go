@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
+	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/catrust"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
-	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 )
 
 // cmdInstallCA is the one-shot install-time helper invoked by the

@@ -309,10 +309,10 @@ func (e *AuditEmitter) buildEvent(
 		RequestHooksMs:         requestHooksMs,
 		ResponseHooksMs:        responseHooksMs,
 		LatencyBreakdown:       latencyBreakdown,
-		DomainRuleID:        info.DomainRuleID,
-		PathAction:          info.PathAction,
-		SourceProcess:       info.SourceProcess,
-		SourceProcessBundle: info.SourceProcessBundle,
+		DomainRuleID:           info.DomainRuleID,
+		PathAction:             info.PathAction,
+		SourceProcess:          info.SourceProcess,
+		SourceProcessBundle:    info.SourceProcessBundle,
 		// V2 (#58) — pre-normalized payload JSON forwarded from
 		// forward_handler's runtimeNormalize. nil/empty for non-AI traffic
 		// and non-bumped flows.

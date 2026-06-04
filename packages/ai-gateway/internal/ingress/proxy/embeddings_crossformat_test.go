@@ -20,10 +20,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 type embeddingsStubVK struct{}
@@ -115,8 +115,8 @@ func TestProxy_Embeddings_OpenAIIngress_GeminiOnlyTarget_NoCompatibleProvider(t 
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIEmbeddings,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIEmbeddings,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"text-embedding-004","input":"hello"}`

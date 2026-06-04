@@ -1359,6 +1359,7 @@ func TestTryRollupComplianceCoverage_WithData_ReturnsStats(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result when rollup data is present")
+		return
 	}
 	// With 10 bump_success and 0 total (proxy_request_count absent), total=10 from components.
 	if result.Period.Start.IsZero() {
@@ -1386,6 +1387,7 @@ func TestTryRollupHookHealth_WithData_ReturnsStats(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result when rollup data is present")
+		return
 	}
 	// allow count = 5, total = allow+deny+err+unknown = 5+0+0+0 = 5
 	if result.Total != 5 {
@@ -1423,6 +1425,7 @@ func TestTryRollupRejectStats_WithData_ReturnsStats(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result when rollup data is present")
+		return
 	}
 	if result.TotalRejects != 3 {
 		t.Errorf("expected 3 total rejects, got %d", result.TotalRejects)
@@ -1542,6 +1545,7 @@ func TestTryRollupHookHealth_WithHistogramMetadata_PopulatesLatency(t *testing.T
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	// With histogram data, latency percentiles should be populated.
 	if result.LatencyP50 == nil {
@@ -1575,6 +1579,7 @@ func TestTryRollupComplianceCoverage_NonZeroTotal_ComputesPct(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	// success=8, total=8 (from components), pct = 8/8 * 100 = 100.
 	if result.CoveragePct != 100.0 {

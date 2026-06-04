@@ -105,8 +105,8 @@ func TestCacheHit_OriginSameAsIngress_NoReshape(t *testing.T) {
 	seedResponseEntry(t, deps, "gpt-4o", body, entry)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -160,8 +160,8 @@ func TestCacheHit_OriginChat_IngressResponses_Reshapes(t *testing.T) {
 	seedResponseEntry(t, deps, "gpt-4o", body, entry)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIResponses,
-		BodyFormat:   provcore.FormatOpenAIResponses,
+		WireShape:  typology.WireShapeOpenAIResponses,
+		BodyFormat: provcore.FormatOpenAIResponses,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -213,8 +213,8 @@ func TestCacheHit_OriginResponses_IngressChat_Reshapes(t *testing.T) {
 	seedResponseEntry(t, deps, "gpt-4o", body, entry)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -274,9 +274,9 @@ func TestCacheHit_Stream_OriginDiffers_StampsContext(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -339,7 +339,7 @@ func TestCacheHit_Stream_ResponsesIngress_OriginOverride(t *testing.T) {
 		t.Fatal("openai adapter missing")
 	}
 	prepReq := provcore.Request{
-		WireShape:   typology.WireShapeOpenAIResponses,
+		WireShape:  typology.WireShapeOpenAIResponses,
 		Body:       body,
 		BodyFormat: provcore.FormatOpenAIResponses,
 		Stream:     true,
@@ -355,9 +355,9 @@ func TestCacheHit_Stream_ResponsesIngress_OriginOverride(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIResponses,
-		BodyFormat:   provcore.FormatOpenAIResponses,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIResponses,
+		BodyFormat: provcore.FormatOpenAIResponses,
+		Stream:     true,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -429,8 +429,8 @@ func TestCacheHit_OriginAcrossFormats_BridgeError_ServesEntryBytes(t *testing.T)
 	seedResponseEntry(t, deps, "gpt-4o", body, entry)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -564,8 +564,8 @@ func TestCacheHit_LegacyUntaggedEntry_FallsBackToOldBehavior(t *testing.T) {
 	seedResponseEntry(t, deps, "gpt-4o", body, entry)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")

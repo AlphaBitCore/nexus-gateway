@@ -3,31 +3,31 @@ package handler
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/handler/agent"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/alerts/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/analytics/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/cache/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/dsar/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/handler"
-	handleriam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/infrastructure/infra"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/killswitch/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/passthrough/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/quota/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/routing/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/handler/agent"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/dsar/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/interception/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/killswitch/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/passthrough/handler"
+	handleriam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/infrastructure/infra"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/alerts/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/dlq/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/retention/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/opsmetrics/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/retention/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/siem/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/thingstats/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/routing/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/handler/settings"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/handler/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/handler/settings"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/analytics/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/handler/traffic"
 )
 
 // RegisterAdminRoutes registers all admin CRUD routes on the given Echo group.
@@ -268,6 +268,9 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 	// owned by handler/agent/ (registered above).
 	// Admin API key management
 	iamBundle.RegisterAPIKeyRoutes(g, iamMW)
+	// OAuth client registrations (issue #40) — separate from per-user
+	// admin API keys above; same audience (IAM admins), distinct lifecycle.
+	iamBundle.RegisterOAuthClientRoutes(g, iamMW)
 	// IAM policies/groups/attachments
 	iamBundle.RegisterIAMRoutes(g, iamMW)
 	// Provider connectivity tests, provider health, and pricing —

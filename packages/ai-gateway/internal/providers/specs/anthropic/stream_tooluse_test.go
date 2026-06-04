@@ -3,11 +3,11 @@ package anthropic
 import (
 	"context"
 	"errors"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"io"
 	"os"
 	"strings"
 	"testing"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 func TestStreamDecoder_ToolUseStreamingConcatenatesArguments(t *testing.T) {

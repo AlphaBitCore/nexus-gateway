@@ -17,8 +17,8 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ── classify.go ─────────────────────────────────────────────────────
@@ -443,7 +443,7 @@ func TestAdapterBackend_EmptyChoices(t *testing.T) {
 
 type nilRespAdapter struct{}
 
-func (nilRespAdapter) Format() provcore.Format     { return provcore.FormatOpenAI }
+func (nilRespAdapter) Format() provcore.Format                 { return provcore.FormatOpenAI }
 func (nilRespAdapter) SupportsShape(_ typology.WireShape) bool { return true }
 func (nilRespAdapter) Execute(_ context.Context, _ provcore.Request) (*provcore.Response, error) {
 	return nil, nil

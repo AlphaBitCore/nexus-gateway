@@ -16,7 +16,6 @@
 //     Extra["binary_preview"] for offline analysis.
 //  3. Streaming chunks parse as JSON when possible; binary chunks
 //     fail-open with empty content.
-//
 package codeium
 
 import (

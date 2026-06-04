@@ -10,8 +10,8 @@ import (
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // fakeAdapter implements just enough of provcore.Adapter to script
@@ -27,8 +27,10 @@ type fakeAdapter struct {
 	calls     int
 }
 
-func (a *fakeAdapter) Format() provcore.Format         { return a.format }
-func (a *fakeAdapter) SupportsShape(shape typology.WireShape) bool { return shape == typology.WireShapeOpenAIChat }
+func (a *fakeAdapter) Format() provcore.Format { return a.format }
+func (a *fakeAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 func (a *fakeAdapter) Execute(ctx context.Context, req provcore.Request) (*provcore.Response, error) {
 	a.calls++
 	a.gotReq = req

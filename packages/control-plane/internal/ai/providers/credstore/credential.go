@@ -255,6 +255,25 @@ func (store *Store) UpdateCredentialEncryption(ctx context.Context, id, encKey, 
 	return err
 }
 
+// ClearCircuit resets the durable circuit-breaker columns on a credential row
+// to the closed state. It is the DB half of an admin circuit reset: the handler
+// also deletes the live Redis hash, but the UI badge and the Hub rehydrate-on-
+// restart path read these columns, so they MUST be cleared too — otherwise the
+// credential shows "open" forever and a Hub restart re-arms the live circuit
+// from the stale row. Idempotent; a no-op on an already-closed row.
+func (store *Store) ClearCircuit(ctx context.Context, id string) error {
+	_, err := store.pool.Exec(ctx, `
+		UPDATE "Credential" SET
+			"circuitState"       = 'closed',
+			"circuitReason"      = NULL,
+			"circuitOpenedAt"    = NULL,
+			"circuitNextProbeAt" = NULL,
+			"updatedAt"          = NOW()
+		WHERE id = $1
+	`, id)
+	return err
+}
+
 // UpdateCredentialParams holds optional fields for updating a credential.
 type UpdateCredentialParams struct {
 	Name            *string

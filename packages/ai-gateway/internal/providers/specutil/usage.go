@@ -110,7 +110,7 @@ func ExtractOpenAIUsage(u gjson.Result) provcore.Usage {
 		return provcore.Usage{}
 	}
 	usage := provcore.Usage{
-		CacheReadTokens:    ExtractCacheReadTokens(u),
+		CacheReadTokens: ExtractCacheReadTokens(u),
 		ReasoningTokens: ExtractReasoningTokens(u),
 	}
 	if v := u.Get("prompt_tokens"); v.Exists() {

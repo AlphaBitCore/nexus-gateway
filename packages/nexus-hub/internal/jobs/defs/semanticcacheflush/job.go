@@ -15,10 +15,10 @@
 //     fingerprint persisted in system_metadata.
 //  3. When fingerprints differ (and the current fingerprint is non-empty):
 //     a. Calls FT.CREATE on the new index name (idempotent — AI Gateway may
-//        have already created it).
+//     have already created it).
 //     b. Persists the new fingerprint as last-reindexed in system_metadata
-//        BEFORE dropping the old index, so a crash between b and c does not
-//        repeat the create on the next tick.
+//     BEFORE dropping the old index, so a crash between b and c does not
+//     repeat the create on the next tick.
 //     c. Calls FT.DROPINDEX on the old index name (idempotent — OK if missing).
 //     d. Stamps an AdminAuditLog row: action=semantic-cache.reindex.
 //  4. Returns nil on no-op or success; returns an error on failure so the
@@ -389,11 +389,11 @@ func (j *SemanticCacheReindexJob) dropIndex(ctx context.Context, indexName strin
 
 // reindexAuditPayload is the JSON payload written to AdminAuditLog.afterState.
 type reindexAuditPayload struct {
-	OldIndexName    string `json:"oldIndexName"`
-	NewIndexName    string `json:"newIndexName"`
-	Fingerprint     string `json:"fingerprint"`
-	OldFingerprint  string `json:"oldFingerprint"`
-	Dim             int    `json:"dim"`
+	OldIndexName   string `json:"oldIndexName"`
+	NewIndexName   string `json:"newIndexName"`
+	Fingerprint    string `json:"fingerprint"`
+	OldFingerprint string `json:"oldFingerprint"`
+	Dim            int    `json:"dim"`
 }
 
 // writeAuditRow inserts one AdminAuditLog row for the reindex event.

@@ -14,12 +14,12 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/openai"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // openAIIngress is the canonical OpenAI-compat chat/completions ingress
@@ -27,7 +27,7 @@ import (
 // route registers in main.go so `runRequestHooks` selects the correct
 // traffic adapter.
 var openAIIngress = Ingress{
-	WireShape:   typology.WireShapeOpenAIChat,
+	WireShape:  typology.WireShapeOpenAIChat,
 	BodyFormat: provcore.FormatOpenAI,
 }
 

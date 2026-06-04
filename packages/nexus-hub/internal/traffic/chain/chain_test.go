@@ -540,6 +540,54 @@ func scanCanonicalKeys(t *testing.T, cb []byte) []string {
 	return keys
 }
 
+// TestCanonicalize_ViaTamperEvidentAndHumanUnchanged is the E90 I5 load-bearing
+// guard. It pins two properties of folding `via` into the canonical hash payload:
+//
+//  1. Tamper-evidence: a row written with via="assistant" produces DIFFERENT
+//     canonical bytes (hence a different integrityHash) than the same row with no
+//     via — so the AI-attribution marker cannot be stripped or forged without
+//     breaking VerifyChain.
+//  2. No re-anchoring: a payload with an EMPTY via canonicalises byte-identically
+//     to the very same payload value (the omitempty field drops out), which is what
+//     guarantees every existing row and every future human/system write hashes
+//     exactly as it did before via existed — no chain break, no backfill.
+func TestCanonicalize_ViaTamperEvidentAndHumanUnchanged(t *testing.T) {
+	base := HashPayload{
+		TimestampMs: 999, Action: "create", ActorID: "user-1",
+		EntityType: "virtual-key", EntityID: "vk-1",
+	}
+
+	human, err := canonicalizePayload(base) // Via == "" (zero value)
+	if err != nil {
+		t.Fatalf("canonicalize human: %v", err)
+	}
+	// Property 2: empty via must NOT appear in the canonical bytes at all.
+	if bytes.Contains(human, []byte(`"via"`)) {
+		t.Fatalf("empty via leaked into canonical bytes (would re-anchor the chain): %s", human)
+	}
+
+	assistant := base
+	assistant.Via = "assistant"
+	aiBytes, err := canonicalizePayload(assistant)
+	if err != nil {
+		t.Fatalf("canonicalize assistant: %v", err)
+	}
+	// Property 1: the assistant row's canonical bytes differ from the human row's.
+	if string(aiBytes) == string(human) {
+		t.Fatal("via=assistant produced identical canonical bytes to a human row; marker is not tamper-evident")
+	}
+	if !bytes.Contains(aiBytes, []byte(`"via":"assistant"`)) {
+		t.Fatalf("assistant canonical bytes missing via marker: %s", aiBytes)
+	}
+
+	// And the resulting hash links differ — the property VerifyChain actually relies
+	// on. computeHashLink mirrors NextHash's SHA-256(prev || canonical) recipe.
+	const prev = "deadbeef"
+	if computeHashLink(prev, human) == computeHashLink(prev, aiBytes) {
+		t.Fatal("integrityHash identical for human vs assistant row; stripping via would not break the chain")
+	}
+}
+
 // --- Test 6.8: canonical bytes for the exact-same payload produce
 // byte-identical output across two invocations (no map iteration leak).
 

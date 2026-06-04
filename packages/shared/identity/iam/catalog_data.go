@@ -131,6 +131,14 @@ var Catalog = []ResourceDef{
 	// Users, RBAC, audit, sessions.
 	{Name: "user", Service: ServiceIAM, Verbs: append(crud(), VerbRevoke)},
 	{Name: "api-key", Service: ServiceIAM, Verbs: append(crud(), VerbRotate)},
+	// OAuth client registrations (third-party apps that authenticate to
+	// the platform via the /authserver OAuth2 endpoints). Carved out as
+	// its own resource so granting api-key:* (per-user authn tokens) does
+	// not implicitly grant the ability to register new third-party apps.
+	// VerbRotate replaces clientSecretHash without changing clientId, so
+	// rotations do not break registered redirectUris or invalidate the
+	// currently-issued refresh tokens.
+	{Name: "oauth-client", Service: ServiceIAM, Verbs: append(crud(), VerbRotate)},
 	{Name: "organization", Service: ServiceIAM, Verbs: crud()},
 	{Name: "project", Service: ServiceIAM, Verbs: crud()},
 	{Name: "iam-policy", Service: ServiceIAM, Verbs: crud()},
@@ -211,6 +219,7 @@ var (
 	// IAM / admin platform.
 	ResourceUser             = MustFind("user")
 	ResourceApiKey           = MustFind("api-key")
+	ResourceOAuthClient      = MustFind("oauth-client")
 	ResourceOrganization     = MustFind("organization")
 	ResourceProject          = MustFind("project")
 	ResourceIamPolicy        = MustFind("iam-policy")

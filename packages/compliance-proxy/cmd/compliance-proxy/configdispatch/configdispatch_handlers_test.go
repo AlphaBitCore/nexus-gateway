@@ -31,7 +31,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
-
 // silentDeps returns a Deps with real (cheap) concrete instances for the
 // mandatory fields and nil for the three optional ones (HookConfigCache,
 // ConfigDB, TelemetryProvider). ProxyServer is also nil — tests that need it
@@ -75,7 +74,6 @@ func applyKey(t *testing.T, loader *cfgloader.Loader, key string, payload []byte
 func bufLogger(buf *bytes.Buffer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
-
 
 func TestKillSwitch_EngageToggle(t *testing.T) {
 	d := silentDeps(t)
@@ -213,7 +211,6 @@ func TestExemptions_WithDB_QueryError_Propagated(t *testing.T) {
 	}
 }
 
-
 // fakeHookReloader is a minimal HookConfigReloader spy for handler tests.
 type fakeHookReloader struct {
 	reloadCalled int
@@ -271,7 +268,6 @@ func TestHooks_InvalidatesCacheWhenManagerNonNil(t *testing.T) {
 		t.Fatalf("hooks invalidate cache: %v", err)
 	}
 }
-
 
 func TestInterceptionDomains_NilCacheManager_NoError(t *testing.T) {
 	d := silentDeps(t)
@@ -350,7 +346,6 @@ func TestInterceptionDomains_WithManagerAndDB_AllowlistSwapped(t *testing.T) {
 		t.Fatalf("interception_domains allowlist swap: %v", err)
 	}
 }
-
 
 func TestObservability_NilManagerOrProvider_NoError(t *testing.T) {
 	for _, tc := range []struct {
@@ -471,7 +466,6 @@ func TestObservability_WithManagerAndProvider_ReconfigureCalled(t *testing.T) {
 	}
 }
 
-
 func TestPayloadCapture_NilDB_NoError(t *testing.T) {
 	d := silentDeps(t) // ConfigDB is nil
 	loader := configdispatch.BuildConfigLoader(d)
@@ -527,7 +521,6 @@ func TestPayloadCapture_WithDB_QueryError_Propagated(t *testing.T) {
 		t.Errorf("error chain missing wantErr; got: %v", err)
 	}
 }
-
 
 func TestStreamingCompliance_NilDB_NoError(t *testing.T) {
 	d := silentDeps(t) // ConfigDB is nil
@@ -590,7 +583,6 @@ func TestStreamingCompliance_MalformedRaw_ErrorWrapped(t *testing.T) {
 	}
 }
 
-
 func TestOnboarding_NilProxyServer_Panics(t *testing.T) {
 	// ProxyServer is nil — SetOnboardingEnabled is called on a nil pointer:
 	// production code dereferences ps.ProxyServer directly (no nil guard).
@@ -607,7 +599,6 @@ func TestOnboarding_NilProxyServer_Panics(t *testing.T) {
 	}()
 	_ = applyKey(t, loader, "onboarding", mustJSON(t, map[string]any{"enabled": true}))
 }
-
 
 func TestLogLevel_ValidLevelApplied(t *testing.T) {
 	var buf bytes.Buffer
@@ -643,7 +634,6 @@ func TestLogLevel_EmptyPayload_NoError(t *testing.T) {
 		t.Fatalf("log_level empty payload: %v", err)
 	}
 }
-
 
 func TestInitHubAndCfgLoader_NilTCFactory(t *testing.T) {
 	d := silentDeps(t)
@@ -759,7 +749,6 @@ func TestBuildConfigLoader_AllNilOptionalDeps(t *testing.T) {
 		t.Errorf("Keys() = %d, want 9", n)
 	}
 }
-
 
 var errSentinel = &sentinelErr{msg: "sentinel error from test"}
 

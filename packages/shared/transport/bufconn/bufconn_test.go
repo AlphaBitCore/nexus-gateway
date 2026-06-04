@@ -1,6 +1,7 @@
 package bufconn
 
 import (
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -58,7 +59,7 @@ func TestBytesReader(t *testing.T) {
 		t.Fatalf("second read: n=%d err=%v buf=%q", n, err, buf[:n])
 	}
 	// Exhausted → EOF.
-	if n, err := r.Read(buf); err != io.EOF || n != 0 {
+	if n, err := r.Read(buf); !errors.Is(err, io.EOF) || n != 0 {
 		t.Fatalf("exhausted read: n=%d err=%v, want 0/EOF", n, err)
 	}
 }

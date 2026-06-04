@@ -487,7 +487,6 @@ func TestDecryptPrivateKey_NewGCMFails_ReturnsWrappedError(t *testing.T) {
 	}
 }
 
-
 // TestCommandSigner_Sign_WriteDigestFails_ReturnsWrappedError exercises the
 // tmp.Write(digest) error arm inside CommandSigner.Sign. After CreateTemp
 // succeeds, a Write failure on a healthy filesystem is impossible without

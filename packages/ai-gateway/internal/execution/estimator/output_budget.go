@@ -25,15 +25,27 @@ var outputBudgetTable = map[string]map[string]int{
 
 	// Anthropic extended-thinking models (effort buckets approximated
 	// from budget_tokens ranges: low ≈ 2k, medium ≈ 8k, high ≈ 24k).
-	"claude-opus-4-7":      {"low": 800, "medium": 4000, "high": 12000},
-	"claude-opus-4-6":      {"low": 800, "medium": 4000, "high": 12000},
-	"claude-sonnet-4-7":    {"low": 600, "medium": 3000, "high": 10000},
-	"claude-sonnet-4-6":    {"low": 600, "medium": 3000, "high": 10000},
-	"claude-haiku-4-5":     {"low": 400, "medium": 1500, "high": 5000},
+	"claude-opus-4-7":   {"low": 800, "medium": 4000, "high": 12000},
+	"claude-opus-4-6":   {"low": 800, "medium": 4000, "high": 12000},
+	"claude-sonnet-4-7": {"low": 600, "medium": 3000, "high": 10000},
+	"claude-sonnet-4-6": {"low": 600, "medium": 3000, "high": 10000},
+	"claude-haiku-4-5":  {"low": 400, "medium": 1500, "high": 5000},
 
 	// Gemini 2.5 thinking models.
 	"gemini-2.5-pro":   {"low": 600, "medium": 3000, "high": 10000},
 	"gemini-2.5-flash": {"low": 400, "medium": 1500, "high": 5000},
+
+	// DeepSeek V4 reasoner (reasoning_effort high/max; reasoning_content
+	// returned on the OpenAI-compatible wire). Anchors approximated from
+	// the comparable reasoner tier pending a real-traffic calibration pass.
+	"deepseek-v4-pro":   {"low": 600, "medium": 2500, "high": 8000},
+	"deepseek-v4-flash": {"low": 300, "medium": 1200, "high": 4000},
+
+	// Moonshot/Kimi thinking models (thinking is a mode of k2.5/k2.6;
+	// effort is not graduated upstream, so effort="" falls to the "low"
+	// anchor). Approximated pending calibration.
+	"kimi-k2.6": {"low": 600, "medium": 3000, "high": 10000},
+	"kimi-k2.5": {"low": 500, "medium": 2500, "high": 8000},
 }
 
 // lookupOutputBudget returns (anchor, supports). When the model is not

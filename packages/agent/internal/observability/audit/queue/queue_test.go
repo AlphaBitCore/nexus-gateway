@@ -371,7 +371,7 @@ func TestEventByID_FullDetail(t *testing.T) {
 	if got == nil {
 		t.Fatal("EventByID returned nil for an existing id")
 	}
-	if got.Method != http.MethodPost || got.Path != "/v1/chat/completions" || got.StatusCode != 200 {
+	if got.Method != http.MethodPost || got.Path != "/v1/chat/completions" || got.StatusCode != http.StatusOK {
 		t.Errorf("request line mismatch: %s %s %d", got.Method, got.Path, got.StatusCode)
 	}
 	if got.PromptTokens == nil || *got.PromptTokens != 11 || got.CompletionTokens == nil || *got.CompletionTokens != 22 {

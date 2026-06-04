@@ -66,7 +66,9 @@ func TestQueueWriter_RecordsApproveDecisionAsInspect(t *testing.T) {
 	}
 	w.Enqueue(ev)
 
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, err := q.QueryEvents("", "", 0, 10)
 	if err != nil {
 		t.Fatalf("QueryEvents: %v", err)
@@ -117,7 +119,9 @@ func TestQueueWriter_RejectHardMapsToDeny(t *testing.T) {
 		RequestHookDecision: "REJECT_HARD",
 	})
 
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, _ := q.QueryEvents("", "", 0, 10)
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row, got %d", len(rows))
@@ -138,7 +142,9 @@ func TestQueueWriter_BlockSoftAlsoMapsToDeny(t *testing.T) {
 		TargetHost:          "soft.example.com",
 		RequestHookDecision: "BLOCK_SOFT",
 	})
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, _ := q.QueryEvents("", "", 0, 10)
 	if len(rows) != 1 || rows[0].Action != "deny" {
 		t.Fatalf("BLOCK_SOFT must map to 'deny', got rows=%d action=%q", len(rows), rows[0].Action)
@@ -156,7 +162,9 @@ func TestQueueWriter_EmptyDecisionMapsToPassthrough(t *testing.T) {
 		TargetHost:          "passthrough.example.com",
 		RequestHookDecision: "",
 	})
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, _ := q.QueryEvents("", "", 0, 10)
 	if len(rows) != 1 || rows[0].Action != "passthrough" {
 		t.Fatalf("empty decision must map to 'passthrough', got rows=%d action=%q", len(rows), rows[0].Action)
@@ -176,7 +184,9 @@ func TestQueueWriter_ZeroTokensStayNil(t *testing.T) {
 		PromptTokens:        0,
 		CompletionTokens:    0,
 	})
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, _ := q.QueryEvents("", "", 0, 10)
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row")
@@ -201,7 +211,9 @@ func TestQueueWriter_ZeroTimestampGetsBackfilled(t *testing.T) {
 		RequestHookDecision: "APPROVE",
 		// Timestamp deliberately zero
 	})
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, _ := q.QueryEvents("", "", 0, 10)
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row")
@@ -226,7 +238,9 @@ func TestQueueWriter_PrefersRequestHooksPipeline(t *testing.T) {
 		RequestHooksPipeline:  reqPipeline,
 		ResponseHooksPipeline: respPipeline,
 	})
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, _ := q.QueryEvents("", "", 0, 10)
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row")
@@ -249,7 +263,9 @@ func TestQueueWriter_FallsBackToResponsePipelineWhenRequestEmpty(t *testing.T) {
 		RequestHookDecision:   "APPROVE",
 		ResponseHooksPipeline: respPipeline,
 	})
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	rows, _, _ := q.QueryEvents("", "", 0, 10)
 	if string(rows[0].HooksPipeline) != string(respPipeline) {
 		t.Errorf("HooksPipeline: when request is empty, must fall back to response pipeline. Got %s", string(rows[0].HooksPipeline))
@@ -314,7 +330,9 @@ func TestQueueWriter_T33_PerRequestRowsCarryAllClassificationFields(t *testing.T
 	}
 	w.Enqueue(inspectedEvent)
 
-	if err := w.Flush(context.Background()); err != nil { t.Fatalf("Flush: %v", err) }
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	events, total, err := q.QueryEvents("", "", 0, 100)
 	if err != nil {
 		t.Fatalf("QueryEvents: %v", err)

@@ -294,12 +294,14 @@ func TestSemanticPut_EnableWithoutModel_400(t *testing.T) {
 	}
 }
 
-// TestSemanticPut_ModelSetButNoDimension_400 locks the dimension guard:
-// providing (provider, model) without dimension is a 400 because the
-// store needs dimension to compute the fingerprint and create the index.
-func TestSemanticPut_ModelSetButNoDimension_400(t *testing.T) {
+// TestSemanticPut_ModelSetNoDimension_NoDefault_400 covers the new contract:
+// a nil dimension is allowed at the handler (the store derives the model's
+// default_dimension), but when the model declares no default the store returns
+// ErrEmbeddingDimensionRequired — which the handler maps to 400, not 500.
+func TestSemanticPut_ModelSetNoDimension_NoDefault_400(t *testing.T) {
 	e := echo.New()
-	h := newSemanticHandler(t, &stubSemanticStore{}, nil, nil)
+	store := &stubSemanticStore{saveErr: configstore.ErrEmbeddingDimensionRequired}
+	h := newSemanticHandler(t, store, nil, nil)
 	e.PUT("/cfg", h.PutConfig)
 
 	body := `{"embeddingProviderId":"prov","embeddingModelId":"model","enabled":true}`
@@ -310,8 +312,26 @@ func TestSemanticPut_ModelSetButNoDimension_400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "embeddingDimension") {
+	if !strings.Contains(rec.Body.String(), "dimension") {
 		t.Errorf("body missing dimension reference: %s", rec.Body.String())
+	}
+}
+
+// TestSemanticPut_UnsupportedDimension_400 maps the store's capability
+// validation failure (dimension not in the model's supported_dimensions) to 400.
+func TestSemanticPut_UnsupportedDimension_400(t *testing.T) {
+	e := echo.New()
+	store := &stubSemanticStore{saveErr: configstore.ErrUnsupportedEmbeddingDimension}
+	h := newSemanticHandler(t, store, nil, nil)
+	e.PUT("/cfg", h.PutConfig)
+
+	body := `{"embeddingProviderId":"prov","embeddingModelId":"model","embeddingDimension":3072,"enabled":true}`
+	req := httptest.NewRequest(http.MethodPut, "/cfg", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

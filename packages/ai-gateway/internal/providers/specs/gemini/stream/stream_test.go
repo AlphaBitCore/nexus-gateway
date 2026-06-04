@@ -26,8 +26,8 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	gemstream "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/stream"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 func sseData(data string) string {
@@ -45,7 +45,6 @@ func openSession(t *testing.T, body string) provcore.StreamSession {
 	t.Cleanup(func() { sess.Close() })
 	return sess
 }
-
 
 func TestNewStreamDecoder_nilLog_usesDefault(t *testing.T) {
 	d := gemstream.NewStreamDecoder(nil)
@@ -288,7 +287,6 @@ func TestStreamDecoder_rawBytesForwarded(t *testing.T) {
 		t.Errorf("RawBytes: got %q, want %q", chunk.RawBytes, body)
 	}
 }
-
 
 func TestFormatSSE_withEvent(t *testing.T) {
 	out := gemstream.FormatSSE("ping", []byte(`{}`))

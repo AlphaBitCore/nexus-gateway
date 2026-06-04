@@ -284,7 +284,7 @@ func TestCanonicalMsgsToInputStaging_ValidMessages(t *testing.T) {
 }
 
 func TestBuildEmbeddingInput_EmptyMessages(t *testing.T) {
-	_, ok := buildEmbeddingInput(nil, inputstaging.StrategySystemPlusLastUser)
+	_, ok := buildEmbeddingInput(nil, inputstaging.StrategySystemPlusLastUser, 0)
 	if ok {
 		t.Error("want ok=false for nil messages, got true")
 	}
@@ -296,7 +296,7 @@ func TestBuildEmbeddingInput_AllNonText(t *testing.T) {
 			{Type: normcore.ContentImageRef, Text: "img"},
 		}},
 	}
-	_, ok := buildEmbeddingInput(msgs, inputstaging.StrategySystemPlusLastUser)
+	_, ok := buildEmbeddingInput(msgs, inputstaging.StrategySystemPlusLastUser, 0)
 	if ok {
 		t.Error("want ok=false when all content is non-text, got true")
 	}
@@ -309,7 +309,7 @@ func TestBuildEmbeddingInput_ValidWithInvalidStrategy(t *testing.T) {
 		}},
 	}
 	// Invalid strategy should fall back to StrategySystemPlusLastUser without error.
-	text, ok := buildEmbeddingInput(msgs, "invalid_strategy")
+	text, ok := buildEmbeddingInput(msgs, "invalid_strategy", 0)
 	if !ok {
 		t.Error("want ok=true even with invalid strategy (fallback to default), got false")
 	}
@@ -327,7 +327,7 @@ func TestBuildEmbeddingInput_ValidMessages(t *testing.T) {
 			{Type: normcore.ContentText, Text: "What is the capital of France?"},
 		}},
 	}
-	text, ok := buildEmbeddingInput(msgs, inputstaging.StrategySystemPlusLastUser)
+	text, ok := buildEmbeddingInput(msgs, inputstaging.StrategySystemPlusLastUser, 0)
 	if !ok {
 		t.Fatal("want ok=true, got false")
 	}

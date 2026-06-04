@@ -121,18 +121,18 @@ type AlertingCooldownConfig struct {
 
 // ComplianceConfig controls the compliance hook pipeline.
 type ComplianceConfig struct {
-	Enabled          bool                 `yaml:"enabled"`
-	PerHookTimeoutMs int                  `yaml:"perHookTimeoutMs"` // default 5000
-	TotalTimeoutMs   int                  `yaml:"totalTimeoutMs"`   // default 15000
-	ParallelHooks    bool                 `yaml:"parallelHooks"`    // default false (aligned with ai-gateway and agent)
+	Enabled          bool `yaml:"enabled"`
+	PerHookTimeoutMs int  `yaml:"perHookTimeoutMs"` // default 5000
+	TotalTimeoutMs   int  `yaml:"totalTimeoutMs"`   // default 15000
+	ParallelHooks    bool `yaml:"parallelHooks"`    // default false (aligned with ai-gateway and agent)
 	// StreamingMode YAML field deleted in #115 — admin policy
 	// (system_metadata['streaming_compliance.config'].default_mode)
 	// is now the single source of truth across all three services
 	// (agent / compliance-proxy / ai-gateway). Operators changing
 	// streaming mode go through CP admin UI / API, not yaml.
-	CheckpointChars  int                  `yaml:"checkpointChars"`  // default 500
-	Hooks            []HookConfigEntry    `yaml:"hooks"`            // static hook configs (ignored; DB is source of truth)
-	RejectResponse   RejectResponseConfig `yaml:"rejectResponse"`
+	CheckpointChars int                  `yaml:"checkpointChars"` // default 500
+	Hooks           []HookConfigEntry    `yaml:"hooks"`           // static hook configs (ignored; DB is source of truth)
+	RejectResponse  RejectResponseConfig `yaml:"rejectResponse"`
 	// AttestationEnabled is a per-cluster feature flag. When true the
 	// compliance-proxy peeks the X-Nexus-Attestation header on every CONNECT
 	// and, on a verified signature, transparently tunnels the connection

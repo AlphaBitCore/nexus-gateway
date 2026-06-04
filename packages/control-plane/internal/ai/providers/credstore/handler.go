@@ -26,4 +26,3 @@ func New(pool PgxPool) *Store { return &Store{pool: pool} }
 var ilikeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 func escapeILIKE(s string) string { return ilikeEscaper.Replace(s) }
-

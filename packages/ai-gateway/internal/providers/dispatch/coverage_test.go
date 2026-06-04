@@ -12,10 +12,10 @@
 package dispatch
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"bytes"
 	"context"
 	"errors"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"io"
 	"log/slog"
 	"net/http"
@@ -88,8 +88,10 @@ func TestRegistry_List_EmptyWhenNothingRegistered(t *testing.T) {
 // stubOpenAIAdapter is a fixed-format stub used by registry tests.
 type stubOpenAIAdapter struct{}
 
-func (stubOpenAIAdapter) Format() Format                  { return FormatOpenAI }
-func (stubOpenAIAdapter) SupportsShape(shape typology.WireShape) bool { return shape == typology.WireShapeOpenAIChat }
+func (stubOpenAIAdapter) Format() Format { return FormatOpenAI }
+func (stubOpenAIAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 func (stubOpenAIAdapter) Execute(context.Context, Request) (*Response, error) {
 	return &Response{StatusCode: 200}, nil
 }
@@ -104,8 +106,10 @@ func (stubOpenAIAdapter) ExecuteWithBody(context.Context, Request, []byte, []str
 // formatStubAdapter is a parameterized stub Adapter for registry tests.
 type formatStubAdapter struct{ f Format }
 
-func (s formatStubAdapter) Format() Format                  { return s.f }
-func (s formatStubAdapter) SupportsShape(shape typology.WireShape) bool { return shape == typology.WireShapeOpenAIChat }
+func (s formatStubAdapter) Format() Format { return s.f }
+func (s formatStubAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 func (s formatStubAdapter) Execute(context.Context, Request) (*Response, error) {
 	return &Response{StatusCode: 200}, nil
 }
@@ -319,7 +323,7 @@ func TestExecuteWithBody_BuildURLError(t *testing.T) {
 	}
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 	})
@@ -354,7 +358,7 @@ func TestExecuteWithBody_ModelsUsesGET(t *testing.T) {
 	}
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeNone,
+		WireShape:  typology.WireShapeNone,
 		BodyFormat: FormatOpenAI,
 	})
 	if err != nil {
@@ -375,7 +379,7 @@ func TestExecuteWithBody_ApplyAuthError(t *testing.T) {
 	}
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 	})
@@ -401,7 +405,7 @@ func TestExecuteWithBody_CanceledCtx_SurfacesTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := ad.Execute(ctx, Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 	})
@@ -439,7 +443,7 @@ func TestExecuteWithBody_NormalizerNilFallback(t *testing.T) {
 	}
 	ad := NewSpecAdapter(spec, slog.Default())
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 	})
@@ -475,7 +479,7 @@ func TestExecuteWithBody_DecodeResponseError(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(tr, codec, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 	})
@@ -508,7 +512,7 @@ func TestExecuteWithBody_StreamOpenError(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, sd, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 		Stream:     true,
@@ -566,7 +570,7 @@ func TestExecuteWithBody_PhaseSinkBreakdownStamped(t *testing.T) {
 	ps := traffic.NewPhaseSink()
 	ctx := traffic.WithPhaseSink(context.Background(), ps)
 	_, err := ad.Execute(ctx, Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 	})
@@ -612,7 +616,7 @@ func TestExecuteWithBody_DebugLog_FiresUpstreamRequestRecord(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), log)
 
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{"model":"gpt-4o"}`),
 	})
@@ -646,7 +650,7 @@ func TestExecuteWithBody_DebugLog_TruncatesLargeBody(t *testing.T) {
 
 	body := bytes.Repeat([]byte("x"), debugBodyLimit+1024)
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       body,
 	})
@@ -681,7 +685,7 @@ func TestExecuteWithBody_StreamDebugBodyWraps(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), log)
 
 	resp, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 		Stream:     true,
@@ -757,7 +761,7 @@ func TestPrepareBody_NonChatEndpoint_PassesBodyThrough(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	body := []byte(`{"model":"foo"}`)
 	got, rw, err := ad.PrepareBody(Request{
-		WireShape:   typology.WireShapeOpenAIResponses, // not in the rewrite-eligible set
+		WireShape:  typology.WireShapeOpenAIResponses, // not in the rewrite-eligible set
 		BodyFormat: FormatOpenAI,
 		Body:       body,
 		Target:     CallTarget{ProviderModelID: "bar"},
@@ -781,7 +785,7 @@ func TestPrepareBody_NonOpenAIWire_NoRewrite(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatAnthropic), slog.Default())
 	body := []byte(`{"model":"claude-3-5-sonnet","messages":[]}`)
 	got, rw, err := ad.PrepareBody(Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatAnthropic,
 		Body:       body,
 		Target:     CallTarget{ProviderModelID: "claude-3-7-sonnet"},
@@ -799,7 +803,7 @@ func TestPrepareBody_NonOpenAIWire_NoRewrite(t *testing.T) {
 func TestPrepareBody_EmptyBodyShortCircuits(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	got, rw, err := ad.PrepareBody(Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       nil,
 		Target:     CallTarget{ProviderModelID: "gpt-4o-mini"},
@@ -818,7 +822,7 @@ func TestPrepareBody_NoProviderModelID_BodyUnchanged(t *testing.T) {
 	ad := NewSpecAdapter(specFrom(&fakeTransport{}, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	body := []byte(`{"model":"original-id"}`)
 	got, rw, err := ad.PrepareBody(Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       body,
 		Target:     CallTarget{}, // empty ProviderModelID
@@ -1017,7 +1021,7 @@ func TestExecuteWithBody_DelegatesToInternal(t *testing.T) {
 	}
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	_, err := ad.ExecuteWithBody(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{"already":"encoded"}`),
 	}, []byte(`{"already":"encoded"}`), nil)
@@ -1102,7 +1106,7 @@ func TestExecute_GeminiEmbeddings_RecoversUsageFromBodyChars(t *testing.T) {
 	}
 	ad := NewSpecAdapter(specFrom(tr, cd, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatGemini), slog.Default())
 	resp, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIEmbeddings,
+		WireShape:  typology.WireShapeOpenAIEmbeddings,
 		BodyFormat: FormatGemini,
 		Body:       []byte(`{"content":{"parts":[{"text":"hello world from the user side"}]}}`),
 	})
@@ -1139,7 +1143,7 @@ func TestExecute_GeminiEmbeddings_BatchPath_RecoversFromRequestsArray(t *testing
 	}
 	ad := NewSpecAdapter(specFrom(tr, cd, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatGemini), slog.Default())
 	resp, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIEmbeddings,
+		WireShape:  typology.WireShapeOpenAIEmbeddings,
 		BodyFormat: FormatGemini,
 		Body:       []byte(batchBody),
 	})
@@ -1169,7 +1173,7 @@ func TestExecute_ReadBodyError_SurfacesUpstreamError(t *testing.T) {
 	}
 	ad := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatOpenAI,
 		Body:       []byte(`{}`),
 	})
@@ -1214,7 +1218,7 @@ func TestExecute_CodecURLOverride_AppliedToBaseURL(t *testing.T) {
 	cd.encoded = []byte(`{"requests":[]}`)
 	ad := NewSpecAdapter(specFrom(tr, cd, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatGemini), slog.Default())
 	_, _ = ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIEmbeddings,
+		WireShape:  typology.WireShapeOpenAIEmbeddings,
 		BodyFormat: FormatOpenAI, // forces codec translation in prepareBodyFull
 		Body:       []byte(`{"model":"text-embedding-004","input":"hello"}`),
 	})

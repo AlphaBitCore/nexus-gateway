@@ -75,14 +75,14 @@ func TestScoreTier1Confidence_RatioRubric(t *testing.T) {
 		},
 		{
 			name: "empty body falls back to 0.90 baseline",
-			body:  ``,
+			body: ``,
 			// Empty observed → 0.90 baseline (no ratios to compute).
 			wantMin: 0.899,
 			wantMax: 0.901,
 		},
 		{
 			name: "non-JSON garbage → 0.90 baseline",
-			body:  `not even json`,
+			body: `not even json`,
 			// topLevelKeys returns nil → 0.90.
 			wantMin: 0.899,
 			wantMax: 0.901,
@@ -200,27 +200,27 @@ func TestScoreTier1Confidence_RealProdShapes(t *testing.T) {
 		wantMin float64
 	}{
 		{
-			name: "openai-chat full response (prod 96.8% of openai-chat rows)",
-			spec: openAIChatFieldSpec(core.DirectionResponse),
-			body: `{"id":"chatcmpl-x","object":"chat.completion","created":1778900000,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6},"system_fingerprint":"fp_x"}`,
+			name:    "openai-chat full response (prod 96.8% of openai-chat rows)",
+			spec:    openAIChatFieldSpec(core.DirectionResponse),
+			body:    `{"id":"chatcmpl-x","object":"chat.completion","created":1778900000,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6},"system_fingerprint":"fp_x"}`,
 			wantMin: 0.95,
 		},
 		{
-			name: "anthropic-messages full response",
-			spec: anthropicMessagesFieldSpec(core.DirectionResponse),
-			body: `{"id":"msg_x","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}`,
+			name:    "anthropic-messages full response",
+			spec:    anthropicMessagesFieldSpec(core.DirectionResponse),
+			body:    `{"id":"msg_x","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}`,
 			wantMin: 0.95,
 		},
 		{
-			name: "gemini-generate full response",
-			spec: geminiGenerateFieldSpec(core.DirectionResponse),
-			body: `{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6},"modelVersion":"gemini-2.5-flash","responseId":"r-x"}`,
+			name:    "gemini-generate full response",
+			spec:    geminiGenerateFieldSpec(core.DirectionResponse),
+			body:    `{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6},"modelVersion":"gemini-2.5-flash","responseId":"r-x"}`,
 			wantMin: 0.95,
 		},
 		{
-			name: "openai-responses full response (was Tier-3 fallback pre-Gap2)",
-			spec: openAIResponsesFieldSpec(core.DirectionResponse),
-			body: `{"id":"resp_x","object":"response","created_at":1778900000,"model":"gpt-5","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}`,
+			name:    "openai-responses full response (was Tier-3 fallback pre-Gap2)",
+			spec:    openAIResponsesFieldSpec(core.DirectionResponse),
+			body:    `{"id":"resp_x","object":"response","created_at":1778900000,"model":"gpt-5","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}`,
 			wantMin: 0.95,
 		},
 		{
@@ -232,9 +232,9 @@ func TestScoreTier1Confidence_RealProdShapes(t *testing.T) {
 			wantMin: 0.85, // safely above 0.70 threshold; still Tier-1
 		},
 		{
-			name: "openai-chat request shape",
-			spec: openAIChatFieldSpec(core.DirectionRequest),
-			body: `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":false,"temperature":0.7,"max_tokens":100}`,
+			name:    "openai-chat request shape",
+			spec:    openAIChatFieldSpec(core.DirectionRequest),
+			body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":false,"temperature":0.7,"max_tokens":100}`,
 			wantMin: 0.85, // 2/2 req + 3/many optional + 0 unknowns
 		},
 	}

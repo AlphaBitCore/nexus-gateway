@@ -34,6 +34,7 @@ func TestNew_NilPool_DoesNotPanic(t *testing.T) {
 	})
 	if h == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if h.cache != nil {
 		t.Error("nil pool must not create a cachestore")
@@ -271,6 +272,7 @@ func TestGetTrafficEventForPreview_Happy(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected row; got nil")
+		return
 	}
 	if got.AdapterType != "anthropic" || got.ProviderID != "prov-1" {
 		t.Errorf("got: %+v", got)

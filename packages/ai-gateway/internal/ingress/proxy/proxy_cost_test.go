@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
-	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 )
 
 // TestEstimatedCostUSD pins the per-request USD cost calculation. The Model
@@ -120,7 +120,7 @@ func TestComputeCacheCosts(t *testing.T) {
 			adapterType:  "openai",
 			promptTokens: 4476, completionTokens: 64, cacheReadTokens: 4352,
 			// uncached = 4476 - 4352 = 124
-			startCost: estimatedCostUSD(4476, 64, 0.15, 1.25),
+			startCost:       estimatedCostUSD(4476, 64, 0.15, 1.25),
 			wantCost:        (124*0.25 + 4352*0.03 + 64*1.25) / 1e6,
 			wantReadSavings: 4352 * (0.25 - 0.03) / 1e6,
 			wantWriteCost:   0,
@@ -132,7 +132,7 @@ func TestComputeCacheCosts(t *testing.T) {
 			promptTokens: 4476, completionTokens: 64, cacheReadTokens: 4352,
 			// uncached = 4476 - 4352 = 124 (same math as openai now that
 			// AdapterType branch is gone — single formula).
-			startCost: estimatedCostUSD(4476, 64, 0.25, 1.25),
+			startCost:       estimatedCostUSD(4476, 64, 0.25, 1.25),
 			wantCost:        (124*0.25 + 4352*0.03 + 64*1.25) / 1e6,
 			wantReadSavings: 4352 * (0.25 - 0.03) / 1e6,
 			wantWriteCost:   0,
@@ -143,7 +143,7 @@ func TestComputeCacheCosts(t *testing.T) {
 			adapterType:  "anthropic",
 			promptTokens: 2500, completionTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 2000,
 			// uncached = 2500 - 0 - 2000 = 500
-			startCost: estimatedCostUSD(2500, 50, 0.25, 1.25),
+			startCost:       estimatedCostUSD(2500, 50, 0.25, 1.25),
 			wantCost:        (500*0.25 + 2000*0.30 + 50*1.25) / 1e6,
 			wantReadSavings: 0,
 			wantWriteCost:   2000 * 0.30 / 1e6,

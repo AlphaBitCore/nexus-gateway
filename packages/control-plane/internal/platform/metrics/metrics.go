@@ -40,6 +40,55 @@ var (
 	// land, so on-call needs the metric to drive alerts. Promauto-registered
 	// against prometheus.DefaultRegisterer so /metrics scrapes pick it up.
 	AdminAuditLogFailedTotal *metricsreg.Counter
+
+	// --- E90 web-assistant ("Chat with Nexus") instruments (spec §7 / NFR-13) ---
+	// These are the base signals from which §7's North Star and counter-metrics
+	// are derived in PromQL / analytics. The North Star (cross-page/mitigation
+	// tasks completed without a manual redo within ~60s) and the behavioral
+	// guardrails (reversal-within-N-min, hallucination/correction, first-question
+	// abandonment) need cross-event windowing and a frontend "redid/corrected"
+	// signal that does not exist yet — they are NOT single counters and are
+	// documented as derivations, not faked here. See e90-s8 §5.
+
+	// AssistantTurnsTotal — counter: assistant.turns_total{result}
+	// result ∈ {ok, error, unavailable, unsupported_auth}. The per-turn outcome
+	// signal; per-user attribution is via the audit trail, not a label (admin
+	// userId would be unbounded cardinality). result="error" is also the
+	// raw-error-exposure guardrail signal (it pairs with the SSE `error` event the
+	// turn emits). First-question abandonment and the North Star success
+	// refinement are NOT derivable from this alone — they need a frontend
+	// session-continuation / redo signal that does not exist yet (see e90-s8 §5).
+	AssistantTurnsTotal *metricsreg.Counter
+	// AssistantToolInvocationsTotal — counter: assistant.tool_invocations_total{tool, result}
+	// result ∈ {ok, error}. The bounded internal-call count (NFR-13) and the
+	// tool-misfire guardrail (result="error"). `tool` is clamped at the call site
+	// to the agent's actual tool set (Agent.ToolNames); a model-emitted name that
+	// is not a real tool collapses to tool="unknown" so a hallucinated name can
+	// never become an unbounded label.
+	AssistantToolInvocationsTotal *metricsreg.Counter
+	// AssistantConfirmsTotal — counter: assistant.confirms_total{decision}
+	// decision ∈ {allow, deny, timeout, cancelled}. The dangerous-write gate
+	// approve/deny rate (NFR-13). The reversal-within-N-min guardrail is derived
+	// from {decision="allow"} correlated against later audit undo actions.
+	AssistantConfirmsTotal *metricsreg.Counter
+	// AssistantNavigationsTotal — counter: assistant.navigations_total
+	// Cross-page navigation DIRECTIVES emitted (a single turn can emit more than
+	// one) — the North Star "cross-page task" numerator candidate (the
+	// no-redo-within-60s success refinement is the derived part needing the
+	// frontend signal).
+	AssistantNavigationsTotal *metricsreg.Counter
+	// AssistantPiiToPromptTotal — counter: assistant.pii_to_prompt_total
+	// Tool results in which the web assistant's PII redactor scrubbed at least one
+	// match before the output entered the prompt (§8 data governance). The §7
+	// guardrail target is 0 — a non-zero rate means raw traffic bodies carrying PII
+	// are reaching the assistant's read tools and being redacted at the boundary.
+	AssistantPiiToPromptTotal *metricsreg.Counter
+	// AssistantConfirmMisrouteTotal — counter: assistant.confirm_misroute_total
+	// Confirm POSTs answered 421 because another CP instance owns the session (the
+	// multi-replica affinity safety net fired). A sustained rate means ingress
+	// session-affinity is misconfigured or churning — the confirm is reaching the
+	// wrong replica.
+	AssistantConfirmMisrouteTotal *metricsreg.Counter
 )
 
 // Register binds the package-level instruments to the supplied opsmetrics
@@ -55,4 +104,10 @@ func Register(reg *metricsreg.Registry) {
 	AuthAttemptsTotal = reg.NewCounter("auth.attempts_total", []string{"result", "method"})
 	IAMEvalTotal = reg.NewCounter("iam.eval_total", []string{"decision", "cache"})
 	AdminAuditLogFailedTotal = reg.NewCounter("admin.audit_log_failed_total", []string{"action"})
+	AssistantTurnsTotal = reg.NewCounter("assistant.turns_total", []string{"result"})
+	AssistantToolInvocationsTotal = reg.NewCounter("assistant.tool_invocations_total", []string{"tool", "result"})
+	AssistantConfirmsTotal = reg.NewCounter("assistant.confirms_total", []string{"decision"})
+	AssistantNavigationsTotal = reg.NewCounter("assistant.navigations_total", []string{})
+	AssistantPiiToPromptTotal = reg.NewCounter("assistant.pii_to_prompt_total", []string{})
+	AssistantConfirmMisrouteTotal = reg.NewCounter("assistant.confirm_misroute_total", []string{})
 }

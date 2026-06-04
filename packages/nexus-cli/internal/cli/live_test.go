@@ -14,7 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
 
 func TestLive_CLICommands(t *testing.T) {
@@ -36,7 +37,7 @@ func TestLive_CLICommands(t *testing.T) {
 
 	newApp := func() *App {
 		return &App{
-			Cfg:   &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": env}},
+			Cfg:   &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": env}},
 			Env:   env,
 			Store: store,
 			HTTP:  hc,

@@ -23,8 +23,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/handler/enroll"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/scheduler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/opsmetrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/ws"

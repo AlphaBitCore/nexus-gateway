@@ -47,11 +47,11 @@ type Model struct {
 	// on the passthrough-fallback path so traffic_event.target_host
 	// records the real upstream domain instead of falling back
 	// to the provider name.
-	ProviderModelID  string // String sent on the upstream wire to the provider.
-	Type             string // chat | embedding | image | audio
-	Enabled          bool
-	InputPricePM     *float64 // per million tokens
-	OutputPricePM    *float64
+	ProviderModelID string // String sent on the upstream wire to the provider.
+	Type            string // chat | embedding | image | audio
+	Enabled         bool
+	InputPricePM    *float64 // per million tokens
+	OutputPricePM   *float64
 	// CachedInputReadPricePM is the cached input token READ price (e.g.
 	// Anthropic 0.10× input, OpenAI 0.50× input, Gemini 0.25× input).
 	// NULL = no discount; cost calculation falls back to InputPricePM.
@@ -60,10 +60,10 @@ type Model struct {
 	// (e.g. Anthropic 1.25×). NULL = no surcharge; cost calculation
 	// falls back to InputPricePM.
 	CachedInputWritePricePM *float64
-	Features         []string // vision, function_calling, streaming, json_mode, thinking, ...
-	MaxContextTokens *int
-	MaxOutputTokens  *int
-	Aliases          []string // Alternate request strings that resolve to this row
+	Features                []string // vision, function_calling, streaming, json_mode, thinking, ...
+	MaxContextTokens        *int
+	MaxOutputTokens         *int
+	Aliases                 []string // Alternate request strings that resolve to this row
 	// (e.g. "gpt-4o-2024-08-06" → "gpt-4o"). Read by
 	// ResolveModelCandidates for code-set hydration.
 	InputModalities  []string // e.g. ["text"], ["text","image"]

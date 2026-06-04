@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	openairesponses "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/responses"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
 
@@ -26,9 +26,9 @@ func (h *Handler) writeNoCompatibleCapability(w http.ResponseWriter, rec *audit.
 	w.WriteHeader(http.StatusBadRequest)
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]any{
-			"type":                  "no_compatible_capability",
-			"message":               "No routing candidate supports the requested embedding parameters. Check available_capabilities for supported values.",
-			"code":                  "no_compatible_capability",
+			"type":                   "no_compatible_capability",
+			"message":                "No routing candidate supports the requested embedding parameters. Check available_capabilities for supported values.",
+			"code":                   "no_compatible_capability",
 			"available_capabilities": e.Available,
 		},
 	})

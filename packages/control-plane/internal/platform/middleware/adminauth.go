@@ -11,8 +11,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/apikeystore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/metrics"
 )
 
 const adminAuthContextKey = "adminAuth"

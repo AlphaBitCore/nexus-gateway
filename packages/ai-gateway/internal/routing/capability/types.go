@@ -2,7 +2,6 @@
 // It parses Model.capabilityJson into structured descriptors and applies
 // compatibility rules before strategy dispatch, rejecting candidates whose
 // model cannot honour the embedding request parameters.
-//
 package capability
 
 import (

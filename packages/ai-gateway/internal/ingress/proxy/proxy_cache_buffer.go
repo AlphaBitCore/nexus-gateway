@@ -8,8 +8,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/streaming"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/responseprehook"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/responseprehook"
 	sharedstreaming "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
 )
 

@@ -12,20 +12,20 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/iamstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/scim/scimstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/iamstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 )
 
 const (
-	scimContentType  = "application/scim+json"
-	scimSchemaUser   = "urn:ietf:params:scim:schemas:core:2.0:User"
-	scimSchemaGroup  = "urn:ietf:params:scim:schemas:core:2.0:Group"
-	scimSchemaList   = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
-	scimSchemaError  = "urn:ietf:params:scim:api:messages:2.0:Error"
-	scimSchemaPatch  = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
-	scimSchemaSPC    = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
-	scimBaseOrg = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+	scimContentType = "application/scim+json"
+	scimSchemaUser  = "urn:ietf:params:scim:schemas:core:2.0:User"
+	scimSchemaGroup = "urn:ietf:params:scim:schemas:core:2.0:Group"
+	scimSchemaList  = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+	scimSchemaError = "urn:ietf:params:scim:api:messages:2.0:Error"
+	scimSchemaPatch = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+	scimSchemaSPC   = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
+	scimBaseOrg     = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
 )
 
 // scimUserStore is the narrow userstore surface the SCIM handler needs.
@@ -64,10 +64,10 @@ type scimTokenStore interface {
 // Handler handles SCIM 2.0 provisioning endpoints mounted at /scim/v2/.
 // Authentication uses a Bearer token looked up by SHA-256 hash in ScimToken table.
 type Handler struct {
-	users   scimUserStore
-	iam     scimIAMStore
-	scim    scimTokenStore
-	Logger  *slog.Logger
+	users  scimUserStore
+	iam    scimIAMStore
+	scim   scimTokenStore
+	Logger *slog.Logger
 	// BaseURL is the canonical SCIM base URL returned in meta.location fields.
 	BaseURL string
 }
@@ -175,7 +175,6 @@ func (h *Handler) SchemaByID(c echo.Context) error {
 		return h.scimError(c, http.StatusNotFound, "schema not found", "noTarget")
 	}
 }
-
 
 func (h *Handler) ListUsers(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -358,7 +357,6 @@ func (h *Handler) DeleteUser(c echo.Context) error {
 	}
 	return c.NoContent(http.StatusNoContent)
 }
-
 
 func (h *Handler) ListGroups(c echo.Context) error {
 	ctx := c.Request().Context()

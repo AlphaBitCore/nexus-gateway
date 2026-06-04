@@ -113,6 +113,15 @@ type HashPayload struct {
 	ClientRequestID string          `json:"clientRequestId,omitempty"`
 	ClientUserID    string          `json:"clientUserId,omitempty"`
 	ClientSessionID string          `json:"clientSessionId,omitempty"`
+	// Via records the channel that initiated the mutation — "assistant" for an
+	// AI-initiated admin write performed by the web assistant, empty for a direct
+	// human/UI action. It is hashed (omitempty) so the AI-attribution marker is
+	// tamper-evident: a row written with via="assistant" cannot have the marker
+	// stripped without breaking the chain. Because of omitempty + the sorted-key
+	// canonical encoding, every row with an empty Via (all existing rows and all
+	// human/system writes) hashes byte-identically to the pre-Via recipe, so adding
+	// this field does NOT re-anchor the chain or require a backfill.
+	Via string `json:"via,omitempty"`
 }
 
 // NextHash acquires the advisory lock for the duration of the surrounding

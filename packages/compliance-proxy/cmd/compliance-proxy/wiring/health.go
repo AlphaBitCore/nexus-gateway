@@ -9,16 +9,16 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/tls/issuer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/config/cache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/exemption"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/health"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/killswitch"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/tls/issuer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
@@ -28,7 +28,7 @@ type HealthDeps struct {
 	BuildVersion      string
 	Logger            *slog.Logger
 	Readiness         *atomic.Bool
-	ThingClient       *thingclient.Client     // may be nil
+	ThingClient       *thingclient.Client // may be nil
 	KillSwitch        *killswitch.KillSwitch
 	ExemptionStore    *exemption.Store
 	PayloadCapture    *payloadcapture.Store

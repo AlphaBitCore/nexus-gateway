@@ -30,7 +30,7 @@ func TestBuildProviderRequest_ForwardsClientHeaders(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer should-be-stripped-by-adapter")
 
 	in := Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatAnthropic,
 	}
 	got := buildProviderRequest(r, in, []byte(`{"model":"claude-x"}`), false, 1<<20)
@@ -63,7 +63,7 @@ func TestBuildProviderRequest_ForwardsClientHeaders(t *testing.T) {
 // retries) without panicking.
 func TestBuildProviderRequest_NilRequest(t *testing.T) {
 	in := Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 	}
 	got := buildProviderRequest(nil, in, nil, false, 0)

@@ -31,7 +31,7 @@ func (h heuristicTokenizer) CountTokens(chars int) int {
 	return t
 }
 
-func (heuristicTokenizer) IsHeuristic() bool { return true }
+func (heuristicTokenizer) IsHeuristic() bool  { return true }
 func (h heuristicTokenizer) Divisor() float64 { return h.divisor }
 
 // pickTokenizer returns the right heuristic for the adapter family.

@@ -592,7 +592,6 @@ func TestSetupGetCACert_ProxyNon200(t *testing.T) {
 	}
 }
 
-
 // JobsTrigger — hubForward non-2xx path (hub_proxy.go:335-336)
 // When Hub returns 4xx the audit block is skipped.
 

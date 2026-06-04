@@ -125,17 +125,20 @@ type OpsTimeseriesParams struct {
 	DimensionKey *string // nil = no filter; pointer to allow ""-value match
 	From         time.Time
 	To           time.Time
-	Granularity  string // "raw" | "1h" | "1d" | "1mo"
+	Granularity  string // "raw" | "5m" | "1h" | "1d" | "1mo"
 }
 
 // SelectGranularity picks the rollup tier for the given span when the caller
-// asks for granularity=auto. Boundaries match the existing analytics rule:
-// ≤6h → raw, 6h-7d → 1h, 7d-90d → 1d, >90d → 1mo.
+// asks for granularity=auto. The 5-minute tier keeps short dashboard windows
+// off the partitioned raw table: ≤1h → raw, 1h-6h → 5m, 6h-7d → 1h,
+// 7d-90d → 1d, >90d → 1mo.
 func SelectGranularity(from, to time.Time) string {
 	span := to.Sub(from)
 	switch {
-	case span <= 6*time.Hour:
+	case span <= time.Hour:
 		return "raw"
+	case span <= 6*time.Hour:
+		return "5m"
 	case span <= 7*24*time.Hour:
 		return "1h"
 	case span <= 90*24*time.Hour:
@@ -163,7 +166,7 @@ func (store *Store) GetOpsMetricsTimeseries(ctx context.Context, p OpsTimeseries
 	switch p.Granularity {
 	case "raw":
 		return store.queryOpsRaw(ctx, p)
-	case "1h", "1d", "1mo":
+	case "5m", "1h", "1d", "1mo":
 		return store.queryOpsRollup(ctx, "metric_ops_rollup_"+p.Granularity, p)
 	default:
 		return nil, fmt.Errorf("ops_metrics_timeseries: invalid granularity %q", p.Granularity)
@@ -268,7 +271,7 @@ type OpsFleetParams struct {
 	DimensionKey *string
 	From         time.Time
 	To           time.Time
-	Granularity  string // 1h | 1d | 1mo (raw has no fleet aggregate)
+	Granularity  string // 5m | 1h | 1d | 1mo (raw has no fleet aggregate)
 }
 
 // GetOpsMetricsFleet returns the fleet aggregate (thing_id IS NULL) for the
@@ -287,11 +290,11 @@ func (store *Store) GetOpsMetricsFleet(ctx context.Context, p OpsFleetParams) ([
 	if gran == "" {
 		gran = SelectGranularity(p.From, p.To)
 		if gran == "raw" {
-			// Raw has no fleet slice. Bump to the smallest rollup tier.
-			gran = "1h"
+			// Raw has no fleet slice. Bump to the smallest rollup tier (5m).
+			gran = "5m"
 		}
 	}
-	if gran != "1h" && gran != "1d" && gran != "1mo" {
+	if gran != "5m" && gran != "1h" && gran != "1d" && gran != "1mo" {
 		return nil, fmt.Errorf("ops_metrics_fleet: invalid granularity %q", gran)
 	}
 	table := "metric_ops_rollup_" + gran

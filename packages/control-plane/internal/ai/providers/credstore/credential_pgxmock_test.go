@@ -62,6 +62,26 @@ func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
 	return New(m), m
 }
 
+func TestClearCircuit(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectExec(`UPDATE "Credential" SET`).WithArgs("c1").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	if err := s.ClearCircuit(context.Background(), "c1"); err != nil {
+		t.Fatalf("ClearCircuit: %v", err)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestClearCircuit_Error(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectExec(`UPDATE "Credential" SET`).WithArgs("c1").WillReturnError(errors.New("boom"))
+	if err := s.ClearCircuit(context.Background(), "c1"); err == nil {
+		t.Fatal("ClearCircuit should surface the exec error")
+	}
+}
+
 func TestListCredentials(t *testing.T) {
 	s, m := newMock(t)
 	enabled := true

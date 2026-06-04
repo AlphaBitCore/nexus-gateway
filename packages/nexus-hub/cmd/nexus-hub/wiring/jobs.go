@@ -11,7 +11,7 @@ import (
 
 	alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/config"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
+	fleetmgr "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	defjobs_audit "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/audit"
 	defjobs_drift "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/drift"
 	defjobs_expiry "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/expiry"
@@ -21,11 +21,11 @@ import (
 	defjobs_retention "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/retention"
 	defjobs_rollup "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/rollup"
 	defjobs_semanticcacheflush "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs/semanticcacheflush"
-	jobstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/scheduler"
+	jobstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/siem"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
-	fleetmgr "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
@@ -199,10 +199,12 @@ func InitScheduler(
 	sched.Register(defjobs_rollup.NewThingRollupMerge1mo(pool, cfg.Scheduler.Intervals.Merge1mo, logger))
 	sched.Register(defjobs_rollup.NewRollupCorrection(rollup5m, merge1h, merge1d, merge1mo, cfg.Scheduler.Intervals.RollupCorrection, logger))
 
+	sched.Register(defjobs_metrics.NewOpsRollup5m(pool, cfg.Scheduler.Intervals.OpsRollup5m, logger))
 	sched.Register(defjobs_metrics.NewOpsRollup1h(pool, cfg.Scheduler.Intervals.OpsRollup1h, logger))
 	sched.Register(defjobs_metrics.NewOpsRollup1d(pool, cfg.Scheduler.Intervals.OpsRollup1d, logger))
 	sched.Register(defjobs_metrics.NewOpsRollup1mo(pool, cfg.Scheduler.Intervals.OpsRollup1mo, logger))
 	sched.Register(defjobs_retention.NewOpsRetention(pool, cfg.Scheduler.Intervals.OpsRetention, logger))
+	sched.Register(defjobs_retention.NewOpsRawPartition(pool, cfg.Scheduler.Intervals.OpsRawPartition, cfg.Scheduler.Retention.OpsRawDays, logger))
 
 	sched.Register(defjobs_expiry.NewVKExpiry(pool, raiser, cfg.Scheduler.Intervals.VKExpiry, logger))
 	sched.Register(defjobs_expiry.NewCredentialExpiry(pool, raiser, cfg.Scheduler.Intervals.CredentialExpiry, logger))

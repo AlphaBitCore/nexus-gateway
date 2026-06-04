@@ -45,13 +45,13 @@ func InitDB(ctx context.Context, cfg *config.HubConfig, logger *slog.Logger) (*p
 // pgxpool.Stat (whose internal puddle.Stat pointer is unexported and would
 // panic on a zero-value struct).
 type pgxpoolStats struct {
-	MaxConns            int32
-	AcquiredConns       int32
-	IdleConns           int32
-	TotalConns          int32
-	NewConnsCount       int64
-	AcquireCount        int64
-	EmptyAcquireCount   int64
+	MaxConns             int32
+	AcquiredConns        int32
+	IdleConns            int32
+	TotalConns           int32
+	NewConnsCount        int64
+	AcquireCount         int64
+	EmptyAcquireCount    int64
 	CanceledAcquireCount int64
 }
 

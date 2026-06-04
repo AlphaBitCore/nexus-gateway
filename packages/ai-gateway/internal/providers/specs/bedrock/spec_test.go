@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/bedrock"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 func TestBedrock_BuildURL(t *testing.T) {
@@ -171,7 +171,7 @@ func TestBedrock_Execute_SignsRequest(t *testing.T) {
 
 	a := provdispatch.NewSpecAdapter(bedrock.NewSpec(slog.Default()), slog.Default())
 	resp, err := a.Execute(context.Background(), provcore.Request{
-		WireShape:   typology.WireShapeBedrockConverse,
+		WireShape:  typology.WireShapeBedrockConverse,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
 		Target: provcore.CallTarget{

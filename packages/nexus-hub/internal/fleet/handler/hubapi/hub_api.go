@@ -10,10 +10,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/enrollment"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/scheduler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 

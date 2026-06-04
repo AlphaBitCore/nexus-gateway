@@ -11,8 +11,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/thingstats/thingstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 

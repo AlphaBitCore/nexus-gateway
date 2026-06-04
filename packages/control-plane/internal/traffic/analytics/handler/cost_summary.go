@@ -20,7 +20,7 @@ type costSummaryResponse struct {
 	// price on cached reads, minus the write surcharge).
 	TotalProviderPromptCacheNetSavingsUSD float64 `json:"totalProviderPromptCacheNetSavingsUsd"`
 	// Combined savings from all cache layers.
-	TotalCombinedSavingsUSD float64             `json:"totalCombinedSavingsUsd"`
+	TotalCombinedSavingsUSD float64 `json:"totalCombinedSavingsUsd"`
 	// Sum of reasoning_cost_usd across the window. Already counted inside
 	// TotalCostUSD — surfaced separately so the Cost dashboard can render a
 	// "reasoning cost share" widget without re-querying.
@@ -34,11 +34,11 @@ type costSummaryResponse struct {
 	// ExcludeInternalOpsFromBilledCost mirrors the Hub yaml flag so the
 	// UI can render the right "internal-ops counted/excluded" hint per
 	// traffic event drawer without making a Hub round-trip.
-	ExcludeInternalOpsFromBilledCost bool `json:"excludeInternalOpsFromBilledCost"`
-	PeriodDays              int                 `json:"periodDays"`
-	Since                   string              `json:"since"`
-	ByOrg                   []orgCostEntry      `json:"byOrg"`
-	ByProvider              []providerCostEntry `json:"byProvider"`
+	ExcludeInternalOpsFromBilledCost bool                `json:"excludeInternalOpsFromBilledCost"`
+	PeriodDays                       int                 `json:"periodDays"`
+	Since                            string              `json:"since"`
+	ByOrg                            []orgCostEntry      `json:"byOrg"`
+	ByProvider                       []providerCostEntry `json:"byProvider"`
 }
 
 type orgCostEntry struct {
@@ -63,11 +63,11 @@ var costSummaryMetrics = []string{
 
 // costSummaryTotals bundles the rollup-summed cost windows.
 type costSummaryTotals struct {
-	estimated          float64
-	gatewaySavings     float64
-	providerPromptNet  float64
-	embedding          float64
-	aiGuard            float64
+	estimated         float64
+	gatewaySavings    float64
+	providerPromptNet float64
+	embedding         float64
+	aiGuard           float64
 }
 
 // rollupCostSummaryTotals reads global cost totals from rollup.
@@ -240,17 +240,17 @@ func (h *Handler) AnalyticsCostSummary(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, costSummaryResponse{
-		TotalCostUSD:                totalCost,
-		TotalGatewayCacheSavingsUSD: gatewaySavings,
+		TotalCostUSD:                          totalCost,
+		TotalGatewayCacheSavingsUSD:           gatewaySavings,
 		TotalProviderPromptCacheNetSavingsUSD: providerPromptCacheNetSavings,
-		TotalCombinedSavingsUSD:     gatewaySavings + providerPromptCacheNetSavings,
-		TotalReasoningCostUSD:       totalReasoningCost,
-		TotalEmbeddingCostUSD:       totalEmbeddingCost,
-		TotalAIGuardCostUSD:         totalAIGuardCost,
-		ExcludeInternalOpsFromBilledCost: h.excludeInternalOpsFromBilledCost,
-		PeriodDays:                  periodDays,
-		Since:                       since.Format(time.RFC3339),
-		ByOrg:                       byOrg,
-		ByProvider:                  byProvider,
+		TotalCombinedSavingsUSD:               gatewaySavings + providerPromptCacheNetSavings,
+		TotalReasoningCostUSD:                 totalReasoningCost,
+		TotalEmbeddingCostUSD:                 totalEmbeddingCost,
+		TotalAIGuardCostUSD:                   totalAIGuardCost,
+		ExcludeInternalOpsFromBilledCost:      h.excludeInternalOpsFromBilledCost,
+		PeriodDays:                            periodDays,
+		Since:                                 since.Format(time.RFC3339),
+		ByOrg:                                 byOrg,
+		ByProvider:                            byProvider,
 	})
 }

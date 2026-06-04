@@ -112,7 +112,16 @@ func (m *Manager) Inject(ctx context.Context, providerID, modelID string, body [
 		return body, InjectResult{}, nil
 	}
 
-	rk := contentHash(providerID, modelID, systemJSON)
+	// Gemini rejects a request that references a cachedContent AND also sets
+	// tools / toolConfig — they must live INSIDE the cache. Capture them so they
+	// are folded into the cachedContent at create time, keyed into the hash (so a
+	// hit guarantees the cached tools match this request), and stripped from the
+	// wire on a hit. Empty when the caller sends no tools (the hash/body are then
+	// unchanged from the system-only form, preserving existing cache entries).
+	toolsJSON := rawIfPresent(body, "tools")
+	toolConfigJSON := rawIfPresent(body, "toolConfig")
+
+	rk := contentHash(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON)
 
 	// Redis lookup.
 	if m.rdb != nil {
@@ -166,13 +175,25 @@ func (m *Manager) Inject(ctx context.Context, providerID, modelID string, body [
 
 	// Cache MISS: fire async creation.
 	m.metrics.recordMiss(modelID)
-	m.asyncCreate(providerID, modelID, systemJSON, rk, cfg)
+	m.asyncCreate(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON, rk, cfg)
 	return body, InjectResult{}, nil
 }
 
+// rawIfPresent returns the raw JSON of body[path] when it exists and is
+// non-empty, else "". Used to fold optional tools / toolConfig blocks into the
+// cache key + create payload without changing behaviour when they are absent.
+func rawIfPresent(body []byte, path string) string {
+	if r := gjson.GetBytes(body, path); r.Exists() && r.Raw != "" {
+		return r.Raw
+	}
+	return ""
+}
+
 // asyncCreate fires a background goroutine that calls the Gemini cachedContents
-// API and stores the result in Redis. Respects the circuit breaker.
-func (m *Manager) asyncCreate(providerID, modelID, systemJSON, redisKey string, cfg Config) {
+// API and stores the result in Redis. Respects the circuit breaker. toolsJSON /
+// toolConfigJSON are the raw tool blocks to fold into the cachedContent (empty
+// when the request carries none).
+func (m *Manager) asyncCreate(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON, redisKey string, cfg Config) {
 	// Circuit breaker — open window check.
 	if openUntil := m.cbOpenUntil.Load(); openUntil > 0 && time.Now().UnixNano() < openUntil {
 		m.metrics.recordSkipped("circuit_open")
@@ -201,7 +222,7 @@ func (m *Manager) asyncCreate(providerID, modelID, systemJSON, redisKey string, 
 			baseURL = "https://generativelanguage.googleapis.com"
 		}
 
-		rec, err := m.api.create(ctx, apiKey, baseURL, modelID, systemJSON, cfg.ttlSeconds())
+		rec, err := m.api.create(ctx, apiKey, baseURL, modelID, systemJSON, toolsJSON, toolConfigJSON, cfg.ttlSeconds())
 		if err != nil {
 			m.logger.Warn("geminicache: create cachedContent failed",
 				"provider_id", providerID, "model", modelID, "error", err)
@@ -257,14 +278,24 @@ func (m *Manager) resetCircuitBreaker() {
 	m.cbOpenUntil.Store(0)
 }
 
-// rewriteBody removes systemInstruction and injects cachedContent into the
-// Gemini body using sjson. Returns the rewritten bytes.
+// rewriteBody rewrites a Gemini body to reference a cachedContent. It removes
+// the fields Gemini forbids alongside a cachedContent reference — systemInstruction,
+// tools, and toolConfig — and sets cachedContent. All three were folded into the
+// cache at create time and are part of the cache key, so a hit guarantees the
+// cached copies match this request; deleting a field that is absent is a no-op.
+// Without stripping tools/toolConfig, Gemini returns 400 "CachedContent can not be
+// used with GenerateContent request setting system_instruction, tools or
+// tool_config" for every tool-calling request (e.g. the operator agent).
 func rewriteBody(body []byte, cachedContentName string) ([]byte, error) {
-	out, err := sjson.DeleteBytes(body, "systemInstruction")
-	if err != nil {
-		return nil, fmt.Errorf("delete systemInstruction: %w", err)
+	out := body
+	for _, field := range []string{"systemInstruction", "tools", "toolConfig"} {
+		var err error
+		out, err = sjson.DeleteBytes(out, field)
+		if err != nil {
+			return nil, fmt.Errorf("delete %s: %w", field, err)
+		}
 	}
-	out, err = sjson.SetBytes(out, "cachedContent", cachedContentName)
+	out, err := sjson.SetBytes(out, "cachedContent", cachedContentName)
 	if err != nil {
 		return nil, fmt.Errorf("set cachedContent: %w", err)
 	}

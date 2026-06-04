@@ -9,9 +9,9 @@ import (
 	"net/http"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
 
@@ -47,6 +47,13 @@ type anthropicStreamSession struct {
 	// tools maps Anthropic content-block index → tool header for streaming
 	// tool_use argument deltas (input_json_delta).
 	tools map[int]struct{ id, name string }
+	// usage accumulates the token usage Anthropic reports across the stream:
+	// input_tokens on message_start, the final output_tokens on message_delta.
+	// Anthropic carries usage on message_delta (not the terminal message_stop),
+	// but every canonical egress encoder reads chunk.Usage only on the Done chunk,
+	// so we stamp the accumulated total onto message_stop — without it the OpenAI /
+	// Responses egress drops the trailing usage frame (include_usage shows nothing).
+	usage *provcore.Usage
 }
 
 func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, error) {
@@ -68,8 +75,10 @@ func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 	case "message_start":
 		// Per-event Usage extraction via shared/normcodecs.MergeAnthropicEventUsage.
 		// Same canonical normalization (PromptTokens = uncached + cache_read +
-		// cache_creation) as the non-streaming codec.
-		if u := normcodecs.MergeAnthropicEventUsage(nil, ev.Data); u != nil {
+		// cache_creation) as the non-streaming codec. Accumulate so the final
+		// total can ride the terminal message_stop chunk.
+		if u := normcodecs.MergeAnthropicEventUsage(s.usage, ev.Data); u != nil {
+			s.usage = u
 			chunk.Usage = u
 		}
 	case "content_block_start":
@@ -140,12 +149,19 @@ func (s *anthropicStreamSession) Next(ctx context.Context) (provcore.Chunk, erro
 		// Same helper as message_start; tolerates message_delta's root-level
 		// `usage` (vs message_start's nested message.usage). Anthropic / Bedrock
 		// / Vertex translation layers may consolidate the entire usage snapshot
-		// onto message_delta — the helper handles every field present.
-		if u := normcodecs.MergeAnthropicEventUsage(nil, ev.Data); u != nil {
+		// onto message_delta — the helper handles every field present. Merge onto
+		// the accumulated usage (message_start's input_tokens + this output_tokens).
+		if u := normcodecs.MergeAnthropicEventUsage(s.usage, ev.Data); u != nil {
+			s.usage = u
 			chunk.Usage = u
 		}
 	case "message_stop":
+		// Terminal frame. Stamp the accumulated usage onto the Done chunk so the
+		// canonical egress encoders (OpenAI / Responses) emit the trailing usage
+		// frame; Anthropic reports usage on message_delta, not here, so without
+		// this the cross-format stream loses token counts entirely.
 		chunk.Done = true
+		chunk.Usage = s.usage
 		s.done = true
 	}
 	return chunk, nil

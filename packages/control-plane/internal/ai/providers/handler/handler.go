@@ -167,4 +167,3 @@ func (h *Handler) incrementConfigVersion(ctx context.Context) {
 		h.logger.Error("increment agent config version", "error", err)
 	}
 }
-

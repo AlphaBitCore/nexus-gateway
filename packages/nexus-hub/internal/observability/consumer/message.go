@@ -60,12 +60,12 @@ type TrafficEventMessage struct {
 	// Pointer so absent (older publisher) → NULL in
 	// traffic_event.reasoning_tokens; 0 written explicitly means "upstream
 	// reported 0".
-	ReasoningTokens    *int     `json:"reasoningTokens,omitempty"`
+	ReasoningTokens *int `json:"reasoningTokens,omitempty"`
 	// ReasoningCostUsd is the cost subset attributable to ReasoningTokens.
 	// Already included inside EstimatedCostUSD; surfaced separately for
 	// the Cost dashboard reasoning-ratio widget.
-	ReasoningCostUsd   *float64 `json:"reasoningCostUsd,omitempty"`
-	EstimatedCostUSD   *float64 `json:"estimatedCostUsd,omitempty"`
+	ReasoningCostUsd *float64 `json:"reasoningCostUsd,omitempty"`
+	EstimatedCostUSD *float64 `json:"estimatedCostUsd,omitempty"`
 	// CacheStatus is the UNIFIED rollup (HIT | MISS) per cost-estimation-architecture.md § 6.4.
 	// The four GatewayCache*/ProviderCacheStatus fields below are detail-only; they feed
 	// the drawer's three layouts. CacheStatus is derived at the ai-gateway audit-writer
@@ -83,13 +83,13 @@ type TrafficEventMessage struct {
 	// check actually consults.
 	GatewayCacheL2EntryKey string  `json:"gatewayCacheL2EntryKey,omitempty"`
 	ProviderCacheStatus    *string `json:"providerCacheStatus,omitempty"`
-	OriginTZ           *string  `json:"originTz,omitempty"`
-	RoutedProviderID   *string  `json:"routedProviderId,omitempty"`
-	RoutedProviderName *string  `json:"routedProviderName,omitempty"`
-	RoutedModelID      *string  `json:"routedModelId,omitempty"`
-	RoutedModelName    *string  `json:"routedModelName,omitempty"`
-	RoutingRuleID      *string  `json:"routingRuleId,omitempty"`
-	RoutingRuleName    *string  `json:"routingRuleName,omitempty"`
+	OriginTZ               *string `json:"originTz,omitempty"`
+	RoutedProviderID       *string `json:"routedProviderId,omitempty"`
+	RoutedProviderName     *string `json:"routedProviderName,omitempty"`
+	RoutedModelID          *string `json:"routedModelId,omitempty"`
+	RoutedModelName        *string `json:"routedModelName,omitempty"`
+	RoutingRuleID          *string `json:"routingRuleId,omitempty"`
+	RoutingRuleName        *string `json:"routingRuleName,omitempty"`
 
 	// Dual hook pipeline. Each stage records its own decision +
 	// reason + reason_code; persisted on traffic_event.{request,response}_hook_*.
@@ -233,4 +233,3 @@ func nullableJSON(raw json.RawMessage) any {
 	}
 	return raw
 }
-

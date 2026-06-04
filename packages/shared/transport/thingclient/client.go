@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	"github.com/coder/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 )

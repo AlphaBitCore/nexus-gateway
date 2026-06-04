@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 )
 

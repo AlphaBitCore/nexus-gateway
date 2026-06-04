@@ -274,4 +274,3 @@ func decodeAddrPort(family uint8, addr16 []byte, port uint16) netip.AddrPort {
 		return netip.AddrPort{}
 	}
 }
-

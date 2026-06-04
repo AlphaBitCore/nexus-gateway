@@ -50,10 +50,13 @@ func newAPIClient() *apiClient {
 // the "models/" prefix is added internally.
 //
 // systemInstruction must be the raw JSON of the Gemini systemInstruction
-// object, e.g. `{"parts":[{"text":"..."}]}`.
+// object, e.g. `{"parts":[{"text":"..."}]}`. toolsJSON / toolConfigJSON are the
+// raw JSON of the request's tools array / toolConfig object, folded into the
+// cachedContent so a request that references it need not (and may not) repeat
+// them; pass "" when the request carries none.
 func (c *apiClient) create(
 	ctx context.Context,
-	apiKey, baseURL, model, systemInstructionJSON string,
+	apiKey, baseURL, model, systemInstructionJSON, toolsJSON, toolConfigJSON string,
 	ttlSecs int,
 ) (*cachedRecord, error) {
 	// The CachedContents API requires the "models/" prefix on the model name.
@@ -66,11 +69,30 @@ func (c *apiClient) create(
 		return nil, fmt.Errorf("geminicache: invalid systemInstruction JSON: %w", err)
 	}
 
-	reqBody, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":             model,
 		"systemInstruction": sysInstr,
 		"ttl":               fmt.Sprintf("%ds", ttlSecs),
-	})
+	}
+	// Fold the request's tools / toolConfig into the cache object so the
+	// GenerateContent request can reference the cache without re-sending them
+	// (Gemini forbids setting both). Mirrors the cache key in contentHash.
+	if toolsJSON != "" {
+		var tools any
+		if err := json.Unmarshal([]byte(toolsJSON), &tools); err != nil {
+			return nil, fmt.Errorf("geminicache: invalid tools JSON: %w", err)
+		}
+		payload["tools"] = tools
+	}
+	if toolConfigJSON != "" {
+		var toolConfig any
+		if err := json.Unmarshal([]byte(toolConfigJSON), &toolConfig); err != nil {
+			return nil, fmt.Errorf("geminicache: invalid toolConfig JSON: %w", err)
+		}
+		payload["toolConfig"] = toolConfig
+	}
+
+	reqBody, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("geminicache: marshal create body: %w", err)
 	}

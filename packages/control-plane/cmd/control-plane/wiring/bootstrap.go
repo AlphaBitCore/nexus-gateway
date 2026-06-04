@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 )
 

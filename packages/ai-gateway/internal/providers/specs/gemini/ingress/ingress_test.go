@@ -20,7 +20,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-
 func TestGenerateContent_emptyBody_returnsError(t *testing.T) {
 	_, err := ingress.GenerateContentRequestToOpenAIChatCompletion(nil, "")
 	if err == nil {
@@ -461,7 +460,6 @@ func TestGenerateContent_toolChoiceAny_multipleOrEmpty_required(t *testing.T) {
 		t.Errorf("ANY with multiple names should be required: %s", string(out))
 	}
 }
-
 
 func TestOpenAIToGenerateContent_basicText(t *testing.T) {
 	openai := []byte(`{

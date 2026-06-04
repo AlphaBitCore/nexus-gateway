@@ -8,13 +8,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic/internal/testredis"
 )
 
-
 func newTestPoisonList(t *testing.T) (*RedisPoisonList, func()) {
 	t.Helper()
 	_, rdb, cleanup := testredis.NewMiniValkey(t)
 	return NewRedisPoisonList(rdb), cleanup
 }
-
 
 func TestRedisPoisonList_AddAndIsPoisoned(t *testing.T) {
 	pl, cleanup := newTestPoisonList(t)
@@ -48,7 +46,6 @@ func TestRedisPoisonList_AddAndIsPoisoned(t *testing.T) {
 	}
 }
 
-
 func TestRedisPoisonList_ZeroTTLUsesDefault(t *testing.T) {
 	pl, cleanup := newTestPoisonList(t)
 	defer cleanup()
@@ -62,7 +59,6 @@ func TestRedisPoisonList_ZeroTTLUsesDefault(t *testing.T) {
 		t.Fatalf("should be poisoned; err=%v, ok=%v", err, ok)
 	}
 }
-
 
 func TestRedisPoisonList_TTLCap(t *testing.T) {
 	pl, cleanup := newTestPoisonList(t)
@@ -79,7 +75,6 @@ func TestRedisPoisonList_TTLCap(t *testing.T) {
 		t.Fatalf("should be poisoned after big TTL; err=%v ok=%v", err, ok)
 	}
 }
-
 
 func TestRedisPoisonList_ScopeIsolation(t *testing.T) {
 	pl, cleanup := newTestPoisonList(t)
@@ -100,7 +95,6 @@ func TestRedisPoisonList_ScopeIsolation(t *testing.T) {
 		t.Fatal("keyX under scopeB should not be poisoned")
 	}
 }
-
 
 // TestRedisPoisonList_TTLEviction verifies that a poisoned entry expires after
 // its TTL. We add with a 1s TTL (poison TTL = 10s), then use miniredis
@@ -133,7 +127,6 @@ func TestRedisPoisonList_TTLEviction(t *testing.T) {
 	}
 }
 
-
 // TestRedisPoisonList_IsPoisoned_ErrorPath verifies that IsPoisoned propagates
 // a Redis error (false, err) when the underlying client fails.
 func TestRedisPoisonList_IsPoisoned_ErrorPath(t *testing.T) {
@@ -153,7 +146,6 @@ func TestRedisPoisonList_IsPoisoned_ErrorPath(t *testing.T) {
 	}
 }
 
-
 func TestNopPoisonList_AlwaysFalse(t *testing.T) {
 	var n nopPoisonList
 	ctx := context.Background()
@@ -165,7 +157,6 @@ func TestNopPoisonList_AlwaysFalse(t *testing.T) {
 		t.Fatalf("nopPoisonList.Add should not error; got %v", err)
 	}
 }
-
 
 func TestPoisonKey_Format(t *testing.T) {
 	k := poisonKey("idx:abc", "vk:1")

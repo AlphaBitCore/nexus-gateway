@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // HTTPConfig tunes the upstream client every provider adapter shares.

@@ -10,9 +10,9 @@ import (
 	"context"
 	"crypto/rsa"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/agentca"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/enrollment"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 )
 

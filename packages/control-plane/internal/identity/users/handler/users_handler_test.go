@@ -497,7 +497,6 @@ func (s *stubPool) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row { ret
 func (s *stubPool) Close()                                                 {}
 func (s *stubPool) Ping(_ context.Context) error                           { return nil }
 
-
 func buildHandler(
 	us iamUserStore,
 	is iamIAMStore,
@@ -534,7 +533,6 @@ func defaultHandler() *Handler {
 		&stubGovernanceStore{},
 	)
 }
-
 
 func TestListUsers_Success_Returns200(t *testing.T) {
 	email := "u1@example.com"
@@ -905,7 +903,6 @@ func TestDeleteIAMGroup_Error_Returns404(t *testing.T) {
 		t.Errorf("code=%d want 404 (handler maps delete store errors to not_found)", rec.Code)
 	}
 }
-
 
 func TestListOrganizations_Returns200(t *testing.T) {
 	os := &stubOrgStore{orgs: []orgstore.Organization{{ID: "o1", Name: "Org 1"}}}
@@ -2567,7 +2564,6 @@ func TestListIdentityProviders_Error_Returns500(t *testing.T) {
 	}
 }
 
-
 func TestParseRFC3339Flexible_Nano(t *testing.T) {
 	_, ok := parseRFC3339Flexible("2026-01-01T00:00:00.000Z")
 	if !ok {
@@ -2788,7 +2784,6 @@ func TestDeleteAuthSessions_NilPool_Returns503(t *testing.T) {
 	}
 }
 
-
 func TestRevokeDeviceInternal_MissingDeviceIDBody_Returns400(t *testing.T) {
 	orig := revocationRevoke
 	revocationRevoke = func(_ *Handler, _ context.Context, _ revocation.Request) error { return nil }
@@ -2847,7 +2842,6 @@ func TestRevokeDeviceInternal_RevokeError_Returns500(t *testing.T) {
 		t.Errorf("code=%d want 500", rec.Code)
 	}
 }
-
 
 func TestUpdateIdentityProvider_NotFound_Returns404(t *testing.T) {
 	ss := &stubScimStore{idp: nil, idpErr: pgx.ErrNoRows}
@@ -2919,7 +2913,6 @@ func TestUpdateIdentityProvider_Success_Returns200(t *testing.T) {
 		t.Errorf("code=%d want 200; body=%s", rec.Code, rec.Body)
 	}
 }
-
 
 func TestDeleteIdentityProvider_NotFound_Returns404(t *testing.T) {
 	ss := &stubScimStore{idp: nil, idpErr: pgx.ErrNoRows}

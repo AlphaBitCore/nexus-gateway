@@ -3,7 +3,8 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	capabilities "github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/capabilities/runtime"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/mcp"
 )
 
@@ -30,10 +31,11 @@ func newMCPServeCmd(a *App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// The simulate tool forwards under the VK stored for this env, if any.
 			vkSecret, _ := a.Store.Get(a.Env.Name, core.SecretVKSecret)
-			return mcp.Serve(cmd.Context(), a.client(), mcp.Options{
+			reg := capabilities.NewMCPRegistry(a.client(), capabilities.MCPOptions{
 				EnableMitigate: enableMitigate,
 				VKSecret:       vkSecret,
 			})
+			return mcp.Serve(cmd.Context(), reg)
 		},
 	}
 	cmd.Flags().BoolVar(&enableMitigate, "enable-mitigate", false, "expose write (mitigate) tools such as the kill switch (off by default)")

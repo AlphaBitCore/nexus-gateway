@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/enrollment"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/status"
 )
 

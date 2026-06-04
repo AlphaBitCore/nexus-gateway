@@ -306,7 +306,6 @@ func TestPruneLifecycle_DeletesOlderRows(t *testing.T) {
 	}
 }
 
-
 // DrainLoop + DB() + Close
 
 func TestDB_ReturnsUsableHandle(t *testing.T) {

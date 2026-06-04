@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
 
 // fakeStore is an in-memory SecretStore for CLI tests. setErr, when non-nil,
@@ -39,7 +40,7 @@ func (s fakeStore) Delete(env, key string) error { delete(s.m, env+":"+key); ret
 func newTestApp(srv *httptest.Server, isProd bool) *App {
 	store := fakeStore{m: map[string]string{"local:" + core.SecretAdminKey: "nxk_test"}}
 	return &App{
-		Cfg:   &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: srv.URL, IsProd: isProd}}},
+		Cfg:   &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: srv.URL, IsProd: isProd}}},
 		Env:   core.Env{Name: "local", CPBaseURL: srv.URL, IsProd: isProd},
 		Store: store,
 		HTTP:  srv.Client(),
@@ -233,7 +234,7 @@ func TestEnvLsAndUse(t *testing.T) {
 func TestLogin_AdminKeyFromStdin(t *testing.T) {
 	store := fakeStore{m: map[string]string{}}
 	a := &App{
-		Cfg:    &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
+		Cfg:    &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
 		Env:    core.Env{Name: "local"},
 		Store:  store,
 		Out:    io.Discard,
@@ -254,7 +255,7 @@ func TestLogin_AdminKeyFromStdin(t *testing.T) {
 
 func TestRoot_NoArgsShowsHelp(t *testing.T) {
 	a := &App{
-		Cfg: &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
+		Cfg: &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
 		Env: core.Env{Name: "local"}, Store: fakeStore{m: map[string]string{}},
 	}
 	out, err := runCLI(t, a)

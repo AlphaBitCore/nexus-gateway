@@ -384,7 +384,6 @@ func TestBreakGlassPut_NilVersionSource(t *testing.T) {
 	}
 }
 
-
 func TestReplayPending_NoFile_ReturnsFalse(t *testing.T) {
 	_, bg, _, _ := newBGTestDeps(t)
 

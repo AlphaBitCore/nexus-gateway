@@ -1228,7 +1228,6 @@ func newTestPolicyResolver(t *testing.T) *compliance.PolicyResolver {
 	return compliance.NewPolicyResolver(nil, hooks.NewHookRegistry(), nil)
 }
 
-
 // ensure httptest is referenced to avoid unused-import errors if future
 // edits remove the only caller above; harmless at runtime.
 var _ = httptest.NewServer

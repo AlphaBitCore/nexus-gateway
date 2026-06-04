@@ -11,8 +11,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 )
 
 // mockProducer records Enqueue payloads and can fail after N successful calls.

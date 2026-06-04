@@ -7,10 +7,10 @@ import (
 	"io"
 	"log/slog"
 
+	agentcompliance "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/attestation"
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/backpressure"
-	agentcompliance "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"

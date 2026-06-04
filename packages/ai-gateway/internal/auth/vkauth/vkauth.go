@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/jackc/pgx/v5"
 )
@@ -76,9 +76,9 @@ type VKMeta struct {
 	// nil → default 30/min applied in code. Separate from RateLimitRpm because
 	// estimate requests dispatch N provider calls internally.
 	CompareEndpointRateLimitRpm *int
-	AllowedModels        []store.AllowedModelRef
-	VKType               string // "personal" | "application"
-	VKStatus             string // "active" | "pending" | "expired" | "rejected" | "revoked"
+	AllowedModels               []store.AllowedModelRef
+	VKType                      string // "personal" | "application"
+	VKStatus                    string // "active" | "pending" | "expired" | "rejected" | "revoked"
 	// Fingerprint is SHA256(presentedKey)[:8] as a 16-char lowercase hex
 	// string — stable per presented key, non-reversible. Used by the
 	// traffic-event pipeline to attribute cost without storing the raw VK.
@@ -164,13 +164,13 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*VKM
 	}
 
 	meta := &VKMeta{
-		ID:             vk.ID,
-		Name:           vk.Name,
+		ID:                          vk.ID,
+		Name:                        vk.Name,
 		AllowedModels:               vk.AllowedModels,
 		RateLimitRpm:                vk.RateLimitRpm,
 		CompareEndpointRateLimitRpm: vk.CompareEndpointRateLimitRpm,
-		Fingerprint:    traffic.ApiKeyFingerprint(raw),
-		Class:          classifyVKToken(raw),
+		Fingerprint:                 traffic.ApiKeyFingerprint(raw),
+		Class:                       classifyVKToken(raw),
 	}
 	if vk.OrganizationID != nil {
 		meta.OrganizationID = *vk.OrganizationID

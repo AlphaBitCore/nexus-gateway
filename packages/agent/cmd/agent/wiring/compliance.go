@@ -34,7 +34,7 @@ type ComplianceConfig struct {
 
 // ComplianceBundle groups all compliance subsystem objects.
 type ComplianceBundle struct {
-	PolicyEngine *policy.Engine
+	PolicyEngine   *policy.Engine
 	ExemptionStore *exemption.Store
 	AgentPipeline  *agentcompliance.AgentPipeline
 	// PayloadCaptureStore holds the Hub-pushed payload_capture config. On the

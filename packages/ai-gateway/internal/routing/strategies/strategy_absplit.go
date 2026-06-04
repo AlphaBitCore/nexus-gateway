@@ -3,8 +3,8 @@ package strategies
 import (
 	"context"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"fmt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"math/rand/v2"
 )
 

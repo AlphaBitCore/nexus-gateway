@@ -23,7 +23,7 @@ func TestContentHash_JSONCanonicalization(t *testing.T) {
 	}
 	keys := make([]string, 0, len(cases))
 	for _, c := range cases {
-		k := contentHash(provider, model, c)
+		k := contentHash(provider, model, c, "", "")
 		keys = append(keys, k)
 	}
 	for i := 1; i < len(keys); i++ {
@@ -38,8 +38,8 @@ func TestContentHash_JSONCanonicalization(t *testing.T) {
 // canonicalization over-collapsing — content that differs in value
 // must still hash differently.
 func TestContentHash_DistinguishesDifferentContent(t *testing.T) {
-	a := contentHash("openai", "gemini-2.5-flash", `{"role":"system","parts":[{"text":"A"}]}`)
-	b := contentHash("openai", "gemini-2.5-flash", `{"role":"system","parts":[{"text":"B"}]}`)
+	a := contentHash("openai", "gemini-2.5-flash", `{"role":"system","parts":[{"text":"A"}]}`, "", "")
+	b := contentHash("openai", "gemini-2.5-flash", `{"role":"system","parts":[{"text":"B"}]}`, "", "")
 	if a == b {
 		t.Fatalf("different content hashed to same key: %s", a)
 	}
@@ -49,8 +49,8 @@ func TestContentHash_DistinguishesDifferentContent(t *testing.T) {
 // blow up — it falls back to the raw string so the hash is still
 // stable for that input (no unexpected key collapse to a single value).
 func TestContentHash_MalformedJSONFallback(t *testing.T) {
-	a := contentHash("p", "m", "{not valid json")
-	b := contentHash("p", "m", "{also not valid json")
+	a := contentHash("p", "m", "{not valid json", "", "")
+	b := contentHash("p", "m", "{also not valid json", "", "")
 	if a == b {
 		t.Fatalf("two distinct malformed inputs collapsed to one key")
 	}
