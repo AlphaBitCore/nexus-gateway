@@ -34,7 +34,7 @@
   },
   "peerDependencies": {
     "react": ">=18",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.7"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -45,7 +45,7 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.16",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^3.2.4",
