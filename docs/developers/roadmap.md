@@ -47,6 +47,20 @@ One IAM, no carve-outs: all three faces reach the gateway only through the exist
 
 **Memory anchors:** none yet (writing as E88-S1 lands).
 
+### E90 — Nexus Web Assistant ("Chat with Nexus")
+
+**Status:** ✅ Shipped (S1–S8) — all 8 stories + the #17 navigation follow-up, #18 prod-security (audit stamp / prod second-confirm / dry-run impact preview), and the P2b session-affinity core (in-process self-call / command+data stream split + SessionBus + reconnect/Stop / persisted confirm) are implemented, reviewed (2 Opus reviews per phase, gate #14), and merged to `develop`. Spec: [e90-nexus-web-assistant.md](./specs/e90-nexus-web-assistant.md) + `e90-s1..s8`. Program record: [docs/handoffs/e90-web-assistant/HANDOFF.md](../handoffs/e90-web-assistant/HANDOFF.md) (source of truth). **Remaining = environment-gated live verification only (no code work):** the ≥2-replica affinity self-check (AC-3) needs a running multi-replica deploy + LB, and the chat-path ai-gateway smoke (T7/AC-5) needs a real stack with provider credentials — both were exercised locally (real-Redis 421 mechanism test + a mock-provider chat-path run).
+
+**Goal:** The **web face** of the E88 operator agent — a floating "Chat with Nexus" widget in the Control Plane UI (bottom-right button → chat popup). The agent kernel (E88) is extracted into a new client-side shared module `packages/nexus-agent-core` and runs **server-side** in the Control Plane; the browser is a thin streaming chat surface that follows navigation directives to existing CP-UI pages.
+
+**Stories:** S1 kernel extraction · S2 backend streaming endpoint (streamable HTTP, identity passthrough, system-VK inference, SessionBus + owner safety-net) · S3 web widget · S4 navigation → routing · S5 write tools + confirm gate · S6 persistence (session CRUD DB+S3, memory DB, file sandbox S3; strong per-user isolation) · S7 built-in skills · S8 hardening + affinity/SSE runbook.
+
+**Binding invariants:** one IAM, no escalation (tools run as the calling web user); system VK backend-only; strong per-user isolation; no `run_command` (file ops are an S3 sandbox).
+
+**Why:** The CLI/TUI agent only reaches terminal users; web admins navigate menus by hand. The widget gives every CP-UI admin the operate/observe/verify loop conversationally, bounded by their own IAM, and dogfoods the AI Gateway + admin API.
+
+**Memory anchors:** [[e90-web-assistant-worktree]] (program status + HANDOFF pointer).
+
 ## Queued
 
 (none — A-Q docs-backfill program is the active focus; new epics added here as they get filed)
@@ -54,4 +68,4 @@ One IAM, no carve-outs: all three faces reach the gateway only through the exist
 ## Reserved epic-number ranges
 
 - E80-E89: cross-cutting refactors (E85 ✅ unit-test coverage 95%, E86 ✅ E2E coverage, E87 endpoint typology, E88 operator toolkit)
-- E90-E99: open for next program
+- E90 — Nexus Web Assistant ("Chat with Nexus", filed 2026-06-01); E91-E99: open for next program

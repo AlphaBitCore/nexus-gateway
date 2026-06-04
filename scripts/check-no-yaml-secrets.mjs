@@ -83,9 +83,11 @@ const STAGED = process.argv.includes('--staged');
 
 // Paths excluded from the scan. OpenAPI specs under docs/users/api/openapi/ embed
 // `example:` / `examples:` blocks that contain illustrative secret-shaped
-// strings — those are documentation, not credentials. Test fixtures and
-// node_modules are similarly out of scope.
-const EXCLUDE_PATH_RE = /^(docs\/users\/api\/openapi\/|tests\/|.*\/node_modules\/)/;
+// strings — those are documentation, not credentials. The nexus-cli toolkit and
+// the nexus-agent-core capability resources embed verbatim copies of those specs
+// (go:embed) to ship them in the binary, so those copies are excluded for the same
+// reason. Test fixtures and node_modules are similarly out of scope.
+const EXCLUDE_PATH_RE = /^(docs\/users\/api\/openapi\/|packages\/nexus-cli\/internal\/capabilities\/openapi\/|packages\/nexus-agent-core\/capabilities\/resource\/openapi\/|tests\/|.*\/node_modules\/)/;
 
 function listYamlFiles() {
   let cmd;

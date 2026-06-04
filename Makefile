@@ -134,9 +134,10 @@ agent-package-windows: agent-build-windows
 agent-clean-windows:
 	rm -rf dist/windows
 
-# ── AMI / appliance build ────────────────────────────────────────────
+# ── AMI / appliance build (E-OSS marketplace) ────────────────────────
 # Wraps Go binaries + UI dist + Prisma bundle + Packer build into one
-# invocation. See nexus-ami/README.md for the build / publish runbook.
+# invocation. Architecture:
+# docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md
 
 ami-build:
 	bash nexus-ami/build.sh

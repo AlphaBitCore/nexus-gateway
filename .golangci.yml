@@ -146,8 +146,13 @@ linters:
       # real network call (noctx). And Go convention treats unchecked
       # cleanup close on test doubles (rdb.Close, srv.Close, etc.) as
       # idiomatic (errcheck) — production code still has it on.
+      # bodyclose is waived in tests for the same reason: fixtures
+      # construct fake *http.Response values (nil Body) and helpers that
+      # drain+close the body internally before returning it, so the
+      # call-site close bodyclose wants is impossible or redundant.
+      # Production bodyclose stays on.
       - path: _test\.go$
-        linters: [forbidigo, noctx, errcheck]
+        linters: [forbidigo, noctx, errcheck, bodyclose]
 
       # The httpclient factory is the one place allowed to construct
       # the underlying *http.Client; everywhere else must call into

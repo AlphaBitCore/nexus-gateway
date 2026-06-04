@@ -17,6 +17,21 @@
 /** @type {Array<{ name: string, code: string[], docs: string[], waiverHint?: string }>} */
 export default [
     {
+        name: 'web-assistant',
+        code: [
+            'packages/control-plane/internal/assistant/**',
+        ],
+        docs: [
+            'docs/developers/specs/e90-s4-navigation.md',
+            'docs/developers/specs/e90-s5-write-confirm.md',
+            'docs/developers/specs/e90-s6-persistence.md',
+            'docs/developers/specs/e90-s7-builtin-skills.md',
+            'docs/developers/specs/e90-s8-hardening.md',
+            'docs/operators/ops/runbooks/e90-web-assistant.md',
+        ],
+        waiverHint: 'Changes under internal/assistant/** ("Chat with Nexus") must update the matching e90 story doc (s4 navigation / s5 write+confirm / s6 persistence / s7 skills+files / s8 hardening) and/or the web-assistant runbook.',
+    },
+    {
         name: 'cost-estimation',
         code: [
             'packages/ai-gateway/internal/ingress/proxy/proxy.go',

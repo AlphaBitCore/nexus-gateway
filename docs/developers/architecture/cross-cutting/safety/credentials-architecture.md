@@ -50,7 +50,7 @@ Admin CRUD lives under `POST/GET/PUT/DELETE /api/admin/credentials` plus four op
 | `PUT /credentials/:id` | `admin:credential.update` | Optional re-encrypt path when `apiKey` is supplied; otherwise metadata-only update. |
 | `DELETE /credentials/:id` | `admin:credential.delete` | Hard delete. |
 | `POST /credentials/:id/probe` | `admin:credential.probe` | Synchronous reliability probe against a stored credential. |
-| `POST /credentials/:id/circuit-reset` | `admin:credential.update` | Clears the per-credential failure circuit-breaker state. |
+| `POST /credentials/:id/circuit-reset` | `admin:credential.update` | Force-closes the per-credential circuit breaker. Clears **both** the durable DB columns and the live Redis hash (see §6). |
 | `POST /credentials/rotate-key` | `admin:credential.rotate` | Initiates the background key-rotation worker (multi-key vault only). |
 | `GET /credentials/key-rotation-status` | `admin:credential.read` | Returns the current rotation state and pending count for the active rotation worker. |
 | `GET /credentials/rotation-status` | `admin:credential.read` | Lists per-credential `rotationState` column values for the rotation Settings page. |
@@ -86,7 +86,26 @@ Two distinct probe surfaces exist; both delegate the actual upstream HTTP call t
 
 **Draft-credential probe (create wizard)** — `POST /providers/test-connection` (handler `ProviderTestConnection`) accepts `{name, adapterType, baseUrl, apiKey}` directly from the admin UI form, validates the adapter type against `IsValidAdapterType`, and forwards the same payload to `AI Gateway /internal/provider-test`. Plaintext lives only in: the operator's browser memory, the HTTPS request body, the CP handler's request-scoped variables, and the inter-service POST body to the gateway. It is never persisted, never logged, and never written to the DB. If the operator abandons the wizard, the plaintext is garbage-collected with the request scope.
 
-## 6. Redaction principles
+## 6. Circuit breaker state & recovery
+
+The per-credential circuit breaker has its state in **two stores that must stay consistent**:
+
+- **Live — Redis hash `cred:circuit:{id}`** (keys in `packages/shared/schemas/credstate`). This is what the AI Gateway reads during pool selection (`credpool.BulkCircuitStates` / `CircuitReader` in `packages/ai-gateway/internal/credentials/pool/pool.go`). A missing hash means *closed*.
+- **Durable — `Credential.circuitState / circuitReason / circuitOpenedAt / circuitNextProbeAt`**. This is what the admin UI badge shows, and what the Hub rehydrates Redis from on restart.
+
+**Open.** The gateway's `RecordAttempt` (`packages/ai-gateway/internal/credentials/stats/buffer.go`) opens the circuit on upstream failures: a single `429` → `open` with reason `rate_limit` and a cooldown `next_probe_at`; three consecutive `401/403` → `open` with reason `auth_fail`. Each transition `SADD`s the credential to `cred:circuit:dirty`.
+
+**Persist.** The Hub `credential-circuit-flush` job (`packages/nexus-hub/internal/jobs/defs/retention/credential_circuit_flush.go`, ~30s) drains `cred:circuit:dirty` into the durable columns (at-least-once via a per-Hub in-flight working set). On first run after a restart it **rehydrates** Redis from the durable columns so a wiped Redis cannot silently re-arm — but it deliberately skips a `rate_limit` row whose cooldown has already elapsed.
+
+**Recover.** A `rate_limit` circuit auto-promotes `open → half_open` once `next_probe_at` passes (on the next Redis read), and a subsequent `2xx` closes it (DEL + dirty). An `auth_fail` circuit has no time-based recovery — a bad key will not fix itself, so it requires a manual reset.
+
+**Manual reset (`POST /credentials/:id/circuit-reset`).** Reconciles **both** stores: it `UPDATE`s the durable columns to closed (`credstore.ClearCircuit`) so the UI clears instantly and a later Hub restart cannot re-arm from a stale row, and it `DEL`s the live Redis hash (and `SREM`s any pending dirty marker) so the gateway sees the credential as eligible immediately. Reconciling both stores is load-bearing: clearing Redis without the DB `UPDATE` would leave the durable row "open" forever — nothing would mark it dirty, so the flush job would never reconcile it, and a restart would re-arm the live circuit from the stale row.
+
+**Self-heal.** The flush job periodically (every `circuitReconcileInterval`, default 5m) reconciles **orphans** — durable rows that are non-closed but whose live Redis hash is absent — by force-closing them. This covers any path that can leave the stores divergent (a Redis eviction, or a cooldown-elapsed `rate_limit` that rehydrate did not re-arm). It only acts when Redis is genuinely absent (the live state is already closed), so it can never close a circuit that is legitimately open, and it skips in-flight members so it never races the flush writer.
+
+**Single-credential caveat.** Pool selection only consults the circuit when a provider has **more than one** credential (`resolveCredential` in `packages/ai-gateway/internal/providers/target/resolver.go`). A single-credential provider is never excluded — failing closed on the only key would guarantee an outage rather than fail over — so for such providers the circuit is advisory state surfaced in the UI and recovered via `RecordAttempt`, not an enforcement gate.
+
+## 7. Redaction principles
 
 Plaintext key material is kept out of logs and out of observable response bodies by construction, not by post-hoc redaction:
 
@@ -94,7 +113,7 @@ Plaintext key material is kept out of logs and out of observable response bodies
 - Log statements in the credential lifecycle and probe handlers identify rows by ID and report error class, never by ciphertext content or plaintext. The decryptor's error branches log the key ID, not the failed bytes.
 - Audit events for credential operations populate `audit.Entry` (`packages/control-plane/internal/platform/audit/writer.go`) with `ActorID`, `Action`, `EntityType = "credential"`, `EntityID`, and outcome flags in `BeforeState` / `AfterState`. The state slots are `any`-typed but the credential handlers populate them with metadata-only payloads — `{id, name, providerId}` on create/update, `{ok, error}` for probe, `{cleared: true}` for circuit-reset, threshold values for reliability overrides — never plaintext or ciphertext.
 
-## 7. Deferred concerns
+## 8. Deferred concerns
 
 Tracked for when an actual product driver appears, not built ahead of demand:
 
@@ -110,6 +129,9 @@ Tracked for when an actual product driver appears, not built ahead of demand:
 - `packages/control-plane/internal/ai/providers/handler/credentials.go` — admin CRUD handler + Hub invalidation.
 - `packages/control-plane/internal/ai/providers/handler/key_rotation.go` — background rotation worker.
 - `packages/control-plane/internal/ai/providers/handler/credential_reliability.go` — saved-credential probe proxy.
+- `packages/control-plane/internal/ai/providers/handler/credentials.go` `CircuitReset` + `credstore.ClearCircuit` — manual circuit reset (DB + Redis reconcile, §6).
+- `packages/nexus-hub/internal/jobs/defs/retention/credential_circuit_flush.go` — durability flush, restart rehydrate, and orphan self-heal reconcile (§6).
+- `packages/ai-gateway/internal/credentials/pool/pool.go` + `internal/providers/target/resolver.go` — circuit-aware pool selection (multi-credential only, §6).
 - `packages/control-plane/internal/ai/providers/handler/provider_test_conn.go` — draft + saved-provider probe paths.
 - `packages/control-plane/internal/platform/audit/writer.go` — `audit.Entry` shape.
 - `packages/ai-gateway/cmd/ai-gateway/wiring/thingclient.go` — gateway-side `InitCredManager`.

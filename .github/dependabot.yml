@@ -9,6 +9,27 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Build/test toolchain majors (vite / vitest / coverage-v8 / eslint /
+    # typescript) are breaking migrations we run deliberately on our own
+    # schedule, and none ship to end users at runtime — so a major bump
+    # carries no deployed-security weight. Ignore their MAJORS so
+    # Dependabot stops re-opening them every week; minor/patch still flow
+    # via the dev-deps group, and CVE-driven fixes still arrive through
+    # the separate Dependabot security-updates layer (repo setting).
+    # Runtime/production + Go-module majors are deliberately NOT ignored
+    # here: they reach users, are rare, and we want them visible to
+    # review and merge on our own cadence.
+    ignore:
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitest/coverage-v8"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       production-deps:
         patterns: ["*"]
@@ -44,8 +65,10 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    # Low-urgency: workflow action bumps don't carry runtime/security
+    # weight; monthly cadence keeps the noise down.
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     groups:
       gha-minor-patch:

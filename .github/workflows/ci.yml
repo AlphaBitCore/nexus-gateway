@@ -124,7 +124,13 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          # Pinned (not `stable`) so the govulncheck gate is reproducible:
+          # the toolchain's own stdlib is what govulncheck scans, so a
+          # floating `stable` that lags behind a patch release makes the
+          # gate flap. 1.26.4 carries the fixes for all standard-library
+          # advisories currently reachable from our code (GO-2026-4918 →
+          # GO-2026-5039). Bump this when govulncheck flags a newer one.
+          go-version: '1.26.4'
       - uses: actions/setup-node@v6
         with:
           node-version: 20

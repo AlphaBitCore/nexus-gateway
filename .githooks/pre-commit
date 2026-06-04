@@ -143,6 +143,23 @@ if echo "$staged" | grep -qE '\.go$'; then
   run_hard "no prod-code TODOs" node scripts/check-no-prod-todos.mjs --staged --strict
 fi
 
+# 13b. gofmt on staged Go files (binding; gofmt gate — CI enforces repo-wide in
+# the Workspace integrity job). gofmt -l lists files differing from canonical
+# formatting; it exits 0 even when it finds some, so check the output directly.
+staged_go="$(echo "$staged" | grep -E '\.go$' || true)"
+if [ -n "$staged_go" ]; then
+  unformatted="$(gofmt -l $staged_go 2>/dev/null || true)"
+  if [ -n "$unformatted" ]; then
+    echo ""
+    echo "✗ gofmt FAILED — blocking commit. Staged Go files need formatting:"
+    echo "$unformatted" | sed 's/^/    /'
+    echo "  Fix: gofmt -w <files>"
+    FAILED=1
+  else
+    echo "[pre-commit] gofmt ✓"
+  fi
+fi
+
 # 14. No inline secrets in committed yaml (binding; CLAUDE.md → Mandatory
 # rules → "Secrets are env-only"). Scoped to staged yaml.
 if echo "$staged" | grep -qE '\.(ya?ml(\.example)?)$'; then

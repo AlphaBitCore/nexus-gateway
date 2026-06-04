@@ -1,0 +1,163 @@
+{
+  "_doc": "Editable source-of-truth for each provider's OFFICIAL model page + pricing page. The sync-provider-pricing skill WebFetches these to extract models and prices — it never guesses. Two URL lists per provider: models_urls (the model catalog/spec page: context window, modalities, deprecation status) and pricing_urls ($/MTok). When a fetch 404s, redirects cross-host, or returns stale content, WebSearch '<provider> api pricing' / '<provider> models', confirm the canonical vendor page, and UPDATE the entry here + bump verified_date. This file is the skill's mutable knob; skill.md is the fixed procedure. URL set last refreshed 2026-06-03 from a Claude.ai link scrape — treat as starting points, verify on use.",
+  "_cache_field_mapping": "Model table has ONE cachedInputWritePricePerMillion (provider's STANDARD/short cache-write price) and ONE cachedInputReadPricePerMillion (cache hit/read). Anthropic: write = 5-minute cache write (1.25x input); 1-hour write (2x) NOT stored; read = 0.1x input. Others per cache_convention below. seed.ts holds FALLBACK multipliers (input x mult) used only when a price is NULL; prefer the explicit official value in the template JSON. Non-chat models (embedding/image/audio) have no prompt cache -> cache fields NULL. NULL-PRICE TRAP: cache/layer/pricing.go defaults cache-read price to FULL input when cachedInputReadPricePerMillion is NULL, so a CHAT model with NULL cache_read overcharges cache hits at full input -> always set explicit cache_read on chat models.",
+  "_code_verification": "Per skill.md Step 3b, every per-provider audit ALSO verifies adapter CODE support, not just price values: (1) THINKING/REASONING — request enable reaches wire (reasoning_effort / gemini thinkingConfig / nexus.ext.anthropic.thinking; anchors estimator/reasoning.go, specs/gemini/codec, specs/openai/responses), response keeps reasoning_content separate from answer (non-stream + delta.reasoning_content->ReasoningDelta; anchor transport/normalize/codecs/openai_chat.go + per-adapter coverage_test.go), and unsupported-param strip ONLY on observed 400 (pattern specs/compat/moonshot/rewrites.go). Known gaps: DeepSeek has no temperature strip + absent from estimator/output_budget.go; Minimax/Xai no thinking. (2) PROMPT CACHE — token classification shared/traffic/adapters/api/<provider>/detect.go, no-double-bill cost formula internal/ingress/proxy/proxy_cachecost.go; only Anthropic has a cache-write surcharge.",
+  "active_in_prod": ["anthropic", "openai", "google-gemini", "deepseek", "moonshot"],
+  "providers": {
+    "anthropic": {
+      "template_json": "anthropic.json", "adapter_type": "anthropic",
+      "models_urls": ["https://platform.claude.com/docs/en/about-claude/models/overview"],
+      "pricing_urls": ["https://platform.claude.com/docs/en/about-claude/pricing", "https://claude.com/pricing"],
+      "deprecations_url": "https://platform.claude.com/docs/en/about-claude/model-deprecations",
+      "verified_date": "2026-06-03",
+      "cache_convention": "cachedInputWrite = 5m cache write = 1.25x input. cachedInputRead = cache hit = 0.10x input. 1h write (2x) not stored. seed.ts mult: read 0.10 / write 1.25.",
+      "notes": "Pricing FETCHED & CONFIRMED 2026-06-03. Opus 4.7+ new tokenizer. inference_geo=us adds 1.1x (not modeled). Official models: Opus 4.8/4.7/4.6/4.5/4.1, Opus 4 (deprecated); Sonnet 4.6/4.5, Sonnet 4 (deprecated); Haiku 4.5, Haiku 3.5 (retired except Bedrock/Vertex)."
+    },
+    "openai": {
+      "template_json": "openai.json", "adapter_type": "openai",
+      "models_urls": ["https://platform.openai.com/docs/models"],
+      "pricing_urls": ["https://platform.openai.com/docs/pricing", "https://openai.com/api/pricing/"],
+      "deprecations_url": "https://platform.openai.com/docs/deprecations",
+      "verified_date": "2026-06-03",
+      "cache_convention": "No cache-WRITE surcharge (automatic prompt caching is free to write) -> cachedInputWrite = 0. cachedInputRead = cache hit, PER-MODEL (~0.25x-0.50x input) -> READ THE OFFICIAL VALUE, never a flat number. seed.ts mult: read 0.50 / write 0.00 (fallback only).",
+      "notes": "KNOWN BUG: prod has cachedInputRead=1.25 flat on nearly every OpenAI model — EXCEEDS input for o3-mini/o4-mini/gpt-5.4-mini/gpt-5.4-nano (impossible), nonsensical on embeddings/whisper/dall-e. Replace with official per-model cached-input prices; NULL cache fields for non-chat. gpt-4-turbo already status=deprecated replacedBy=gpt-4o."
+    },
+    "google-gemini": {
+      "template_json": "google-gemini.json", "adapter_type": "gemini",
+      "models_urls": ["https://ai.google.dev/gemini-api/docs/models"],
+      "pricing_urls": ["https://ai.google.dev/gemini-api/docs/pricing"],
+      "deprecations_url": "https://ai.google.dev/gemini-api/docs/changelog",
+      "verified_date": "2026-06-03",
+      "cache_convention": "Implicit caching: no write surcharge -> cachedInputWrite = 0. cachedInputRead = cached-content/hit price (~0.25x input; 2.5 Pro tiered by context length >200k). seed.ts mult: read 0.25 / write 0.00 (fallback). Embedding models: read NULL.",
+      "notes": "gemini-2.5-pro tiered (<=200k vs >200k). gemini-embedding-001 prod cachedInputRead 0.31 is meaningless -> NULL."
+    },
+    "deepseek": {
+      "template_json": "deepseek.json", "adapter_type": "deepseek",
+      "models_urls": ["https://api-docs.deepseek.com"],
+      "pricing_urls": ["https://api-docs.deepseek.com/quick_start/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Prices as cache-HIT vs cache-MISS input (not a write surcharge) -> cachedInputWrite = 0; cachedInputRead = cache-hit input price. seed.ts mult: read 0.10 / write 0.00 (fallback). Off-peak discount windows not modeled.",
+      "notes": "Confirm deepseek-v4-pro/flash map to which DeepSeek SKU/tier; prod input 0.435/0.14 are custom."
+    },
+    "moonshot": {
+      "template_json": "moonshot.json", "adapter_type": "moonshot",
+      "models_urls": ["https://platform.kimi.ai/docs", "https://platform.moonshot.cn"],
+      "pricing_urls": ["https://platform.kimi.ai/docs/pricing/chat", "https://platform.moonshot.cn/docs/pricing/chat"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Per-SKU cache pricing (8k/32k/128k differ). cachedInputWrite = context-cache write price if published else 0; cachedInputRead = cache-hit price. seed.ts mult: read 0.50 / write 0.00 (DEFAULT approximation only — no uniform ratio; prefer exact per-SKU official values).",
+      "notes": "Kimi rebrand: models live under platform.kimi.ai (CN: platform.moonshot.cn). prod flat cw=0.84/cr=0.084 across kimi-k2.5/k2.6/128k despite different inputs — almost certainly wrong; read official per-SKU."
+    },
+    "azure-openai": {
+      "template_json": "azure-openai.json", "adapter_type": "azure-openai",
+      "models_urls": ["https://ai.azure.com/explore/models", "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/models"],
+      "pricing_urls": ["https://azure.microsoft.com/en-us/pricing/details/azure-openai/", "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/openai-service/"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Mirrors OpenAI (write 0, read per-model).",
+      "notes": "NOT configured in prod (template-only). Model catalog via ai.azure.com (Microsoft Learn)."
+    },
+    "bedrock": {
+      "template_json": "bedrock.json", "adapter_type": "bedrock",
+      "models_urls": ["https://aws.amazon.com/bedrock/", "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html"],
+      "pricing_urls": ["https://aws.amazon.com/bedrock/pricing/"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Per-model (Anthropic-on-Bedrock follows Anthropic ratios; others vary).",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "cohere": {
+      "template_json": "cohere.json", "adapter_type": "cohere",
+      "models_urls": ["https://docs.cohere.com/docs/models"],
+      "pricing_urls": ["https://cohere.com/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "No published prompt-cache tiers -> write 0, read NULL unless documented.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "fireworks": {
+      "template_json": "fireworks.json", "adapter_type": "fireworks",
+      "models_urls": ["https://fireworks.ai/models"],
+      "pricing_urls": ["https://fireworks.ai/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Per-model serverless token pricing; cache rarely separate -> read NULL unless documented.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "glm": {
+      "template_json": "glm.json", "adapter_type": "glm",
+      "models_urls": ["https://docs.z.ai", "https://open.bigmodel.cn/dev/howuse/model"],
+      "pricing_urls": ["https://z.ai/pricing", "https://open.bigmodel.cn/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Zhipu GLM publishes cache-hit pricing on some SKUs; read official.",
+      "notes": "NOT configured in prod (template-only). Z.ai intl / open.bigmodel.cn CN."
+    },
+    "groq": {
+      "template_json": "groq.json", "adapter_type": "groq",
+      "models_urls": ["https://console.groq.com/docs/models"],
+      "pricing_urls": ["https://groq.com/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Token pricing only; no prompt cache -> write 0, read NULL.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "huggingface": {
+      "template_json": "huggingface.json", "adapter_type": "huggingface",
+      "models_urls": ["https://huggingface.co/models"],
+      "pricing_urls": ["https://huggingface.co/docs/inference-providers/en/pricing", "https://huggingface.co/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Routed to underlying providers; pricing passes through -> read NULL unless documented.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "minimax": {
+      "template_json": "minimax.json", "adapter_type": "minimax",
+      "models_urls": ["https://platform.minimax.io/docs"],
+      "pricing_urls": ["https://platform.minimax.io/docs/pricing/overview"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Read official; MiniMax publishes per-model token prices.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "mistral": {
+      "template_json": "mistral.json", "adapter_type": "mistral",
+      "models_urls": ["https://docs.mistral.ai/getting-started/models/models_overview"],
+      "pricing_urls": ["https://mistral.ai/pricing"],
+      "deprecations_url": "https://docs.mistral.ai/getting-started/models/models_overview", "verified_date": "2026-06-03",
+      "cache_convention": "Token pricing; no standard prompt-cache surcharge -> write 0, read NULL unless documented.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "perplexity": {
+      "template_json": "perplexity.json", "adapter_type": "perplexity",
+      "models_urls": ["https://docs.perplexity.ai/getting-started/models"],
+      "pricing_urls": ["https://docs.perplexity.ai/docs/getting-started/pricing", "https://docs.perplexity.ai/getting-started/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Per-model token + per-request search fee; no prompt cache -> write 0, read NULL.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "replicate": {
+      "template_json": "replicate.json", "adapter_type": "replicate",
+      "models_urls": ["https://replicate.com/explore"],
+      "pricing_urls": ["https://replicate.com/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Often per-second hardware billing, not per-token; map carefully -> read NULL.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "together": {
+      "template_json": "together.json", "adapter_type": "together",
+      "models_urls": ["https://www.together.ai/models"],
+      "pricing_urls": ["https://www.together.ai/pricing", "https://docs.together.ai/docs/inference/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Per-model token pricing; no standard prompt-cache surcharge -> write 0, read NULL unless documented.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "vertex": {
+      "template_json": "vertex.json", "adapter_type": "vertex",
+      "models_urls": ["https://cloud.google.com/vertex-ai/generative-ai/docs/models"],
+      "pricing_urls": ["https://cloud.google.com/vertex-ai/generative-ai/pricing"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Gemini-on-Vertex follows Gemini ratios; Claude-on-Vertex follows Anthropic; context-caching priced separately. Regional/multi-region endpoints +10%.",
+      "notes": "NOT configured in prod (template-only)."
+    },
+    "xai": {
+      "template_json": "xai.json", "adapter_type": "xai",
+      "models_urls": ["https://docs.x.ai/docs/models"],
+      "pricing_urls": ["https://docs.x.ai/docs/models", "https://x.ai/api"],
+      "deprecations_url": "", "verified_date": "2026-06-03",
+      "cache_convention": "Grok publishes cached-input price on some models; read official (model page includes pricing).",
+      "notes": "NOT configured in prod (template-only). docs.x.ai model page embeds pricing."
+    }
+  }
+}

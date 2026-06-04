@@ -161,34 +161,34 @@ model MetricRollup {
 }
 
 model AdminApiKey {
-  id          String     @id @default(uuid())
-  name        String
-  keyHash     String     @unique
-  keyPrefix   String
-  createdBy   String
-  enabled     Boolean    @default(true)
+  id                 String        @id @default(uuid())
+  name               String
+  keyHash            String        @unique
+  keyPrefix          String
+  createdBy          String
+  enabled            Boolean       @default(true)
   /// Lifecycle state — orthogonal to the `enabled` quick-toggle.
   /// active     accepted by auth middleware (steady state)
   /// rotating   superseded but still accepted during the rotation window
   /// expired    natural sunset (past expiresAt or operator-retired)
   /// unavailable explicitly revoked (compromise, withdrawal); rejected
   /// CHECK constraint enforced by 20260610000000_admin_api_key_rotation.
-  status      String     @default("active")
-  lastUsedAt  DateTime?  @db.Timestamptz(3)
-  expiresAt   DateTime?  @db.Timestamptz(3)
+  status             String        @default("active")
+  lastUsedAt         DateTime?     @db.Timestamptz(3)
+  expiresAt          DateTime?     @db.Timestamptz(3)
   /// Stamp of the moment status transitioned active → rotating.
-  rotatedAt   DateTime?  @db.Timestamptz(3)
+  rotatedAt          DateTime?     @db.Timestamptz(3)
   /// Predecessor row: set on the newly-minted key during a rotate operation.
   /// FK ON DELETE SET NULL keeps the successor row valid if the predecessor
   /// is later purged.
-  rotatedFromId String?
-  rotatedFrom   AdminApiKey?  @relation("AdminApiKeyRotation", fields: [rotatedFromId], references: [id], onDelete: SetNull)
+  rotatedFromId      String?
+  rotatedFrom        AdminApiKey?  @relation("AdminApiKeyRotation", fields: [rotatedFromId], references: [id], onDelete: SetNull)
   rotationSuccessors AdminApiKey[] @relation("AdminApiKeyRotation")
   /// Optional owning dashboard user: programmatic admin calls use their IAM identity and audit attribution.
-  ownerUserId String?
-  ownerUser   NexusUser? @relation("AdminApiKeyOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
-  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime   @updatedAt @db.Timestamptz(3)
+  ownerUserId        String?
+  ownerUser          NexusUser?    @relation("AdminApiKeyOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdAt          DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime      @updatedAt @db.Timestamptz(3)
 
   @@index([keyHash])
   @@index([ownerUserId])
@@ -296,6 +296,13 @@ model AdminAuditLog {
   /// display copies only; this column is the cryptographic source of
   /// truth.
   hashInput       Bytes
+  /// Channel that initiated the mutation: "assistant" for an AI-initiated admin
+  /// write performed by the E90 web assistant on a user's behalf, NULL for a
+  /// direct human/UI action. Set server-side from the X-Nexus-Initiated-By header (never
+  /// trusted from arbitrary clients for any decision) and folded into the
+  /// tamper-evident hash chain so the AI-attribution marker cannot be stripped
+  /// without breaking integrityHash (E90 I5).
+  via             String?
 
   @@index([timestamp])
   @@index([actorId])
@@ -303,6 +310,7 @@ model AdminAuditLog {
   @@index([nexusRequestId])
   @@index([clientRequestId])
   @@index([sequenceNumber])
+  @@index([via])
 }
 
 // ─── Phase 1 Simplified Models (full implementation in later phases) ──────────
@@ -1237,18 +1245,18 @@ model InterceptionPath {
 /// Admin actions live in AdminAuditLog; Thing lifecycle events get a dedicated thing_event table.
 /// A CHECK constraint (see migration 2026-04-21-traffic-event-source-check) pins the allowed set.
 model traffic_event {
-  id                        String                    @id @default(uuid())
-  source                    String // ai-gateway | compliance-proxy | agent
-  timestamp                 DateTime                  @default(now()) @db.Timestamptz(3)
+  id                         String                    @id @default(uuid())
+  source                     String // ai-gateway | compliance-proxy | agent
+  timestamp                  DateTime                  @default(now()) @db.Timestamptz(3)
   // Common fields
-  source_ip                 String?                   @map("source_ip")
-  target_host               String?                   @map("target_host")
+  source_ip                  String?                   @map("source_ip")
+  target_host                String?                   @map("target_host")
   /// E58/E41: incoming HTTP method as observed at the ingress (what the
   /// client called). For AI gateway: `/v1/chat/completions`, `/v1/messages`,
   /// `/v1/responses`, `:generateContent` — the surface the client hit.
   /// For compliance proxy + agent: same as the captured upstream call.
-  method                    String?
-  path                      String?
+  method                     String?
+  path                       String?
   /// E87: canonical request modality, one of the typology.EndpointKind
   /// strings ("chat", "embeddings", "stt", "tts", "image_generation",
   /// "batch", ...). Stamped by the producing service onto the audit
@@ -1256,81 +1264,81 @@ model traffic_event {
   /// traffic by endpoint kind without re-deriving it from `path`.
   /// Empty string for non-AI traffic (compliance-proxy / agent forwards)
   /// that does not classify a modality.
-  endpoint_type             String                    @default("") @map("endpoint_type")
+  endpoint_type              String                    @default("") @map("endpoint_type")
   /// E58-S1/E41: HTTP method actually sent to the upstream provider.
   /// For AI gateway: may differ from `method` (e.g. E57 routes a chat-
   /// completions request to OpenAI Responses API via POST /v1/responses).
   /// For compliance-proxy + agent: same as `method`.
-  target_method             String?                   @map("target_method")
+  target_method              String?                   @map("target_method")
   /// E58-S1/E41: HTTP path actually sent to the upstream provider.
   /// For AI gateway: differs from `path` when the client's surface differs
   /// from the upstream's surface (Anthropic /v1/messages vs OpenAI /v1/chat/completions
   /// vs Gemini :generateContent vs OpenAI Responses /v1/responses).
   /// For compliance-proxy + agent: same as `path` (transparent forwarding).
-  target_path               String?                   @map("target_path")
-  status_code               Int?                      @map("status_code")
-  latency_ms                Int?                      @map("latency_ms")
+  target_path                String?                   @map("target_path")
+  status_code                Int?                      @map("status_code")
+  latency_ms                 Int?                      @map("latency_ms")
   // E50 latency phase breakdown. All nullable; producers omit when not
   // measured. See docs/users/product/architecture.md "Latency Phase Taxonomy (E50)".
   /// TTFB observed by the producer service from its forward destination.
   /// For streaming responses: first SSE chunk arrival.
-  upstream_ttfb_ms          Int?                      @map("upstream_ttfb_ms")
+  upstream_ttfb_ms           Int?                      @map("upstream_ttfb_ms")
   /// Full upstream round-trip duration: header + body for non-stream, last
   /// chunk + connection close for stream.
-  upstream_total_ms         Int?                      @map("upstream_total_ms")
+  upstream_total_ms          Int?                      @map("upstream_total_ms")
   /// Aggregate of per-hook latency on the request side
   /// (SUM(request_hooks_pipeline[*].latencyMs)).
-  request_hooks_ms          Int?                      @map("request_hooks_ms")
+  request_hooks_ms           Int?                      @map("request_hooks_ms")
   /// Aggregate of per-hook latency on the response side.
-  response_hooks_ms         Int?                      @map("response_hooks_ms")
+  response_hooks_ms          Int?                      @map("response_hooks_ms")
   /// Long-tail per-source phase durations (ms). Closed key set per `source`:
   ///   ai-gateway       → auth_ms / quota_ms / routing_ms / cache_lookup_ms /
   ///                       req_adapter_ms / resp_adapter_ms
   ///   compliance-proxy → conn_setup_ms / tls_handshake_ms
   ///   agent            → intercept_ms
   /// Keys omitted when the phase did not run or measured zero.
-  latency_breakdown         Json?                     @map("latency_breakdown")
-  created_at                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  latency_breakdown          Json?                     @map("latency_breakdown")
+  created_at                 DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
   // Request tracing
-  trace_id                  String?                   @map("trace_id")
-  external_request_id       String?                   @map("external_request_id")
+  trace_id                   String?                   @map("trace_id")
+  external_request_id        String?                   @map("external_request_id")
   // Entity attribution (who/what originated this traffic)
-  entity_type               String?                   @map("entity_type") // "user" | "project" | "unknown"
-  entity_id                 String?                   @map("entity_id")
-  entity_name               String?                   @map("entity_name")
-  org_id                    String?                   @map("org_id")
-  org_name                  String?                   @map("org_name")
+  entity_type                String?                   @map("entity_type") // "user" | "project" | "unknown"
+  entity_id                  String?                   @map("entity_id")
+  entity_name                String?                   @map("entity_name")
+  org_id                     String?                   @map("org_id")
+  org_name                   String?                   @map("org_name")
   // Structured identity snapshot (JSONB: {status, method, user, device, credential, project})
-  identity                  Json?                     @map("identity")
+  identity                   Json?                     @map("identity")
   // AI/Provider (ID + denormalized name)
-  provider_id               String?                   @map("provider_id")
-  provider_name             String?                   @map("provider_name")
-  model_id                  String?                   @map("model_id")
-  model_name                String?                   @map("model_name")
-  prompt_tokens             Int?                      @map("prompt_tokens")
-  completion_tokens         Int?                      @map("completion_tokens")
-  total_tokens              Int?                      @map("total_tokens")
+  provider_id                String?                   @map("provider_id")
+  provider_name              String?                   @map("provider_name")
+  model_id                   String?                   @map("model_id")
+  model_name                 String?                   @map("model_name")
+  prompt_tokens              Int?                      @map("prompt_tokens")
+  completion_tokens          Int?                      @map("completion_tokens")
+  total_tokens               Int?                      @map("total_tokens")
   /// E53-s4: per-request reasoning / chain-of-thought tokens reported by
   /// providers in `usage.completion_tokens_details.reasoning_tokens`
   /// (OpenAI / DeepSeek / Moonshot / Kimi), `usage.thoughtsTokenCount`
   /// (Gemini), and `usage.thinking_tokens` (Anthropic). NULL when the
   /// upstream doesn't report it. No backfill — historical rows stay NULL.
-  reasoning_tokens          Int?                      @map("reasoning_tokens")
+  reasoning_tokens           Int?                      @map("reasoning_tokens")
   /// E58-S1: cost in USD attributable to reasoning_tokens. Computed as
   /// ReasoningTokens × outputPricePerMillion / 1e6 (reasoning is billed
   /// at the output rate by all three frontier providers). Already counted
   /// inside cost_usd; surfaced separately for the Cost dashboard's
   /// "reasoning ratio" widget. NULL when reasoning_tokens is NULL.
-  reasoning_cost_usd        Decimal?                  @map("reasoning_cost_usd") @db.Decimal(12, 8)
-  estimated_cost_usd        Decimal?                  @map("estimated_cost_usd") @db.Decimal(12, 6)
+  reasoning_cost_usd         Decimal?                  @map("reasoning_cost_usd") @db.Decimal(12, 8)
+  estimated_cost_usd         Decimal?                  @map("estimated_cost_usd") @db.Decimal(12, 6)
   // E59-S1: cache outcome — unified rollup (HIT | MISS) plus four detail columns.
   // cache_status is derived at write time from gateway_cache_status + provider_cache_status
   // per cost-estimation-architecture.md § 6.4. UI filters bind only to cache_status;
   // the four detail columns surface in the audit drawer via the three layouts in § 6.4.
-  cache_status              String?                   @map("cache_status")
-  gateway_cache_status      String?                   @map("gateway_cache_status")
-  gateway_cache_skip_reason String?                   @map("gateway_cache_skip_reason")
-  gateway_cache_kind        String?                   @map("gateway_cache_kind")
+  cache_status               String?                   @map("cache_status")
+  gateway_cache_status       String?                   @map("gateway_cache_status")
+  gateway_cache_skip_reason  String?                   @map("gateway_cache_skip_reason")
+  gateway_cache_kind         String?                   @map("gateway_cache_kind")
   /// 2026-05-21 E68 bug fix: Redis HASH key of the L2 semantic-cache entry
   /// that served this row. Stamped only when gateway_cache_kind='semantic'.
   /// Format: "<redis_index_name>:<sha256(EmbeddingInput)[:16]>". Surfaced to
@@ -1338,28 +1346,28 @@ model traffic_event {
   /// poison-list POST carries the actual key the Reader's IsPoisoned check
   /// will match against; before this column the UI posted traffic_event.id
   /// which never matched, making the action a silent no-op in production.
-  gateway_cache_l2_entry_key String?                  @map("gateway_cache_l2_entry_key")
-  provider_cache_status     String?                   @map("provider_cache_status")
-  routed_provider_id        String?                   @map("routed_provider_id")
-  routed_provider_name      String?                   @map("routed_provider_name")
-  routed_model_id           String?                   @map("routed_model_id")
-  routed_model_name         String?                   @map("routed_model_name")
-  routing_rule_id           String?                   @map("routing_rule_id")
-  routing_rule_name         String?                   @map("routing_rule_name")
+  gateway_cache_l2_entry_key String?                   @map("gateway_cache_l2_entry_key")
+  provider_cache_status      String?                   @map("provider_cache_status")
+  routed_provider_id         String?                   @map("routed_provider_id")
+  routed_provider_name       String?                   @map("routed_provider_name")
+  routed_model_id            String?                   @map("routed_model_id")
+  routed_model_name          String?                   @map("routed_model_name")
+  routing_rule_id            String?                   @map("routing_rule_id")
+  routing_rule_name          String?                   @map("routing_rule_name")
   // Compliance — dual pipeline (E33). Request and response stages each
   // record their own decision, reason, reason_code, hooks_pipeline, and
   // blocking_rule. Analytics that want a "single overall decision"
   // derive worst_of(request_hook_decision, response_hook_decision).
-  request_hook_decision     String?                   @map("request_hook_decision")
-  request_hook_reason       String?                   @map("request_hook_reason")
-  request_hook_reason_code  String?                   @map("request_hook_reason_code")
-  request_blocking_rule     Json?                     @map("request_blocking_rule")
-  response_hook_decision    String?                   @map("response_hook_decision")
-  response_hook_reason      String?                   @map("response_hook_reason")
-  response_hook_reason_code String?                   @map("response_hook_reason_code")
-  response_blocking_rule    Json?                     @map("response_blocking_rule")
-  compliance_tags           String[]                  @default([]) @map("compliance_tags")
-  bump_status               String?                   @map("bump_status")
+  request_hook_decision      String?                   @map("request_hook_decision")
+  request_hook_reason        String?                   @map("request_hook_reason")
+  request_hook_reason_code   String?                   @map("request_hook_reason_code")
+  request_blocking_rule      Json?                     @map("request_blocking_rule")
+  response_hook_decision     String?                   @map("response_hook_decision")
+  response_hook_reason       String?                   @map("response_hook_reason")
+  response_hook_reason_code  String?                   @map("response_hook_reason_code")
+  response_blocking_rule     Json?                     @map("response_blocking_rule")
+  compliance_tags            String[]                  @default([]) @map("compliance_tags")
+  bump_status                String?                   @map("bump_status")
   // E60 agent attestation passthrough. Populated by compliance-proxy when
   // an incoming CONNECT carried a verified X-Nexus-Attestation header and
   // CP transparently tunneled the connection (skipping its own MITM + hook
@@ -1369,19 +1377,19 @@ model traffic_event {
   // a JOIN. See docs/developers/architecture/services/agent/agent-attestation-architecture.md
   // § 5 — the BumpStatus column carries "BUMP_DISABLED_ATTESTATION" on
   // the same rows for dashboards that don't yet read these columns.
-  attestation_verified      Boolean?                  @map("attestation_verified")
-  attestation_agent_id      String?                   @map("attestation_agent_id")
+  attestation_verified       Boolean?                  @map("attestation_verified")
+  attestation_agent_id       String?                   @map("attestation_agent_id")
   // LLM signal extraction (E18)
   /// Provider-identifying prefix fragment of the caller's API key (e.g. "sk-ant-", "nvk_", "AIza", "aws-sigv4").
-  api_key_class             String?                   @map("api_key_class")
+  api_key_class              String?                   @map("api_key_class")
   /// SHA256(key)[:8] hex. Non-reversible; stable per-key. Semantics depend on `source`:
   /// ai-gateway → caller's virtual key (internal attribution);
   /// compliance-proxy/agent → caller's real provider key (external attribution).
-  api_key_fingerprint       String?                   @map("api_key_fingerprint")
+  api_key_fingerprint        String?                   @map("api_key_fingerprint")
   /// Extraction tier: ok | streaming_reported | streaming_estimated |
   /// streaming_unavailable | parse_failed | no_body | non_llm. CHECK constraint
   /// enforced via raw SQL migration (see migration file).
-  usage_extraction_status   String?                   @map("usage_extraction_status")
+  usage_extraction_status    String?                   @map("usage_extraction_status")
   /// Structured failure-reason classification (E34-S3). Any producer that
   /// classifies a non-2xx outcome may populate this with its own enum
   /// vocabulary. ai-gateway uses RATE_LIMITED / QUOTA_EXCEEDED /
@@ -1392,15 +1400,15 @@ model traffic_event {
   /// failures the producer chose not to classify (e.g. raw upstream
   /// 5xx propagated unchanged — leave NULL so upstream-error alerts can
   /// distinguish them from Nexus-classified failures).
-  error_code                String?                   @map("error_code")
+  error_code                 String?                   @map("error_code")
   /// Human-readable failure description paired with error_code. For ops to
   /// skim without looking up the code dictionary (the `message` arg to
   /// writeDetailedError on the ai-gateway side). NULL when error_code is NULL.
-  error_reason              String?                   @map("error_reason")
+  error_reason               String?                   @map("error_reason")
   // Agent-specific
-  source_process            String?                   @map("source_process")
-  action                    String?
-  internal_purpose          String?                   @map("internal_purpose") // "ai-guard" | null; filter in analytics
+  source_process             String?                   @map("source_process")
+  action                     String?
+  internal_purpose           String?                   @map("internal_purpose") // "ai-guard" | null; filter in analytics
   /// IANA timezone of the event's owning org at the time of capture
   /// (e.g. "Asia/Shanghai"). The `timestamp` column is always a UTC
   /// instant; this field tells compliance / regulatory readers what
@@ -1408,54 +1416,54 @@ model traffic_event {
   /// generated, so reports can render in jurisdiction-local time
   /// without ambiguity. Empty/null for system rows that don't bind
   /// to a tenant. E32-S1.
-  origin_tz                 String?                   @map("origin_tz")
+  origin_tz                  String?                   @map("origin_tz")
   // JSONB
-  request_hooks_pipeline    Json?                     @map("request_hooks_pipeline")
-  response_hooks_pipeline   Json?                     @map("response_hooks_pipeline")
-  routing_trace             Json?                     @map("routing_trace")
-  details                   Json?
+  request_hooks_pipeline     Json?                     @map("request_hooks_pipeline")
+  response_hooks_pipeline    Json?                     @map("response_hooks_pipeline")
+  routing_trace              Json?                     @map("routing_trace")
+  details                    Json?
   // Prompt cache metrics (E38). All nullable; absent when provider did not report cache usage.
   /// Tokens written to upstream provider prompt cache this request (Anthropic: cache_creation_input_tokens).
-  cache_creation_tokens     Int?                      @map("cache_creation_tokens")
+  cache_creation_tokens      Int?                      @map("cache_creation_tokens")
   /// Tokens served from upstream provider prompt cache this request (Anthropic: cache_read_input_tokens; OpenAI: prompt_tokens_details.cached_tokens).
-  cache_read_tokens         Int?                      @map("cache_read_tokens")
+  cache_read_tokens          Int?                      @map("cache_read_tokens")
   /// Number of normaliser rule matches that removed bytes from the upstream request body (E38-S3).
-  normalized_strip_count    Int?                      @map("normalized_strip_count")
+  normalized_strip_count     Int?                      @map("normalized_strip_count")
   /// Total bytes removed by normaliser rules from the upstream request body.
-  normalized_strip_bytes    Int?                      @map("normalized_strip_bytes")
+  normalized_strip_bytes     Int?                      @map("normalized_strip_bytes")
   /// Number of cache_control markers injected by L4 injection (0–4).
-  cache_marker_injected     Int?                      @map("cache_marker_injected")
+  cache_marker_injected      Int?                      @map("cache_marker_injected")
   /// Cost of writing to provider prompt cache this request (USD), computed from provider_pricing.
-  cache_write_cost_usd      Decimal?                  @map("cache_write_cost_usd") @db.Decimal(12, 8)
+  cache_write_cost_usd       Decimal?                  @map("cache_write_cost_usd") @db.Decimal(12, 8)
   /// Savings from reading from provider prompt cache this request (USD).
-  cache_read_savings_usd    Decimal?                  @map("cache_read_savings_usd") @db.Decimal(12, 8)
+  cache_read_savings_usd     Decimal?                  @map("cache_read_savings_usd") @db.Decimal(12, 8)
   /// Net cache savings = cache_read_savings_usd - cache_write_cost_usd. Negative on first turn (write cost), positive on subsequent turns.
-  cache_net_savings_usd     Decimal?                  @map("cache_net_savings_usd") @db.Decimal(12, 8)
+  cache_net_savings_usd      Decimal?                  @map("cache_net_savings_usd") @db.Decimal(12, 8)
   /// Full cost that would have been charged if the L1/L2/L3 response cache had missed (USD). Zero or null for cache misses.
-  gateway_cache_savings_usd Decimal?                  @map("gateway_cache_savings_usd") @db.Decimal(12, 8)
+  gateway_cache_savings_usd  Decimal?                  @map("gateway_cache_savings_usd") @db.Decimal(12, 8)
   /// E61-S2: cost in USD of the embedding call on the L1-miss path (DECIMAL(20,10)
   /// for high-precision accounting at sub-cent granularity). NULL on rows where
   /// no embedding was produced (L1 hit, semantic disabled, or pre-E61). Used by
   /// Cache ROI: net_savings = gateway_cache_savings_usd - SUM(embedding_cost_usd).
-  embedding_cost_usd        Decimal?                  @map("embedding_cost_usd") @db.Decimal(20, 10)
+  embedding_cost_usd         Decimal?                  @map("embedding_cost_usd") @db.Decimal(20, 10)
   /// E61-S2: which embedding model produced the embedding for this request.
   /// Nullable FK with SET NULL on provider/model removal so historical rows stay
   /// intact. Records model attribution for per-model ROI breakdown after admin
   /// swaps the L1 embedding model. Disambiguated from the upstream routing model
   /// (model_id) via a named relation.
-  embedding_model_id        String?                   @map("embedding_model_id")
-  embeddingModel            Model?                    @relation("EmbeddingModelOnTraffic", fields: [embedding_model_id], references: [id], onDelete: SetNull)
+  embedding_model_id         String?                   @map("embedding_model_id")
+  embeddingModel             Model?                    @relation("EmbeddingModelOnTraffic", fields: [embedding_model_id], references: [id], onDelete: SetNull)
   /// 2026-05-21 internal-ops cost accounting: ai-guard classifier call
   /// cost (when an admin-enabled ai-guard hook ran an LLM-backed classifier).
   /// Same per-token formula as the primary cost. NULL when no ai-guard
   /// hook fired on this request.
-  ai_guard_cost_usd         Decimal?                  @map("ai_guard_cost_usd") @db.Decimal(20, 10)
+  ai_guard_cost_usd          Decimal?                  @map("ai_guard_cost_usd") @db.Decimal(20, 10)
   /// 2026-05-21 catch-all for future hook-type internal model calls
   /// (prompt-shield, custom hooks invoking an LLM). Shape:
   ///   [{type, model, prompt_tokens, completion_tokens, cost_usd, latency_ms}]
   /// Reserved for cost types we don't yet have a dedicated column for; on
   /// promotion to a known type a follow-up migration adds the column.
-  internal_ops_breakdown    Json?                     @map("internal_ops_breakdown")
+  internal_ops_breakdown     Json?                     @map("internal_ops_breakdown")
   // Thing attribution (E39 follow-up). Identifies the Thing instance that
   // emitted this traffic_event. Semantic depends on `source`:
   //   source='agent'            → originating agent device (Hub fills from
@@ -1466,15 +1474,15 @@ model traffic_event {
   //                               request (producer fills from its own cfg).
   // NULL on rows written before this wire-up landed.
   /// Thing ID of the Thing instance that emitted this traffic_event.
-  thing_id                  String?                   @map("thing_id")
+  thing_id                   String?                   @map("thing_id")
   /// Denormalized thing.name SNAPSHOT at emit time — NOT auto-updated when the
   /// thing is later renamed. Treat as the historical label; JOIN thing on
   /// thing_id for the live name. Kept top-level so analytics can group/display
   /// without forcing a JOIN.
-  thing_name                String?                   @map("thing_name")
+  thing_name                 String?                   @map("thing_name")
   // Provider credential attribution (E41). Top-level for windowed group-by in the
   // credential-health-rollup job. Also available via identity->'apiCredential'->>'id'.
-  credential_id             String?                   @map("credential_id")
+  credential_id              String?                   @map("credential_id")
   // E48 emergency-passthrough audit fan-out. Empty / NULL when no bypass
   // fired. passthrough_flags carries the canonical-order slice from
   // passthrough.Config.Flags() — currently one or more of
@@ -1483,15 +1491,15 @@ model traffic_event {
   // gateway_passthrough_config_*). Partial index on
   // (timestamp DESC) WHERE passthrough_flags IS NOT NULL optimises
   // "show every request that bypassed compliance in the last 30 days".
-  passthrough_flags         String[]                  @map("passthrough_flags")
-  passthrough_reason        String?                   @map("passthrough_reason")
+  passthrough_flags          String[]                  @map("passthrough_flags")
+  passthrough_reason         String?                   @map("passthrough_reason")
   // Relations
-  payload                   traffic_event_payload?
+  payload                    traffic_event_payload?
   /// E46 — canonical normalized representation of the captured request/response.
   /// Populated at capture time by the shared/normalize layer; NULL when capture
   /// was disabled, the body was unsupported, or normalize ran but failed
   /// (the row itself records the failure with status='failed').
-  normalized                traffic_event_normalized?
+  normalized                 traffic_event_normalized?
 
   @@index([source, timestamp])
   @@index([timestamp])
@@ -1985,17 +1993,21 @@ model UserFederatedIdentity {
 /// (requirePkce = true, no secret); the dashboard BFF is a confidential client
 /// (clientSecretHash populated).
 model OAuthClient {
-  id                String   @id
-  name              String
-  type              String // public | confidential
-  redirectUris      String[]
-  allowedScopes     String[]
-  requirePkce       Boolean  @default(true)
-  accessTtlSeconds  Int      @default(3600)
-  refreshTtlSeconds Int      @default(86400)
-  clientSecretHash  String?
-  createdAt         DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+  id                  String    @id
+  name                String
+  type                String // public | confidential
+  redirectUris        String[]
+  allowedScopes       String[]
+  requirePkce         Boolean   @default(true)
+  accessTtlSeconds    Int       @default(3600)
+  refreshTtlSeconds   Int       @default(86400)
+  clientSecretHash    String?
+  /// Stamp of the last successful secret rotation. NULL means the secret has
+  /// never been rotated since creation. Surfaced in the admin detail page so
+  /// admins can judge whether a stale-secret incident is plausible.
+  lastSecretRotatedAt DateTime? @db.Timestamptz(3)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
 
   refreshTokens RefreshToken[]
 
@@ -2018,10 +2030,11 @@ model RefreshToken {
   createdAt DateTime  @default(now()) @db.Timestamptz(3)
 
   user   NexusUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  client OAuthClient @relation(fields: [clientId], references: [id])
+  client OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
   @@index([userId])
+  @@index([clientId])
   @@index([expiresAt])
   @@map("RefreshToken")
 }
@@ -2093,7 +2106,7 @@ model JobRun {
 /// Real-time ops metric samples reported by every Thing (services + agents).
 /// `value` is nullable because histograms put their data in `metadata.buckets`.
 model MetricOpsRaw {
-  id           String   @id @default(uuid()) @db.Uuid
+  id           String   @default(uuid()) @db.Uuid
   sampledAt    DateTime @map("sampled_at") @db.Timestamptz(6)
   thingId      String   @map("thing_id")
   thingType    String   @map("thing_type")
@@ -2105,11 +2118,38 @@ model MetricOpsRaw {
 
   thing Thing @relation(fields: [thingId], references: [id], onDelete: Cascade)
 
+  // metric_ops_raw is RANGE-partitioned by sampled_at at the DB level (see
+  // migration 20260613000002_partition_metric_ops_raw). A partitioned table's
+  // primary key must include the partition key, so id is paired with sampledAt.
+  @@id([sampledAt, id])
   @@unique([sampledAt, thingId, metricName, dimensionKey])
   @@index([thingId, sampledAt(sort: Desc)])
   @@index([metricName, sampledAt(sort: Desc)])
   @@index([thingType, sampledAt(sort: Desc)])
   @@map("metric_ops_raw")
+}
+
+/// 5-minute rollup — the smallest persisted aggregation tier. metric_ops_raw is
+/// aggregated into this table by the ops-rollup-5m job; the 1h/1d/1mo tiers
+/// cascade from here. Same shape as MetricOpsRollup1h; real uniqueness via the
+/// `uq_ops_rollup_5m` partial-COALESCE UNIQUE INDEX added in raw SQL.
+model MetricOpsRollup5m {
+  id           String   @id @default(uuid()) @db.Uuid
+  bucketStart  DateTime @map("bucket_start") @db.Timestamptz(6)
+  thingId      String?  @map("thing_id")
+  thingType    String   @map("thing_type")
+  metricName   String   @map("metric_name")
+  metricKind   String   @map("metric_kind")
+  dimensionKey String   @default("") @map("dimension_key")
+  valueAvg     Float?   @map("value_avg") @db.DoublePrecision
+  valueSum     Float?   @map("value_sum") @db.DoublePrecision
+  valueMin     Float?   @map("value_min") @db.DoublePrecision
+  valueMax     Float?   @map("value_max") @db.DoublePrecision
+  sampleCount  Int      @map("sample_count")
+  metadata     Json?
+
+  @@index([metricName, bucketStart(sort: Desc)])
+  @@map("metric_ops_rollup_5m")
 }
 
 /// 1-hour rollup. `thingId` is nullable: NULL means the row is a fleet aggregate.
@@ -2447,16 +2487,83 @@ model GatewayPassthroughConfigProvider {
 /// the redeliver-forever loop and lets the broker move on; operators
 /// inspect and decide whether to fix the bug + requeue or discard.
 model traffic_event_dlq {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  msgId           String   @map("msg_id")
-  subject         String
-  payload         Bytes
-  deliveryCount   Int      @map("delivery_count")
-  lastError       String?  @map("last_error")
-  firstSeenAt     DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
-  dlqInsertedAt   DateTime @default(now()) @map("dlq_inserted_at") @db.Timestamptz(6)
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  msgId         String   @map("msg_id")
+  subject       String
+  payload       Bytes
+  deliveryCount Int      @map("delivery_count")
+  lastError     String?  @map("last_error")
+  firstSeenAt   DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  dlqInsertedAt DateTime @default(now()) @map("dlq_inserted_at") @db.Timestamptz(6)
 
   @@index([msgId], map: "traffic_event_dlq_msg_id_idx")
   @@index([dlqInsertedAt(sort: Desc)], map: "traffic_event_dlq_inserted_at_idx")
   @@map("traffic_event_dlq")
+}
+
+/// E90 web assistant ("Chat with Nexus") session metadata. The transcript content
+/// lives in object storage (key by userId+id); this row is the DB index used for
+/// listing / rename / delete. Strong per-user isolation: every runtime query
+/// filters by userId, and the userId FK cascade-deletes a user's sessions.
+model AssistantSession {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String   @default("")
+  model     String   @default("")
+  msgCount  Int      @default(0)
+  lastSeq   Int      @default(0)
+  spillRef  Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([userId, updatedAt])
+}
+
+/// E90 web assistant durable memory, isolated per user (recall/remember/update/forget).
+model AssistantMemory {
+  userId    String
+  name      String
+  type      String
+  body      String
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@id([userId, name])
+}
+
+/// E90 web assistant sandbox file metadata. Content lives in object storage at
+/// assistant/<userId>/<sessionId>/files/<id>; isolated per user.
+model AssistantFile {
+  id          String   @id @default(uuid())
+  userId      String
+  sessionId   String
+  name        String
+  size        Int
+  contentType String   @default("application/octet-stream")
+  spillRef    Json
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, sessionId])
+}
+
+/// E90 P2b NFR-10: a durable record of a parked dangerous-write confirmation. The
+/// in-memory confirm registry holds the live rendezvous channel; this row mirrors it so
+/// a POST /confirm that misses the in-memory entry can tell "the pod restarted, re-issue"
+/// from "expired/unknown". makeConfirm writes the row on register and deletes it when the
+/// confirm resolves (defer), so a row that outlives confirmTimeout is an orphan from a
+/// restart. It does NOT resume the write (the turn goroutine is in-memory and gone after a
+/// restart) — it drives the clearer re-issue error + cross-pod visibility. Isolated per
+/// user (I3); cascade-deleted with the user.
+model AssistantPendingConfirm {
+  key            String   @id // userId:sessionId:callId
+  userId         String
+  sessionId      String
+  callId         String
+  tool           String
+  input          Json
+  reason         String   @default("")
+  requiresSecond Boolean  @default(false)
+  isProd         Boolean  @default(false)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, createdAt])
 }

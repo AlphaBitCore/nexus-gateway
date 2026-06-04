@@ -1,6 +1,6 @@
 # Control Plane UI — IAM
 
-The IAM sidebar section manages tenancy and access control. It has seven leaves: **Organizations**, **Projects**, **Users**, **Roles**, **Policies**, **Simulator**, and **Identity Provider**. Sidebar labels and routes are defined in `packages/control-plane-ui/src/routes/shellRouteConfig.tsx`.
+The IAM sidebar section manages tenancy and access control. It has eight leaves: **Organizations**, **Projects**, **Users**, **Roles**, **Policies**, **Simulator**, **OAuth Clients**, and **Identity Provider**. Sidebar labels and routes are defined in `packages/control-plane-ui/src/routes/shellRouteConfig.tsx`.
 
 Nexus is the service provider (SP) in any federation; "identity provider" here always means an external IdP that Nexus federates with.
 
@@ -78,6 +78,24 @@ A user's effective permissions come from two sources, shown by a badge on each p
 
 **Where the data comes from.** `iamApi` — `simulate`, `getActionCatalog`.
 
+## OAuth Clients
+
+**Purpose.** The inventory of third-party applications allowed to authenticate to the platform via OAuth — what `client_id` values the auth server will accept on `/oauth/authorize` and `/oauth/token`. The seeded clients (the Control Plane web console, the agent desktop, the operator-toolkit TUI) live in the same table; this page manages the admin-managed registrations alongside them.
+
+**List page.** Columns: id (monospace), name, type (a pill of either `Public` or `Confidential`), the redirect-URI count (hover for the full list), the allowed-scopes count (hover for the full list), and created date. Row click drills into the detail page; the row's kebab carries Delete only — Edit and Rotate live on the detail page where the active-refresh-token count is in scope.
+
+**Create and detail.** Creation collects an id (kebab-case slug, immutable after create), a name, a type (`public` or `confidential`, also immutable after create), one or more redirect URIs (only `https://`, `http://localhost`, and `http://127.0.0.1` are accepted), a list of allowed scopes (any lowercase scope token; the common ones — `openid`, `profile`, `email`, `offline_access`, `admin`, `traffic:write` — autocomplete), a require-PKCE flag (forced on and disabled for public clients), and access + refresh token TTLs in seconds. The form starts from sensible defaults: `confidential`, PKCE on, `[openid, profile, email]`, 1 hour access TTL, 24 hour refresh TTL.
+
+The detail page is a five-card read-mode layout — Authentication, Redirect URIs, Allowed Scopes, Security, and Activity — with a sticky action header carrying Edit, Rotate secret (confidential only), and Delete. The Authentication card surfaces the client id (with copy) and, for confidential clients, a masked secret with a "last rotated" relative timestamp. The Allowed Scopes card renders each scope as a chip with a plain-English explanation; the `admin` scope shows in a warning tone because it bypasses individual resource grants. The Activity card surfaces the live `activeRefreshTokenCount` — rotating the secret does **not** revoke those tokens, so the rotate-confirm dialog repeats that warning with the live count interpolated in.
+
+**Secret reveal.** For confidential clients, the plaintext `client_secret` is returned exactly once — on create and on each rotate-secret call. The reveal modal is hard-gated: an explicit "I have copied and stored this secret securely" checkbox must be ticked before the Close button enables; the secret is never echoed in any other response, audit row, or log line, and cannot be recovered later. Losing the plaintext forces a rotation.
+
+**Delete cascade.** Deleting an OAuth client cascades to its `RefreshToken` rows via the FK `onDelete: Cascade`, immediately invalidating any session that was issued under that registration. The delete-confirm dialog is type-to-confirm — the admin must type the client id exactly — and surfaces the live active-refresh-token count so the blast radius is visible before commit.
+
+**Key concepts.** Two types: **Public** clients (browser SPAs, native CLIs) authenticate by PKCE alone and the token endpoint rejects any presented `client_secret` for them. **Confidential** clients carry a `client_secret` and authenticate to `/oauth/token` via the RFC 6749 §2.3.1 `Authorization: Basic` header (or the `client_secret` form fallback). Rotating a secret invalidates the previous secret immediately but does not revoke outstanding refresh tokens; consumers continue to grant access until the refresh TTL elapses. The IAM resource is `oauth-client`, with `read` / `create` / `update` / `delete` / `rotate` verbs — UI affordances are gated against the matching verbs so a holder of `oauth-client.read` sees the list and detail but no Edit / Rotate / Delete buttons.
+
+**Where the data comes from.** `oauthClientApi` — `list`, `getOne`, `create`, `update`, `rotateSecret`, `remove`. The `getOne` response embeds `activeRefreshTokenCount` so the detail page renders the Activity card in a single round-trip; the `list` response omits the aggregate to keep the page fast.
+
 ## Identity Provider
 
 **Purpose.** Manage the external identity providers Nexus federates with for single sign-on.
@@ -98,6 +116,7 @@ A user's effective permissions come from two sources, shown by a badge on each p
 - `packages/control-plane-ui/src/pages/iam/projects/` — Projects list, create, detail
 - `packages/control-plane-ui/src/pages/iam/users/` and `packages/control-plane-ui/src/pages/iam/user-detail/` — Users list and detail tabs (Info, Permissions, Devices)
 - `packages/control-plane-ui/src/pages/iam/roles/` — Roles (IAM groups) list, form, detail
+- `packages/control-plane-ui/src/pages/iam/oauth-clients/` — OAuth Clients list, detail (5 cards), form (create/edit), and the three confirm dialogs
 - `packages/control-plane-ui/src/pages/iam/policies/` — Policy list, editor, detail, and principal-policies view
 - `packages/control-plane-ui/src/pages/iam/simulator/IamSimulator.tsx` — Simulator
 - `packages/control-plane-ui/src/pages/devices/auth/` — Identity Provider pages (routed under `/iam/identity-providers`)

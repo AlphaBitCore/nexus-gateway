@@ -22,10 +22,19 @@ Gateway-issued virtual keys are prefixed `nvk_`. The caller never sends the upst
 | `POST /api/paas/v4/chat/completions`, `/api/paas/v4/embeddings` | GLM-native | chat: yes |
 | `POST /openai/deployments/{deployment}/chat/completions`, `/embeddings` | Azure OpenAI-native | chat: yes |
 | `POST /v1beta/models/{model}:generateContent`, `:streamGenerateContent` | Gemini-native | via the stream variant |
+| `GET /v1/models`, `GET /v1/models/{model}` | model catalog | no |
 | `POST /v1/estimate` | cost preview (no upstream call) | no |
 | `POST /v1/ai-guard/classify`, `/v1/ai-guard/compliance-webhook` | AI-Guard classifier | no |
 
 The canonical `/v1/*` routes are the primary surface. The provider-native shims mirror a provider's own path and body so an SDK already pointed at GLM, Azure, or Gemini works against the gateway with only a base-URL and credential change. `/v1/estimate` returns the projected cost of a request without calling upstream (see [cost-estimation-architecture.md](cost-estimation-architecture.md)); the AI-Guard routes are covered in [aiguard-architecture.md](aiguard-architecture.md).
+
+### Model catalog
+
+`GET /v1/models` and `GET /v1/models/{model}` return the catalog of models the gateway serves. Both require a valid virtual key (parity with every upstream provider's `/v1/models`); an unauthenticated call is rejected with `401`. The result is scoped to the key: a virtual key restricted to specific models sees only those in the list, and requesting the detail of a model outside that scope returns `404` (the model is hidden rather than revealed).
+
+The response shape follows the caller's SDK. Send an `anthropic-version` header to get Anthropic's native `/v1/models` shape (`data[].{type:"model", id, display_name, created_at, max_input_tokens, max_tokens}` plus top-level `first_id`/`last_id`/`has_more`); otherwise the OpenAI-style `{object:"list", data:[…]}`. `GET /v1/models/{model}` returns a single entry in the same shape.
+
+Each entry carries Nexus extension fields so a client can choose a model locally without a second round-trip: `aliases` (alternate request strings that resolve to the model), `features` (capability flags such as `vision`, `function_calling`, `json_mode`, `thinking`), the context window (`maxContextTokens`/`maxOutputTokens`, carried as the native `max_input_tokens`/`max_tokens` in the Anthropic shape), `type` plus `inputModalities`/`outputModalities`, `lifecycle` (`ga`/`preview`/`deprecated`), `capabilityJson` (embedding dimensions, batch limits), and `pricing` (configured USD-per-million-token input/output rates plus cached-input read/write rates). SDKs ignore the extension keys; any field is omitted when unset.
 
 ## 3. Cross-format translation
 
@@ -68,6 +77,7 @@ Errors are returned in the envelope of the API shape you called, with the HTTP s
 
 - `packages/ai-gateway/internal/auth/vkauth/vkauth.go` — virtual-key carriers and `nvk_` prefix
 - `packages/ai-gateway/cmd/ai-gateway/wiring/routes.go` — ingress route registration
+- `packages/ai-gateway/internal/ingress/models/models.go` — model-catalog endpoints (`/v1/models`, `/v1/models/{model}`): vk enforcement, per-key filtering, response shapes
 - `packages/ai-gateway/internal/execution/canonicalbridge/` — ingress↔canonical translation
 - `packages/ai-gateway/internal/ingress/proxy/proxy.go` — cross-format filter, Responses guard, response headers, no-cache handling
 - `packages/ai-gateway/internal/ingress/envelope/error_envelope.go` — per-ingress error envelopes

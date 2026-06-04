@@ -4,22 +4,22 @@ Prompt caching is provider-side caching of a request's large, stable prefix so r
 
 ## 1. Gemini cachedContent
 
-When a Gemini request carries a large `systemInstruction`, the gateway uploads that instruction to Gemini's `cachedContents` API once and rewrites later requests to reference the returned cache object instead of resending the full text — cutting prompt-token cost on every reuse. The lifecycle manager lives in `packages/ai-gateway/internal/cache/gemini`.
+When a Gemini request carries a large `systemInstruction`, the gateway uploads that instruction to Gemini's `cachedContents` API once and rewrites later requests to reference the returned cache object instead of resending the full text — cutting prompt-token cost on every reuse. When the same request also carries `tools` / `toolConfig` (function-calling — e.g. the operator agent), those blocks are folded into the same cache object: Gemini **forbids** a request that references a `cachedContent` from also setting `systemInstruction`, `tools`, or `toolConfig` (it returns `400 CachedContent can not be used with GenerateContent request setting system_instruction, tools or tool_config`), so anything cached must be removed from the wire on a hit. The lifecycle manager lives in `packages/ai-gateway/internal/cache/gemini`.
 
 `Manager.Inject` is the entry point and is fully fail-open — the caller always uses the returned body, whatever happens:
 
 1. If the manager is disabled, the body has no `systemInstruction`, or that instruction is shorter than `min_system_chars`, the request passes through unchanged.
-2. Otherwise the manager computes a content hash over `(providerID, model, systemInstruction)` and looks it up in Redis.
-3. **Hit** — it rewrites the body (`rewriteBody` deletes `systemInstruction` and sets `cachedContent` to the stored name) and returns an `InjectResult` carrying the cache name and an `Invalidate` closure.
+2. Otherwise the manager computes a content hash over `(providerID, model, systemInstruction, tools, toolConfig)` — `tools`/`toolConfig` only contribute when present — and looks it up in Redis.
+3. **Hit** — it rewrites the body (`rewriteBody` deletes `systemInstruction`, `tools`, and `toolConfig`, then sets `cachedContent` to the stored name) and returns an `InjectResult` carrying the cache name and an `Invalidate` closure.
 4. **Miss** — it fires an asynchronous creation goroutine and passes the original body through this time; the next matching request gets the hit.
 
 ### Content hash
 
-The Redis key is `gemini:cc:<sha256(providerID|model|canonical-systemInstruction)>`. The system instruction is canonicalized through a JSON round-trip (sorted keys, whitespace stripped) before hashing, so the same logical instruction produces the same key whether it arrived through the canonical bridge (compact JSON) or through native `/v1beta` passthrough (pretty JSON, different key order). Without that normalization the two ingresses would hash differently and never reuse each other's cached content.
+The Redis key is `gemini:cc:<sha256(providerID|model|canonical-systemInstruction[|tools|canonical-tools][|toolcfg|canonical-toolConfig])>`. The system instruction (and `tools`/`toolConfig` when present) is canonicalized through a JSON round-trip (sorted keys, whitespace stripped) before hashing, so the same logical instruction produces the same key whether it arrived through the canonical bridge (compact JSON) or through native `/v1beta` passthrough (pretty JSON, different key order). Without that normalization the two ingresses would hash differently and never reuse each other's cached content. The `tools`/`toolConfig` segments are appended only when those blocks are present, so a request with no tools keys identically to the historical system-only form — existing cache entries keep hitting — while two requests that share a system prompt but use different tool sets correctly map to different cache objects.
 
 ### Asynchronous creation and the TTL invariant
 
-On a miss, `asyncCreate` resolves the provider's API key and base URL, calls `POST {baseURL}/v1beta/cachedContents` (adding the required `models/` prefix and a `ttl` of `<n>s`), and stores the returned record in Redis. The Redis TTL is set **strictly shorter** than the Gemini object's TTL — `ttl_seconds - 300`, floored at 60 seconds. This is a load-bearing invariant: if Redis outlived the Gemini object it would keep vending a `cachedContent` name that Gemini had already evicted, and every request would fail with `403 CachedContent not found`. Keeping Redis shorter guarantees the reference is dropped before Gemini's own eviction.
+On a miss, `asyncCreate` resolves the provider's API key and base URL, calls `POST {baseURL}/v1beta/cachedContents` (adding the required `models/` prefix, the request's `tools`/`toolConfig` when present, and a `ttl` of `<n>s`), and stores the returned record in Redis. The Redis TTL is set **strictly shorter** than the Gemini object's TTL — `ttl_seconds - 300`, floored at 60 seconds. This is a load-bearing invariant: if Redis outlived the Gemini object it would keep vending a `cachedContent` name that Gemini had already evicted, and every request would fail with `403 CachedContent not found`. Keeping Redis shorter guarantees the reference is dropped before Gemini's own eviction.
 
 ### Stale-reference invalidation
 

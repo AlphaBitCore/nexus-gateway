@@ -103,6 +103,46 @@ published to MQ, so a publish failure never leaves a revoked session unrecorded.
 The event carries the target session id; the refresh replay hook publishes
 through the same path so a detected compromise revokes the entire session.
 
+## Client registration
+
+`OAuthClient` is the admin-managed inventory of which third-party applications
+may speak OAuth to the platform — what `client_id` values the auth server will
+accept on `/oauth/authorize` and `/oauth/token`. The Control Plane exposes a
+CRUD + rotate-secret admin API under `/api/admin/oauth-clients` so the inventory
+is operable from the admin UI without psql; the seeded clients
+(`web-console`, `agent-desktop`, `cp-ui`, the operator-toolkit TUI) co-exist
+with admin-managed registrations in the same table.
+
+A client is one of two `type` values. **Public** clients (browser SPAs, native
+CLIs) authenticate by PKCE alone; the token endpoint rejects any presented
+`client_secret` for them so a misconfigured caller fails loudly rather than
+silently downgrading the security model. **Confidential** clients (server-side
+backends) carry a `client_secret`; the token endpoint accepts it via the RFC
+6749 §2.3.1 preferred `Authorization: Basic` header and falls through to the
+`client_secret` form field. The handler bcrypt-compares against
+`OAuthClient.clientSecretHash`; a missing or empty hash is treated as auth
+failure rather than bypass. For confidential clients, client authentication
+runs *before* the auth-code single-use store is touched, so a wrong secret
+never burns a valid authorization code.
+
+The plaintext secret is returned exactly once — on create and on each
+rotate-secret call — and then unrecoverable. The admin UI surfaces it through
+a hard-gated reveal dialog (an explicit acknowledgement checkbox must be
+ticked before the modal can be closed); the API itself never echoes the
+plaintext in any other response, audit row, or log line. Rotating does **not**
+revoke active refresh tokens — they continue to grant access until they
+expire — so the admin UI surfaces the live `activeRefreshTokenCount` in the
+rotate-confirm dialog. Deleting a client cascades to its `RefreshToken` rows
+via the FK `onDelete: Cascade`, immediately invalidating any session that was
+issued under that registration.
+
+The IAM resource is `oauth-client`, exposing `read`/`create`/`update`/`delete`
+plus a dedicated `rotate` verb (a Service IAM `crud() + VerbRotate`). The
+admin route group is mounted by
+`iamBundle.RegisterOAuthClientRoutes(g, iamMW)` alongside the rest of the IAM
+admin surface; every endpoint is `iamMW`-gated against the matching verb so a
+holder of `oauth-client.read` cannot rotate, and vice versa.
+
 ## Device binding
 
 `/oauth/device-binding` runs behind the agent mTLS middleware, so the peer
@@ -116,6 +156,7 @@ part of the agent enrollment path — see
 - `packages/control-plane/internal/identity/authserver/oauth/` — authorize, token, introspect, revoke, device-binding, PKCE, JWKS, discovery
 - `packages/control-plane/internal/identity/authserver/token/` — RS256 keystore, signer, access-token claims, refresh rotation
 - `packages/control-plane/internal/identity/authserver/store/` — auth-code, refresh, pending-authz, client stores
+- `packages/control-plane/internal/identity/users/handler/oauth_client.go` — admin CRUD + rotate-secret handler
 - `packages/control-plane/internal/identity/authserver/revocation/` — session revocation service + MQ publisher
 - `packages/shared/identity/pkce/` — S256 verifier
 - `packages/control-plane/cmd/control-plane/wiring/authserver.go` — auth-server wiring

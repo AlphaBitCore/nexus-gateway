@@ -1,7 +1,7 @@
 # Nexus Gateway
 
-[![CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/ci.yml)
-[![Go CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/go-ci.yml)
+[![CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](.github/workflows/ci.yml)
+[![Go CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](.github/workflows/go-ci.yml)
 [![Coverage gate](https://img.shields.io/badge/coverage-%E2%89%A595%25%20per%20package-brightgreen)](./scripts/check-go-coverage.sh)
 [![Status: Pre-GA](https://img.shields.io/badge/status-Pre--GA%20%C2%B7%20active%20development-orange)](./CHANGELOG.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
@@ -119,8 +119,10 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 
 | Form factor | How | Status |
 |---|---|---|
+| **AWS Marketplace AMI / single-instance appliance** | `cd nexus-ami && ./build.sh` — bakes binaries + UI + Prisma + nginx + Postgres + Valkey + NATS into one AL2023 image via Packer | [`nexus-ami/README.md`](./nexus-ami/README.md) for build steps, [`docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md`](./docs/developers/architecture/cross-cutting/deployment/ami-appliance-architecture.md) for design |
 | **Local development** | docker-compose + `./scripts/dev-start.sh` (Postgres + Valkey + NATS) and per-service `go run ./cmd/<svc>/` | See **Quick start** below |
-| **Container / Kubernetes** | Container images per service — separate product line | Future |
+| **VMware / KVM image / bare-metal appliance** | Reuses the same `install.sh` + `harden.sh` from `nexus-ami/scripts/` under a different Packer builder | Future |
+| **Container / Kubernetes** | Out of scope for the appliance form factor — separate product line | Future |
 
 ---
 
