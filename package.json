@@ -54,7 +54,7 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.3",
     "jsdom": "^29.1.1"
   }
 }
