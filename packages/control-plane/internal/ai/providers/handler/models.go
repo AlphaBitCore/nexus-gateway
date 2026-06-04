@@ -7,8 +7,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/modelstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -85,24 +85,24 @@ func (h *Handler) UpdateModel(c echo.Context) error {
 	}
 
 	var body struct {
-		Code                           *string          `json:"code"`
-		ProviderModelID                *string          `json:"providerModelId"`
-		Name                           *string          `json:"name"`
-		Description                    *string          `json:"description"`
-		Type                           *string          `json:"type"`
-		InputPricePerMillion           *float64         `json:"inputPricePerMillion"`
-		OutputPricePerMillion          *float64         `json:"outputPricePerMillion"`
-		CachedInputReadPricePerMillion *float64         `json:"cachedInputReadPricePerMillion"`
-		CachedInputWritePricePerMillion *float64        `json:"cachedInputWritePricePerMillion"`
-		MaxContextTokens               *int             `json:"maxContextTokens"`
-		MaxOutputTokens                *int             `json:"maxOutputTokens"`
-		Status                         *string          `json:"status"`
-		DeprecationDate                *time.Time       `json:"deprecationDate"`
-		ReplacedBy                     *string          `json:"replacedBy"`
-		Aliases                        []string         `json:"aliases"`
-		Enabled                        *bool            `json:"enabled"`
-		Features                       []string         `json:"features"`
-		CapabilityJson                 *json.RawMessage `json:"capabilityJson"`
+		Code                            *string          `json:"code"`
+		ProviderModelID                 *string          `json:"providerModelId"`
+		Name                            *string          `json:"name"`
+		Description                     *string          `json:"description"`
+		Type                            *string          `json:"type"`
+		InputPricePerMillion            *float64         `json:"inputPricePerMillion"`
+		OutputPricePerMillion           *float64         `json:"outputPricePerMillion"`
+		CachedInputReadPricePerMillion  *float64         `json:"cachedInputReadPricePerMillion"`
+		CachedInputWritePricePerMillion *float64         `json:"cachedInputWritePricePerMillion"`
+		MaxContextTokens                *int             `json:"maxContextTokens"`
+		MaxOutputTokens                 *int             `json:"maxOutputTokens"`
+		Status                          *string          `json:"status"`
+		DeprecationDate                 *time.Time       `json:"deprecationDate"`
+		ReplacedBy                      *string          `json:"replacedBy"`
+		Aliases                         []string         `json:"aliases"`
+		Enabled                         *bool            `json:"enabled"`
+		Features                        []string         `json:"features"`
+		CapabilityJson                  *json.RawMessage `json:"capabilityJson"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
@@ -130,24 +130,24 @@ func (h *Handler) UpdateModel(c echo.Context) error {
 	}
 
 	params := modelstore.UpdateModelParams{
-		Code:                           body.Code,
-		ProviderModelID:                body.ProviderModelID,
-		Name:                           body.Name,
-		Description:                    body.Description,
-		Type:                           body.Type,
-		InputPricePerMillion:           body.InputPricePerMillion,
-		OutputPricePerMillion:          body.OutputPricePerMillion,
+		Code:                            body.Code,
+		ProviderModelID:                 body.ProviderModelID,
+		Name:                            body.Name,
+		Description:                     body.Description,
+		Type:                            body.Type,
+		InputPricePerMillion:            body.InputPricePerMillion,
+		OutputPricePerMillion:           body.OutputPricePerMillion,
 		CachedInputReadPricePerMillion:  body.CachedInputReadPricePerMillion,
 		CachedInputWritePricePerMillion: body.CachedInputWritePricePerMillion,
-		MaxContextTokens:               body.MaxContextTokens,
-		MaxOutputTokens:                body.MaxOutputTokens,
-		Status:                         body.Status,
-		DeprecationDate:                body.DeprecationDate,
-		ReplacedBy:                     body.ReplacedBy,
-		Aliases:                        body.Aliases,
-		Enabled:                        body.Enabled,
-		Features:                       body.Features,
-		CapabilityJson:                 body.CapabilityJson,
+		MaxContextTokens:                body.MaxContextTokens,
+		MaxOutputTokens:                 body.MaxOutputTokens,
+		Status:                          body.Status,
+		DeprecationDate:                 body.DeprecationDate,
+		ReplacedBy:                      body.ReplacedBy,
+		Aliases:                         body.Aliases,
+		Enabled:                         body.Enabled,
+		Features:                        body.Features,
+		CapabilityJson:                  body.CapabilityJson,
 	}
 
 	updated, err := h.models.UpdateModel(c.Request().Context(), id, params)

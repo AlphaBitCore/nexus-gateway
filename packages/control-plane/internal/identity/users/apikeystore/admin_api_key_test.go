@@ -56,6 +56,7 @@ func TestFindAPIKeyByHash_StatusFiltering(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatal("FindAPIKeyByHash returned nil")
+				return
 			}
 			if got.Enabled != tc.wantEnabled {
 				t.Errorf("Enabled=%v want %v (status=%q dbEnabled=%v)",
@@ -101,6 +102,7 @@ func TestFindAPIKeyByHash_PastExpiry(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("FindAPIKeyByHash returned nil")
+		return
 	}
 	if got.Enabled {
 		t.Error("Enabled=true but key is past expiresAt; expected fold to false")

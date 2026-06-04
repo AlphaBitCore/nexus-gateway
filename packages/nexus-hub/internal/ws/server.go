@@ -12,9 +12,9 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/agentca"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 )
 
 // thingManager is the slice of *manager.Manager the WS server actually uses.

@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	cpgx "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/pgx"
-	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/modelstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/fleetstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/apikeystore"
@@ -17,12 +17,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/diag/diagstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/opsmetrics/opsstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/thingstats/thingstore"
+	cpgx "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/pgx"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/store/metricsstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/analytics/analyticsstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/modelstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/observability/thingstats/thingstore"
+	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 )
 
 // PgxPool is the shared pool interface for control-plane store packages.
@@ -190,4 +190,3 @@ func (db *DB) ListModelsFlat(ctx context.Context, p ModelListParams) ([]Model, i
 func (db *DB) LookupThingNodeByCertSerial(ctx context.Context, serial string) (*ThingNodeInfo, error) {
 	return agentstore.New(db.pool).LookupThingNodeByCertSerial(ctx, serial)
 }
-

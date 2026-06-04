@@ -81,7 +81,7 @@ func TestProbeOIDC_DiscoveryErrors(t *testing.T) {
 		t.Fatal("discovery fetch failure must error")
 	}
 	// Non-200.
-	s500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) }))
+	s500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
 	defer s500.Close()
 	if r := ProbeOIDC(ctx(), map[string]any{"issuer": s500.URL}); r.OK {
 		t.Fatal("discovery 500 must error")
@@ -115,7 +115,7 @@ func TestProbeOIDC_JWKSErrors(t *testing.T) {
 		t.Fatal("jwks fetch failure must error")
 	}
 	// Non-200.
-	s500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(503) }))
+	s500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
 	defer s500.Close()
 	if r := ProbeOIDC(ctx(), skip(s500.URL)); r.OK {
 		t.Fatal("jwks 503 must error")

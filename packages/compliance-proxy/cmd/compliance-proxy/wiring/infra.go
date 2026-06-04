@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/access"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/access"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/conn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"

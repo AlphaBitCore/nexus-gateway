@@ -187,4 +187,3 @@ func TestNormalizeBackfill_ScanRowError(t *testing.T) {
 		t.Fatal("expected error from scan-row failure")
 	}
 }
-

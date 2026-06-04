@@ -114,6 +114,31 @@ func TestPassthroughGlobalOn_SetsBypassHooks(t *testing.T) {
 	}
 }
 
+func TestPassthroughGlobalOn_BypassFlagsRideIntoRequest(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	// --bypass-cache / --bypass-normalize must add their tiers alongside the default
+	// hook bypass (previously these flags had no wire-level assertion).
+	if _, err := runCLI(t, newTestApp(srv, false), "passthrough", "global", "on", "--bypass-cache", "--bypass-normalize"); err != nil {
+		t.Fatalf("passthrough global on with bypass flags: err=%v", err)
+	}
+	if gotBody["bypassHooks"] != true || gotBody["bypassCache"] != true || gotBody["bypassNormalize"] != true {
+		t.Fatalf("--bypass-cache/--bypass-normalize must ride in alongside bypassHooks: %+v", gotBody)
+	}
+	// Without the flags only hooks are bypassed — the extra tiers stay off.
+	gotBody = nil
+	if _, err := runCLI(t, newTestApp(srv, false), "passthrough", "global", "on"); err != nil {
+		t.Fatalf("passthrough global on (no flags): err=%v", err)
+	}
+	if gotBody["bypassHooks"] != true || gotBody["bypassCache"] != false || gotBody["bypassNormalize"] != false {
+		t.Fatalf("without flags only hooks bypass; cache/normalize must be false: %+v", gotBody)
+	}
+}
+
 func TestPassthroughGlobalProdRequiresYes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("prod global toggle without --yes must not hit the server")

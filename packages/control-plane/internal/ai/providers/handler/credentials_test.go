@@ -821,6 +821,8 @@ func TestCircuitReset_HappyNoRedis(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectQuery(`FROM "Credential" WHERE id`).WithArgs("cred-1").
 		WillReturnRows(pgxmock.NewRows(credentialMetadataCols).AddRow(makeCredentialRow(now)...))
+	mock.ExpectExec(`UPDATE "Credential" SET`).WithArgs("cred-1").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	aud := &auditSpy{}
 	h := newHandler(db, nil, aud, nil, nil, nil, ProxyConfig{})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -837,6 +839,30 @@ func TestCircuitReset_HappyNoRedis(t *testing.T) {
 	if aud.count() != 1 {
 		t.Errorf("audit count = %d; want 1", aud.count())
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("db expectations: %v", err)
+	}
+}
+
+func TestCircuitReset_DBClearError500(t *testing.T) {
+	// The durable DB clear is the source of truth; if it fails the reset must
+	// 500 rather than silently leaving the row "open".
+	mock, db := newMockStore(t)
+	now := nowFixture()
+	mock.ExpectQuery(`FROM "Credential" WHERE id`).WithArgs("cred-1").
+		WillReturnRows(pgxmock.NewRows(credentialMetadataCols).AddRow(makeCredentialRow(now)...))
+	mock.ExpectExec(`UPDATE "Credential" SET`).WithArgs("cred-1").
+		WillReturnError(errors.New("update boom"))
+	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u-1")
+	c.SetParamNames("id")
+	c.SetParamValues("cred-1")
+	_ = h.CircuitReset(c)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want 500", rec.Code)
+	}
 }
 
 func TestCircuitReset_HappyWithRedis(t *testing.T) {
@@ -844,8 +870,11 @@ func TestCircuitReset_HappyWithRedis(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectQuery(`FROM "Credential" WHERE id`).WithArgs("cred-1").
 		WillReturnRows(pgxmock.NewRows(credentialMetadataCols).AddRow(makeCredentialRow(now)...))
+	mock.ExpectExec(`UPDATE "Credential" SET`).WithArgs("cred-1").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	mr, rdb := newMiniRedis(t)
 	mr.HSet("cred:circuit:cred-1", "state", "open")
+	mr.SAdd("cred:circuit:dirty", "cred-1")
 	h := newHandler(db, nil, &auditSpy{}, rdb, nil, nil, ProxyConfig{})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
@@ -858,9 +887,15 @@ func TestCircuitReset_HappyWithRedis(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d; want 200", rec.Code)
 	}
-	// After reset the key must be gone.
+	// After reset the live key AND any pending dirty marker must be gone.
 	if mr.Exists("cred:circuit:cred-1") {
 		t.Errorf("redis key should have been deleted")
+	}
+	if isMember, _ := mr.SIsMember("cred:circuit:dirty", "cred-1"); isMember {
+		t.Errorf("dirty-set marker should have been removed")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("db expectations: %v", err)
 	}
 }
 
@@ -871,6 +906,8 @@ func TestCircuitReset_RedisDelError_StillReturnsOK(t *testing.T) {
 	now := nowFixture()
 	mock.ExpectQuery(`FROM "Credential" WHERE id`).WithArgs("cred-1").
 		WillReturnRows(pgxmock.NewRows(credentialMetadataCols).AddRow(makeCredentialRow(now)...))
+	mock.ExpectExec(`UPDATE "Credential" SET`).WithArgs("cred-1").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	mr, rdb := newMiniRedis(t)
 	mr.Close() // closing miniredis forces Del to error
 	h := newHandler(db, nil, &auditSpy{}, rdb, nil, nil, ProxyConfig{})

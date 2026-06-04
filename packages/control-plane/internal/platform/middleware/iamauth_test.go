@@ -412,7 +412,6 @@ func contains(s, substr string) bool {
 	return false
 }
 
-
 // TestRequireIAMPermissionForDevice_NoPrincipalReturns401 mirrors the
 // unscoped path's auth gate.
 func TestRequireIAMPermissionForDevice_NoPrincipalReturns401(t *testing.T) {

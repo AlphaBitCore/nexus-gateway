@@ -36,8 +36,8 @@ type queryPool interface {
 }
 
 type Deps struct {
-	Pool  *pgxpool.Pool
-	Audit *audit.Writer
+	Pool   *pgxpool.Pool
+	Audit  *audit.Writer
 	Logger *slog.Logger
 }
 

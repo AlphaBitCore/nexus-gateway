@@ -1,12 +1,12 @@
 package codecs
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"strings"
 )
 

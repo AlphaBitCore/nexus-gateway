@@ -27,14 +27,14 @@ type WireShape string
 // CP/Agent classifier rules registered in defaults.go.
 const (
 	// OpenAI family.
-	WireShapeOpenAIChat                  WireShape = "openai-chat"
-	WireShapeOpenAIResponses             WireShape = "openai-responses"
-	WireShapeOpenAICompletionsLegacy     WireShape = "openai-completions-legacy"
-	WireShapeOpenAIEmbeddings            WireShape = "openai-embeddings"
-	WireShapeOpenAIAudioSpeech           WireShape = "openai-audio-speech"
-	WireShapeOpenAIAudioTranscriptions   WireShape = "openai-audio-transcriptions"
-	WireShapeOpenAIImages                WireShape = "openai-images"
-	WireShapeOpenAIBatches               WireShape = "openai-batches"
+	WireShapeOpenAIChat                WireShape = "openai-chat"
+	WireShapeOpenAIResponses           WireShape = "openai-responses"
+	WireShapeOpenAICompletionsLegacy   WireShape = "openai-completions-legacy"
+	WireShapeOpenAIEmbeddings          WireShape = "openai-embeddings"
+	WireShapeOpenAIAudioSpeech         WireShape = "openai-audio-speech"
+	WireShapeOpenAIAudioTranscriptions WireShape = "openai-audio-transcriptions"
+	WireShapeOpenAIImages              WireShape = "openai-images"
+	WireShapeOpenAIBatches             WireShape = "openai-batches"
 
 	// Anthropic.
 	WireShapeAnthropicMessages WireShape = "anthropic-messages"

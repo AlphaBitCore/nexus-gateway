@@ -51,7 +51,6 @@ func New(d Deps) *Handler {
 	return &Handler{db: dsarstore.New(d.Pool), audit: d.Audit, logger: logger}
 }
 
-
 func errJSON(message, errType, code string) map[string]any {
 	return map[string]any{
 		"error": map[string]any{

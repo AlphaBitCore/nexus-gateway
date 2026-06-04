@@ -270,6 +270,7 @@ func TestConvenienceVarsMatchCatalog(t *testing.T) {
 		"agent-attestation":    ResourceAgentAttestation,
 		"user":                 ResourceUser,
 		"api-key":              ResourceApiKey,
+		"oauth-client":         ResourceOAuthClient,
 		"organization":         ResourceOrganization,
 		"project":              ResourceProject,
 		"iam-policy":           ResourceIamPolicy,

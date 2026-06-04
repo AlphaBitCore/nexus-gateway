@@ -28,10 +28,10 @@ import (
 //     rejected our signature, third-party AV blocked driver load,
 //     etc.) → show a modal MessageBoxW with OK / Cancel buttons.
 //     - User picks OK   → exit 0; MSI completes with the agent in
-//                          SystemProxyFallback mode.
+//     SystemProxyFallback mode.
 //     - User picks Cancel → exit 1; MSI rolls back the install
-//                          per the <CustomAction Return="check"/>
-//                          contract.
+//     per the <CustomAction Return="check"/>
+//     contract.
 func CmdInstallWfpCheck(_ []string) int {
 	running, queryErr := isNexusWfpRunning()
 	if running {

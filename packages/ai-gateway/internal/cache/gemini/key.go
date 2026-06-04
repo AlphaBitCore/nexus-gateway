@@ -8,26 +8,41 @@ import (
 
 const redisKeyPrefix = "gemini:cc:"
 
-// contentHash returns the Redis key for a (providerID, model, systemJSON) triple.
+// contentHash returns the Redis key for a cached content object keyed on the
+// (providerID, model, systemInstruction, tools, toolConfig) tuple.
 //
-// systemJSON is normalized through encoding/json before hashing so that
-// logically identical systemInstruction values (differing only in
-// whitespace or key ordering) produce the same Redis key. Without
-// normalization, two ingresses that both target Gemini — one via the
+// systemJSON (and, when present, toolsJSON / toolConfigJSON) are normalized
+// through encoding/json before hashing so that logically identical values
+// (differing only in whitespace or key ordering) produce the same Redis key.
+// Without normalization, two ingresses that both target Gemini — one via the
 // canonical bridge (compact JSON, `parts` before `role`) and one via
 // `/v1beta` native passthrough (pretty JSON, `role` before `parts`) —
 // hash to different keys and never reuse each other's cachedContent.
 // That asymmetry shows up in smoke as: /v1/chat/completions and
 // /v1/responses hit the Gemini prompt cache, but /v1beta misses.
 //
+// tools / toolConfig are part of the key because Gemini folds them INTO the
+// cachedContent (a request that references a cachedContent may not also set
+// systemInstruction / tools / toolConfig). Two requests that share a system
+// prompt but carry different tool sets must therefore map to different cache
+// objects. When both are empty the hash input is byte-identical to the
+// system-only form, so existing no-tool cache entries keep hitting unchanged.
+//
 // Algorithm:
 //
-//	canonical = json.Marshal(json.Unmarshal(systemJSON))   // best-effort
-//	hash_input = providerID + "|" + model + "|" + canonical
-//	redis_key  = "gemini:cc:" + hex(sha256(hash_input))
-func contentHash(providerID, model, systemJSON string) string {
-	canonical := canonicalizeJSON(systemJSON)
-	h := sha256.Sum256([]byte(providerID + "|" + model + "|" + canonical))
+//	input = providerID + "|" + model + "|" + canonical(system)
+//	        [+ "|tools|"   + canonical(tools)]       // only when non-empty
+//	        [+ "|toolcfg|" + canonical(toolConfig)]  // only when non-empty
+//	redis_key = "gemini:cc:" + hex(sha256(input))
+func contentHash(providerID, model, systemJSON, toolsJSON, toolConfigJSON string) string {
+	input := providerID + "|" + model + "|" + canonicalizeJSON(systemJSON)
+	if toolsJSON != "" {
+		input += "|tools|" + canonicalizeJSON(toolsJSON)
+	}
+	if toolConfigJSON != "" {
+		input += "|toolcfg|" + canonicalizeJSON(toolConfigJSON)
+	}
+	h := sha256.Sum256([]byte(input))
 	return redisKeyPrefix + hex.EncodeToString(h[:])
 }
 

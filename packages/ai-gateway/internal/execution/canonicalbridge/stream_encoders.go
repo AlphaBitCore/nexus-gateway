@@ -626,4 +626,3 @@ func buildToolCallDeltas(deltas []provcore.ToolCallDelta) []any {
 	}
 	return calls
 }
-

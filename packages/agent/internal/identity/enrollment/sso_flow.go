@@ -27,8 +27,8 @@ import (
 	"testing"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	metricsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // The following package-level variables exist solely as test seams so unit
@@ -42,11 +42,11 @@ import (
 // packages/agent/internal/identity/secretstore/fallback.go (osFile +
 // createTempFn).
 var (
-	ssoRandReader        io.Reader = rand.Reader
-	ssoMarshalECPrivKey            = x509.MarshalECPrivateKey
-	ssoNetListen                   = net.Listen
-	ssoRuntimeGOOS                 = runtime.GOOS
-	ssoExecCommandStart            = func(name string, args ...string) error {
+	ssoRandReader       io.Reader = rand.Reader
+	ssoMarshalECPrivKey           = x509.MarshalECPrivateKey
+	ssoNetListen                  = net.Listen
+	ssoRuntimeGOOS                = runtime.GOOS
+	ssoExecCommandStart           = func(name string, args ...string) error {
 		// Defense-in-depth: refuse to spawn a real browser process when the
 		// binary is a test binary. Any test that reaches this seam without
 		// installing a stub (e.g. via enrollment.SetExecCommandStart) would

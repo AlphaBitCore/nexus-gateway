@@ -31,8 +31,8 @@ func newTestManager(cfg Config) *Manager {
 }
 
 func TestContentHash_Stable(t *testing.T) {
-	h1 := contentHash("prov1", "gemini-2.0-flash", `{"parts":[{"text":"hi"}]}`)
-	h2 := contentHash("prov1", "gemini-2.0-flash", `{"parts":[{"text":"hi"}]}`)
+	h1 := contentHash("prov1", "gemini-2.0-flash", `{"parts":[{"text":"hi"}]}`, "", "")
+	h2 := contentHash("prov1", "gemini-2.0-flash", `{"parts":[{"text":"hi"}]}`, "", "")
 	if h1 != h2 {
 		t.Fatalf("hash not stable: %q != %q", h1, h2)
 	}
@@ -50,7 +50,7 @@ func TestContentHash_DiffersByInput(t *testing.T) {
 	}
 	keys := make(map[string]bool)
 	for _, c := range cases {
-		k := contentHash(c.prov, c.model, c.sys)
+		k := contentHash(c.prov, c.model, c.sys, "", "")
 		if keys[k] {
 			t.Fatalf("hash collision for %+v", c)
 		}

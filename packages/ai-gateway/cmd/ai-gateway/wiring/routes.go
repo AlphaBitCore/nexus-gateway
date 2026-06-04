@@ -12,40 +12,40 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
-	streamcache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
+	streamcache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/proxy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/debug"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/models"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/models"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/proxy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	epMetrics "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
-	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )
 
@@ -241,7 +241,7 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 
 	// Model catalog + usage.
 	mux.HandleFunc("GET /v1/models", models.ModelsHandler(deps.DB, deps.VKAuth, deps.Logger))
-	mux.HandleFunc("GET /v1/models/{model}", models.ModelDetailHandler(deps.DB, deps.Logger))
+	mux.HandleFunc("GET /v1/models/{model}", models.ModelDetailHandler(deps.DB, deps.VKAuth, deps.Logger))
 	mux.HandleFunc("GET /v1/usage", envelope.UsageSummaryHandler(deps.DB, deps.VKAuth, deps.QuotaEngine, deps.Logger))
 	mux.HandleFunc("GET /v1/usage/daily", envelope.UsageDailyHandler(deps.DB, deps.VKAuth, deps.Logger))
 

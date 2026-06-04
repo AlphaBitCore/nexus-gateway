@@ -141,4 +141,3 @@ func (h *HubDiagAdapter) PushDiagEvent(ctx context.Context, evt sharedops.DiagEv
 	evt.ThingID = h.ThingID
 	return h.Writer.Enqueue(ctx, h.ThingID, h.ThingType, evt)
 }
-

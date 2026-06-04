@@ -3,8 +3,8 @@ package wiring
 import (
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
 )
 
 // TestInitExecutor_nilDepsReturnsNonNil verifies that InitExecutor with nil

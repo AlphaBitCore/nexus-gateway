@@ -715,7 +715,12 @@ func TestLifecycle_HTTPFallback_ConfigViaHeartbeat(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	waitFor(t, 6*time.Second, func() bool { return configApplied.Load() >= 1 })
+	// Wait for BOTH the config callback to fire AND the reported version to
+	// catch up. ReportedVer is updated asynchronously after OnConfigChanged
+	// returns (the client reports the applied version back to the Hub on a
+	// separate path), so gating only on configApplied races the report and
+	// intermittently observes ReportedVer == 0.
+	waitFor(t, 6*time.Second, func() bool { return configApplied.Load() >= 1 && c.ReportedVer() == 5 })
 
 	if c.ReportedVer() != 5 {
 		t.Errorf("ReportedVer = %d, want 5", c.ReportedVer())

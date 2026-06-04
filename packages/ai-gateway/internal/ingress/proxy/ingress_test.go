@@ -12,8 +12,8 @@ import (
 
 func TestIngress_WithContext_Roundtrip(t *testing.T) {
 	in := Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatAnthropic,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatAnthropic,
 	}
 	ctx := WithIngress(context.Background(), in)
 	got, ok := IngressFromContext(ctx)

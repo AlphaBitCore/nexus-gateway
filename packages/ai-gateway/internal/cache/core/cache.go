@@ -49,12 +49,12 @@ var ErrCacheEntryTooLarge = errors.New("cache entry exceeds size cap")
 // original chunk granularity from the producing upstream call so HIT replay
 // does not collapse the stream to a single frame.
 type StreamEntry struct {
-	Schema   string          `json:"schema"` // always schemaStream
-	Provider string          `json:"provider"`
-	Model    string          `json:"model"` // ProviderModelID
-	Chunks   []ChunkRecord   `json:"chunks"`
+	Schema   string         `json:"schema"` // always schemaStream
+	Provider string         `json:"provider"`
+	Model    string         `json:"model"` // ProviderModelID
+	Chunks   []ChunkRecord  `json:"chunks"`
 	Usage    provcore.Usage `json:"usage"`
-	CachedAt time.Time       `json:"cachedAt"`
+	CachedAt time.Time      `json:"cachedAt"`
 	// UpstreamHeaders preserves upstream HTTP response headers observed at MISS
 	// time so HIT replay can run them through the active forward-header
 	// allowlist. Stored verbatim — the allowlist is applied at read time so a
@@ -93,13 +93,13 @@ type StreamEntry struct {
 // omitempty everywhere keeps stream entries compact when individual chunks
 // carry only deltas (the common case).
 type ChunkRecord struct {
-	Delta          string                    `json:"d,omitempty"`
-	ReasoningDelta string                    `json:"r,omitempty"`
+	Delta          string                   `json:"d,omitempty"`
+	ReasoningDelta string                   `json:"r,omitempty"`
 	ToolCallDeltas []provcore.ToolCallDelta `json:"t,omitempty"`
 	Usage          *provcore.Usage          `json:"u,omitempty"`
-	Done           bool                      `json:"done,omitempty"`
-	NativeEvent    string                    `json:"e,omitempty"`
-	RawBytes       []byte                    `json:"raw,omitempty"`
+	Done           bool                     `json:"done,omitempty"`
+	NativeEvent    string                   `json:"e,omitempty"`
+	RawBytes       []byte                   `json:"raw,omitempty"`
 }
 
 // ResponseEntry is the cache value for non-streaming responses.
@@ -108,7 +108,7 @@ type ResponseEntry struct {
 	Provider          string          `json:"provider"`
 	Model             string          `json:"model"`
 	CanonicalResponse json.RawMessage `json:"response"`
-	Usage             provcore.Usage `json:"usage"`
+	Usage             provcore.Usage  `json:"usage"`
 	CachedAt          time.Time       `json:"cachedAt"`
 	// UpstreamHeaders — same semantics as on StreamEntry.
 	UpstreamHeaders map[string][]string `json:"upstreamHeaders,omitempty"`

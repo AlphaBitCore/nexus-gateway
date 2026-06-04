@@ -67,8 +67,10 @@ type stubAdapter struct {
 	probe  func(context.Context, provcore.CallTarget) (*provcore.ProbeResult, error)
 }
 
-func (s *stubAdapter) Format() provcore.Format                          { return s.format }
-func (s *stubAdapter) SupportsShape(shape typology.WireShape) bool      { return shape == typology.WireShapeOpenAIChat }
+func (s *stubAdapter) Format() provcore.Format { return s.format }
+func (s *stubAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 func (s *stubAdapter) Probe(ctx context.Context, t provcore.CallTarget) (*provcore.ProbeResult, error) {
 	return s.probe(ctx, t)
 }

@@ -665,24 +665,26 @@ func adminRowsTwo() *pgxmock.Rows {
 	before := json.RawMessage(`{"old":"v"}`)
 	after := json.RawMessage(`{"new":"v"}`)
 
+	via := "assistant"
+
 	rows := pgxmock.NewRows([]string{
 		"id", "timestamp",
 		"actorId", "actorLabel", "actorRole",
 		"sourceIp", "action", "entityType", "entityId",
-		"beforeState", "afterState",
+		"beforeState", "afterState", "via",
 	})
 	rows.AddRow(
 		"adm-1", time.Date(2026, 5, 17, 9, 0, 0, 0, time.UTC),
 		&actor, &label, &role,
 		&ip, "create", "virtual-key", &entityID,
-		&before, &after,
+		&before, &after, &via,
 	)
-	// Row 2 — all optional fields NULL — exercises the nil-omit branches.
+	// Row 2 — all optional fields NULL (incl. via) — exercises the nil-omit branches.
 	rows.AddRow(
 		"adm-2", time.Date(2026, 5, 17, 9, 1, 0, 0, time.UTC),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), "delete", "session", (*string)(nil),
-		(*json.RawMessage)(nil), (*json.RawMessage)(nil),
+		(*json.RawMessage)(nil), (*json.RawMessage)(nil), (*string)(nil),
 	)
 	return rows
 }
@@ -714,12 +716,20 @@ func TestQueryAdminEvents_PopulatesFields(t *testing.T) {
 	if _, ok := events[0]["beforeState"]; !ok {
 		t.Errorf("beforeState should be parsed and present")
 	}
+	// Row 1 — via="assistant" must be exported so the SIEM can distinguish the
+	// AI-initiated write from a human one (E90 I5 — the whole point of the column).
+	if events[0]["via"] != "assistant" {
+		t.Errorf("row 1 via = %v, want 'assistant'", events[0]["via"])
+	}
 	// Row 2 — nil fields omitted.
 	if _, ok := events[1]["actorLabel"]; ok {
 		t.Errorf("row 2 actorLabel should be omitted (was NULL)")
 	}
 	if _, ok := events[1]["beforeState"]; ok {
 		t.Errorf("row 2 beforeState should be omitted (was NULL)")
+	}
+	if _, ok := events[1]["via"]; ok {
+		t.Errorf("row 2 via should be omitted (human write, was NULL)")
 	}
 	if lastTS.IsZero() {
 		t.Errorf("lastTS should be set")
@@ -739,12 +749,12 @@ func TestQueryAdminEvents_InvalidStateJSON(t *testing.T) {
 		"id", "timestamp",
 		"actorId", "actorLabel", "actorRole",
 		"sourceIp", "action", "entityType", "entityId",
-		"beforeState", "afterState",
+		"beforeState", "afterState", "via",
 	}).AddRow(
 		"adm-bad", time.Now().UTC(),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), "update", "thing", (*string)(nil),
-		&bad, &bad,
+		&bad, &bad, (*string)(nil),
 	)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -797,12 +807,12 @@ func TestQueryAdminEvents_RowsErr_Wrapped(t *testing.T) {
 		"id", "timestamp",
 		"actorId", "actorLabel", "actorRole",
 		"sourceIp", "action", "entityType", "entityId",
-		"beforeState", "afterState",
+		"beforeState", "afterState", "via",
 	}).AddRow(
 		"adm-iter", time.Now().UTC(),
 		(*string)(nil), (*string)(nil), (*string)(nil),
 		(*string)(nil), "create", "x", (*string)(nil),
-		(*json.RawMessage)(nil), (*json.RawMessage)(nil),
+		(*json.RawMessage)(nil), (*json.RawMessage)(nil), (*string)(nil),
 	).CloseError(errors.New("iter blip post-iteration"))
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -948,7 +958,7 @@ func TestPoll_ReloadError_KeepsPreviousSink(t *testing.T) {
 			"id", "timestamp",
 			"actorId", "actorLabel", "actorRole",
 			"sourceIp", "action", "entityType", "entityId",
-			"beforeState", "afterState",
+			"beforeState", "afterState", "via",
 		}))
 	// One saveCheckpoint for traffic (admin had 0 events so no save).
 	mock.ExpectExec(`INSERT INTO system_metadata`).
@@ -1547,7 +1557,7 @@ func TestPoll_SerializedByMutex_NoRace(t *testing.T) {
 				"id", "timestamp",
 				"actorId", "actorLabel", "actorRole",
 				"sourceIp", "action", "entityType", "entityId",
-				"beforeState", "afterState",
+				"beforeState", "afterState", "via",
 			}))
 	}
 

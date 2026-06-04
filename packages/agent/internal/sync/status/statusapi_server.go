@@ -247,31 +247,31 @@ const statusapiReadDeadline = 30 * time.Second
 const statusapiMaxLineBytes = 256 * 1024
 
 type Server struct {
-	socketPath         string
-	collector          *Collector
-	checkUpdateFn      CheckUpdateFn
-	syncConfigFn       SyncConfigFn
-	shutdownFn         ShutdownFn
+	socketPath            string
+	collector             *Collector
+	checkUpdateFn         CheckUpdateFn
+	syncConfigFn          SyncConfigFn
+	shutdownFn            ShutdownFn
 	queryEventsFn         QueryEventsFn
 	queryEventsFilteredFn QueryEventsFilteredFn // #88 — when wired, handler prefers this
 	eventByIDFn           EventByIDFn           // detail-by-id (drawer fetches body/normalized/spill on demand)
-	queryLifecycleFn   QueryLifecycleFn
-	getAppliedConfigFn GetAppliedConfigFn
-	quitAllowedFn      QuitAllowedFn
-	authenticateFn     AuthenticateFn
-	confirmAuthFn      ConfirmAuthFn
-	cancelAuthFn       CancelAuthFn
-	tokenEnrollFn      TokenEnrollFn
-	pauseFn            PauseProtectionFn
-	resumeFn           ResumeProtectionFn
-	diagnosticsFn      DiagnosticsFn
-	openBrowserFn      OpenBrowserFn
-	runtimeFn          RuntimeFn
-	proxyReportFn      ProxyInstallReportFn
-	versionFn          VersionFn
-	queryStatsFn       QueryStatsFn
-	signOutFn          SignOutFn
-	refreshPoliciesFn  RefreshPoliciesFn
+	queryLifecycleFn      QueryLifecycleFn
+	getAppliedConfigFn    GetAppliedConfigFn
+	quitAllowedFn         QuitAllowedFn
+	authenticateFn        AuthenticateFn
+	confirmAuthFn         ConfirmAuthFn
+	cancelAuthFn          CancelAuthFn
+	tokenEnrollFn         TokenEnrollFn
+	pauseFn               PauseProtectionFn
+	resumeFn              ResumeProtectionFn
+	diagnosticsFn         DiagnosticsFn
+	openBrowserFn         OpenBrowserFn
+	runtimeFn             RuntimeFn
+	proxyReportFn         ProxyInstallReportFn
+	versionFn             VersionFn
+	queryStatsFn          QueryStatsFn
+	signOutFn             SignOutFn
+	refreshPoliciesFn     RefreshPoliciesFn
 	// listener is set by Start() in a goroutine and read by Stop() from
 	// the daemon-shutdown caller. listenerMu guards both — without it
 	// `go test -race` flags the write-vs-read on Server.listener.

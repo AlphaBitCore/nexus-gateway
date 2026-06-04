@@ -15,10 +15,13 @@ import (
 // when HoldBack=false is NOT equivalent to passthrough.
 //
 // passthrough = wire bytes copied through, NO compliance pipeline,
-//   NO audit normalize stamp, NO hooks
+//
+//	NO audit normalize stamp, NO hooks
+//
 // HoldBack=false = wire bytes copied through IMMEDIATELY (no
-//   client-side delay), but checkpoints still fire and the hook
-//   executor + preHook callback still see the cumulative bytes
+//
+//	client-side delay), but checkpoints still fire and the hook
+//	executor + preHook callback still see the cumulative bytes
 //
 // This distinction matters because an admin who sets HoldBack=false
 // hoping to "skip compliance" actually keeps the full audit + hook

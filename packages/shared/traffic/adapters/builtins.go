@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/anthropic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/api/azure"
@@ -57,6 +56,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/web/poeweb"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/web/v0web"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters/web/youweb"
+	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // builtinEntries is the single source of truth for built-in adapter IDs and

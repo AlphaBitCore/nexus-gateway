@@ -438,12 +438,15 @@ func TestOpsMetricsTimeseries_NoRows_ReturnsEmptySlice(t *testing.T) {
 }
 
 func TestOpsMetricsTimeseries_AutoGranularity_Short(t *testing.T) {
-	// A 2h window should auto-select "raw".
+	// A 2h window falls in the 1h-6h band → auto-selects the "5m" rollup tier
+	// (raw is reserved for ≤1h windows so short dashboards stay off the
+	// partitioned raw table).
 	mock, h := newHandlerWithMock(t)
-	mock.ExpectQuery(`FROM metric_ops_raw`).
+	mock.ExpectQuery(`FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"sampled_at", "thing_id", "thing_type", "metric_name", "metric_kind", "dimension_key", "value", "metadata",
+			"bucket_start", "thing_id", "thing_type", "metric_name", "metric_kind",
+			"dimension_key", "value_avg", "value_sum", "value_min", "value_max", "sample_count", "metadata",
 		}))
 	now := time.Now().UTC()
 	from := now.Add(-2 * time.Hour).Format(time.RFC3339)
@@ -453,8 +456,8 @@ func TestOpsMetricsTimeseries_AutoGranularity_Short(t *testing.T) {
 	rec := httptest.NewRecorder()
 	_ = h.OpsMetricsTimeseries(echoCtx(req, rec))
 	body := decodeJSON(t, rec)
-	if body["granularity"] != "raw" {
-		t.Errorf("granularity = %v; want raw for 2h window", body["granularity"])
+	if body["granularity"] != "5m" {
+		t.Errorf("granularity = %v; want 5m for 2h window", body["granularity"])
 	}
 }
 
@@ -537,7 +540,7 @@ func TestOpsMetricsFleet_InvalidCustomGranularity_400(t *testing.T) {
 	_, h := newHandlerWithMock(t)
 	from, to := validFromTo()
 	req := httptest.NewRequest(http.MethodGet,
-		"/ops-metrics/fleet?nodeType=agent&metric=cpu&from="+from+"&to="+to+"&granularity=5m", nil)
+		"/ops-metrics/fleet?nodeType=agent&metric=cpu&from="+from+"&to="+to+"&granularity=raw", nil)
 	rec := httptest.NewRecorder()
 	if err := h.OpsMetricsFleet(echoCtx(req, rec)); err != nil {
 		t.Fatalf("OpsMetricsFleet: %v", err)
@@ -590,11 +593,12 @@ func TestOpsMetricsFleet_NoRows_ReturnsEmptySlice(t *testing.T) {
 	}
 }
 
-func TestOpsMetricsFleet_AutoGranularity_ShortWindow_BumpsTo1h(t *testing.T) {
-	// A 2h window → opsstore.SelectGranularity returns "raw" → fleet handler
-	// bumps it to "1h" and issues the 1h query.
+func TestOpsMetricsFleet_AutoGranularity_ShortWindow_SelectsFiveMinute(t *testing.T) {
+	// A 2h window → opsstore.SelectGranularity returns "5m" (the smallest
+	// fleet-bearing tier), so the fleet handler issues the 5m query directly —
+	// no bump needed (only ≤1h "raw" gets bumped, since raw has no fleet slice).
 	mock, h := newHandlerWithMock(t)
-	mock.ExpectQuery(`FROM metric_ops_rollup_1h`).
+	mock.ExpectQuery(`FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"bucket_start", "thing_id", "thing_type", "metric_name", "metric_kind",
@@ -608,8 +612,8 @@ func TestOpsMetricsFleet_AutoGranularity_ShortWindow_BumpsTo1h(t *testing.T) {
 	rec := httptest.NewRecorder()
 	_ = h.OpsMetricsFleet(echoCtx(req, rec))
 	body := decodeJSON(t, rec)
-	if body["granularity"] != "1h" {
-		t.Errorf("granularity = %v; want 1h (raw bumped for fleet)", body["granularity"])
+	if body["granularity"] != "5m" {
+		t.Errorf("granularity = %v; want 5m for 2h fleet window", body["granularity"])
 	}
 }
 
@@ -632,6 +636,51 @@ func TestOpsMetricsFleet_WithDimParam(t *testing.T) {
 	}
 }
 
+func TestOpsMetricsFleet_AutoGranularity_RawWindow_CoercedToFiveMinute(t *testing.T) {
+	// A ≤1h window makes SelectGranularity return "raw", but raw has no fleet
+	// aggregate slice — the handler must bump it to "5m" (the smallest fleet tier)
+	// and query metric_ops_rollup_5m, reporting granularity "5m" back to the caller.
+	mock, h := newHandlerWithMock(t)
+	mock.ExpectQuery(`FROM metric_ops_rollup_5m`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"bucket_start", "thing_id", "thing_type", "metric_name", "metric_kind",
+			"dimension_key", "value_avg", "value_sum", "value_min", "value_max", "sample_count", "metadata",
+		}))
+	now := time.Now().UTC()
+	from := now.Add(-30 * time.Minute).Format(time.RFC3339)
+	to := now.Format(time.RFC3339)
+	req := httptest.NewRequest(http.MethodGet,
+		"/ops-metrics/fleet?nodeType=agent&metric=cpu&from="+from+"&to="+to+"&granularity=auto", nil)
+	rec := httptest.NewRecorder()
+	if err := h.OpsMetricsFleet(echoCtx(req, rec)); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d; want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if body := decodeJSON(t, rec); body["granularity"] != "5m" {
+		t.Errorf("granularity = %v; want 5m (raw bumped to the smallest fleet tier)", body["granularity"])
+	}
+}
+
+func TestOpsMetricsFleet_InvalidFromTo_400(t *testing.T) {
+	// With a valid nodeType + metric but no from/to window, parseFromTo rejects the
+	// request — the fleet handler must surface that 400 before issuing any query.
+	_, h := newHandlerWithMock(t)
+	req := httptest.NewRequest(http.MethodGet, "/ops-metrics/fleet?nodeType=agent&metric=cpu", nil)
+	rec := httptest.NewRecorder()
+	if err := h.OpsMetricsFleet(echoCtx(req, rec)); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d; want 400 for missing from/to; body=%s", rec.Code, rec.Body.String())
+	}
+	if typ := errType(t, rec); typ != "validation_error" {
+		t.Errorf("error type = %q; want validation_error", typ)
+	}
+}
+
 // SelectGranularity (opsstore helper — tested via handler)
 
 func TestSelectGranularity_Boundaries(t *testing.T) {
@@ -641,8 +690,11 @@ func TestSelectGranularity_Boundaries(t *testing.T) {
 		span time.Duration
 		want string
 	}{
-		{"≤6h → raw", 5 * time.Hour, "raw"},
-		{"6h boundary → raw", 6 * time.Hour, "raw"},
+		{"≤1h → raw", 30 * time.Minute, "raw"},
+		{"1h boundary → raw", time.Hour, "raw"},
+		{"1h+1min → 5m", time.Hour + time.Minute, "5m"},
+		{"≤6h → 5m", 5 * time.Hour, "5m"},
+		{"6h boundary → 5m", 6 * time.Hour, "5m"},
 		{"6h+1min → 1h", 6*time.Hour + time.Minute, "1h"},
 		{"7d → 1h", 7 * 24 * time.Hour, "1h"},
 		{"7d+1h → 1d", 7*24*time.Hour + time.Hour, "1d"},

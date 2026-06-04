@@ -170,11 +170,11 @@ func TestRetentionRowsToMap_Empty(t *testing.T) {
 
 func TestRetentionRowsToMap_WithRows(t *testing.T) {
 	rows := []opsstore.RetentionEntry{
-		{Layer: "runtime_raw", RetentionDays: 7},
-		{Layer: "business_raw", RetentionDays: 14},
+		{Layer: "runtime_5m", RetentionDays: 7},
+		{Layer: "business_5m", RetentionDays: 14},
 	}
 	m := retentionRowsToMap(rows)
-	if m["runtime_raw"] != 7 || m["business_raw"] != 14 {
+	if m["runtime_5m"] != 7 || m["business_5m"] != 14 {
 		t.Errorf("unexpected map: %v", m)
 	}
 }
@@ -187,23 +187,23 @@ func TestValidateRetentionUpdates_UnknownLayer_Error(t *testing.T) {
 }
 
 func TestValidateRetentionUpdates_BelowMin_Error(t *testing.T) {
-	// runtime_raw has min=1, so 0 is out of range.
-	err := validateRetentionUpdates(map[string]int{"runtime_raw": 0})
+	// runtime_5m has min=1, so 0 is out of range.
+	err := validateRetentionUpdates(map[string]int{"runtime_5m": 0})
 	if err == nil {
 		t.Fatal("expected error for value below min")
 	}
 }
 
 func TestValidateRetentionUpdates_AboveMax_Error(t *testing.T) {
-	// runtime_raw has max=30, so 31 is out of range.
-	err := validateRetentionUpdates(map[string]int{"runtime_raw": 31})
+	// runtime_5m has max=30, so 31 is out of range.
+	err := validateRetentionUpdates(map[string]int{"runtime_5m": 31})
 	if err == nil {
 		t.Fatal("expected error for value above max")
 	}
 }
 
 func TestValidateRetentionUpdates_ValidLayer_NoError(t *testing.T) {
-	err := validateRetentionUpdates(map[string]int{"runtime_raw": 7})
+	err := validateRetentionUpdates(map[string]int{"runtime_5m": 7})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -212,8 +212,8 @@ func TestValidateRetentionUpdates_ValidLayer_NoError(t *testing.T) {
 func TestValidateRetentionUpdates_AllLayers_HappyPath(t *testing.T) {
 	// Each layer gets a value within its declared range.
 	valid := map[string]int{
-		"runtime_raw":  7,
-		"business_raw": 14,
+		"runtime_5m":   7,
+		"business_5m":  14,
 		"runtime_1h":   90,
 		"business_1h":  180,
 		"runtime_1d":   365,
@@ -299,7 +299,7 @@ func TestGetRetention_KnownLayers_RangeAnnotated(t *testing.T) {
 	mock, h := newHandlerWithMock(t)
 	now := time.Now()
 	mock.ExpectQuery(`SELECT layer`).WillReturnRows(
-		retentionCols().AddRow("runtime_raw", 7, now),
+		retentionCols().AddRow("runtime_5m", 7, now),
 	)
 	c, rec := echoGET("/api/admin/observability/retention")
 	if err := h.GetRetention(c); err != nil {
@@ -310,15 +310,15 @@ func TestGetRetention_KnownLayers_RangeAnnotated(t *testing.T) {
 	}
 	body := decodeJSON(t, rec)
 	retention, _ := body["retention"].(map[string]any)
-	rr, _ := retention["runtime_raw"].(map[string]any)
+	rr, _ := retention["runtime_5m"].(map[string]any)
 	if rr == nil {
-		t.Fatalf("runtime_raw key missing; retention=%v", retention)
+		t.Fatalf("runtime_5m key missing; retention=%v", retention)
 	}
 	// min=1, max=30 from retentionLayerRanges
 	minVal, _ := rr["min"].(float64)
 	maxVal, _ := rr["max"].(float64)
 	if minVal != 1 || maxVal != 30 {
-		t.Errorf("runtime_raw min/max = %v/%v; want 1/30", minVal, maxVal)
+		t.Errorf("runtime_5m min/max = %v/%v; want 1/30", minVal, maxVal)
 	}
 }
 
@@ -346,7 +346,7 @@ func TestGetRetention_UnknownLayerInDB_ForwardCompat(t *testing.T) {
 
 func TestPutRetention_NilOps_503(t *testing.T) {
 	h := newHandlerNilOps(t)
-	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_raw": 7})
+	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_5m": 7})
 	if err := h.PutRetention(c); err != nil {
 		t.Fatalf("PutRetention: %v", err)
 	}
@@ -394,8 +394,8 @@ func TestPutRetention_UnknownLayer_400(t *testing.T) {
 
 func TestPutRetention_OutOfRange_400(t *testing.T) {
 	_, h := newHandlerWithMock(t)
-	// runtime_raw max=30; 100 is out of range.
-	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_raw": 100})
+	// runtime_5m max=30; 100 is out of range.
+	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_5m": 100})
 	if err := h.PutRetention(c); err != nil {
 		t.Fatalf("PutRetention: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestPutRetention_ListBeforeUpdateDBError_500(t *testing.T) {
 		WillReturnError(errGeneric())
 	mock.ExpectRollback()
 
-	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_raw": 7})
+	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_5m": 7})
 	if err := h.PutRetention(c); err != nil {
 		t.Fatalf("PutRetention: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestPutRetention_Success_200(t *testing.T) {
 	// ListRetentionConfig (before-snapshot) returns one existing row so the
 	// audit BeforeState payload is non-empty.
 	mock.ExpectQuery(`SELECT layer`).WillReturnRows(retentionCols().
-		AddRow("runtime_raw", 14, time.Now()))
+		AddRow("runtime_5m", 14, time.Now()))
 	// UpdateRetentionConfig: Begin + Exec succeed + Commit.
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE metric_ops_retention_config`).
@@ -441,7 +441,7 @@ func TestPutRetention_Success_200(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	mock.ExpectCommit()
 
-	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_raw": 7})
+	c, rec := echoPUT("/api/admin/observability/retention", map[string]int{"runtime_5m": 7})
 	if err := h.PutRetention(c); err != nil {
 		t.Fatalf("PutRetention: %v", err)
 	}

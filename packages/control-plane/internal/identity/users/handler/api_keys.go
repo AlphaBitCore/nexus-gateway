@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -231,14 +231,15 @@ func (h *Handler) DeleteAPIKey(c echo.Context) error {
 // predecessor.
 //
 // Body (optional):
-//   { "expiresAt": "RFC3339" }   override the successor's expiry; default is
-//                                to inherit the predecessor's expiry so the
-//                                operator's intended lifetime is preserved.
+//
+//	{ "expiresAt": "RFC3339" }   override the successor's expiry; default is
+//	                             to inherit the predecessor's expiry so the
+//	                             operator's intended lifetime is preserved.
 //
 // Failure modes:
-//   * 404 — predecessor does not exist
-//   * 409 — predecessor is not in 'active' state (e.g. already rotating)
-//   * 500 — DB error
+//   - 404 — predecessor does not exist
+//   - 409 — predecessor is not in 'active' state (e.g. already rotating)
+//   - 500 — DB error
 func (h *Handler) RotateAPIKey(c echo.Context) error {
 	id := c.Param("id")
 
@@ -305,19 +306,19 @@ func (h *Handler) RotateAPIKey(c echo.Context) error {
 		"predecessorStatus": "active",
 	}
 	ae.AfterState = map[string]any{
-		"predecessorId":     res.Predecessor.ID,
-		"predecessorStatus": res.Predecessor.Status,
-		"successorId":       res.Successor.ID,
+		"predecessorId":      res.Predecessor.ID,
+		"predecessorStatus":  res.Predecessor.Status,
+		"successorId":        res.Successor.ID,
 		"successorKeyPrefix": res.Successor.KeyPrefix,
 		"successorExpiresAt": res.Successor.ExpiresAt,
 	}
 	h.audit.LogObserved(c.Request().Context(), ae)
 
 	return c.JSON(http.StatusCreated, map[string]any{
-		"id":          res.Successor.ID,
-		"key":         rawKey,
-		"keyPrefix":   res.Successor.KeyPrefix,
-		"expiresAt":   res.Successor.ExpiresAt,
+		"id":        res.Successor.ID,
+		"key":       rawKey,
+		"keyPrefix": res.Successor.KeyPrefix,
+		"expiresAt": res.Successor.ExpiresAt,
 		"predecessor": map[string]any{
 			"id":        res.Predecessor.ID,
 			"status":    res.Predecessor.Status,
@@ -329,17 +330,18 @@ func (h *Handler) RotateAPIKey(c echo.Context) error {
 
 // RetireAPIKey closes the rotation window OR actively revokes a key. The
 // caller picks the target status:
-//   * targetStatus = "expired"     — natural sunset (operator confirms the
-//                                    rotation handoff is complete)
-//   * targetStatus = "unavailable" — active revocation (compromise, key
-//                                    leaked, withdrawn from service)
+//   - targetStatus = "expired"     — natural sunset (operator confirms the
+//     rotation handoff is complete)
+//   - targetStatus = "unavailable" — active revocation (compromise, key
+//     leaked, withdrawn from service)
+//
 // After this call the key is no longer accepted by the auth middleware.
 //
 // Failure modes:
-//   * 400 — invalid targetStatus
-//   * 404 — key does not exist
-//   * 409 — key is already in a terminal state (expired / unavailable)
-//   * 500 — DB error
+//   - 400 — invalid targetStatus
+//   - 404 — key does not exist
+//   - 409 — key is already in a terminal state (expired / unavailable)
+//   - 500 — DB error
 func (h *Handler) RetireAPIKey(c echo.Context) error {
 	id := c.Param("id")
 	aa := middleware.AdminAuthFromContext(c)

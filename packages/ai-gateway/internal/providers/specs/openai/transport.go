@@ -9,8 +9,8 @@ import (
 	"time"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // Transport implements [provcore.Transport] for OpenAI and OpenAI-

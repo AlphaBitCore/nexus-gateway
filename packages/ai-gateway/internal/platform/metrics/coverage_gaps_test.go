@@ -54,7 +54,6 @@ func newRecorderAndReg() (*Recorder, *opsmetrics.Registry) {
 	return NewRecorder(reg), reg
 }
 
-
 // TestRecordEstimate_HappyPath_IncrementsAndObserves pins the dual emission:
 // requests counter +1 for the (ingress, model, provider) tuple, AND the
 // duration histogram receives the observation in the correct bucket.
@@ -102,7 +101,6 @@ func TestRecordEstimate_NilReceiver_NoPanic(t *testing.T) {
 	var r *Recorder
 	r.RecordEstimate("chat", "m", "p", time.Second) // must not panic
 }
-
 
 // TestRecordEstimateCompare_HappyPath_IncrementsAllThree pins:
 // (1) compare requests +1, (2) targets +N (AddBy, not N Inc), (3) duration
@@ -164,7 +162,6 @@ func TestRecordEstimateCompare_NilReceiver_NoPanic(t *testing.T) {
 	r.RecordEstimateCompare("chat", 3, time.Second) // must not panic
 }
 
-
 // TestRecordReasoningPassthrough_BothActions verifies the per-(provider,
 // action) counter increments for both observed actions ("injected" and
 // "skipped_malformed"), each with its own series.
@@ -208,7 +205,6 @@ func TestRecordReasoningPassthrough_NilCounter_NoPanic(t *testing.T) {
 	r := &Recorder{} // all instrument fields nil
 	r.RecordReasoningPassthrough("anthropic", "injected")
 }
-
 
 // TestRecordForwardHeaderDropped_HappyPath verifies the 3-label tuple
 // (direction, adapter_type, header) increments and isolates per series.
@@ -254,7 +250,6 @@ func TestRecordForwardHeaderDropped_NilCounter_NoPanic(t *testing.T) {
 	r := &Recorder{}
 	r.RecordForwardHeaderDropped("request", "openai", "auth")
 }
-
 
 // TestRecordRouterRetry_AllThreeOutcomes verifies each documented outcome
 // bucket produces its own series.
@@ -304,7 +299,6 @@ func TestRecordRouterRetry_NilCounter_NoPanic(t *testing.T) {
 	r.RecordRouterRetry("openai", "5xx", "retried_succeeded")
 }
 
-
 // TestRecordSchemaMismatch_HappyPath verifies the (ingress, provider) tuple
 // increments and that the satisfied handler.SchemaMismatchRecorder interface
 // stays observable.
@@ -335,7 +329,6 @@ func TestRecordSchemaMismatch_NilCounter_NoPanic(t *testing.T) {
 	r.RecordSchemaMismatch("chat", "anthropic")
 }
 
-
 // TestRecordError_HappyPath verifies the (provider, error_type) tuple
 // increments and the snake_case prom name maps correctly.
 func TestRecordError_HappyPath(t *testing.T) {
@@ -352,7 +345,6 @@ func TestRecordError_HappyPath(t *testing.T) {
 		t.Errorf("anthropic/timeout: want 1, got %v", got)
 	}
 }
-
 
 // TestRecordHookRequest_AllDecisions verifies every documented decision
 // (approve/modify/block_soft/reject_hard/error/skipped) produces a distinct
@@ -397,7 +389,6 @@ func TestRecordHookRequest_NilCounter_NoPanic(t *testing.T) {
 	r := &Recorder{}
 	r.RecordHookRequest("chat", "request", "approve")
 }
-
 
 // TestRecordTrafficExtract_AllOutcomes verifies the three direction × outcome
 // shapes (success/error/skipped) increment per-tuple correctly.
@@ -525,7 +516,6 @@ func TestRecordRequest_OnlyCompletionTokensBump(t *testing.T) {
 	}
 }
 
-
 // TestStatusBucket_AllBuckets pins every branch of the status → bucket map,
 // including the `default` arm (status < 200 or in [300, 400)).
 func TestStatusBucket_AllBuckets(t *testing.T) {
@@ -573,7 +563,6 @@ func TestRecordRequest_3xxStatusFallsToOther(t *testing.T) {
 		t.Errorf("3xx must not bump 5xx alert counter, got %d", fiveXX)
 	}
 }
-
 
 // TestExtractUsage_OpenAIShape verifies the canonical OpenAI usage block is
 // extracted into the three int fields.

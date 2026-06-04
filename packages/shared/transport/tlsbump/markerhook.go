@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/responseio"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/responseio"
 )
 
 // defaultIdentity is the via-name stamped when the caller did not supply

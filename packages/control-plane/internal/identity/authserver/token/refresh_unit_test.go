@@ -419,6 +419,7 @@ func TestRefreshHelper_NewRefreshHelper_BindsStore(t *testing.T) {
 	h := token.NewRefreshHelper(nil)
 	if h == nil {
 		t.Fatal("NewRefreshHelper returned nil")
+		return
 	}
 	if h.Store == nil {
 		// A nil concrete *store.RefreshStore wrapped in the iface is still

@@ -7,15 +7,14 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
-
 
 const (
 	opsRetentionJobID          = "ops-retention"
 	opsRetentionJobName        = "Ops Metrics & Diag Retention Purge"
-	opsRetentionJobDescription = "Purges aged metric_ops_raw, metric_ops_rollup_1h/1d/1mo, and thing_diag_event rows. Per-class retention is read live from metric_ops_retention_config (one row per layer: runtime_raw, business_raw, runtime_1h, business_1h, runtime_1d, business_1d, runtime_1mo, business_1mo, diag_info, diag_warn, diag_error, diag_fatal). Deletes run in chunks of 10k rows so transactions stay short."
+	opsRetentionJobDescription = "Purges aged metric_ops_rollup_5m/1h/1d/1mo and thing_diag_event rows. Per-class retention is read live from metric_ops_retention_config (one row per layer: runtime_5m, business_5m, runtime_1h, business_1h, runtime_1d, business_1d, runtime_1mo, business_1mo, diag_info, diag_warn, diag_error, diag_fatal). Deletes run in chunks of 10k rows so transactions stay short. The metric_ops_raw table is NOT purged here — it is partition-dropped by the ops-raw-partition job."
 )
 
 // opsRetentionDeleteLimit caps each DELETE to 10k rows so individual
@@ -122,24 +121,13 @@ func (j *OpsRetentionJob) loadLayers(ctx context.Context) ([]opsRetentionLayer, 
 // table tier (raw/1h/1d/1mo).
 func (j *OpsRetentionJob) purgeLayer(ctx context.Context, layer string, cutoff time.Time) (int64, error) {
 	switch layer {
-	case "runtime_raw":
-		return j.deleteLooping(ctx, `
-			DELETE FROM metric_ops_raw
-			 WHERE id IN (
-			   SELECT id FROM metric_ops_raw
-			    WHERE sampled_at < $1 AND metric_name LIKE 'runtime.%'
-			    LIMIT $2
-			 )
-		`, cutoff)
-	case "business_raw":
-		return j.deleteLooping(ctx, `
-			DELETE FROM metric_ops_raw
-			 WHERE id IN (
-			   SELECT id FROM metric_ops_raw
-			    WHERE sampled_at < $1 AND metric_name NOT LIKE 'runtime.%'
-			    LIMIT $2
-			 )
-		`, cutoff)
+	// metric_ops_raw is no longer purged here — the ops-raw-partition job
+	// drops whole-day partitions instead. The smallest persisted tier under
+	// chunked DELETE is now the 5-minute rollup.
+	case "runtime_5m":
+		return j.deleteRollup(ctx, "metric_ops_rollup_5m", "runtime", cutoff)
+	case "business_5m":
+		return j.deleteRollup(ctx, "metric_ops_rollup_5m", "business", cutoff)
 
 	case "runtime_1h":
 		return j.deleteRollup(ctx, "metric_ops_rollup_1h", "runtime", cutoff)

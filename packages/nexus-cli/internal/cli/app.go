@@ -8,14 +8,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
 	"golang.org/x/term"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local/paths"
 )
+
+// Version is the build version stamped into the session-start log line. It is
+// "dev" for un-stamped local builds and overridden via -ldflags at release.
+var Version = "dev"
 
 // errUsage marks an argument/usage error so the exit-code mapper returns 2.
 var errUsage = errors.New("usage error")
@@ -23,7 +30,7 @@ var errUsage = errors.New("usage error")
 // App holds the shared state every command needs. Tests construct an App with
 // Client/Out/Format preset to bypass config loading and real auth.
 type App struct {
-	Cfg        *core.Config
+	Cfg        *local.Config
 	Env        core.Env
 	Store      core.SecretStore
 	HTTP       *http.Client
@@ -32,7 +39,15 @@ type App struct {
 	Format     string // "table" | "json"
 	EnvFlag    string // value of --env
 	ConfigPath string // override for tests; empty → DefaultConfigPath
+	SkillDir   string // override for tests; empty → capabilities.DefaultSkillDir
 	Client     *core.Client
+	// Log is the diagnostic file logger built by ensureConfig from the resolved
+	// config's log level. It writes to a user-scoped file (never the TUI's
+	// stdout/stderr). Tests may preset it (or leave it nil — slog calls on a nil
+	// *slog.Logger are guarded at the call sites that can run pre-config).
+	Log *slog.Logger
+	// logCloser is the open log file's io.Closer, closed by App.Close on exit.
+	logCloser io.Closer
 	// BrowserOpener, when set, overrides how `login` opens the authorize URL
 	// (used by tests; nil → the OS browser).
 	BrowserOpener func(string) error
@@ -42,30 +57,83 @@ type App struct {
 	LaunchTUI   func(*App) error
 }
 
-// ensureConfig populates Cfg, Store, and HTTP from disk/defaults WITHOUT
+// ensureConfig populates Cfg, Store, Log, and HTTP from disk/defaults WITHOUT
 // resolving an environment. Used by config-management commands (env use) that
 // run before any default_env exists. Idempotent; preset fields are kept.
 func (a *App) ensureConfig() error {
-	if a.HTTP == nil {
-		a.HTTP = &http.Client{Timeout: 30 * time.Second}
-	}
 	if a.Store == nil {
-		a.Store = core.KeyringStore{}
+		a.Store = local.KeyringStore{}
 	}
 	if a.Cfg == nil {
 		path := a.ConfigPath
 		if path == "" {
-			p, err := core.DefaultConfigPath()
+			p, err := local.DefaultConfigPath()
 			if err != nil {
 				return err
 			}
 			path = p
 		}
-		cfg, err := core.Load(path)
+		cfg, err := local.Load(path)
 		if err != nil {
 			return err
 		}
 		a.Cfg = cfg
+	}
+	// Build the diagnostic file logger from the resolved config's level. A
+	// failure to open the log file is non-fatal — the CLI must still run — so we
+	// fall back to a discard logger and carry on. Only built once (tests may
+	// preset a.Log to capture records).
+	if a.Log == nil {
+		a.initLogger()
+	}
+	// Default HTTP client wraps the kernel's widened-TLS transport in the
+	// logging RoundTripper so every gateway/admin/auth call records per-phase
+	// timings. Only set when nil — tests inject their own client to bypass real
+	// network calls, and that injection must win.
+	if a.HTTP == nil {
+		base := core.NewHTTPTransport()
+		// HTTP/2 PING health-checking: prod is h2, so all requests to a host share one
+		// connection; without this a NAT-dropped connection is reused dead and every
+		// request hangs to the timeout with no recovery. See local.EnableH2Health.
+		local.EnableH2Health(base)
+		a.HTTP = &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: &local.LoggingTransport{Base: base, Log: a.Log},
+		}
+	}
+	return nil
+}
+
+// initLogger opens the file logger and emits the session-start line. A failure
+// to open the log (read-only home, etc.) is swallowed into a discard logger so
+// the CLI keeps working — diagnostics are a convenience, never a hard dependency.
+func (a *App) initLogger() {
+	p, err := paths.DefaultPaths()
+	if err != nil {
+		a.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		return
+	}
+	logger, closer, err := local.OpenLogger(p, a.Cfg.SlogLevel())
+	if err != nil {
+		a.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		return
+	}
+	a.Log = logger
+	a.logCloser = closer
+	a.Log.Info("cli session start",
+		"version", Version,
+		"env", a.Cfg.DefaultEnv,
+		"config", p.ConfigFile,
+		"log_file", p.LogFile,
+		"level", a.Cfg.SlogLevel().String(),
+	)
+}
+
+// Close releases the open log file. It is called once from Main on process exit;
+// a nil closer (logger never opened, or a test-injected logger) is a no-op.
+func (a *App) Close() error {
+	if a.logCloser != nil {
+		return a.logCloser.Close()
 	}
 	return nil
 }

@@ -7,8 +7,8 @@ func TestStableHashHint(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"", ""},                              // empty
-		{"short", "short"},                    // under cap
+		{"", ""},                                 // empty
+		{"short", "short"},                       // under cap
 		{"0123456789012345", "0123456789012345"}, // exactly 16
 		{"0123456789012345EXTRA", "0123456789012345"}, // truncated to 16
 	}
@@ -33,9 +33,9 @@ func TestIntFromAny_AllTypes(t *testing.T) {
 		{float64(42.9), 42}, // truncates
 		{int(7), 7},
 		{int64(99), 99},
-		{"42", 0},   // not a number
-		{nil, 0},    // not a number
-		{true, 0},   // not a number
+		{"42", 0},     // not a number
+		{nil, 0},      // not a number
+		{true, 0},     // not a number
 		{int32(5), 0}, // int32 is NOT in the switch — pins this
 	}
 	for _, c := range cases {

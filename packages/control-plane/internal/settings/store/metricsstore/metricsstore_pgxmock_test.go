@@ -317,7 +317,7 @@ func TestQueryRollupCascade(t *testing.T) {
 	s3, m3 := newMock(t)
 	m3.ExpectQuery(`rollup_watermark`).WithArgs("merge-1mo").WillReturnRows(pgxmock.NewRows([]string{"watermark"}).AddRow(b1h))
 	m3.ExpectQuery(`rollup_watermark`).WithArgs("merge-1d").WillReturnRows(pgxmock.NewRows([]string{"watermark"}).AddRow(b1mo)) // behind 1mo
-	m3.ExpectQuery(`rollup_watermark`).WithArgs("merge-1h").WillReturnRows(pgxmock.NewRows([]string{"watermark"}).AddRow(b1d)) // behind clamped 1d
+	m3.ExpectQuery(`rollup_watermark`).WithArgs("merge-1h").WillReturnRows(pgxmock.NewRows([]string{"watermark"}).AddRow(b1d))  // behind clamped 1d
 	m3.ExpectQuery(`FROM "metric_rollup_1mo"`).WithArgs(start, b1h).WillReturnRows(pgxmock.NewRows(rollupCols))
 	m3.ExpectQuery(`FROM "metric_rollup_5m"`).WithArgs(b1h, end).WillReturnError(errors.New("boom"))
 	if _, err := s3.QueryRollupCascade(context.Background(), metrics.MetricsQuery{StartTime: start, EndTime: end}); err == nil {

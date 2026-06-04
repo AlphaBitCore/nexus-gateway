@@ -145,6 +145,16 @@ func handleAuthCode(c echo.Context, d TokenDeps) error {
 		return writeTokenError(c, ErrInvalidRequest, "missing required parameter", http.StatusBadRequest)
 	}
 
+	// RFC 6749 §2.3 + §5.2 client authentication. Confidential clients must
+	// present client_secret (Basic or form) and the secret must verify
+	// against the stored bcrypt hash. Public clients must NOT present a
+	// secret. Done BEFORE AuthCodes.Get so failing the secret check does
+	// not consume the auth code — otherwise a misconfigured caller burns
+	// a code on every refresh attempt.
+	if r := verifyClientAuth(ctx, c, d.Clients, clientID); r.ErrCode != "" {
+		return writeTokenError(c, r.ErrCode, r.Desc, r.Status)
+	}
+
 	entry, ok := d.AuthCodes.Get(code)
 	if !ok {
 		return writeTokenError(c, ErrInvalidGrant, "unknown or expired code", http.StatusBadRequest)
@@ -257,8 +267,19 @@ func handleRefresh(c echo.Context, d TokenDeps) error {
 	ctx := c.Request().Context()
 
 	refreshInput := c.FormValue("refresh_token")
+	clientID := c.FormValue("client_id")
 	if refreshInput == "" {
 		return writeTokenError(c, ErrInvalidRequest, "refresh_token required", http.StatusBadRequest)
+	}
+	if clientID == "" {
+		return writeTokenError(c, ErrInvalidRequest, "client_id required", http.StatusBadRequest)
+	}
+
+	// RFC 6749 §6 + §5.2 — authenticate the caller BEFORE rotating the refresh
+	// token. Otherwise a stolen refresh token alone would burn the chain on
+	// every retry, locking the legitimate session out without recovering it.
+	if r := verifyClientAuth(ctx, c, d.Clients, clientID); r.ErrCode != "" {
+		return writeTokenError(c, r.ErrCode, r.Desc, r.Status)
 	}
 
 	newRefresh, _, parent, err := d.Refresh.Rotate(ctx, refreshInput, d.refreshTTL())
@@ -270,6 +291,15 @@ func handleRefresh(c echo.Context, d TokenDeps) error {
 			d.logger().Error("token: refresh Rotate failed", slog.Any("err", err))
 			return writeTokenError(c, ErrServerError, "refresh rotation failed", http.StatusInternalServerError)
 		}
+	}
+
+	// The refresh row was issued to a specific client; the request must
+	// arrive from that same client. Without this check a caller authenticated
+	// as client A could rotate a refresh token that belongs to client B,
+	// turning client A into a passive replay oracle for any chain it can
+	// somehow obtain.
+	if parent.ClientID != clientID {
+		return writeTokenError(c, ErrInvalidGrant, "client_id does not match refresh_token", http.StatusBadRequest)
 	}
 
 	// Re-hydrate the user so a disabled account cannot extend its session by

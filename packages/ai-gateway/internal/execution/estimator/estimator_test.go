@@ -253,7 +253,6 @@ func TestEstimate_multiPartContent_sumsChars(t *testing.T) {
 	}
 }
 
-
 func TestReadReasoningSignal_reasoningEffort_topLevel(t *testing.T) {
 	body := []byte(`{"reasoning_effort":"high"}`)
 	sig := estimator.ReadReasoningSignal(body, provcore.FormatOpenAI)

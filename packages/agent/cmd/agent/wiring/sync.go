@@ -55,14 +55,14 @@ func InitEnrollment(hubHTTPURL, hubCAFile, certDir string) (*enrollment.Manager,
 
 // ThingClientConfig groups the configuration for the Hub WebSocket thingclient.
 type ThingClientConfig struct {
-	HubURL        string
-	HubHTTPURL    string
-	ThingID       string
-	Version       string
-	DeviceToken   string
-	Logger        *slog.Logger
-	ProcessStart  time.Time
-	OpsReg        *registry.Registry
+	HubURL       string
+	HubHTTPURL   string
+	ThingID      string
+	Version      string
+	DeviceToken  string
+	Logger       *slog.Logger
+	ProcessStart time.Time
+	OpsReg       *registry.Registry
 	// ComposeVersionFn composes a full composite version string
 	// (daemon + macOS bundle inventory). Pass composeThingVersion from main package.
 	ComposeVersionFn func(version string) string

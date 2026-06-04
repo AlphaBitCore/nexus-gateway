@@ -141,9 +141,9 @@ func (n *VoyageEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta
 // Embedding vectors are intentionally ignored per SDD §T2.3.
 // Note: Voyage AI only reports total_tokens; there is no prompt/completion split.
 type voyageEmbeddingsResponse struct {
-	Object string               `json:"object"`
-	Model  string               `json:"model"`
-	Usage  *voyageEmbedUsage    `json:"usage,omitempty"`
+	Object string            `json:"object"`
+	Model  string            `json:"model"`
+	Usage  *voyageEmbedUsage `json:"usage,omitempty"`
 }
 
 type voyageEmbedUsage struct {

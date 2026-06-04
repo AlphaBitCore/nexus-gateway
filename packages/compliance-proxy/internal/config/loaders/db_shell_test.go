@@ -38,7 +38,6 @@ func newSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	return db, mock
 }
 
-
 func TestLoadObservabilityConfig_QueryErrorPropagates(t *testing.T) {
 	db, mock := newSQLMock(t)
 	want := errors.New("planner err")
@@ -82,7 +81,6 @@ func TestLoadObservabilityConfig_HappyPathDecodesValue(t *testing.T) {
 		t.Errorf("decoded mismatch: %+v", got)
 	}
 }
-
 
 func TestLoadPayloadCaptureConfig_QueryErrorWrapped(t *testing.T) {
 	db, mock := newSQLMock(t)
@@ -128,7 +126,6 @@ func TestLoadPayloadCaptureConfig_HappyPath(t *testing.T) {
 		t.Errorf("happy path did not thread capture flags: %+v", got)
 	}
 }
-
 
 const domainAllowlistQuery = `
 		SELECT host_pattern, host_match_type
@@ -200,7 +197,6 @@ func TestLoadDomainAllowlist_HappyPath(t *testing.T) {
 		t.Errorf("happy path threading: %v", got)
 	}
 }
-
 
 // hookCols mirrors the SELECT column list. Helper keeps the sqlmock
 // NewRows call readable.
@@ -290,7 +286,6 @@ func TestLoadHookConfigs_HappyPath(t *testing.T) {
 		t.Errorf("ApplicableIngress not threaded: %v", got[1].ApplicableIngress)
 	}
 }
-
 
 const interceptionDomainsQuery = `
 		SELECT id, name, host_pattern, host_match_type::text, adapter_id,

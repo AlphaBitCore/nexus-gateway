@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 )
 
 // newChatCmd sends one prompt to the selected model over the AI Gateway

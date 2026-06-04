@@ -14,8 +14,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
-	cfginterception "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/interception"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	cfginterception "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/interception"
 )
 
 // Thing types that receive the kill-switch fan-out. The kill switch is
@@ -207,4 +207,3 @@ func errJSON(message, errType, code string) map[string]any {
 		},
 	}
 }
-

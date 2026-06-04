@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // ErrAllTargetsExhausted is returned when every target in the list has
@@ -73,7 +73,7 @@ type Attempt struct {
 type ExecutionResult struct {
 	StatusCode int
 	Headers    http.Header
-	Body       []byte                  // non-streaming; nil for streaming
+	Body       []byte                 // non-streaming; nil for streaming
 	Stream     provcore.StreamSession // streaming; nil for non-streaming
 	Usage      provcore.Usage
 	// Coerced lists any in-place request rewrites the adapter applied before

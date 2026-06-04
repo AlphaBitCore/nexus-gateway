@@ -23,11 +23,10 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	gemcodec "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/gemini/codec"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
-
 
 func TestNewCodec_returnsFunctionalCodec(t *testing.T) {
 	c := gemcodec.NewCodec()
@@ -35,7 +34,6 @@ func TestNewCodec_returnsFunctionalCodec(t *testing.T) {
 		t.Fatal("NewCodec returned nil")
 	}
 }
-
 
 func TestEncodeRequest_unsupportedEndpoint_returnsError(t *testing.T) {
 	var c gemcodec.Codec
@@ -532,7 +530,6 @@ func TestEncodeRequest_emptyArrayContent_emptyTextPart(t *testing.T) {
 	}
 }
 
-
 func TestDecodeResponse_nonChatEndpoint_passthrough(t *testing.T) {
 	var c gemcodec.Codec
 	body := []byte(`{"some":"response"}`)
@@ -597,7 +594,6 @@ func TestDecodeResponse_malformedBody_gracefulFallback(t *testing.T) {
 	_ = err
 }
 
-
 func TestMapFinishReason_allVariants(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -626,7 +622,6 @@ func TestMapFinishReason_allVariants(t *testing.T) {
 	}
 }
 
-
 func TestUsageToNormalize_zero_returnsNil(t *testing.T) {
 	u := provcore.Usage{}
 	got := gemcodec.UsageToNormalize(u)
@@ -643,7 +638,6 @@ func TestUsageToNormalize_nonZero_returnsPointer(t *testing.T) {
 		t.Fatal("non-zero Usage: expected non-nil")
 	}
 }
-
 
 func TestParseDataURL_valid(t *testing.T) {
 	media, b64, ok := gemcodec.ParseDataURL("data:image/png;base64,aGVsbG8=")
@@ -696,7 +690,6 @@ func TestParseDataURL_emptyMediaType_usesDefault(t *testing.T) {
 	}
 }
 
-
 func TestGuessMimeFromURL_extensions(t *testing.T) {
 	cases := []struct {
 		url, want string
@@ -708,10 +701,10 @@ func TestGuessMimeFromURL_extensions(t *testing.T) {
 		{"https://x.com/img.heif", "image/heif"},
 		{"https://x.com/img.jpg", "image/jpeg"},
 		{"https://x.com/img.jpeg", "image/jpeg"},
-		{"https://x.com/img.PNG?v=1", "image/png"},     // case + query string
-		{"https://x.com/img.png#anchor", "image/png"},  // fragment stripped
-		{"https://x.com/file.bin", "image/jpeg"},        // fallback
-		{"https://x.com/noext", "image/jpeg"},           // no extension fallback
+		{"https://x.com/img.PNG?v=1", "image/png"},    // case + query string
+		{"https://x.com/img.png#anchor", "image/png"}, // fragment stripped
+		{"https://x.com/file.bin", "image/jpeg"},      // fallback
+		{"https://x.com/noext", "image/jpeg"},         // no extension fallback
 	}
 	for _, tc := range cases {
 		got := gemcodec.GuessMimeFromURL(tc.url)
@@ -720,7 +713,6 @@ func TestGuessMimeFromURL_extensions(t *testing.T) {
 		}
 	}
 }
-
 
 func TestStringifyContent_string(t *testing.T) {
 	r := gjson.Parse(`"hello"`)

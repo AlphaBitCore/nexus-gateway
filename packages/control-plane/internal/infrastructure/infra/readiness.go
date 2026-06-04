@@ -7,8 +7,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterReadinessRoutes mounts the readiness check + instance list routes.

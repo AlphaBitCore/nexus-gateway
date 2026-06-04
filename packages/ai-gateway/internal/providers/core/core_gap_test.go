@@ -12,7 +12,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
-
 func TestRegistry_MustRegister_success(t *testing.T) {
 	r := NewRegistry()
 	// MustRegister should not panic on a valid adapter.
@@ -33,7 +32,6 @@ func TestRegistry_MustRegister_panicOnError(t *testing.T) {
 	}()
 	r.MustRegister(stubCoreAdapter{}) // duplicate → panic
 }
-
 
 func TestRegistry_List_returnsRegisteredFormats(t *testing.T) {
 	r := NewRegistry()
@@ -59,7 +57,6 @@ func TestRegistry_List_emptyRegistry(t *testing.T) {
 	}
 	// len 0 is fine; verify no panic.
 }
-
 
 func TestAdapterSpec_Valid_completeSpec_returnsTrue(t *testing.T) {
 	spec := AdapterSpec{
@@ -97,7 +94,6 @@ func TestAdapterSpec_Valid_nilTransport_returnsFalse(t *testing.T) {
 		t.Error("AdapterSpec with nil Transport should not be Valid()")
 	}
 }
-
 
 func TestFormat_IsOpenAIFamily_openAIFormats(t *testing.T) {
 	// Formats that share the OpenAI wire shape.
@@ -168,8 +164,10 @@ func TestExtractUsage_defaultUnknownFormat_returnsZero(t *testing.T) {
 // stubCoreAdapter implements Adapter for registry tests (reuse pattern from registry_test.go).
 type stubCoreAdapter struct{}
 
-func (stubCoreAdapter) Format() Format              { return FormatOpenAI }
-func (stubCoreAdapter) SupportsShape(s typology.WireShape) bool { return s == typology.WireShapeOpenAIChat }
+func (stubCoreAdapter) Format() Format { return FormatOpenAI }
+func (stubCoreAdapter) SupportsShape(s typology.WireShape) bool {
+	return s == typology.WireShapeOpenAIChat
+}
 func (stubCoreAdapter) Execute(_ context.Context, _ Request) (*Response, error) {
 	return &Response{StatusCode: 200}, nil
 }

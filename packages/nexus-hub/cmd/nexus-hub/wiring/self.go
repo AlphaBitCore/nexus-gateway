@@ -130,4 +130,3 @@ func InitSelfShadow(
 		ConfigKeyRecorder: configKeyRecorder,
 	}, nil
 }
-

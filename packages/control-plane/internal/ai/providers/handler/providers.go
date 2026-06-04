@@ -582,7 +582,7 @@ func (h *Handler) AddProviderModel(c echo.Context) error {
 		InputPricePerMillion: body.InputPricePerMillion, OutputPricePerMillion: body.OutputPricePerMillion,
 		CachedInputReadPricePerMillion:  body.CachedInputReadPricePerMillion,
 		CachedInputWritePricePerMillion: body.CachedInputWritePricePerMillion,
-		MaxContextTokens: body.MaxContextTokens, MaxOutputTokens: body.MaxOutputTokens,
+		MaxContextTokens:                body.MaxContextTokens, MaxOutputTokens: body.MaxOutputTokens,
 		Aliases: body.Aliases, CapabilityJson: capJSON, Enabled: true,
 	})
 	if err != nil {

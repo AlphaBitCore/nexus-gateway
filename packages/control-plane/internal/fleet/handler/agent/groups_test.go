@@ -44,7 +44,6 @@ func TestRegisterDeviceGroupRoutes_MountsAll(t *testing.T) {
 	}
 }
 
-
 func TestListDeviceGroups_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	h := newHandlerForTest(mock, &fakeHub{}, nil)
@@ -99,7 +98,6 @@ func TestListDeviceGroups_DBError(t *testing.T) {
 	}
 }
 
-
 func TestGetDeviceGroup_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	h := newHandlerForTest(mock, &fakeHub{}, nil)
@@ -153,7 +151,6 @@ func TestGetDeviceGroup_MembershipsError(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestCreateDeviceGroup_Happy(t *testing.T) {
 	mock := newMockPool(t)
@@ -231,7 +228,6 @@ func TestCreateDeviceGroup_DBError(t *testing.T) {
 	}
 }
 
-
 func TestUpdateDeviceGroup_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	spy := &auditSpy{}
@@ -274,7 +270,6 @@ func TestUpdateDeviceGroup_DBError(t *testing.T) {
 	}
 }
 
-
 func TestDeleteDeviceGroup_Happy(t *testing.T) {
 	mock := newMockPool(t)
 	spy := &auditSpy{}
@@ -314,7 +309,6 @@ func TestDeleteDeviceGroup_NotFound(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestAddGroupMember_Happy(t *testing.T) {
 	mock := newMockPool(t)
@@ -429,7 +423,6 @@ func TestAddGroupMember_DBError(t *testing.T) {
 		t.Fatalf("code=%d", rec.Code)
 	}
 }
-
 
 func TestRemoveGroupMember_Happy(t *testing.T) {
 	mock := newMockPool(t)

@@ -8,7 +8,7 @@ import (
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 )
 
-func iptr(v int) *int     { return &v }
+func iptr(v int) *int         { return &v }
 func fptr(v float64) *float64 { return &v }
 
 // TestCalculateCost_AnthropicCacheMix verifies the four-component
@@ -35,10 +35,10 @@ func TestCalculateCost_AnthropicCacheMix(t *testing.T) {
 	got := metrics.CalculateCost(u, p)
 
 	want := metrics.Cost{
-		UncachedInput: 50 * 3.00 / 1e6,           // 0.00015
-		CacheRead:     4000 * 0.30 / 1e6,         // 0.0012
-		CacheWrite:    1000 * 3.75 / 1e6,         // 0.00375
-		Output:        20 * 15.00 / 1e6,          // 0.0003
+		UncachedInput: 50 * 3.00 / 1e6,   // 0.00015
+		CacheRead:     4000 * 0.30 / 1e6, // 0.0012
+		CacheWrite:    1000 * 3.75 / 1e6, // 0.00375
+		Output:        20 * 15.00 / 1e6,  // 0.0003
 	}
 	want.Total = want.UncachedInput + want.CacheRead + want.CacheWrite + want.Output
 
@@ -55,9 +55,9 @@ func TestCalculateCost_AnthropicCacheMix(t *testing.T) {
 // rate — preserving the "no discount available" semantics.
 func TestCalculateCost_NoCachePrices_FallbackToInputPrice(t *testing.T) {
 	u := provcore.Usage{
-		PromptTokens:    iptr(1000),
+		PromptTokens:     iptr(1000),
 		CompletionTokens: iptr(100),
-		CacheReadTokens: iptr(200),
+		CacheReadTokens:  iptr(200),
 	}
 	p := metrics.ModelPrices{
 		InputUsdPerM:  fptr(2.00),
@@ -68,7 +68,7 @@ func TestCalculateCost_NoCachePrices_FallbackToInputPrice(t *testing.T) {
 	// UncachedInput = 1000 - 200 - 0 = 800; CacheRead is billed at 2.00 (fallback).
 	assertClose(t, "UncachedInput", got.UncachedInput, 800*2.00/1e6)
 	assertClose(t, "CacheRead", got.CacheRead, 200*2.00/1e6)
-	assertClose(t, "Total", got.Total, 800*2.00/1e6 + 200*2.00/1e6 + 100*10.00/1e6)
+	assertClose(t, "Total", got.Total, 800*2.00/1e6+200*2.00/1e6+100*10.00/1e6)
 }
 
 // TestCalculateCost_ReasoningSplit verifies the reasoning subset of
@@ -88,7 +88,7 @@ func TestCalculateCost_ReasoningSplit(t *testing.T) {
 	assertClose(t, "Output", got.Output, 500*10.00/1e6)
 	assertClose(t, "ReasoningSplit", got.ReasoningSplit, 300*10.00/1e6)
 	// ReasoningSplit is SUBSET of Output, NOT added on top.
-	assertClose(t, "Total", got.Total, 100*1.00/1e6 + 500*10.00/1e6)
+	assertClose(t, "Total", got.Total, 100*1.00/1e6+500*10.00/1e6)
 }
 
 // TestCalculateCost_UncachedUnderflowDefense verifies the defensive

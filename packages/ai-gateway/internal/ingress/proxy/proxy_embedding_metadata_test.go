@@ -23,7 +23,6 @@ import (
 	"testing"
 )
 
-
 func TestPreStampEmbeddingRequestMeta_singleStringInput(t *testing.T) {
 	body := []byte(`{"model":"text-embedding-3-small","input":"hello world"}`)
 	result := preStampEmbeddingRequestMeta(nil, body, false)
@@ -130,7 +129,6 @@ func TestPreStampEmbeddingRequestMeta_emptyBody(t *testing.T) {
 	}
 }
 
-
 func TestUpdateEmbeddingDimension_vectorPresent(t *testing.T) {
 	// Simulate canonical OpenAI embeddings response.
 	respBody := buildEmbeddingResponse(1536)
@@ -196,7 +194,6 @@ func TestUpdateEmbeddingDimension_preservesPriorSubmap(t *testing.T) {
 	}
 }
 
-
 func TestMergeIntoMetadataMap_nilReturnsEmptyMap(t *testing.T) {
 	m := mergeIntoMetadataMap(nil)
 	if m == nil {
@@ -222,7 +219,6 @@ func TestMergeIntoMetadataMap_nonMapPreservedUnderPrev(t *testing.T) {
 		t.Errorf("non-map value not preserved under _prev: %v", out)
 	}
 }
-
 
 // embeddingFromMeta extracts the embedding sub-map from the metadata value.
 func embeddingFromMeta(t *testing.T, meta any) map[string]any {

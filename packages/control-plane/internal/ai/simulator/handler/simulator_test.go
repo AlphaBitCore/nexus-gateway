@@ -454,6 +454,7 @@ func TestNew(t *testing.T) {
 	h := newTestHandler()
 	if h == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if h.logger == nil {
 		t.Error("logger should be set")

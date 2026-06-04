@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configcache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configcache"
 )
 
 // HookConfigLoader loads hook configs from the database.

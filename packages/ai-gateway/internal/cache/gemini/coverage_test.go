@@ -173,7 +173,7 @@ func TestAPIClient_Create_Success_AddsModelsPrefix(t *testing.T) {
 	defer srv.Close()
 
 	c := newAPIClient()
-	rec, err := c.create(context.Background(), "key-1", srv.URL, "gemini-2.0-flash", `{"parts":[{"text":"x"}]}`, 600)
+	rec, err := c.create(context.Background(), "key-1", srv.URL, "gemini-2.0-flash", `{"parts":[{"text":"x"}]}`, "", "", 600)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestAPIClient_Create_PreservesModelsPrefix(t *testing.T) {
 	defer srv.Close()
 
 	c := newAPIClient()
-	if _, err := c.create(context.Background(), "k", srv.URL, "models/already-prefixed", `{}`, 60); err != nil {
+	if _, err := c.create(context.Background(), "k", srv.URL, "models/already-prefixed", `{}`, "", "", 60); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if seenModel != "models/already-prefixed" {
@@ -218,7 +218,7 @@ func TestAPIClient_Create_PreservesModelsPrefix(t *testing.T) {
 
 func TestAPIClient_Create_InvalidSystemInstructionJSON(t *testing.T) {
 	c := newAPIClient()
-	_, err := c.create(context.Background(), "k", "https://example.invalid", "m", `{not json`, 60)
+	_, err := c.create(context.Background(), "k", "https://example.invalid", "m", `{not json`, "", "", 60)
 	if err == nil || !strings.Contains(err.Error(), "invalid systemInstruction JSON") {
 		t.Fatalf("expected systemInstruction JSON error, got %v", err)
 	}
@@ -227,7 +227,7 @@ func TestAPIClient_Create_InvalidSystemInstructionJSON(t *testing.T) {
 func TestAPIClient_Create_BuildRequestError(t *testing.T) {
 	// A baseURL with a control character is rejected by http.NewRequestWithContext.
 	c := newAPIClient()
-	_, err := c.create(context.Background(), "k", "http://example.com\x7f", "m", `{}`, 60)
+	_, err := c.create(context.Background(), "k", "http://example.com\x7f", "m", `{}`, "", "", 60)
 	if err == nil || !strings.Contains(err.Error(), "build request") {
 		t.Fatalf("expected build request error, got %v", err)
 	}
@@ -241,7 +241,7 @@ func TestAPIClient_Create_Non200Status(t *testing.T) {
 	defer srv.Close()
 
 	c := newAPIClient()
-	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, 60)
+	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, "", "", 60)
 	if err == nil || !strings.Contains(err.Error(), "status=400") {
 		t.Fatalf("expected status=400 error, got %v", err)
 	}
@@ -254,7 +254,7 @@ func TestAPIClient_Create_UnparseableBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newAPIClient()
-	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, 60)
+	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, "", "", 60)
 	if err == nil || !strings.Contains(err.Error(), "parse response") {
 		t.Fatalf("expected parse response error, got %v", err)
 	}
@@ -267,7 +267,7 @@ func TestAPIClient_Create_MissingName(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := newAPIClient()
-	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, 60)
+	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, "", "", 60)
 	if err == nil || !strings.Contains(err.Error(), "missing name") {
 		t.Fatalf("expected missing-name error, got %v", err)
 	}
@@ -278,7 +278,7 @@ func TestAPIClient_Create_NetworkError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	srv.Close() // immediately closed so Do() fails
 	c := newAPIClient()
-	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, 60)
+	_, err := c.create(context.Background(), "k", srv.URL, "m", `{}`, "", "", 60)
 	if err == nil || !strings.Contains(err.Error(), "POST cachedContents") {
 		t.Fatalf("expected POST error, got %v", err)
 	}
@@ -294,7 +294,7 @@ func TestAPIClient_Create_BaseURLTrailingSlashTrimmed(t *testing.T) {
 	defer srv.Close()
 	c := newAPIClient()
 	// Append a trailing slash; the code TrimRight's it so we expect a single /v1beta path.
-	if _, err := c.create(context.Background(), "k", srv.URL+"/", "m", `{}`, 60); err != nil {
+	if _, err := c.create(context.Background(), "k", srv.URL+"/", "m", `{}`, "", "", 60); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if seenPath != "/v1beta/cachedContents" {
@@ -313,7 +313,7 @@ func TestInject_RedisHit_RewritesAndInvalidateClearsKey(t *testing.T) {
 	body := []byte(`{"systemInstruction":` + systemJSON + `,"contents":[{"role":"user","parts":[{"text":"q"}]}]}`)
 
 	// Pre-seed Redis with a valid record.
-	rk := contentHash("p1", "gemini-2.0-flash", systemJSON)
+	rk := contentHash("p1", "gemini-2.0-flash", systemJSON, "", "")
 	rec := cachedRecord{Name: "cachedContents/seed", ExpireTime: "2026-05-17T00:00:00Z", TokenCount: 42}
 	raw, _ := json.Marshal(rec)
 	if err := rdb.Set(context.Background(), rk, raw, time.Hour).Err(); err != nil {
@@ -358,7 +358,7 @@ func TestInvalidate_NilRedisIsSafe(t *testing.T) {
 	m := New(nil, nil, NewMetrics(prometheus.NewRegistry()), Config{Enabled: true}, nil)
 	// Construct a fake Invalidate by hand mirroring the path; we just want
 	// to ensure the package's nil-redis early return doesn't panic.
-	rk := contentHash("p", "m", `{"x":1}`)
+	rk := contentHash("p", "m", `{"x":1}`, "", "")
 	inv := func() {
 		if m.rdb == nil {
 			return
@@ -375,7 +375,7 @@ func TestInvalidate_RedisDelError_DoesNotPanicAndDoesNotRecordSkipped(t *testing
 
 	systemJSON := `{"parts":[{"text":"sys"}]}`
 	body := []byte(`{"systemInstruction":` + systemJSON + `,"contents":[]}`)
-	rk := contentHash("p1", "m", systemJSON)
+	rk := contentHash("p1", "m", systemJSON, "", "")
 	rec := cachedRecord{Name: "cachedContents/x", ExpireTime: "", TokenCount: 1}
 	raw, _ := json.Marshal(rec)
 	if err := rdb.Set(context.Background(), rk, raw, time.Hour).Err(); err != nil {
@@ -397,7 +397,7 @@ func TestInject_CorruptRedisRecord_TreatsAsMiss(t *testing.T) {
 
 	systemJSON := `{"parts":[{"text":"x"}]}`
 	body := []byte(`{"systemInstruction":` + systemJSON + `,"contents":[]}`)
-	rk := contentHash("p1", "m", systemJSON)
+	rk := contentHash("p1", "m", systemJSON, "", "")
 	if err := rdb.Set(context.Background(), rk, "{not json", time.Hour).Err(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestInject_EmptyNameInRecord_TreatsAsMiss(t *testing.T) {
 	m := New(rdb, nil, NewMetrics(prometheus.NewRegistry()), Config{Enabled: true, MinSystemChars: 1}, nil)
 	systemJSON := `{"parts":[{"text":"x"}]}`
 	body := []byte(`{"systemInstruction":` + systemJSON + `,"contents":[]}`)
-	rk := contentHash("p1", "m", systemJSON)
+	rk := contentHash("p1", "m", systemJSON, "", "")
 	raw, _ := json.Marshal(cachedRecord{Name: "", ExpireTime: "", TokenCount: 0})
 	if err := rdb.Set(context.Background(), rk, raw, time.Hour).Err(); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -467,7 +467,7 @@ func TestAsyncCreate_FullPath_WritesToRedis(t *testing.T) {
 	}
 	res.waitForCalls(t, 1, 2*time.Second)
 	// Wait briefly for the Redis SET to land after the HTTP call.
-	rk := contentHash("p1", "gemini-2.0-flash", `{"parts":[{"text":"some big system"}]}`)
+	rk := contentHash("p1", "gemini-2.0-flash", `{"parts":[{"text":"some big system"}]}`, "", "")
 	deadline := time.Now().Add(2 * time.Second)
 	var stored string
 	for time.Now().Before(deadline) {
@@ -515,7 +515,7 @@ func TestAsyncCreate_TTLFloorAt60s(t *testing.T) {
 	}
 	res.waitForCalls(t, 1, 2*time.Second)
 	// Wait for the SET.
-	rk := contentHash("p", "m", `{"parts":[{"text":"x"}]}`)
+	rk := contentHash("p", "m", `{"parts":[{"text":"x"}]}`, "", "")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := rdb.Get(context.Background(), rk).Result(); err == nil {

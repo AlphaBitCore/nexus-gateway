@@ -45,11 +45,10 @@ func (f *fakeConn) decision(t *testing.T) string {
 	return d.Decision
 }
 
-// mockHandler implements api.ConnectionHandler and (optionally) KillSwitchGater.
+// mockHandler implements api.ConnectionHandler. Kill-switch gating is
+// exercised separately via gatingHandler, which embeds this type.
 type mockHandler struct {
-	decision   api.Decision
-	killSwitch bool
-	gater      bool // when true, expose IsKillSwitchEngaged
+	decision api.Decision
 }
 
 func (m *mockHandler) HandleConnection(api.InterceptedConn) api.Decision { return m.decision }

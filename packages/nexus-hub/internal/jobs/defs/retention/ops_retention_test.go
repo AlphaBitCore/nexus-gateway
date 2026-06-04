@@ -6,11 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Pure (no-DB) identity tests.
+// Pure (no-DB) identity + default tests.
 
 func TestOpsRetention_Identity(t *testing.T) {
 	j := NewOpsRetention(nil, 24*time.Hour, testLogger())
@@ -35,355 +34,223 @@ func TestOpsRetention_IntervalDefault(t *testing.T) {
 	}
 }
 
-// DB-backed tests.
+// jobsTestPool + testLogger live in helpers_test.go (shared with the other
+// retention DB tests). These DB-backed tests require a live Postgres and are
+// skipped automatically when DATABASE_URL is unset / unreachable.
+//
+// Behavior under test reflects the post-partition design: ops-retention
+// chunked-DELETEs the rollup tiers (5m/1h/1d/1mo) + thing_diag_event, but does
+// NOT touch metric_ops_raw — raw is day-partitioned and aged out by the
+// separate ops-raw-partition job (whole-day partition drops).
 
-// opsRetentionTestSetup wipes ops state for the test thing IDs and ensures
-// the canonical retention-config defaults are present (the migration seeds
-// them, but other tests may have mutated rows).
-func opsRetentionTestSetup(t *testing.T, pool *pgxpool.Pool, things map[string]string) func() {
+// runOpsRetention constructs the job with the shared pool and runs it once.
+func runOpsRetention(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	ctx := context.Background()
-
-	for id, ttype := range things {
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO thing (id, name, type, status, last_seen_at, updated_at)
-			VALUES ($1, $1, $2, 'online', NOW(), NOW())
-			ON CONFLICT (id) DO NOTHING
-		`, id, ttype); err != nil {
-			t.Fatalf("seed thing %s: %v", id, err)
-		}
-	}
-
-	for id := range things {
-		_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_raw WHERE thing_id = $1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_rollup_1h WHERE thing_id = $1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_rollup_1d WHERE thing_id = $1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_rollup_1mo WHERE thing_id = $1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM thing_diag_event WHERE thing_id = $1`, id)
-	}
-
-	// Restore the canonical defaults so this test's behaviour is isolated.
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO metric_ops_retention_config (layer, retention_days) VALUES
-		  ('runtime_raw',   7),
-		  ('business_raw',  7),
-		  ('runtime_1h',    90),
-		  ('business_1h',   90),
-		  ('runtime_1d',    365),
-		  ('business_1d',   365),
-		  ('runtime_1mo',   1825),
-		  ('business_1mo',  1825),
-		  ('diag_warn',     30),
-		  ('diag_error',    180),
-		  ('diag_fatal',    365)
-		ON CONFLICT (layer) DO UPDATE SET retention_days = EXCLUDED.retention_days
-	`); err != nil {
-		t.Fatalf("restore config: %v", err)
-	}
-
-	return func() {
-		for id := range things {
-			_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_raw WHERE thing_id = $1`, id)
-			_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_rollup_1h WHERE thing_id = $1`, id)
-			_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_rollup_1d WHERE thing_id = $1`, id)
-			_, _ = pool.Exec(ctx, `DELETE FROM metric_ops_rollup_1mo WHERE thing_id = $1`, id)
-			_, _ = pool.Exec(ctx, `DELETE FROM thing_diag_event WHERE thing_id = $1`, id)
-			_, _ = pool.Exec(ctx, `DELETE FROM thing WHERE id = $1`, id)
-		}
+	j := NewOpsRetention(pool, 0, testLogger())
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("run ops retention: %v", err)
 	}
 }
 
-// insertRawForRetention writes one metric_ops_raw row with a controlled
-// sampled_at so the retention test can age it.
-func insertRawForRetention(t *testing.T, pool *pgxpool.Pool, sampledAt time.Time, thingID, name string) {
+// cleanupOpsRetention removes any rows for the given thing IDs across the
+// metric_ops_* + thing_diag_event tables so each test starts clean.
+func cleanupOpsRetention(t *testing.T, pool *pgxpool.Pool, ids []string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, tbl := range []string{"metric_ops_rollup_5m", "metric_ops_rollup_1h", "metric_ops_rollup_1d", "metric_ops_rollup_1mo"} {
+		if _, err := pool.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE thing_id = ANY($1)`, tbl), ids); err != nil {
+			t.Fatalf("cleanup %s: %v", tbl, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM thing_diag_event WHERE thing_id = ANY($1)`, ids); err != nil {
+		t.Fatalf("cleanup diag: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM metric_ops_raw WHERE thing_id = ANY($1)`, ids); err != nil {
+		t.Fatalf("cleanup raw: %v", err)
+	}
+}
+
+// seedRetentionConfig sets retention_days for each layer used by the tests.
+// Raw is intentionally absent: it is no longer a retention-config layer.
+func seedRetentionConfig(t *testing.T, pool *pgxpool.Pool) {
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO metric_ops_retention_config (layer, retention_days, updated_at)
+		VALUES
+		  ('runtime_5m',    7, NOW()),
+		  ('business_5m',   7, NOW()),
+		  ('runtime_1h',    7, NOW()),
+		  ('business_1h',   7, NOW()),
+		  ('runtime_1d',    7, NOW()),
+		  ('business_1d',   7, NOW()),
+		  ('runtime_1mo',   7, NOW()),
+		  ('business_1mo',  7, NOW()),
+		  ('diag_info',     7, NOW()),
+		  ('diag_warn',     7, NOW())
+		ON CONFLICT (layer) DO UPDATE SET retention_days = EXCLUDED.retention_days
+	`); err != nil {
+		t.Fatalf("seed retention config: %v", err)
+	}
+}
+
+// insertRawOpsSample writes one metric_ops_raw row at the given age in days.
+func insertRawOpsSample(t *testing.T, pool *pgxpool.Pool, thingID string, ageDays int) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO metric_ops_raw (id, sampled_at, thing_id, thing_type, metric_name, metric_kind, dimension_key, value)
-		VALUES ($1, $2, $3, 'service', $4, 'gauge', '', 1.0)
-	`, uuid.NewString(), sampledAt, thingID, name)
+		VALUES (gen_random_uuid(), NOW() - ($1 || ' days')::interval, $2, 'service', 'runtime.cpu', 'gauge', '', 1.0)
+	`, ageDays, thingID)
 	if err != nil {
-		t.Fatalf("insert raw: %v", err)
+		t.Fatalf("insert raw sample: %v", err)
 	}
 }
 
-// insertRollupForRetention writes one rollup row in the given table with a
-// controlled bucket_start so the retention test can age it.
-func insertRollupForRetention(t *testing.T, pool *pgxpool.Pool, table string, bucketStart time.Time, thingID, name string) {
+// insertRollupOpsSample writes one metric_ops_rollup_<tier> row at the given age.
+func insertRollupOpsSample(t *testing.T, pool *pgxpool.Pool, table, thingID string, ageDays int) {
 	t.Helper()
-	q := fmt.Sprintf(`
-		INSERT INTO %s
-			(id, bucket_start, thing_id, thing_type, metric_name, metric_kind, dimension_key,
-			 value_avg, value_sum, value_min, value_max, sample_count)
-		VALUES ($1, $2, $3, 'service', $4, 'gauge', '', 1, 1, 1, 1, 1)
-	`, table)
-	if _, err := pool.Exec(context.Background(), q, uuid.NewString(), bucketStart, thingID, name); err != nil {
-		t.Fatalf("insert rollup row in %s: %v", table, err)
+	_, err := pool.Exec(context.Background(), fmt.Sprintf(`
+		INSERT INTO %s (id, bucket_start, thing_id, thing_type, metric_name, metric_kind, dimension_key, value_avg, value_sum, value_min, value_max, sample_count)
+		VALUES (gen_random_uuid(), NOW() - ($1 || ' days')::interval, $2, 'service', 'runtime.cpu', 'gauge', '', 1.0, 1.0, 1.0, 1.0, 1)
+	`, table), ageDays, thingID)
+	if err != nil {
+		t.Fatalf("insert rollup sample: %v", err)
 	}
 }
 
-// insertDiagForRetention writes one thing_diag_event with a controlled
-// occurred_at + level.
-func insertDiagForRetention(t *testing.T, pool *pgxpool.Pool, occurredAt time.Time, thingID, level string) {
+// countOpsRows returns the row count for the given table + thing scope.
+func countOpsRows(t *testing.T, pool *pgxpool.Pool, table, thingID string) int {
 	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(), fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE thing_id = $1`, table), thingID).Scan(&n); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return n
+}
+
+// TestOpsRetention_DeletesAgedRollupsRawExempt is the end-to-end DB test: seed
+// rows at various ages across raw + the 5m/1h rollup tiers, run the job, and
+// assert (a) aged rollup rows are gone, (b) fresh rollup rows survive, and
+// (c) raw is left entirely untouched (the partition job owns raw, not this one).
+func TestOpsRetention_DeletesAgedRollupsRawExempt(t *testing.T) {
+	pool := jobsTestPool(t)
+	defer pool.Close()
+
+	cleanupOpsRetention(t, pool, []string{"ret-raw", "ret-5m", "ret-1h", "ret-keep"})
+	seedRetentionConfig(t, pool)
+
+	// Two raw samples (one aged 10d, one fresh 1d). Both must survive: the
+	// retention job never deletes raw.
+	thingRaw := "ret-raw"
+	insertRawOpsSample(t, pool, thingRaw, 10)
+	insertRawOpsSample(t, pool, thingRaw, 1)
+
+	// 5m tier: aged 10d (deleted at 7d) + fresh 1d (kept).
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_5m", "ret-5m", 10)
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_5m", "ret-5m", 1)
+
+	// 1h tier: aged 10d (deleted) + fresh 1d (kept).
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_1h", "ret-1h", 10)
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_1h", "ret-1h", 1)
+
+	// A thing whose rows are all fresh — must survive entirely.
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_1h", "ret-keep", 1)
+
+	runOpsRetention(t, pool)
+
+	// raw: untouched — both rows survive (partition job, not retention, ages raw).
+	if got := countOpsRows(t, pool, "metric_ops_raw", thingRaw); got != 2 {
+		t.Errorf("raw rows after retention = %d, want 2 (raw is exempt from chunked delete)", got)
+	}
+	// 5m: aged deleted, fresh kept.
+	if got := countOpsRows(t, pool, "metric_ops_rollup_5m", "ret-5m"); got != 1 {
+		t.Errorf("runtime_5m kept = %d, want 1", got)
+	}
+	// 1h: aged deleted, fresh kept.
+	if got := countOpsRows(t, pool, "metric_ops_rollup_1h", "ret-1h"); got != 1 {
+		t.Errorf("runtime_1h kept = %d, want 1", got)
+	}
+	// all-fresh thing untouched.
+	if got := countOpsRows(t, pool, "metric_ops_rollup_1h", "ret-keep"); got != 1 {
+		t.Errorf("fresh thing kept = %d, want 1", got)
+	}
+}
+
+// TestOpsRetention_DiagPurge asserts the diag layers also purge.
+func TestOpsRetention_DiagPurge(t *testing.T) {
+	pool := jobsTestPool(t)
+	defer pool.Close()
+
+	cleanupOpsRetention(t, pool, []string{"ret-diag"})
+	seedRetentionConfig(t, pool)
+
 	_, err := pool.Exec(context.Background(), `
-		INSERT INTO thing_diag_event
-			(id, thing_id, thing_type, occurred_at, level, event_type, source, message, message_hash)
-		VALUES ($1, $2, 'agent', $3, $4, 'log', 'agent', 'test', 'test-hash')
-	`, uuid.NewString(), thingID, occurredAt, level)
+		INSERT INTO thing_diag_event (id, thing_id, thing_type, occurred_at, received_at, level, event_type, source, message, message_hash)
+		VALUES (gen_random_uuid(), $1, 'agent', NOW() - interval '10 days', NOW(), 'warn', 'test', 'test', 'm', 'h')
+	`, "ret-diag")
 	if err != nil {
 		t.Fatalf("insert diag: %v", err)
 	}
-}
-
-func runOpsRetention(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	j := NewOpsRetention(pool, 24*time.Hour, testLogger())
-	if err := j.Run(context.Background()); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-}
-
-// TestOpsRetention_DeletesAgedRowsKeepsInWindow seeds one row per layer with
-// timestamps split across the cutoff (one well-aged, one fresh) and asserts
-// only the aged rows are deleted.
-func TestOpsRetention_DeletesAgedRowsKeepsInWindow(t *testing.T) {
-	pool := jobsTestPool(t)
-	defer pool.Close()
-
-	thingID := "test-ops-ret-window"
-	cleanup := opsRetentionTestSetup(t, pool, map[string]string{thingID: "service"})
-	defer cleanup()
-
-	now := time.Now().UTC()
-
-	// raw: defaults are 7d. Aged = 30d ago; fresh = 1h ago.
-	insertRawForRetention(t, pool, now.AddDate(0, 0, -30), thingID, "runtime.heap")
-	insertRawForRetention(t, pool, now.Add(-time.Hour), thingID, "runtime.heap")
-	insertRawForRetention(t, pool, now.AddDate(0, 0, -30), thingID, "biz.tokens")
-	insertRawForRetention(t, pool, now.Add(-time.Hour), thingID, "biz.tokens")
-
-	// rollup_1h: 90d. Aged = 200d; fresh = 30d.
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1h", now.AddDate(0, 0, -200), thingID, "runtime.heap")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1h", now.AddDate(0, 0, -30), thingID, "runtime.heap")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1h", now.AddDate(0, 0, -200), thingID, "biz.tokens")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1h", now.AddDate(0, 0, -30), thingID, "biz.tokens")
-
-	// rollup_1d: 365d. Aged = 400d; fresh = 90d.
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1d", now.AddDate(0, 0, -400), thingID, "runtime.heap")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1d", now.AddDate(0, 0, -90), thingID, "runtime.heap")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1d", now.AddDate(0, 0, -400), thingID, "biz.tokens")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1d", now.AddDate(0, 0, -90), thingID, "biz.tokens")
-
-	// rollup_1mo: 1825d. Aged = 2000d; fresh = 365d.
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1mo", now.AddDate(0, 0, -2000), thingID, "runtime.heap")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1mo", now.AddDate(0, 0, -365), thingID, "runtime.heap")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1mo", now.AddDate(0, 0, -2000), thingID, "biz.tokens")
-	insertRollupForRetention(t, pool, "metric_ops_rollup_1mo", now.AddDate(0, 0, -365), thingID, "biz.tokens")
-
-	// diag_warn=30, diag_error=180, diag_fatal=365.
-	insertDiagForRetention(t, pool, now.AddDate(0, 0, -45), thingID, "warn")
-	insertDiagForRetention(t, pool, now.AddDate(0, 0, -10), thingID, "warn")
-	insertDiagForRetention(t, pool, now.AddDate(0, 0, -200), thingID, "error")
-	insertDiagForRetention(t, pool, now.AddDate(0, 0, -90), thingID, "error")
-	insertDiagForRetention(t, pool, now.AddDate(0, 0, -400), thingID, "fatal")
-	insertDiagForRetention(t, pool, now.AddDate(0, 0, -90), thingID, "fatal")
-
-	runOpsRetention(t, pool)
-
-	ctx := context.Background()
-	mustCount := func(query string, args ...any) int {
-		t.Helper()
-		var n int
-		if err := pool.QueryRow(ctx, query, args...).Scan(&n); err != nil {
-			t.Fatalf("count: %v", err)
-		}
-		return n
-	}
-
-	// runtime_raw + business_raw kept = 1 each.
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_raw WHERE thing_id=$1 AND metric_name LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("runtime_raw kept = %d, want 1", got)
-	}
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_raw WHERE thing_id=$1 AND metric_name NOT LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("business_raw kept = %d, want 1", got)
-	}
-
-	// rollup_1h kept = 1 each.
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_rollup_1h WHERE thing_id=$1 AND metric_name LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("runtime_1h kept = %d, want 1", got)
-	}
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_rollup_1h WHERE thing_id=$1 AND metric_name NOT LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("business_1h kept = %d, want 1", got)
-	}
-
-	// rollup_1d kept = 1 each.
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_rollup_1d WHERE thing_id=$1 AND metric_name LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("runtime_1d kept = %d, want 1", got)
-	}
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_rollup_1d WHERE thing_id=$1 AND metric_name NOT LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("business_1d kept = %d, want 1", got)
-	}
-
-	// rollup_1mo kept = 1 each.
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_rollup_1mo WHERE thing_id=$1 AND metric_name LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("runtime_1mo kept = %d, want 1", got)
-	}
-	if got := mustCount(`SELECT COUNT(*) FROM metric_ops_rollup_1mo WHERE thing_id=$1 AND metric_name NOT LIKE 'runtime.%'`, thingID); got != 1 {
-		t.Errorf("business_1mo kept = %d, want 1", got)
-	}
-
-	// diag levels kept = 1 each.
-	if got := mustCount(`SELECT COUNT(*) FROM thing_diag_event WHERE thing_id=$1 AND level='warn'`, thingID); got != 1 {
-		t.Errorf("diag warn kept = %d, want 1", got)
-	}
-	if got := mustCount(`SELECT COUNT(*) FROM thing_diag_event WHERE thing_id=$1 AND level='error'`, thingID); got != 1 {
-		t.Errorf("diag error kept = %d, want 1", got)
-	}
-	if got := mustCount(`SELECT COUNT(*) FROM thing_diag_event WHERE thing_id=$1 AND level='fatal'`, thingID); got != 1 {
-		t.Errorf("diag fatal kept = %d, want 1", got)
-	}
-}
-
-// TestOpsRetention_DefaultsRespected pins the migration seed values: a row
-// just inside each canonical retention window survives.
-func TestOpsRetention_DefaultsRespected(t *testing.T) {
-	pool := jobsTestPool(t)
-	defer pool.Close()
-
-	thingID := "test-ops-ret-defaults"
-	cleanup := opsRetentionTestSetup(t, pool, map[string]string{thingID: "service"})
-	defer cleanup()
-
-	// Verify the canonical seed is in place.
-	ctx := context.Background()
-	rows := map[string]int{}
-	r, err := pool.Query(ctx, `SELECT layer, retention_days FROM metric_ops_retention_config`)
-	if err != nil {
-		t.Fatalf("query config: %v", err)
-	}
-	for r.Next() {
-		var l string
-		var d int
-		if err := r.Scan(&l, &d); err != nil {
-			t.Fatalf("scan config: %v", err)
-		}
-		rows[l] = d
-	}
-	r.Close()
-
-	expected := map[string]int{
-		"runtime_raw": 7, "business_raw": 7,
-		"runtime_1h": 90, "business_1h": 90,
-		"runtime_1d": 365, "business_1d": 365,
-		"runtime_1mo": 1825, "business_1mo": 1825,
-		"diag_warn": 30, "diag_error": 180, "diag_fatal": 365,
-	}
-	for layer, want := range expected {
-		if got := rows[layer]; got != want {
-			t.Errorf("retention_days[%s] = %d, want %d", layer, got, want)
-		}
-	}
-}
-
-// TestOpsRetention_PicksUpConfigChanges asserts the job re-reads the config
-// each run: lowering retention to 1 day causes a 5-day-old row to be deleted.
-func TestOpsRetention_PicksUpConfigChanges(t *testing.T) {
-	pool := jobsTestPool(t)
-	defer pool.Close()
-
-	thingID := "test-ops-ret-config-change"
-	cleanup := opsRetentionTestSetup(t, pool, map[string]string{thingID: "service"})
-	defer func() {
-		// Restore default before cleanup.
-		_, _ = pool.Exec(context.Background(), `
-			UPDATE metric_ops_retention_config SET retention_days = 7 WHERE layer = 'runtime_raw'
-		`)
-		cleanup()
-	}()
-
-	now := time.Now().UTC()
-	// 5 days old — well within the 7-day default.
-	insertRawForRetention(t, pool, now.AddDate(0, 0, -5), thingID, "runtime.heap")
-
-	// Run with default config — the row should survive.
-	runOpsRetention(t, pool)
-
-	ctx := context.Background()
-	var n int
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM metric_ops_raw WHERE thing_id=$1`, thingID).Scan(&n); err != nil {
-		t.Fatalf("count after default run: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("after default run: rows=%d, want 1 (5d row inside 7d retention)", n)
-	}
-
-	// Lower runtime_raw to 1 day.
-	if _, err := pool.Exec(ctx, `UPDATE metric_ops_retention_config SET retention_days = 1 WHERE layer = 'runtime_raw'`); err != nil {
-		t.Fatalf("update config: %v", err)
-	}
-
-	runOpsRetention(t, pool)
-
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM metric_ops_raw WHERE thing_id=$1`, thingID).Scan(&n); err != nil {
-		t.Fatalf("count after tightened run: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("after tightened run: rows=%d, want 0 (5d row outside 1d retention)", n)
-	}
-}
-
-// TestOpsRetention_LoopsUntilDone seeds rows substantially past the chunk
-// limit and asserts they all get deleted in one Run() call.
-func TestOpsRetention_LoopsUntilDone(t *testing.T) {
-	pool := jobsTestPool(t)
-	defer pool.Close()
-
-	thingID := "test-ops-ret-loop"
-	cleanup := opsRetentionTestSetup(t, pool, map[string]string{thingID: "service"})
-	defer cleanup()
-
-	// Lower runtime_raw to 1 day so all our rows are aged out, then seed
-	// 12_500 rows (chunk limit + 25%) to force at least 2 loop iterations.
-	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `UPDATE metric_ops_retention_config SET retention_days = 1 WHERE layer = 'runtime_raw'`); err != nil {
-		t.Fatalf("tighten config: %v", err)
-	}
-	defer func() {
-		_, _ = pool.Exec(ctx, `UPDATE metric_ops_retention_config SET retention_days = 7 WHERE layer = 'runtime_raw'`)
-	}()
-
-	const total = opsRetentionDeleteLimit + (opsRetentionDeleteLimit / 4)
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	now := time.Now().UTC()
-	aged := now.AddDate(0, 0, -10)
-	// Stagger the sampled_at values by microsecond increments so the unique
-	// (sampled_at, thing_id, metric_name, dimension_key) constraint never
-	// fires. Each row has a distinct timestamp.
-	for i := range total {
-		sampledAt := aged.Add(time.Duration(i) * time.Microsecond)
-		_, err := tx.Exec(ctx, `
-			INSERT INTO metric_ops_raw (id, sampled_at, thing_id, thing_type, metric_name, metric_kind, dimension_key, value)
-			VALUES ($1, $2, $3, 'service', 'runtime.heap', 'gauge', '', 1.0)
-		`, uuid.NewString(), sampledAt, thingID)
-		if err != nil {
-			tx.Rollback(ctx) //nolint:errcheck
-			t.Fatalf("bulk insert at %d: %v", i, err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit bulk insert: %v", err)
-	}
 
 	runOpsRetention(t, pool)
 
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM metric_ops_raw WHERE thing_id=$1`, thingID).Scan(&n); err != nil {
-		t.Fatalf("post-run count: %v", err)
-	}
+	_ = pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM thing_diag_event WHERE thing_id = $1`, "ret-diag").Scan(&n)
 	if n != 0 {
-		t.Errorf("post-run rows = %d, want 0 (loop did not drain)", n)
+		t.Errorf("aged diag kept = %d, want 0 (warn retention 7d)", n)
+	}
+}
+
+// TestOpsRetention_FreshKept asserts a freshly-aged row (younger than the
+// retention horizon) survives a retention run across raw + rollup tiers.
+func TestOpsRetention_FreshKept(t *testing.T) {
+	pool := jobsTestPool(t)
+	defer pool.Close()
+
+	cleanupOpsRetention(t, pool, []string{"ret-fresh"})
+	seedRetentionConfig(t, pool)
+
+	insertRawOpsSample(t, pool, "ret-fresh", 1)
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_5m", "ret-fresh", 1)
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_1h", "ret-fresh", 1)
+
+	runOpsRetention(t, pool)
+
+	if got := countOpsRows(t, pool, "metric_ops_raw", "ret-fresh"); got != 1 {
+		t.Errorf("fresh raw kept = %d, want 1", got)
+	}
+	if got := countOpsRows(t, pool, "metric_ops_rollup_5m", "ret-fresh"); got != 1 {
+		t.Errorf("fresh 5m rollup kept = %d, want 1", got)
+	}
+	if got := countOpsRows(t, pool, "metric_ops_rollup_1h", "ret-fresh"); got != 1 {
+		t.Errorf("fresh 1h rollup kept = %d, want 1", got)
+	}
+	// runtime_5m config row exists (the smallest chunked-delete tier).
+	var cfg int
+	_ = pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM metric_ops_retention_config WHERE layer = 'runtime_5m'`).Scan(&cfg)
+	if cfg < 1 {
+		t.Errorf("runtime_5m config row missing = %d", cfg)
+	}
+}
+
+// TestOpsRetention_ZeroRetentionDisables asserts a layer with retention_days
+// <= 0 is treated as "keep forever" (no deletes for that layer).
+func TestOpsRetention_ZeroRetentionDisables(t *testing.T) {
+	pool := jobsTestPool(t)
+	defer pool.Close()
+
+	cleanupOpsRetention(t, pool, []string{"ret-zero"})
+	seedRetentionConfig(t, pool)
+
+	// Seed an aged 5m rollup row that would be deleted at 7d.
+	insertRollupOpsSample(t, pool, "metric_ops_rollup_5m", "ret-zero", 10)
+	// Disable the runtime_5m layer (retention_days = 0 → keep forever).
+	if _, err := pool.Exec(context.Background(), `UPDATE metric_ops_retention_config SET retention_days = 0 WHERE layer = 'runtime_5m'`); err != nil {
+		t.Fatalf("disable runtime_5m: %v", err)
+	}
+
+	runOpsRetention(t, pool)
+
+	// The aged 5m row survives because runtime_5m is disabled.
+	if got := countOpsRows(t, pool, "metric_ops_rollup_5m", "ret-zero"); got != 1 {
+		t.Errorf("disabled-layer 5m kept = %d, want 1", got)
 	}
 }

@@ -1,10 +1,10 @@
 package codecs
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"strings"
 )
 
@@ -97,7 +97,7 @@ type replicateRequest struct {
 }
 
 type replicateInput struct {
-	Prompt   string            `json:"prompt,omitempty"`
+	Prompt   string             `json:"prompt,omitempty"`
 	Messages []replicateMessage `json:"messages,omitempty"`
 }
 
@@ -147,12 +147,12 @@ func (n *ReplicateNormalizer) normalizeRequest(raw []byte, meta core.Meta) (core
 }
 
 type replicateResponse struct {
-	ID        string           `json:"id"`
-	Version   string           `json:"version"`
-	Status    string           `json:"status"`
-	Output    json.RawMessage  `json:"output,omitempty"`
-	Error     string           `json:"error,omitempty"`
-	CreatedAt string           `json:"created_at,omitempty"`
+	ID        string            `json:"id"`
+	Version   string            `json:"version"`
+	Status    string            `json:"status"`
+	Output    json.RawMessage   `json:"output,omitempty"`
+	Error     string            `json:"error,omitempty"`
+	CreatedAt string            `json:"created_at,omitempty"`
 	Metrics   *replicateMetrics `json:"metrics,omitempty"`
 }
 

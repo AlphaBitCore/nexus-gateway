@@ -104,10 +104,10 @@ func (n *CohereEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta
 // cohereEmbeddingsResponse mirrors the Cohere /v1/embed and /v2/embed
 // response body. Embedding vectors are intentionally ignored per SDD §T2.3.
 type cohereEmbeddingsResponse struct {
-	ID           string              `json:"id,omitempty"`
-	Model        string              `json:"model,omitempty"`
-	ResponseType string              `json:"response_type,omitempty"`
-	Meta         *cohereEmbedMeta    `json:"meta,omitempty"`
+	ID           string           `json:"id,omitempty"`
+	Model        string           `json:"model,omitempty"`
+	ResponseType string           `json:"response_type,omitempty"`
+	Meta         *cohereEmbedMeta `json:"meta,omitempty"`
 }
 
 type cohereEmbedMeta struct {

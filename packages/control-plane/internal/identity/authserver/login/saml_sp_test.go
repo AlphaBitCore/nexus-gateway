@@ -21,9 +21,9 @@ func TestBuildSAMLServiceProvider(t *testing.T) {
 
 	t.Run("incomplete config rejected", func(t *testing.T) {
 		for _, cfg := range []*store.SAMLConfig{
-			{SSOURL: "x", Certificate: kp.CertPEM},     // no entityID
-			{EntityID: "x", Certificate: kp.CertPEM},   // no ssoURL
-			{EntityID: "x", SSOURL: "y"},               // no cert
+			{SSOURL: "x", Certificate: kp.CertPEM},   // no entityID
+			{EntityID: "x", Certificate: kp.CertPEM}, // no ssoURL
+			{EntityID: "x", SSOURL: "y"},             // no cert
 		} {
 			if _, err := buildSAMLServiceProvider(cfg, issuer); err == nil {
 				t.Errorf("expected error for incomplete config %+v", cfg)

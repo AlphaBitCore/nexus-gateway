@@ -65,6 +65,36 @@ type OpsRollupCascadeJob struct {
 	cfg      opsCascadeConfig
 }
 
+// NewOpsRollup1h constructs the 5m→1h cascade job. interval defaults to 5m.
+// The raw→5m aggregation (per-thing/fleet collapse, diag-mode window,
+// histogram folding) is owned by ops-rollup-5m; this job just merges sealed
+// 5-minute buckets into 1-hour buckets, so 1h/1d/1mo all share one code path.
+func NewOpsRollup1h(pool *pgxpool.Pool, interval time.Duration, logger *slog.Logger) *OpsRollupCascadeJob {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	cfg := opsCascadeConfig{
+		id:              "ops-rollup-1h",
+		name:            "Ops Metrics Rollup (1 hour)",
+		description:     "Aggregates metric_ops_rollup_5m into metric_ops_rollup_1h every 5 minutes. Sample-count-weighted averages; histograms merge element-wise. The fleet vs per-thing distinction (thing_id NULL vs not) is preserved from the 5m layer.",
+		sourceTable:     "metric_ops_rollup_5m",
+		targetTable:     "metric_ops_rollup_1h",
+		watermarkName:   "ops_1h",
+		sourceBucketDur: 5 * time.Minute,
+		targetBucketDur: time.Hour,
+		mode:            opsCascadeFixed,
+		// One full source bucket (5m) of headroom — late 5m rollups from
+		// straggler raw samples must land before the hour seals.
+		sealedGrace: 5 * time.Minute,
+	}
+	return &OpsRollupCascadeJob{
+		pool:     pool,
+		interval: interval,
+		logger:   logger.With("job", cfg.id),
+		cfg:      cfg,
+	}
+}
+
 // NewOpsRollup1d constructs the 1h→1d cascade job. interval defaults to 1h.
 func NewOpsRollup1d(pool *pgxpool.Pool, interval time.Duration, logger *slog.Logger) *OpsRollupCascadeJob {
 	if interval <= 0 {
@@ -216,8 +246,17 @@ func (j *OpsRollupCascadeJob) resolveFixedCursor(ctx context.Context) (time.Time
 	// `cursor` is the first processed bucket, not its predecessor).
 	bootstrap := oldest.UTC().Truncate(j.cfg.targetBucketDur)
 
+	// Cold start, or a watermark seeded into the future → bootstrap to the
+	// oldest source bucket. Otherwise advance from the watermark and never
+	// rewind below it: re-merging already-completed target buckets on every run
+	// (the source layer retains 90+ days) is the same wasted full-history
+	// re-scan that wedged ops_rollup_1h. If the source has been purged past the
+	// watermark, skip the empty gap forward to the oldest surviving bucket.
+	if watermark.IsZero() || watermark.UTC().After(time.Now().UTC()) {
+		return bootstrap, true, nil
+	}
 	advanceFromWatermark := watermark.UTC().Truncate(j.cfg.targetBucketDur).Add(j.cfg.targetBucketDur)
-	if watermark.IsZero() || bootstrap.Before(advanceFromWatermark) {
+	if advanceFromWatermark.Before(bootstrap) {
 		return bootstrap, true, nil
 	}
 	return advanceFromWatermark, true, nil
@@ -240,9 +279,15 @@ func (j *OpsRollupCascadeJob) resolveCalendarCursor(ctx context.Context) (time.T
 	}
 
 	bootstrap := firstOfMonth(oldest)
-	advanceFromWatermark := nextOpsMonth(watermark)
 
-	if watermark.IsZero() || bootstrap.Before(advanceFromWatermark) {
+	// Same rule as resolveFixedCursor: bootstrap only on cold start or a
+	// future-seeded watermark; otherwise advance to the month after the
+	// watermark and never rewind below it.
+	if watermark.IsZero() || watermark.UTC().After(time.Now().UTC()) {
+		return bootstrap, true, nil
+	}
+	advanceFromWatermark := nextOpsMonth(watermark)
+	if advanceFromWatermark.Before(bootstrap) {
 		return bootstrap, true, nil
 	}
 	return advanceFromWatermark, true, nil

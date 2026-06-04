@@ -15,8 +15,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	authserver_store "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )

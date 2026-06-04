@@ -636,6 +636,7 @@ func TestQueryMetricsOrFallback_ReturnsSummaryOnSuccess(t *testing.T) {
 	}
 	if res == nil {
 		t.Fatal("FAILURE_MODE: successful rollup must return non-nil MetricsResult")
+		return
 	}
 	if res.Summary[metricspkg.MetricRequestCount] != 42 {
 		t.Errorf("FAILURE_MODE: summary value = %v, want 42", res.Summary[metricspkg.MetricRequestCount])

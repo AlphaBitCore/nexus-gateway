@@ -32,7 +32,6 @@ import (
 // (pgxmock + in-memory fakes only) and therefore cannot violate the
 // no-cross-test-data rule.
 
-
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 }
@@ -62,37 +61,6 @@ func (b *safeBuffer) String() string {
 // when the relevant defensive branches fire.
 func captureLogger(buf *safeBuffer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-}
-
-// fakeProducer captures Enqueue calls for assertion. Optionally returns
-// an error from the Nth call (for the publish-failure branch).
-type fakeProducer struct {
-	mu      sync.Mutex
-	calls   []fakeProducerCall
-	failIdx int // 1-based; 0 = never fail
-}
-
-type fakeProducerCall struct {
-	subject string
-	data    []byte
-}
-
-func (p *fakeProducer) Publish(_ context.Context, _ string, _ []byte) error { return nil }
-func (p *fakeProducer) Enqueue(_ context.Context, subject string, data []byte) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.calls = append(p.calls, fakeProducerCall{subject: subject, data: data})
-	if p.failIdx > 0 && len(p.calls) == p.failIdx {
-		return errors.New("fakeProducer enqueue failed")
-	}
-	return nil
-}
-func (p *fakeProducer) Close() error { return nil }
-
-func (p *fakeProducer) callCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.calls)
 }
 
 // Writer (metric_ops_raw)
@@ -972,7 +940,6 @@ func TestComputeMessageHash_EmptyEverything(t *testing.T) {
 		t.Errorf("got %q; want %q", got, want)
 	}
 }
-
 
 // TestStaticInfoWriter_UpsertHappyPath pins the SUCCESS path (rows
 // affected = 1).

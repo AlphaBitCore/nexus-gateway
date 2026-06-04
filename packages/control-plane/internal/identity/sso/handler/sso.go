@@ -50,17 +50,17 @@ const (
 // `admin:device-enrollment.enroll` check that gates both
 // enterprise-login and local-login device-auth modes.
 type AgentEnrollHandler struct {
-	AuthCodes   *authserver_store.AuthCodeStore
-	Signer      *token.Signer
-	Pool        *pgxpool.Pool         // used to construct NewUserStore; nil-safe (kept for callers; see userChecker)
-	Meta        *systemmetastore.Store // used to read device.auth.mode; nil-safe (kept for callers; see metaReader)
-	IAM         *iam.Engine
-	Issuer      string
-	Logger      *slog.Logger
+	AuthCodes *authserver_store.AuthCodeStore
+	Signer    *token.Signer
+	Pool      *pgxpool.Pool          // used to construct NewUserStore; nil-safe (kept for callers; see userChecker)
+	Meta      *systemmetastore.Store // used to read device.auth.mode; nil-safe (kept for callers; see metaReader)
+	IAM       *iam.Engine
+	Issuer    string
+	Logger    *slog.Logger
 	// metaReader is the test seam for system-metadata lookups. When nil,
 	// the handler falls back to Meta. Tests inject a stub; production callers
 	// leave this nil and set Meta instead.
-	metaReader  systemMetaReader
+	metaReader systemMetaReader
 	// userChecker is the test seam for user-active validation. When nil,
 	// the handler constructs a UserStore from Pool. Tests inject a stub;
 	// production callers leave this nil and set Pool instead.

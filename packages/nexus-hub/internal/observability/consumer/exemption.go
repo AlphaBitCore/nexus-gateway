@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
 // ExemptionConsumerConfig holds configuration for the agent auto-exemption
@@ -267,12 +267,12 @@ func (c *ExemptionConsumer) insertExemptions(ctx context.Context, tx pgx.Tx, ite
 		reason := "auto-detected: " + e.Reason
 
 		if _, err := tx.Exec(ctx, insertExemptionRequestSQL,
-			transactionID, // $1
-			"",            // $2 source_ip (agent uploads no IP; left empty)
-			e.Host,        // $3 target_host
-			reason,        // $4 reason
+			transactionID,   // $1
+			"",              // $2 source_ip (agent uploads no IP; left empty)
+			e.Host,          // $3 target_host
+			reason,          // $4 reason
 			durationMinutes, // $5 duration_minutes
-			requestedBy,   // $6 requested_by
+			requestedBy,     // $6 requested_by
 		); err != nil {
 			return fmt.Errorf("insert exemption_request row (thing=%s host=%s): %w", e.ThingID, e.Host, err)
 		}

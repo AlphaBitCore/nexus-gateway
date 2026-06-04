@@ -168,7 +168,6 @@ func TestErrorNormalizer_statusFallback_500_upstreamError(t *testing.T) {
 	}
 }
 
-
 func TestParseRetryAfter_emptyString_nil(t *testing.T) {
 	got := anterrors.ParseRetryAfter("")
 	if got != nil {

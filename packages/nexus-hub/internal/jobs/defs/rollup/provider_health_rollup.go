@@ -6,10 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
-
 
 const (
 	providerHealthRollupJobID          = "provider-health-rollup"

@@ -8,18 +8,19 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	authserver_store "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/token"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
-	systemmetastore "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
+	jwtverifier "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/sso/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
+	systemmetastore "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 )
 
 // AuthServerDeps groups the inputs for InitAuthServer.
@@ -30,6 +31,7 @@ type AuthServerDeps struct {
 	IAMEngine         *iam.Engine
 	RevocationService *revocation.Service
 	AuditWriter       *audit.Writer
+	JWTVerifier       *jwtverifier.Verifier
 	Logger            *slog.Logger
 }
 
@@ -75,6 +77,7 @@ func InitAuthServer(ctx context.Context, e *echo.Echo, d AuthServerDeps) (closer
 		Revocation:  d.RevocationService,
 		Audit:       d.AuditWriter,
 		AuthCodes:   authCodeStore,
+		JWTVerifier: d.JWTVerifier,
 	})
 
 	agentGroup := e.Group("/api/agent")

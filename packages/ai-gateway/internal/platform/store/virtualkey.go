@@ -9,11 +9,11 @@ import (
 
 // VirtualKey represents a virtual key record with project-joined fields.
 type VirtualKey struct {
-	ID             string
-	Name           string
-	KeyHash        *string
-	KeyPrefix      *string
-	ProjectID      *string
+	ID        string
+	Name      string
+	KeyHash   *string
+	KeyPrefix *string
+	ProjectID *string
 	// OrganizationID is the resolved org for this VK. For application
 	// VKs it comes from Project.organizationId; for personal VKs it
 	// falls back to Owner (NexusUser).organizationId. See vkSelectSQL
@@ -26,8 +26,8 @@ type VirtualKey struct {
 	// CompareEndpointRateLimitRpm is the per-VK cap on /v1/estimate compare
 	// requests. nil → default 30/min applied in handler.checkCompareRateLimit.
 	CompareEndpointRateLimitRpm *int
-	AllowedModels  []AllowedModelRef
-	OwnerID        *string
+	AllowedModels               []AllowedModelRef
+	OwnerID                     *string
 
 	// VK type and approval status.
 	VKType   *string // "personal" | "application"
@@ -57,8 +57,8 @@ type AllowedModelRef struct {
 //
 // Org resolution precedence (binding):
 //
-//   1. application VK → Project → Organization
-//   2. personal    VK → Owner (NexusUser) → Organization
+//  1. application VK → Project → Organization
+//  2. personal    VK → Owner (NexusUser) → Organization
 //
 // Without #2 personal VKs would always have org_id = NULL, breaking
 // the audit pipeline's org_id/org_name columns on traffic_event AND

@@ -9,9 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/compliance"
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/config/cache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/config/loaders"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
@@ -31,11 +31,11 @@ type ComplianceResult struct {
 	// StreamingMode field deleted in #115 — admin policy is the
 	// single source of truth; downstream reads from
 	// *streampolicy.Store directly.
-	LiveConfig      streaming.LiveConfig
-	PerHookTmout    time.Duration
-	TotalTmout      time.Duration
-	Parallel        bool
-	ConfigDB        *sql.DB
+	LiveConfig   streaming.LiveConfig
+	PerHookTmout time.Duration
+	TotalTmout   time.Duration
+	Parallel     bool
+	ConfigDB     *sql.DB
 	// RulePackPool is a pgx pool used exclusively by the rule-pack store
 	// (shared/rulepack.Store expects pgxpool, not database/sql.DB). It is
 	// shared by rulepack.Enrich calls during hook-config reloads.

@@ -1,16 +1,13 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 
 	"github.com/spf13/cobra"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 )
 
 // NewRootCmd builds the `nexus` command tree bound to a.
@@ -71,106 +68,20 @@ func NewRootCmd(a *App) *cobra.Command {
 		newKillSwitchCmd(a),
 		newPassthroughCmd(a),
 		newVKCmd(a),
+		newResourceCmd(a),
 		newMCPCmd(a),
+		newSkillCmd(a),
 	)
 	return root
-}
-
-// launchTUI starts the operator console (or the injected test hook).
-func (a *App) launchTUI() error {
-	if a.LaunchTUI != nil {
-		return a.LaunchTUI(a)
-	}
-	return tui.Run(a.tuiDeps())
-}
-
-// tuiSession builds the dashboard session from the currently-resolved env plus
-// the VK secret stored for it. The closures below read a.Env (not a captured
-// copy) so a wizard env switch is reflected everywhere.
-func (a *App) tuiSession() tui.Session {
-	vkSecret, _ := a.Store.Get(a.Env.Name, core.SecretVKSecret)
-	return tui.Session{
-		EnvName:  a.Env.Name,
-		Addr:     a.Env.CPBaseURL,
-		IsProd:   a.Env.IsProd,
-		Model:    a.Env.LastModel,
-		VKID:     a.Env.LastVKID,
-		VKName:   a.Env.LastVKName,
-		VKSecret: vkSecret,
-	}
-}
-
-// tuiDeps assembles the shell dependencies: the typed gateway plus the
-// auth/persistence callbacks the entry wizard needs (env switch/create, login,
-// VK-secret storage, remembered-selection persistence). All reach the gateway
-// only through core. The closures read a.Env dynamically so the env step's
-// switch/create (which mutates a.Env and rebuilds the client) takes effect.
-func (a *App) tuiDeps() tui.Deps {
-	names := make([]string, 0, len(a.Cfg.Envs))
-	for n := range a.Cfg.Envs {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return tui.Deps{
-		Gateway:  a.client(),
-		Session:  a.tuiSession(),
-		EnvNames: names,
-		HasSession: func() bool {
-			return a.loggedIn()
-		},
-		SwitchEnv: func(name string) (tui.Gateway, tui.Session, bool, error) {
-			env, err := a.Cfg.Resolve(name, "")
-			if err != nil {
-				return nil, tui.Session{}, false, err
-			}
-			a.Env, a.Client = env, nil // force the client to rebuild for the new env
-			return a.client(), a.tuiSession(), a.loggedIn(), nil
-		},
-		CreateEnv: func(name, cpBaseURL string, prod bool) (tui.Gateway, tui.Session, error) {
-			env := core.Env{
-				Name:             name,
-				CPBaseURL:        cpBaseURL,
-				AIGatewayBaseURL: cpBaseURL,
-				OAuthClientID:    "cp-ui",
-				OAuthRedirectURI: "http://localhost:3000/auth/callback",
-				IsProd:           prod,
-			}
-			a.Cfg.SetEnv(env)
-			if err := a.Cfg.SetDefault(name); err != nil {
-				return nil, tui.Session{}, err
-			}
-			if err := a.Cfg.Save(); err != nil {
-				return nil, tui.Session{}, err
-			}
-			a.Env, a.Client = env, nil
-			return a.client(), a.tuiSession(), nil
-		},
-		Login: func(ctx context.Context) error {
-			return core.NewAuthenticator(a.Env, a.Store, a.HTTP).
-				WithBrowserOpener(a.BrowserOpener).LoginBrowser(ctx)
-		},
-		SaveVKSecret: func(secret string) error {
-			return a.Store.Set(a.Env.Name, core.SecretVKSecret, secret)
-		},
-		SaveSelection: func(model, vkID, vkName string) error {
-			a.Env.LastModel, a.Env.LastVKID, a.Env.LastVKName = model, vkID, vkName
-			a.Cfg.SetEnv(a.Env)
-			return a.Cfg.Save()
-		},
-		CreateVK: func(ctx context.Context, name string) (string, string, string, error) {
-			vk, err := a.client().CreateVK(ctx, name)
-			if err != nil {
-				return "", "", "", err
-			}
-			return vk.ID, vk.Name, vk.Key, nil
-		},
-	}
 }
 
 // Main is the process entry point: it builds the app, executes, and returns the
 // documented exit code.
 func Main() int {
 	a := &App{Out: os.Stdout, ErrOut: os.Stderr}
+	// Close the diagnostic log file on exit. ensureConfig (run in the command
+	// tree's PersistentPreRunE) opens it; Close is a no-op when it never did.
+	defer func() { _ = a.Close() }()
 	root := NewRootCmd(a)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(a.ErrOut, "error:", err)

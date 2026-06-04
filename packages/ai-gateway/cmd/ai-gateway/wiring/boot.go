@@ -11,37 +11,37 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
-	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
+	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
+	credstats "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/stats"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/proxy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	epMetrics "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
-	credstats "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/stats"
-	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 	"github.com/redis/go-redis/v9"
@@ -49,48 +49,48 @@ import (
 
 // BootDeps holds every wired subsystem produced by boot().
 type BootDeps struct {
-	Cfg              *config.Config
-	DB               *store.DB
-	Rdb              redis.UniversalClient
-	CacheLayer       *cachelayer.Layer
-	CredManager      *credmanager.Manager
-	VkAuth           *vkauth.Authenticator
-	RateLimiter      *ratelimit.Limiter
-	GwHookRegistry   *hookcore.HookRegistry
-	HookConfigCache  *pipeline.HookConfigCache
-	HealthTracker    *store.HealthTracker
-	PtResolver       *provtarget.PgResolver
-	RouterResolver   *routing.Resolver
-	CapCache         *capability.Cache
-	AdapterReg       *provcore.Registry
-	FormatBridge     *canonicalbridge.Bridge
-	TargetExecutor   *executor.TargetExecutor
-	QuotaEngine      *quota.Engine
-	PolicyCache      *quota.PolicyCache
-	MqProducer       mq.Producer
-	PayloadCapture   *payloadcapture.Store
+	Cfg             *config.Config
+	DB              *store.DB
+	Rdb             redis.UniversalClient
+	CacheLayer      *cachelayer.Layer
+	CredManager     *credmanager.Manager
+	VkAuth          *vkauth.Authenticator
+	RateLimiter     *ratelimit.Limiter
+	GwHookRegistry  *hookcore.HookRegistry
+	HookConfigCache *pipeline.HookConfigCache
+	HealthTracker   *store.HealthTracker
+	PtResolver      *provtarget.PgResolver
+	RouterResolver  *routing.Resolver
+	CapCache        *capability.Cache
+	AdapterReg      *provcore.Registry
+	FormatBridge    *canonicalbridge.Bridge
+	TargetExecutor  *executor.TargetExecutor
+	QuotaEngine     *quota.Engine
+	PolicyCache     *quota.PolicyCache
+	MqProducer      mq.Producer
+	PayloadCapture  *payloadcapture.Store
 	// StreamingPolicy is the hot-swappable streaming compliance policy
 	// Store (#115). proxy_cache.go reads Store.Get() per-request to
 	// dispatch SSE handler between live (chunked_async) and buffer
 	// (buffer_full_block) modes. Hot-reloaded via configdispatch's
 	// streaming_compliance shadow handler.
-	StreamingPolicy  *streampolicy.Store
-	AuditWriter      *audit.Writer
-	NormalizeReg     *normcore.Registry // shared with proxy.Deps so L2 semantic cache sees a populated rctxFull.Normalized()
-	MetricsRecorder  *epMetrics.Recorder
-	ResponseCache    *cache.Cache
-	NormEngine       *wirerewrite.Engine
-	PassthroughCache *passthrough.Cache
-	GeminiMgrSet     *geminicache.ManagerSet
-	Allowlist        *forwardheader.Resolved
+	StreamingPolicy    *streampolicy.Store
+	AuditWriter        *audit.Writer
+	NormalizeReg       *normcore.Registry // shared with proxy.Deps so L2 semantic cache sees a populated rctxFull.Normalized()
+	MetricsRecorder    *epMetrics.Recorder
+	ResponseCache      *cache.Cache
+	NormEngine         *wirerewrite.Engine
+	PassthroughCache   *passthrough.Cache
+	GeminiMgrSet       *geminicache.ManagerSet
+	Allowlist          *forwardheader.Resolved
 	AiguardConfigCache *aiguard.ConfigCache
-	UpstreamClient   *http.Client
-	Tp               *telemetry.SwappableTracerProvider
-	ObsState         atomic.Pointer[telemetry.Config]
-	Reliability      *ReliabilityConfig
-	ConfigKeyRecorder *runtimeintrospect.KeyStateRecorder
-	OpsReg           *registry.Registry
-	ProcessStartTime time.Time
+	UpstreamClient     *http.Client
+	Tp                 *telemetry.SwappableTracerProvider
+	ObsState           atomic.Pointer[telemetry.Config]
+	Reliability        *ReliabilityConfig
+	ConfigKeyRecorder  *runtimeintrospect.KeyStateRecorder
+	OpsReg             *registry.Registry
+	ProcessStartTime   time.Time
 	// Semantic holds the L2 semantic cache subsystem.
 	// All fields are nil when L2 is disabled (Redis not *redis.Client or config off).
 	Semantic SemanticDeps

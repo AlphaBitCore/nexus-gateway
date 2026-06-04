@@ -100,5 +100,5 @@ func (p *RedisPoisonList) Add(ctx context.Context, entryKey, vkScope string, ttl
 // returns (false, nil) and Add is a no-op.
 type nopPoisonList struct{}
 
-func (nopPoisonList) IsPoisoned(_ context.Context, _, _ string) (bool, error) { return false, nil }
+func (nopPoisonList) IsPoisoned(_ context.Context, _, _ string) (bool, error)   { return false, nil }
 func (nopPoisonList) Add(_ context.Context, _, _ string, _ time.Duration) error { return nil }

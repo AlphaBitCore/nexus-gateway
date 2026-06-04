@@ -33,7 +33,6 @@ func GenerateScimToken() (token, prefix string, err error) {
 	return token, prefix, nil
 }
 
-
 // ScimToken is the stored representation of a SCIM provisioner credential.
 // The full token value is never stored; only the bcrypt hash is kept.
 type ScimToken struct {
@@ -133,7 +132,6 @@ func (store *Store) RevokeScimToken(ctx context.Context, id string) error {
 	}
 	return nil
 }
-
 
 // IdentityProviderRecord is the admin-API view of an IdentityProvider row.
 // `Config` and `RoleMapping` are returned as raw JSON; the handler layer
@@ -315,7 +313,6 @@ func (store *Store) DeleteIdentityProvider(ctx context.Context, idpID string, fo
 	}
 	return tx.Commit(ctx)
 }
-
 
 // IdpGroupMapping maps an external IdP group to an internal IamGroup.
 // When SCIM pushes a group membership for a user, the resolved IamGroup's

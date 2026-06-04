@@ -442,4 +442,3 @@ func TestUsageSummaryHandler_HappyPath_NoQuota(t *testing.T) {
 		t.Errorf("totalRequests=%d", got)
 	}
 }
-

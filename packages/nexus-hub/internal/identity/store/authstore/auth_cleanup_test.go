@@ -9,7 +9,6 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 )
 
-
 func TestDeleteExpiredRevokedTokens_HappyPath(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -74,7 +73,6 @@ func TestDeleteExpiredRevokedTokens_ViaMethod(t *testing.T) {
 		t.Errorf("rows = %d; want 3", n)
 	}
 }
-
 
 func TestDeleteExpiredRefreshTokens_HappyPath(t *testing.T) {
 	mock, _ := pgxmock.NewPool()

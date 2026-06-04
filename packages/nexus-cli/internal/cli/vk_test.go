@@ -8,14 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
 
 // vkTestApp builds an App whose config has a writable path (so SaveSelection
 // works) and whose client talks to srv via a stored admin key.
 func vkTestApp(t *testing.T, srv *httptest.Server) *App {
 	t.Helper()
-	cfg, err := core.Load(t.TempDir() + "/config.toml")
+	cfg, err := local.Load(t.TempDir() + "/config.toml")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}

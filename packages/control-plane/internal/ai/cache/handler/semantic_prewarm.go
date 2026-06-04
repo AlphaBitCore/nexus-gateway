@@ -41,8 +41,8 @@ const prewarmMaxEntries = 500
 // (i.e. the field arrives as the Go zero value 0).
 const (
 	prewarmMinTTLSeconds     = 60
-	prewarmMaxTTLSeconds     = 7 * 86400  // 7 days
-	prewarmDefaultTTLSeconds = 86400      // 1 day — matches the TS service docstring
+	prewarmMaxTTLSeconds     = 7 * 86400 // 7 days
+	prewarmDefaultTTLSeconds = 86400     // 1 day — matches the TS service docstring
 )
 
 // prewarmEntryInput is one Q→A corpus entry from the admin request body.

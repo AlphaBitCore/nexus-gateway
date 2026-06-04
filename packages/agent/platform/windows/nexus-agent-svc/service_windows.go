@@ -7,7 +7,6 @@
 //
 // This package is build-tagged to Windows; on other platforms the binary does
 // not include any of this code.
-//
 package winsvc
 
 import (

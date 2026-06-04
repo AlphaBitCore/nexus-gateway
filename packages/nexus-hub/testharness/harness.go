@@ -19,15 +19,15 @@ import (
 	emw "github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/agentca"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine/rules"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine/senders"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/enrollment"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/agentca"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/enrollment"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/opsmetrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/ws"
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 )

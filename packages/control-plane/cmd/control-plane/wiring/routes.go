@@ -4,31 +4,34 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/handler"
 	cachehandler "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/cache/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/aiguard/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/simulator/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/assistant"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/aiguard/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/exemptions/handler"
-	handleriam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/sessions/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/rulepacks/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/scim/handler"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/scim/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/sessions/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/apikeystore"
+	handleriam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/rstokenauth"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
@@ -56,6 +59,13 @@ type RoutesDeps struct {
 // Readiness checks are registered separately via InitReadiness/NewReadinessHandler.
 func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 	cfg := d.Cfg
+
+	// Strip any inbound AI-initiated channel header at the ingress edge (runs before
+	// routing, for every request). The web assistant marks its in-process self-calls
+	// via an unforgeable context value, never this header, so a copy arriving from a
+	// client is a forgery attempt — dropped here so it can never reach the audit
+	// writer or be echoed downstream (E90 I5 / #18b H1).
+	e.Pre(audit.StripInitiatorHeader)
 
 	spillStore, err := spillfactory.New(cfg.Spill, d.Logger)
 	if err != nil {
@@ -130,7 +140,7 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 			Audit:        d.AuditWriter,
 			Logger:       d.Logger,
 			AIGatewayURL: cfg.BFF.AIGatewayURL,
-			Poison: semanticPoison,
+			Poison:       semanticPoison,
 		})
 		adminHandler.ExtractCache = cachehandler.NewExtractCacheHandler(cachehandler.ExtractCacheHandlerDeps{
 			Store:  configstore.NewExtractCacheStore(d.DB.Pool),
@@ -164,6 +174,53 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 		Logger:       d.Logger,
 	}))
 	adminHandler.RegisterAdminRoutes(adminGroup)
+
+	// Web assistant ("Chat with Nexus") — streaming chat under the admin group
+	// (login-only; each tool self-calls admin APIs under the caller's IAM, so no
+	// new IAM action). System VK + model come from env (secret never in yaml); the
+	// AI Gateway + self-call base URL come from config.
+	assistantModel := os.Getenv("NEXUS_ASSISTANT_MODEL")
+	if assistantModel == "" {
+		assistantModel = "claude-sonnet-4-6"
+	}
+	// Optional client-selectable allow-list (comma-separated). Empty (the default) → the
+	// picker auto-derives every chat model the system VK can route (assistant.ListModels);
+	// set this only to pin a narrower allow-list.
+	var assistantModels []string
+	for _, m := range strings.Split(os.Getenv("NEXUS_ASSISTANT_MODELS"), ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			assistantModels = append(assistantModels, m)
+		}
+	}
+	assistantCfg := assistant.Config{
+		AIGatewayURL: cfg.BFF.AIGatewayURL,
+		CPBaseURL:    fmt.Sprintf("http://localhost:%d", cfg.Server.Port),
+		SystemVK:     os.Getenv("NEXUS_ASSISTANT_SYSTEM_VK"),
+		Model:        assistantModel,
+		Models:       assistantModels,
+		Spill:        spillStore,
+		// §8 governance posture: set NEXUS_ASSISTANT_DISABLE_BODY_READS=1 to withhold
+		// the raw-body read tools (the assistant cannot reach raw traffic bodies).
+		DisableBodyReads: os.Getenv("NEXUS_ASSISTANT_DISABLE_BODY_READS") == "1",
+		// Wall-clock turn backstop (e.g. "10m"); blank/invalid → built-in default.
+		// Keep it below the ingress idle/read timeout so the clean turn_deadline SSE
+		// error fires before the proxy severs the stream.
+		TurnDeadline: parseDurationOr(os.Getenv("NEXUS_ASSISTANT_TURN_DEADLINE"), 0),
+		// Multi-replica session-owner registry (the 421 affinity safety net). Uses
+		// the shared Redis client + this instance's hostname as the owner id; nil
+		// Redis (single replica / no Redis) disables it.
+		Redis:   d.RedisClient,
+		OwnerID: assistantOwnerID(),
+		// In-process self-call (R3): dispatch the agent's admin tools straight into
+		// this CP router (no loopback HTTP, unforgeable AI-initiated audit stamp).
+		Dispatcher: e,
+	}
+	// d.DB is nil when CP boots without a database (a supported mode); leave Pool nil
+	// so the assistant degrades to in-memory stores rather than nil-dereferencing.
+	if d.DB != nil {
+		assistantCfg.Pool = d.DB.Pool
+	}
+	assistant.New(assistantCfg).RegisterAssistantRoutes(adminGroup)
 
 	// AI Gateway simulator — bypasses AdminAuth, enforces VK credential itself.
 	e.POST("/api/admin/ai-gateway-simulator/forward",
@@ -201,3 +258,23 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 	return adminHandler, nil
 }
 
+// parseDurationOr parses a Go duration string (e.g. "10m"), returning def on a
+// blank or malformed value so a typo in the env never wedges startup.
+func parseDurationOr(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return def
+	}
+	return d
+}
+
+// assistantOwnerID identifies this CP instance for the assistant session-owner
+// registry. The hostname is the pod identity in a K8s/containerized deploy; an
+// empty hostname (unusual) disables the registry (blank OwnerID → nil registry).
+func assistantOwnerID() string {
+	h, _ := os.Hostname()
+	return h
+}

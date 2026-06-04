@@ -14,7 +14,7 @@ import (
 // matters here — the Go types deliberately differ between the two structs.
 func jsonTagSet(t reflect.Type) map[string]struct{} {
 	out := make(map[string]struct{}, t.NumField())
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		raw := t.Field(i).Tag.Get("json")
 		if raw == "" {
 			continue

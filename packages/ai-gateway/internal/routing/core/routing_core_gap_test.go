@@ -23,7 +23,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 )
 
-
 func TestFormatTargetFriendly_nilTarget_safeString(t *testing.T) {
 	got := FormatTargetFriendly(nil)
 	if got != "?/? (\"?\")" {
@@ -57,7 +56,6 @@ func TestFormatTargetFriendly_partiallyEmpty_mixedPlaceholders(t *testing.T) {
 	}
 }
 
-
 func TestFormatTargetPath_nilTarget_safeString(t *testing.T) {
 	got := FormatTargetPath(nil)
 	if got != "?/?" {
@@ -78,7 +76,6 @@ func TestFormatTargetPath_populated(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
-
 
 func TestMatchGlob_wildcardStar_matchesAll(t *testing.T) {
 	if !MatchGlob("*", "anything") {
@@ -136,7 +133,6 @@ func TestMatchGlob_cachedPattern_secondCallUsesCache(t *testing.T) {
 		t.Error("second call (cached): expected true")
 	}
 }
-
 
 func TestModelMatchesAllowedRefs_emptyRefs_unrestricted(t *testing.T) {
 	if !ModelMatchesAllowedRefs("model-id", "provider-model", "prov-id", nil) {
@@ -317,7 +313,6 @@ func (c *countingSmartCatalog) GetProvider(_ context.Context, _ string) (*store.
 	*c.providerCallCount++
 	return c.provider, nil
 }
-
 
 // TestNoCompatibleProviderError_ErrorString verifies the sentinel error message.
 func TestNoCompatibleProviderError_ErrorString(t *testing.T) {

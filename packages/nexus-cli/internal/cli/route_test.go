@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 )
 
 func TestRouteExplain_TableAndJSON(t *testing.T) {
@@ -46,6 +46,30 @@ func TestRouteExplain_NoSubstitutionAndNoTargets(t *testing.T) {
 	out, err := runCLI(t, newTestApp(srv, false), "route", "explain", "--model", "gpt-4o-mini")
 	if err != nil || !strings.Contains(out, "substituted: no") || !strings.Contains(out, "rejected by the router") {
 		t.Fatalf("no-target route wrong: %q err=%v", out, err)
+	}
+}
+
+func TestRouteExplain_EndpointForwarded(t *testing.T) {
+	var gotBody core.RoutingSimulateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = io.WriteString(w, `{"substituted":false,"targets":[],"warnings":[]}`)
+	}))
+	defer srv.Close()
+	// --endpoint must forward as EndpointType (previously unasserted at the wire).
+	if _, err := runCLI(t, newTestApp(srv, false), "route", "explain", "--model", "m", "--endpoint", "responses"); err != nil {
+		t.Fatalf("route explain --endpoint: err=%v", err)
+	}
+	if gotBody.EndpointType != "responses" {
+		t.Fatalf("--endpoint must forward EndpointType, got %q", gotBody.EndpointType)
+	}
+	// The flag defaults to "chat" when omitted.
+	gotBody = core.RoutingSimulateRequest{}
+	if _, err := runCLI(t, newTestApp(srv, false), "route", "explain", "--model", "m"); err != nil {
+		t.Fatalf("route explain default endpoint: err=%v", err)
+	}
+	if gotBody.EndpointType != "chat" {
+		t.Fatalf("default endpoint must be chat, got %q", gotBody.EndpointType)
 	}
 }
 

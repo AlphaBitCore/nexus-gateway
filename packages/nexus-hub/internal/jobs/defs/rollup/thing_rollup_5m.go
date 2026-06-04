@@ -13,8 +13,8 @@ import (
 
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 )
 
 // ThingRollup5mJob is the per-Thing sibling of Rollup5mJob: it aggregates

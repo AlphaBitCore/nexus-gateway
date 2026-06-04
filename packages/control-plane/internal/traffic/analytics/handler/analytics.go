@@ -9,8 +9,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/analytics/analyticsstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
 // RegisterMetricsRoutes registers metric rollup routes.

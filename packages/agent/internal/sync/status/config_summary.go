@@ -327,4 +327,3 @@ func countInterceptionDomains(raw json.RawMessage) int {
 	}
 	return len(p.Domains)
 }
-

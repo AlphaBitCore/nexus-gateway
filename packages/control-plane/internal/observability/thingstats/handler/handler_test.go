@@ -801,9 +801,11 @@ func TestParseTimeRange_BothValid(t *testing.T) {
 	s, en := parseTimeRange(c)
 	if s == nil {
 		t.Fatal("want non-nil start")
+		return
 	}
 	if en == nil {
 		t.Fatal("want non-nil end")
+		return
 	}
 	if !s.Equal(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("start = %v", *s)
@@ -876,6 +878,7 @@ func TestNew_WithExplicitLogger(t *testing.T) {
 	})
 	if h == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	// Logger should be the one we passed in, not slog.Default().
 	if h.logger != logger {
@@ -893,6 +896,7 @@ func TestNew_NilLogger_FallsBackToDefault(t *testing.T) {
 	})
 	if h == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if h.logger == nil {
 		t.Errorf("New should have set a non-nil logger via slog.Default() fallback")

@@ -15,20 +15,21 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/fleetstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	authstore "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 	cpiam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
-	cpgx "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/pgx"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/scim/scimstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/governancestore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/iamstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/orgstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/governancestore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/scim/scimstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/fleetstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/infrastructure/store/federatedstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	cpgx "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/pgx"
 )
 
 // HubAPI is the union Hub surface the iam bundle needs.
@@ -183,6 +184,11 @@ type Handler struct {
 	vk         iamVKStore
 	fed        iamFedStore
 	governance iamGovernanceStore
+	// oauth backs the OAuth client admin endpoints (issue #40). Distinct
+	// from the OAuth runtime store wired into authserver/oauth: the admin
+	// surface here CRUD's the OAuthClient row, the runtime surface there
+	// reads it during /token verification.
+	oauth iamOAuthClientStore
 	// pool is the direct SQL surface for auth_sessions queries that issue
 	// inline SQL against RefreshToken and related tables.
 	pool            cpgx.PgxPool
@@ -220,6 +226,10 @@ func New(d Deps) *Handler {
 		h.vk = vkstore.New(d.Pool)
 		h.fed = federatedstore.New(d.Pool)
 		h.governance = governancestore.New(d.Pool)
+		// d.Pool is the narrow cpgx.PgxPool interface (Exec+Query+QueryRow)
+		// which satisfies authstore.ClientPgxPool; the wider concrete-typed
+		// constructor would force an unnecessary type assertion here.
+		h.oauth = authstore.NewClientStoreWithPool(d.Pool)
 	}
 	return h
 }

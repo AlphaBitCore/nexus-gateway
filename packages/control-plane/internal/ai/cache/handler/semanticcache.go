@@ -13,6 +13,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -52,10 +53,10 @@ type SemanticCacheHubInvalidator interface {
 // SemanticCacheHandlerDeps is the construction-time argument shape for
 // NewSemanticCacheHandler.
 type SemanticCacheHandlerDeps struct {
-	Store        SemanticCacheStore
-	Hub          SemanticCacheHubInvalidator // may be nil — invalidation skipped, reconcile recovers within 60s
-	Audit        *audit.Writer               // may be nil (tests) — audit emission skipped silently
-	Logger       *slog.Logger
+	Store  SemanticCacheStore
+	Hub    SemanticCacheHubInvalidator // may be nil — invalidation skipped, reconcile recovers within 60s
+	Audit  *audit.Writer               // may be nil (tests) — audit emission skipped silently
+	Logger *slog.Logger
 	// AIGatewayURL is the internal base URL of the AI Gateway service.
 	// Required for the prewarm endpoint which forwards embedding+write to the
 	// AI GW's /internal/semantic-prewarm handler. Empty string disables
@@ -175,15 +176,15 @@ func (h *SemanticCacheHandler) PutConfig(c echo.Context) error {
 		})
 	}
 
-	// Dimension must be provided and positive when a model is set: the store
-	// uses it to build the SHA fingerprint and the ai-gateway uses it for
-	// FT.CREATE. The UI sources the dimension from the embedding probe result.
-	if hasModel {
-		if req.EmbeddingDimension == nil || *req.EmbeddingDimension <= 0 {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error": "embeddingDimension must be a positive integer when embedding model is set; run the embedding probe first",
-			})
-		}
+	// A supplied dimension must be positive. nil is allowed when a model is set:
+	// the store derives the model's default_dimension from its capabilityJson.
+	// Compatibility of a supplied dimension with the model's supported_dimensions
+	// is validated in the store (ErrUnsupportedEmbeddingDimension) so an operator
+	// cannot persist a value the gateway would 400 on for every embed call.
+	if hasModel && req.EmbeddingDimension != nil && *req.EmbeddingDimension <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error": "embeddingDimension must be a positive integer",
+		})
 	}
 
 	actor := actorFromContext(c)
@@ -224,6 +225,11 @@ func (h *SemanticCacheHandler) PutConfig(c echo.Context) error {
 		UpdatedBy:           actor.UserID,
 	})
 	if err != nil {
+		// Capability validation failures are operator errors → 400, not 500.
+		if errors.Is(err, configstore.ErrUnsupportedEmbeddingDimension) ||
+			errors.Is(err, configstore.ErrEmbeddingDimensionRequired) {
+			return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
+		}
 		h.logger.Error("semantic-cache: save config", "error", err)
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}

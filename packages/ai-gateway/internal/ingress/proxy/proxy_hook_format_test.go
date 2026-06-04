@@ -14,13 +14,13 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // fakeMetricsRecorder records the arguments of every metric call so
@@ -130,7 +130,7 @@ func TestRunRequestHooks_UsesIngressFormatTrafficAdapter(t *testing.T) {
 		{
 			name: "anthropic ingress",
 			ingress: Ingress{
-				WireShape:   typology.WireShapeOpenAIChat,
+				WireShape:  typology.WireShapeOpenAIChat,
 				BodyFormat: provcore.FormatAnthropic,
 			},
 			bodyJSON: `{
@@ -144,7 +144,7 @@ func TestRunRequestHooks_UsesIngressFormatTrafficAdapter(t *testing.T) {
 		{
 			name: "glm ingress",
 			ingress: Ingress{
-				WireShape:   typology.WireShapeOpenAIChat,
+				WireShape:  typology.WireShapeOpenAIChat,
 				BodyFormat: provcore.FormatGLM,
 			},
 			bodyJSON: `{
@@ -158,7 +158,7 @@ func TestRunRequestHooks_UsesIngressFormatTrafficAdapter(t *testing.T) {
 		{
 			name: "gemini ingress",
 			ingress: Ingress{
-				WireShape:   typology.WireShapeOpenAIChat,
+				WireShape:  typology.WireShapeOpenAIChat,
 				BodyFormat: provcore.FormatGemini,
 			},
 			bodyJSON: `{
@@ -171,7 +171,7 @@ func TestRunRequestHooks_UsesIngressFormatTrafficAdapter(t *testing.T) {
 		{
 			name: "openai ingress",
 			ingress: Ingress{
-				WireShape:   typology.WireShapeOpenAIChat,
+				WireShape:  typology.WireShapeOpenAIChat,
 				BodyFormat: provcore.FormatOpenAI,
 			},
 			bodyJSON: `{

@@ -22,9 +22,9 @@ type reproEvent struct {
 	// resolved adapter ID (agent's forward_handler passes adapter.ID()
 	// to runtimeNormalize's Meta.AdapterType). Empty means "PolicyResolver
 	// returned no adapter" — registry falls back to Tier 2+3 only.
-	adapterType  string
-	reqFile      string
-	respFile     string
+	adapterType     string
+	reqFile         string
+	respFile        string
 	wantReqAdapter  string // expected adapter ID in request normalized
 	wantRespAdapter string // expected adapter ID in response normalized
 }

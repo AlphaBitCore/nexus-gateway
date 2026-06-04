@@ -78,6 +78,18 @@ func TestClientStore_RedirectAllowed_LoopbackWildcard(t *testing.T) {
 			want:      true,
 		},
 		{
+			name:      "localhost port wildcard matches concrete port",
+			patterns:  []string{"http://localhost:*/callback"},
+			candidate: "http://localhost:54321/callback",
+			want:      true,
+		},
+		{
+			name:      "localhost pattern does not match 127.0.0.1 candidate",
+			patterns:  []string{"http://localhost:*/callback"},
+			candidate: "http://127.0.0.1:54321/callback",
+			want:      false,
+		},
+		{
 			name:      "ipv4 pattern does not match ipv6 candidate",
 			patterns:  []string{"http://127.0.0.1:*/callback"},
 			candidate: "http://[::1]:53821/callback",
@@ -120,6 +132,40 @@ func TestClientStore_RedirectAllowed_LoopbackWildcard(t *testing.T) {
 			got := store.RedirectAllowed(c, tc.candidate)
 			if got != tc.want {
 				t.Fatalf("RedirectAllowed(%v, %q) = %v, want %v", tc.patterns, tc.candidate, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClientStore_ValidRedirectURIPattern(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "empty rejected", raw: "", want: false},
+		{name: "https any host", raw: "https://cp.nexus.ai/callback", want: true},
+		{name: "http localhost fixed port", raw: "http://localhost:8080/cb", want: true},
+		{name: "http 127.0.0.1 fixed port", raw: "http://127.0.0.1:9000/cb", want: true},
+		{name: "http ipv6 loopback fixed port", raw: "http://[::1]:9000/cb", want: true},
+		// The bug this fix targets: the tui CLI client's loopback port wildcard.
+		{name: "http 127.0.0.1 port wildcard", raw: "http://127.0.0.1:*/callback", want: true},
+		{name: "http ipv6 loopback port wildcard", raw: "http://[::1]:*/callback", want: true},
+		// localhost+wildcard is honored by matchLoopback, so registration accepts it.
+		{name: "http localhost port wildcard", raw: "http://localhost:*/cb", want: true},
+		// https with a port wildcard is meaningless and can never match.
+		{name: "https port wildcard rejected", raw: "https://cp.nexus.ai:*/cb", want: false},
+		{name: "http non-loopback host rejected", raw: "http://evil.example/cb", want: false},
+		{name: "http localhost lookalike rejected", raw: "http://localhost.evil.com/cb", want: false},
+		{name: "unparseable rejected", raw: "://bad", want: false},
+		{name: "non-http scheme rejected", raw: "ftp://127.0.0.1/cb", want: false},
+		// A "*" outside the port position must not be read as a port wildcard.
+		{name: "path wildcard not a port wildcard", raw: "http://127.0.0.1/*", want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := store.ValidRedirectURIPattern(tc.raw); got != tc.want {
+				t.Fatalf("ValidRedirectURIPattern(%q) = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
 	}

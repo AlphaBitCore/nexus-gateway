@@ -12,10 +12,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	configtypes "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // SetMetricsRecorder + WithStats — package-level wiring helpers.
@@ -358,7 +358,7 @@ func TestExecute_BridgeTranslateError_SkipsToNextTarget(t *testing.T) {
 	// Ingress = FormatOpenAI; first target resolves to FormatAnthropic
 	// so ingress != target and the bridge path is entered.
 	req := provcore.Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`),
 	}

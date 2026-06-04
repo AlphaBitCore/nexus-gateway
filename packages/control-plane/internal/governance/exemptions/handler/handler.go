@@ -62,8 +62,8 @@ type HubAPI interface {
 
 // Deps is the construction-time arg shape.
 type Deps struct {
-	DataLayer DataLayer    // production: *store.DB; tests: stub
-	Hub       HubAPI       // may be nil — write endpoints return 503
+	DataLayer DataLayer // production: *store.DB; tests: stub
+	Hub       HubAPI    // may be nil — write endpoints return 503
 	Audit     *audit.Writer
 	Logger    *slog.Logger
 }

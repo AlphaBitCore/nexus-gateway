@@ -56,7 +56,6 @@ const rawToken = "test-bearer-token-12345"
 
 var validTokenHash = scimstore.HashScimToken(rawToken)
 
-
 // stubUserStore satisfies scimUserStore.
 type stubUserStore struct {
 	users         []userstore.NexusUserSafe
@@ -275,7 +274,6 @@ func TestScimAuth_ValidToken_CallsNext(t *testing.T) {
 	}
 }
 
-
 func TestServiceProviderConfig_Returns200(t *testing.T) {
 	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubScimStore{})
 	c, rec := echoCtx(http.MethodGet, "/ServiceProviderConfig", nil)
@@ -291,7 +289,6 @@ func TestServiceProviderConfig_Returns200(t *testing.T) {
 		t.Error("response missing schemas")
 	}
 }
-
 
 func TestSchemas_Returns200(t *testing.T) {
 	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubScimStore{})
@@ -343,7 +340,6 @@ func TestSchemaByID_Unknown_Returns404(t *testing.T) {
 	}
 }
 
-
 func TestListUsers_ReturnsPagedList(t *testing.T) {
 	u := makeUser("u1", "u1@example.com", "active")
 	us := &stubUserStore{users: []userstore.NexusUserSafe{*u}, total: 1}
@@ -361,7 +357,6 @@ func TestListUsers_ReturnsPagedList(t *testing.T) {
 		t.Errorf("totalResults=%v want 1", resp["totalResults"])
 	}
 }
-
 
 func TestGetUser_Found_Returns200(t *testing.T) {
 	u := makeUser("u1", "u1@example.com", "active")
@@ -405,7 +400,6 @@ func TestGetUser_StoreError_Returns500(t *testing.T) {
 		t.Errorf("code=%d want 500", rec.Code)
 	}
 }
-
 
 func TestCreateUser_MissingUserName_Returns400(t *testing.T) {
 	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubScimStore{})
@@ -509,7 +503,6 @@ func TestCreateUser_WithIdPToken_LinksUserToIdP(t *testing.T) {
 	}
 }
 
-
 func TestReplaceUser_NotFound_Returns404(t *testing.T) {
 	us := &stubUserStore{updateResult: nil}
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
@@ -558,7 +551,6 @@ func TestReplaceUser_StoreError_Returns500(t *testing.T) {
 	}
 }
 
-
 func TestPatchUser_ActiveFalse_SuspendsUser(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
 	us := &stubUserStore{updateResult: updated}
@@ -598,7 +590,6 @@ func TestPatchUser_NotFound_Returns404(t *testing.T) {
 	}
 }
 
-
 func TestDeleteUser_Success_Returns204(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
 	us := &stubUserStore{updateResult: updated}
@@ -628,7 +619,6 @@ func TestDeleteUser_StoreError_Returns500(t *testing.T) {
 	}
 }
 
-
 func TestListGroups_ReturnsGroups(t *testing.T) {
 	g := makeGroup("g1", "Engineering")
 	is := &stubIAMStore{groups: []iamstore.GroupRow{*g}}
@@ -646,7 +636,6 @@ func TestListGroups_ReturnsGroups(t *testing.T) {
 		t.Errorf("totalResults=%v want 1", resp["totalResults"])
 	}
 }
-
 
 func TestGetGroup_Found_Returns200(t *testing.T) {
 	g := makeGroup("g1", "Engineering")
@@ -676,7 +665,6 @@ func TestGetGroup_NotFound_Returns404(t *testing.T) {
 		t.Errorf("code=%d want 404", rec.Code)
 	}
 }
-
 
 func TestCreateGroup_MissingDisplayName_Returns400(t *testing.T) {
 	idpID := "idp-1"
@@ -755,7 +743,6 @@ func TestCreateGroup_CreateGroupError_Returns500(t *testing.T) {
 	}
 }
 
-
 func TestReplaceGroup_NonScimGroup_Returns403(t *testing.T) {
 	ss := &stubScimStore{groupSrc: "admin"} // not "scim"
 	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, ss)
@@ -806,7 +793,6 @@ func TestReplaceGroup_ScimGroup_Returns200(t *testing.T) {
 		t.Errorf("code=%d want 200; body=%s", rec.Code, rec.Body)
 	}
 }
-
 
 func TestPatchGroup_AddMember(t *testing.T) {
 	idpID := "idp-1"
@@ -879,7 +865,6 @@ func TestPatchGroup_ReplaceDisplayName(t *testing.T) {
 		t.Errorf("code=%d want 200", rec.Code)
 	}
 }
-
 
 func TestDeleteGroup_Success_Returns204(t *testing.T) {
 	is := &stubIAMStore{deleteErr: nil}
@@ -1084,6 +1069,7 @@ func TestNew_NilPool_ReturnsHandler(t *testing.T) {
 	h := New(nil, silentLogger(), "https://nexus.test/scim/v2")
 	if h == nil {
 		t.Fatal("expected non-nil handler from New(nil pool)")
+		return
 	}
 	// With nil pool, stores are nil — the zero handler should not panic on init.
 	if h.Logger == nil {
@@ -1096,6 +1082,7 @@ func TestNew_WithPool_ConstructsStores(t *testing.T) {
 	h := New(stubPool{}, silentLogger(), "https://nexus.test/scim/v2")
 	if h == nil {
 		t.Fatal("expected non-nil handler from New(pool)")
+		return
 	}
 	if h.users == nil || h.iam == nil || h.scim == nil {
 		t.Error("expected stores to be initialized with non-nil pool")

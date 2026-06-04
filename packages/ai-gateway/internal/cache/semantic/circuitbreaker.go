@@ -46,12 +46,12 @@ type CircuitBreaker struct {
 	failureWindow    time.Duration
 	halfOpenAfter    time.Duration
 
-	state          cbState
-	failureCount   int
-	windowStart    time.Time
-	lastTripAt     time.Time
-	tripCount      int
-	probeInFlight  bool // half_open: true when a probe call is in-flight
+	state         cbState
+	failureCount  int
+	windowStart   time.Time
+	lastTripAt    time.Time
+	tripCount     int
+	probeInFlight bool // half_open: true when a probe call is in-flight
 
 	log *slog.Logger
 

@@ -194,3 +194,42 @@ func TestDefaultIndexName(t *testing.T) {
 		t.Errorf("default: got %q", got)
 	}
 }
+
+func TestParseEmbeddingCapability(t *testing.T) {
+	cap := parseEmbeddingCapability([]byte(`{"embeddings":{"max_input_tokens":8191,"default_dimension":1536,"supported_dimensions":[512,1024,1536]}}`))
+	if cap.MaxInputTokens != 8191 || cap.DefaultDimension != 1536 || len(cap.SupportedDimensions) != 3 {
+		t.Fatalf("parsed = %+v", cap)
+	}
+	if got := parseEmbeddingCapability(nil); got.MaxInputTokens != 0 || len(got.SupportedDimensions) != 0 {
+		t.Errorf("nil capability should be zero: %+v", got)
+	}
+	if got := parseEmbeddingCapability([]byte("not json")); got.DefaultDimension != 0 {
+		t.Errorf("bad json should be zero: %+v", got)
+	}
+}
+
+func TestResolveEmbeddingDimension(t *testing.T) {
+	small := embeddingCapability{DefaultDimension: 1536, SupportedDimensions: []int{512, 1024, 1536}}
+
+	got, err := resolveEmbeddingDimension(nil, small)
+	if err != nil || got == nil || *got != 1536 {
+		t.Fatalf("derive default: got=%v err=%v", got, err)
+	}
+	d1024 := 1024
+	got, err = resolveEmbeddingDimension(&d1024, small)
+	if err != nil || got == nil || *got != 1024 {
+		t.Fatalf("supported dim: got=%v err=%v", got, err)
+	}
+	d3072 := 3072
+	if _, err := resolveEmbeddingDimension(&d3072, small); !errors.Is(err, ErrUnsupportedEmbeddingDimension) {
+		t.Fatalf("3072 on small should be unsupported; got %v", err)
+	}
+	if _, err := resolveEmbeddingDimension(nil, embeddingCapability{}); !errors.Is(err, ErrEmbeddingDimensionRequired) {
+		t.Fatalf("no default → required err; got %v", err)
+	}
+	d999 := 999
+	got, err = resolveEmbeddingDimension(&d999, embeddingCapability{})
+	if err != nil || got == nil || *got != 999 {
+		t.Fatalf("permissive legacy: got=%v err=%v", got, err)
+	}
+}

@@ -137,6 +137,7 @@ func run() int {
 		IAMEngine:         iamEngine,
 		RevocationService: revResult.Service,
 		AuditWriter:       auditWriter,
+		JWTVerifier:       adminJWTVerifier,
 		Logger:            logger,
 	})
 	if err != nil {

@@ -528,9 +528,76 @@ func TestRollupCorrection_Run_HappyPath(t *testing.T) {
 	m1mo.pool = mock
 
 	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 24*time.Hour, testLogger())
+	// Pin a mid-month date so the monthly re-merge branch does NOT fire — the
+	// expectations above cover only the 5m/1h/1d layers. Without this seam the test
+	// failed every 1st of the month (yesterday a month-end → an unexpected 1mo
+	// source Query). The month-end path has its own test below.
+	j.nowFn = func() time.Time { return time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC) }
 
 	if err := j.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("pgxmock expectations not met: %v", err)
+	}
+}
+
+// TestRollupCorrection_Run_MonthEnd_RemergesMonthly pins today to the 1st of a
+// month (yesterday = a month-end) so Run() takes the monthly re-merge branch, and
+// asserts the 1mo merge reads its metric_rollup_1d source exactly once on top of
+// the daily layers. This is the branch that broke the date-naive happy-path test.
+func TestRollupCorrection_Run_MonthEnd_RemergesMonthly(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	// 24 × 5m processOneBucket for yesterday (2026-05-31).
+	for range 288 {
+		mock.ExpectBegin()
+		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).
+			WithArgs(pgxmock.AnyArg()).
+			WillReturnResult(pgxmock.NewResult("DELETE", 0))
+		mock.ExpectQuery(`FROM traffic_event`).
+			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows(trafficEventCols))
+		mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
+			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
+		mock.ExpectCommit()
+	}
+	mergeCols := []string{"id", "bucketStart", "metricName", "dimensionKey", "subDimension", "value", "metadata", "updatedAt"}
+	// 24 × 1h merge.
+	for range 24 {
+		mock.ExpectQuery(`FROM "metric_rollup_5m"`).
+			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows(mergeCols))
+	}
+	// 1 × 1d merge.
+	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(mergeCols))
+	// 1 × 1mo merge — the month-end branch. Source is metric_rollup_1d.
+	mock.ExpectQuery(`FROM "metric_rollup_1d"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(mergeCols))
+
+	r5m := NewRollup5m(nil, time.Minute, testLogger(), false)
+	r5m.pool = mock
+	m1h := NewRollupMerge1h(nil, 5*time.Minute, testLogger())
+	m1h.pool = mock
+	m1d := NewRollupMerge1d(nil, time.Hour, testLogger())
+	m1d.pool = mock
+	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
+	m1mo.pool = mock
+
+	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 24*time.Hour, testLogger())
+	// 2026-06-01: yesterday = 2026-05-31 (month-end) → monthly re-merge fires.
+	j.nowFn = func() time.Time { return time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC) }
+
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("pgxmock expectations not met (1mo merge should have read metric_rollup_1d): %v", err)
 	}
 }
 

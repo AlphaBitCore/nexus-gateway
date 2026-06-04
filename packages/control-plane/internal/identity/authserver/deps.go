@@ -5,10 +5,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	store "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/token"
+	jwtverifier "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 )
 
@@ -48,4 +49,9 @@ type Deps struct {
 	// authserver login flow (which creates codes) and the sso-enroll endpoint
 	// (which consumes them). When nil, Mount creates its own internal store.
 	AuthCodes *store.AuthCodeStore
+	// JWTVerifier validates the bearer token in front of POST /authserver/approve
+	// — the endpoint a signed-in SPA calls to complete a pending OAuth dance
+	// without re-typing a password. When nil, that route is not registered (the
+	// SPA falls back to the password path).
+	JWTVerifier *jwtverifier.Verifier
 }

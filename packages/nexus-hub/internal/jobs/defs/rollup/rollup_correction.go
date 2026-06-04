@@ -25,6 +25,11 @@ type RollupCorrectionJob struct {
 	merge1mo *RollupMergeJob
 	interval time.Duration
 	logger   *slog.Logger
+	// nowFn returns the current time; defaults to time.Now. Seam so tests can pin a
+	// date deterministically — the monthly re-merge fires only on the 1st of a month
+	// (when yesterday was a month-end), a branch that is otherwise reachable in tests
+	// only on that calendar day.
+	nowFn func() time.Time
 }
 
 // NewRollupCorrection constructs the job. interval defaults to 24h.
@@ -46,6 +51,7 @@ func NewRollupCorrection(
 		merge1mo: merge1mo,
 		interval: interval,
 		logger:   logger.With("job", rollupCorrectionJobID),
+		nowFn:    time.Now,
 	}
 }
 
@@ -55,7 +61,11 @@ func (j *RollupCorrectionJob) Description() string     { return rollupCorrection
 func (j *RollupCorrectionJob) Interval() time.Duration { return j.interval }
 
 func (j *RollupCorrectionJob) Run(ctx context.Context) error {
-	now := time.Now().UTC()
+	nowFn := j.nowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	now := nowFn().UTC()
 	yesterdayStart := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC)
 	yesterdayEnd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 

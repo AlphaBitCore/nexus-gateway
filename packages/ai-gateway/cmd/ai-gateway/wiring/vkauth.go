@@ -4,8 +4,8 @@ package wiring
 import (
 	"log/slog"
 
-	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
+	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 )
 
 // InitVKAuth validates the HMAC secret and constructs the VK authenticator.

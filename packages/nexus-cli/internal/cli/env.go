@@ -3,11 +3,10 @@ package cli
 import (
 	"fmt"
 	"sort"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 )
 
 func newEnvCmd(a *App) *cobra.Command {
@@ -44,7 +43,7 @@ func newEnvAddCmd(a *App) *cobra.Command {
 				Name:             name,
 				CPBaseURL:        cpURL,
 				AIGatewayBaseURL: orDefault(aigwURL, cpURL),
-				OAuthClientID:    orDefault(clientID, "cp-ui"),
+				OAuthClientID:    orDefault(clientID, "tui"),
 				OAuthRedirectURI: orDefault(redirect, "http://localhost:3000/auth/callback"),
 				IsProd:           prod,
 			})
@@ -60,7 +59,7 @@ func newEnvAddCmd(a *App) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cpURL, "cp-url", "", "Control Plane base URL (required)")
 	cmd.Flags().StringVar(&aigwURL, "aigw-url", "", "AI Gateway base URL (defaults to --cp-url)")
-	cmd.Flags().StringVar(&clientID, "oauth-client", "", "OAuth client id (default cp-ui)")
+	cmd.Flags().StringVar(&clientID, "oauth-client", "", "OAuth client id (default tui)")
 	cmd.Flags().StringVar(&redirect, "oauth-redirect", "", "OAuth redirect URI")
 	cmd.Flags().BoolVar(&prod, "prod", false, "mark as a production environment (red banner + confirmations)")
 	return cmd
@@ -121,16 +120,15 @@ func newEnvLsCmd(a *App) *cobra.Command {
 			if a.isJSON() {
 				return a.renderJSON(rows)
 			}
-			tw := tabwriter.NewWriter(a.Out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tCP URL\tPROD\tDEFAULT")
+			cells := make([][]string, 0, len(rows))
 			for _, r := range rows {
 				def := ""
 				if r.IsDefault {
 					def = "*"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\n", r.Name, r.CPBaseURL, r.IsProd, def)
+				cells = append(cells, []string{r.Name, r.CPBaseURL, fmt.Sprintf("%v", r.IsProd), def})
 			}
-			return tw.Flush()
+			return a.table([]string{"NAME", "CP URL", "PROD", "DEFAULT"}, cells)
 		},
 	}
 }

@@ -44,13 +44,13 @@ type configAppliers struct {
 
 // buildConfigAppliersArgs carries the dependencies for buildConfigAppliers.
 type buildConfigAppliersArgs struct {
-	cfg                  *config.AgentConfig
-	cfgMgr               *config.Manager
-	logger               *slog.Logger
-	statusCollectorPtr   **status.Collector
-	agentPipeline        *agentcompliance.AgentPipeline
-	exemptionStore       *exemption.Store
-	payloadCaptureStore  *payloadcapture.Store
+	cfg                 *config.AgentConfig
+	cfgMgr              *config.Manager
+	logger              *slog.Logger
+	statusCollectorPtr  **status.Collector
+	agentPipeline       *agentcompliance.AgentPipeline
+	exemptionStore      *exemption.Store
+	payloadCaptureStore *payloadcapture.Store
 	// localCaptureStore is the always-on local-capture store fed to tlsbump.
 	// The payload_capture applier re-derives it (server params + local flags)
 	// on every Hub push via wiring.SyncLocalCapture. localBodyCapture is the
@@ -66,7 +66,7 @@ type buildConfigAppliersArgs struct {
 	// Sign call so admin toggles propagate without a daemon restart.
 	// Nil means attestation is not wired in this build — applier
 	// no-ops, Signer fail-opens (omits header).
-	attestationEnabled   *atomic.Bool
+	attestationEnabled *atomic.Bool
 }
 
 func applyOf(a shadow.ShadowApplier) rawApply {
@@ -103,11 +103,11 @@ func buildConfigAppliers(a buildConfigAppliersArgs) configAppliers {
 			return nil
 		}
 		var as struct {
-			QuitAllowed            *bool             `json:"quitAllowed"`
-			ShutdownWarning        map[string]string `json:"shutdownWarning"`
-			ShutdownWarningEnabled bool              `json:"shutdownWarningEnabled"`
-			TrafficUploadLevel     string            `json:"trafficUploadLevel"`
-			ForceQUICFallbackBundles []string        `json:"forceQUICFallbackBundles"`
+			QuitAllowed              *bool             `json:"quitAllowed"`
+			ShutdownWarning          map[string]string `json:"shutdownWarning"`
+			ShutdownWarningEnabled   bool              `json:"shutdownWarningEnabled"`
+			TrafficUploadLevel       string            `json:"trafficUploadLevel"`
+			ForceQUICFallbackBundles []string          `json:"forceQUICFallbackBundles"`
 			// Fleet toggle for traffic attestation. When true and an Ed25519
 			// cert is on disk, the request injector stamps X-Nexus-Attestation
 			// on every outbound HTTPS request.

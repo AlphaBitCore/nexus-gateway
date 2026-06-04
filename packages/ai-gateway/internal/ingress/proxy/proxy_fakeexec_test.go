@@ -44,7 +44,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -53,6 +52,7 @@ import (
 	configtypes "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	trafficbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )
 
@@ -293,8 +293,8 @@ func TestServeProxy_Fake_AllTargetsExhausted_NonRate(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -322,8 +322,8 @@ func TestServeProxy_Fake_AllTargetsExhausted_TerminalRateLimited(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -367,8 +367,8 @@ func TestServeProxy_Fake_ProviderError4xx(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -416,8 +416,8 @@ func TestServeProxy_Fake_ResponseReshapeFails(t *testing.T) {
 	}}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatAnthropic,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatAnthropic,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":4}`
 	w := httptest.NewRecorder()
@@ -456,8 +456,8 @@ func TestServeProxy_Fake_E57_ReverseDecode_Fails(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 
 	inner := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	// Wrap to inject the ResponsesUpgrade ctx flag before delegating to
 	// ServeProxy — simulates the auto-upgrade firing.
@@ -500,8 +500,8 @@ func TestServeProxy_Fake_CanonicalizeFails(t *testing.T) {
 	cacheOpt(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatAnthropic,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatAnthropic,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],"max_tokens":4}`
 	w := httptest.NewRecorder()
@@ -558,8 +558,8 @@ func TestServeProxy_Fake_CacheHIT_NonStream_ReshapeWarns(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatAnthropic,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatAnthropic,
 	})
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, string(body)))
@@ -612,8 +612,8 @@ func TestServeProxy_Fake_PassthroughNoReshape(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -658,8 +658,8 @@ func TestServeProxy_Fake_NilBridge_NoReshape(t *testing.T) {
 	deps.CanonicalBridge = nil // pin the no-bridge arm
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -706,8 +706,8 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_ReshapeFails(t *testing.T) {
 
 	// Anthropic ingress → OpenAI target → cross-format reshape fires.
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatAnthropic,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatAnthropic,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],"max_tokens":4}`
 	w := httptest.NewRecorder()
@@ -765,8 +765,8 @@ func TestServeProxy_Fake_ResponsesCrossFormat_Canonicalizes(t *testing.T) {
 	cacheOpt(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIResponses,
-		BodyFormat:   provcore.FormatOpenAIResponses,
+		WireShape:  typology.WireShapeOpenAIResponses,
+		BodyFormat: provcore.FormatOpenAIResponses,
 	})
 	// Body has NO stateful fields — guard passes.
 	body := `{"model":"claude-opus-4-7","input":"hi"}`
@@ -808,8 +808,8 @@ func TestServeProxy_Fake_ResponsesGuard_Rejects(t *testing.T) {
 	}}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIResponses,
-		BodyFormat:   provcore.FormatOpenAIResponses,
+		WireShape:  typology.WireShapeOpenAIResponses,
+		BodyFormat: provcore.FormatOpenAIResponses,
 	})
 	body := `{"model":"claude-opus-4-7","previous_response_id":"resp_prev_123","input":"hi"}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
@@ -850,9 +850,9 @@ func TestServeProxy_Fake_StreamCrossFormatBedrockRejected(t *testing.T) {
 	}}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	body := `{"model":"claude-bed","stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -888,8 +888,8 @@ func TestServeProxy_Fake_RequestBodyTooLarge(t *testing.T) {
 	deps.PayloadCapture = smallStore
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := strings.Repeat(`{"model":"gpt-4o","messages":[{"role":"user","content":"way too long for the 16 byte cap"}]}`, 1)
 	w := httptest.NewRecorder()
@@ -916,7 +916,6 @@ func newSmallReqCapPayloadStore(t *testing.T, cap int64) *payloadcapture.Store {
 	})
 }
 
-
 // ServeProxy — router error → ROUTING_NO_MATCH 500 envelope
 
 // errorRouter satisfies RouteResolver and always returns an error from
@@ -935,8 +934,8 @@ func TestServeProxy_Fake_RouterError(t *testing.T) {
 	deps.Router = errorRouter{}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -970,8 +969,8 @@ func TestServeProxy_Fake_NoTargets_FallbackFails(t *testing.T) {
 	// Models is nil so resolveNoMatchPassthrough cannot find the model.
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"unknown-model","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1017,8 +1016,8 @@ func TestServeProxy_Fake_NoCompatCapability_EmptyAvailable_FallsThroughToPassthr
 	// final 500 envelope confirms we traversed the fallback arm.
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1056,8 +1055,8 @@ func TestServeProxy_Fake_AuthFails(t *testing.T) {
 	deps.VKAuth = failVKAuth{}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1106,8 +1105,8 @@ func TestServeProxy_Fake_Direct_NonStream_MetricsAndCaptureFire(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1141,8 +1140,8 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_MetricsAndCaptureFire(t *testing
 	withBroker(t)(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1189,8 +1188,8 @@ func TestServeProxy_Fake_CacheHIT_NonStream_MetricsAndCaptureFire(t *testing.T) 
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, string(body)))
@@ -1215,8 +1214,8 @@ func TestServeProxy_Fake_NormaliserWired(t *testing.T) {
 	cacheOpt(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1259,9 +1258,9 @@ func TestServeProxy_Fake_CacheHIT_Stream_ReasoningTokensOnEntryUsage(t *testing.
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, string(body)))
@@ -1311,8 +1310,8 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookPipelineError(t *testing.T) {
 	deps.HookConfigCache = erroringHookFactoryCache(t, "response")
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1337,8 +1336,8 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookPipelineError(t *testing
 	withBroker(t)(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1372,8 +1371,8 @@ func TestServeProxy_Fake_CacheHIT_NonStream_RespHookPipelineError(t *testing.T) 
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, string(body)))
@@ -1390,8 +1389,8 @@ func TestServeProxy_Fake_RequestHookPipelineError(t *testing.T) {
 	deps.HookConfigCache = erroringHookFactoryCache(t, "request")
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1440,8 +1439,8 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookRejects(t *testing.T) {
 	withBroker(t)(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1468,8 +1467,8 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookBlockSoft(t *testing.T) 
 	withBroker(t)(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1496,8 +1495,8 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookModify(t *testing.T) {
 	withBroker(t)(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1524,8 +1523,8 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookRejects(t *testing.T) {
 	// No cache wired → direct path.
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1543,8 +1542,8 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookBlockSoft(t *testing.T) {
 	deps.HookConfigCache = newResponseHookCache(t, responseBlockSoftHook{})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1562,8 +1561,8 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookModifies(t *testing.T) {
 	deps.HookConfigCache = newResponseHookCache(t, responseModifyHook{})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1605,8 +1604,8 @@ func TestServeProxy_Fake_Direct_NonStream_ModifyUnsupportedReturnsOriginal(t *te
 	deps.TrafficAdapter = &stubRewriteUnsupportedAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-unsupported"}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1645,8 +1644,8 @@ func TestServeProxy_Fake_BrokerLeader_ModifyUnsupportedReturnsOriginal(t *testin
 	withBroker(t)(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1673,8 +1672,8 @@ func TestServeProxy_Fake_BrokerLeader_ModifyRewriteFails500(t *testing.T) {
 	withBroker(t)(deps)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1711,8 +1710,8 @@ func TestServeProxy_Fake_CacheHIT_ModifyUnsupportedReturnsOriginal(t *testing.T)
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, string(body)))
@@ -1750,8 +1749,8 @@ func TestServeProxy_Fake_CacheHIT_ModifyRewriteFails500(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, string(body)))
@@ -1773,8 +1772,8 @@ func TestServeProxy_Fake_Direct_NonStream_ModifyRewriteFails500(t *testing.T) {
 	deps.TrafficAdapter = &stubRewriteFailAdapter{stubTrafficAdapter: stubTrafficAdapter{id: "stub-fail"}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1812,8 +1811,8 @@ func TestServeProxy_Fake_StampsRateLimitHeader(t *testing.T) {
 	}}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1852,8 +1851,8 @@ func TestServeProxy_Fake_Coerced_Header(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -1897,8 +1896,8 @@ func TestServeProxy_Fake_E57_ReverseDecode_Success(t *testing.T) {
 	deps := makeFakeDeps(t, fexec, fbridge)
 
 	inner := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	// Inject ResponsesUpgrade ctx flag — simulates auto-upgrade firing.
 	h := func(w http.ResponseWriter, r *http.Request) {
@@ -1951,8 +1950,8 @@ func TestServeProxy_Fake_CacheReadTokensZero_ProviderCacheMiss(t *testing.T) {
 	deps.AuditWriter = aw
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -2013,8 +2012,8 @@ func TestServeProxy_Fake_CacheCreationTokens_Stamped(t *testing.T) {
 	deps.AuditWriter = aw2
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	w := httptest.NewRecorder()
@@ -2081,8 +2080,8 @@ func TestServeProxy_Fake_Embeddings_UpdateDimensionCalled(t *testing.T) {
 	deps.AuditWriter = aw3
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIEmbeddings,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIEmbeddings,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	// Standard embeddings request body.
 	reqBody := `{"model":"text-embedding-3-small","input":"hello world"}`

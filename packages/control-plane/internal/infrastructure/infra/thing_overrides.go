@@ -15,8 +15,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
-	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 )
 
 // thingOverrideGroupLookup is the narrow read seam used by the override

@@ -42,7 +42,7 @@ type RuntimeConfig struct {
 	CacheTTLSeconds    int
 	// InputStrategy is one of the five inputstaging.Strategy constants.
 	// Empty string → defaults to StrategySystemPlusLastUser at classify time.
-	InputStrategy     string
+	InputStrategy string
 	// ModelContextLimit is the judge model's context window in tokens.
 	// 0 → classify uses aiguardFallbackContextLimit (8192).
 	ModelContextLimit int
@@ -162,7 +162,12 @@ func applyInputStaging(req Request, cfg *RuntimeConfig) string {
 		}
 		sb.WriteString(m.Content)
 	}
-	return sb.String()
+	// Last-resort hard cut, applied here inside ai-guard (not at the hook
+	// dispatch layer): inputstaging.Plan drops whole messages but never cuts
+	// within one, so a single oversized turn would reach the judge over-limit.
+	// Keep the newest content (tail) so the classification reflects the latest
+	// user input, not a stale preamble.
+	return inputstaging.TruncateToTokens(sb.String(), contextLimit-aiguardReserveOutput)
 }
 
 // classifyImpl runs the full classify pipeline:

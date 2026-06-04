@@ -414,4 +414,3 @@ func joinModifiedAssistantText(blocks []hookcore.ContentBlock) string {
 	}
 	return b.String()
 }
-

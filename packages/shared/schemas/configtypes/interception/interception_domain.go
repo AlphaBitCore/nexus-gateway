@@ -37,8 +37,8 @@ type InterceptionDomain struct {
 	// When non-empty, CP applies this domain rule only to traffic whose
 	// classified EndpointType is in the list. Empty list (the default)
 	// means "all endpoints" — fully backward compatible.
-	ApplicableEndpoints     []string          `db:"applicable_endpoints"`
-	CreatedAt               time.Time         `db:"created_at"`
-	UpdatedAt               time.Time         `db:"updated_at"`
-	CreatedBy               *string           `db:"created_by"`
+	ApplicableEndpoints []string  `db:"applicable_endpoints"`
+	CreatedAt           time.Time `db:"created_at"`
+	UpdatedAt           time.Time `db:"updated_at"`
+	CreatedBy           *string   `db:"created_by"`
 }

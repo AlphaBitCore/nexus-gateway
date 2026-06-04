@@ -69,7 +69,7 @@ func New(url string, logger *slog.Logger) *Cache {
 // handleFetchFailure without sleeping for ten minutes.
 func newWithGrace(url string, logger *slog.Logger, staleGrace time.Duration) *Cache {
 	c := &Cache{
-		url:        url,
+		url: url,
 		client: nexushttp.New(nexushttp.Config{
 			Timeout:        10 * time.Second,
 			Caller:         "hub-jwks-cache",

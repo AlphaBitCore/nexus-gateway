@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
 
 // newConfigApp builds an App backed by a temp config file (no network), so the
@@ -46,7 +48,7 @@ func TestSetup_CreatesEnvAndSetsDefault(t *testing.T) {
 	if !strings.Contains(out, `Saved environment "dev"`) || !strings.Contains(out, "nexus login") {
 		t.Fatalf("setup should confirm + guide to login:\n%s", out)
 	}
-	cfg, err := core.Load(a.ConfigPath)
+	cfg, err := local.Load(a.ConfigPath)
 	if err != nil {
 		t.Fatalf("reload config: %v", err)
 	}
@@ -73,9 +75,9 @@ func TestEnvAdd_DefaultsAndRm(t *testing.T) {
 	if _, err := runCLIWithIn(t, a, "", "env", "add", "prod", "--cp-url", "https://prod.example.com", "--prod"); err != nil {
 		t.Fatalf("env add: %v", err)
 	}
-	cfg, _ := core.Load(a.ConfigPath)
+	cfg, _ := local.Load(a.ConfigPath)
 	e := cfg.Envs["prod"]
-	if e.CPBaseURL != "https://prod.example.com" || e.AIGatewayBaseURL != "https://prod.example.com" || e.OAuthClientID != "cp-ui" || !e.IsProd {
+	if e.CPBaseURL != "https://prod.example.com" || e.AIGatewayBaseURL != "https://prod.example.com" || e.OAuthClientID != "tui" || !e.IsProd {
 		t.Fatalf("env add defaults wrong: %+v", e)
 	}
 	// env add does not hijack an existing default (built-in local seeds it);
@@ -87,7 +89,7 @@ func TestEnvAdd_DefaultsAndRm(t *testing.T) {
 	if _, err := runCLIWithIn(t, a5, "", "env", "use", "prod"); err != nil {
 		t.Fatalf("env use: %v", err)
 	}
-	cfg, _ = core.Load(a.ConfigPath)
+	cfg, _ = local.Load(a.ConfigPath)
 	if cfg.DefaultEnv != "prod" {
 		t.Fatalf("env use should switch the default, got %q", cfg.DefaultEnv)
 	}
@@ -103,7 +105,7 @@ func TestEnvAdd_DefaultsAndRm(t *testing.T) {
 	if _, err := runCLIWithIn(t, a3, "", "env", "rm", "prod"); err != nil {
 		t.Fatalf("env rm: %v", err)
 	}
-	cfg, _ = core.Load(a.ConfigPath)
+	cfg, _ = local.Load(a.ConfigPath)
 	if _, ok := cfg.Envs["prod"]; ok {
 		t.Fatal("env rm should delete the env")
 	}
@@ -116,7 +118,7 @@ func TestEnvAdd_DefaultsAndRm(t *testing.T) {
 func TestGuard_NotLoggedInGuidesToLogin(t *testing.T) {
 	a := &App{
 		Store: fakeStore{m: map[string]string{}}, // no credential
-		Cfg:   &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: "http://x"}}},
+		Cfg:   &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: "http://x"}}},
 	}
 	_, err := runCLI(t, a, "health")
 	if err == nil || exitCode(err) != 3 {
@@ -130,7 +132,7 @@ func TestGuard_NotLoggedInGuidesToLogin(t *testing.T) {
 func TestGuard_UnknownEnvGuidesToSetup(t *testing.T) {
 	a := &App{
 		Store: fakeStore{m: map[string]string{}},
-		Cfg:   &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: "http://x"}}},
+		Cfg:   &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: "http://x"}}},
 	}
 	_, err := runCLI(t, a, "--env", "ghost", "health")
 	if err == nil || exitCode(err) != 3 {
@@ -167,7 +169,7 @@ func TestEnvAdd_RmUsageErrors(t *testing.T) {
 	if _, err := runCLIWithIn(t, a, "", "env", "add", "p2", "--cp-url", "https://cp", "--aigw-url", "https://sep"); err != nil {
 		t.Fatalf("env add: %v", err)
 	}
-	cfg, _ := core.Load(a.ConfigPath)
+	cfg, _ := local.Load(a.ConfigPath)
 	if cfg.Envs["p2"].AIGatewayBaseURL != "https://sep" {
 		t.Fatalf("explicit --aigw-url should be kept, got %q", cfg.Envs["p2"].AIGatewayBaseURL)
 	}
@@ -179,7 +181,7 @@ func TestSetup_NameArgAndEditPreservesProd(t *testing.T) {
 	if _, err := runCLIWithIn(t, a, "https://cp\n\ncp-ui\n\ny\n", "setup", "stage"); err != nil {
 		t.Fatalf("setup create: %v", err)
 	}
-	cfg, _ := core.Load(a.ConfigPath)
+	cfg, _ := local.Load(a.ConfigPath)
 	if e := cfg.Envs["stage"]; e.CPBaseURL != "https://cp" || !e.IsProd {
 		t.Fatalf("setup create wrong: %+v", e)
 	}
@@ -188,7 +190,7 @@ func TestSetup_NameArgAndEditPreservesProd(t *testing.T) {
 	if _, err := runCLIWithIn(t, a2, "\n\n\n\n\n", "setup", "stage"); err != nil {
 		t.Fatalf("setup edit: %v", err)
 	}
-	cfg, _ = core.Load(a.ConfigPath)
+	cfg, _ = local.Load(a.ConfigPath)
 	if e := cfg.Envs["stage"]; e.CPBaseURL != "https://cp" || e.OAuthClientID != "cp-ui" || !e.IsProd {
 		t.Fatalf("setup edit should preserve fields incl. prod: %+v", e)
 	}
@@ -204,14 +206,14 @@ func TestEnvAdd_SetsDefaultWhenNone(t *testing.T) {
 	if _, err := runCLIWithIn(t, a2, "", "env", "add", "first", "--cp-url", "https://f"); err != nil {
 		t.Fatalf("env add: %v", err)
 	}
-	cfg, _ := core.Load(a.ConfigPath)
+	cfg, _ := local.Load(a.ConfigPath)
 	if cfg.DefaultEnv != "first" {
 		t.Fatalf("first env added to a default-less config should become default, got %q", cfg.DefaultEnv)
 	}
 }
 
 func TestEnvCmds_ConfigLoadError(t *testing.T) {
-	dir := t.TempDir() // a directory, not a file → core.Load fails to read it
+	dir := t.TempDir() // a directory, not a file → local.Load fails to read it
 	for _, args := range [][]string{
 		{"env", "add", "x", "--cp-url", "https://x"},
 		{"env", "rm", "x"},
@@ -245,13 +247,14 @@ func TestTuiDeps_SwitchAndCreateEnv(t *testing.T) {
 		t.Fatal("SwitchEnv(ghost) should error")
 	}
 
-	// CreateEnv persists a new prod env, sets it default, and switches to it.
-	gw, sess, err = deps.CreateEnv("prod", "https://prod", true)
+	// CreateEnv persists a new prod env (CP host + separately-collected AI
+	// Gateway host), sets it default, and switches to it.
+	gw, sess, err = deps.CreateEnv("prod", "https://prod", "https://aigw.prod", true)
 	if err != nil || gw == nil || sess.EnvName != "prod" || a.Env.Name != "prod" {
 		t.Fatalf("CreateEnv wrong: sess=%+v env=%q err=%v", sess, a.Env.Name, err)
 	}
-	cfg, _ := core.Load(a.ConfigPath)
-	if e := cfg.Envs["prod"]; e.CPBaseURL != "https://prod" || e.AIGatewayBaseURL != "https://prod" || !e.IsProd {
+	cfg, _ := local.Load(a.ConfigPath)
+	if e := cfg.Envs["prod"]; e.CPBaseURL != "https://prod" || e.AIGatewayBaseURL != "https://aigw.prod" || !e.IsProd {
 		t.Fatalf("CreateEnv did not persist correctly: %+v", e)
 	}
 	if cfg.DefaultEnv != "prod" {
@@ -285,6 +288,103 @@ func TestTuiDeps_SwitchAndCreateEnv(t *testing.T) {
 	if _, _, _, err := deps.CreateVK(context.Background(), "x"); err == nil {
 		t.Fatal("CreateVK with no reachable gateway should error")
 	}
+
+	// EnvDetail returns the URLs + prod flag for the named env so the wizard
+	// can show "where each env points" under the cursor row.
+	cpURL, aigwURL, isProd, err := deps.EnvDetail("prod")
+	if err != nil || cpURL != "https://prod" || aigwURL != "https://aigw.prod" || !isProd {
+		t.Fatalf("EnvDetail(prod) wrong: cp=%q aigw=%q prod=%v err=%v", cpURL, aigwURL, isProd, err)
+	}
+	if _, _, _, err := deps.EnvDetail("ghost"); err == nil {
+		t.Fatal("EnvDetail on an unknown env must error")
+	}
+
+	// UpdateEnv overwrites URLs + prod flag without minting a new env or
+	// touching the OAuth client + remembered selections.
+	gw, sess, loggedIn, err = deps.UpdateEnv("prod", "https://cp.new", "https://aigw.new", false)
+	if err != nil || gw == nil || sess.EnvName != "prod" || a.Env.Name != "prod" {
+		t.Fatalf("UpdateEnv wrong: sess=%+v env=%q err=%v", sess, a.Env.Name, err)
+	}
+	cfg, _ = local.Load(a.ConfigPath)
+	if e := cfg.Envs["prod"]; e.CPBaseURL != "https://cp.new" || e.AIGatewayBaseURL != "https://aigw.new" || e.IsProd {
+		t.Fatalf("UpdateEnv did not persist correctly: %+v", e)
+	}
+	if e := cfg.Envs["prod"]; e.LastModel != "m1" || e.LastVKID != "vk1" {
+		t.Fatalf("UpdateEnv must preserve remembered selection, got %+v", e)
+	}
+	// UpdateEnv on an unknown env errors instead of silently creating one.
+	if _, _, _, err := deps.UpdateEnv("ghost", "https://x", "https://x", false); err == nil {
+		t.Fatal("UpdateEnv on an unknown env must error")
+	}
+	// loggedIn reflects whether the stored secret survives the URL edit (we
+	// previously set an admin key for prod — the edit must NOT wipe it).
+	if !loggedIn {
+		t.Fatal("UpdateEnv must preserve the existing credential — loggedIn should be true")
+	}
+
+	// DeleteEnv removes the row + clears its stored secrets so a future env
+	// reusing the same name does not inherit a stale credential.
+	if err := deps.DeleteEnv("prod"); err != nil {
+		t.Fatalf("DeleteEnv(prod): %v", err)
+	}
+	cfg, _ = local.Load(a.ConfigPath)
+	if _, ok := cfg.Envs["prod"]; ok {
+		t.Fatal("DeleteEnv must remove the env from the config")
+	}
+	if v, _ := a.Store.Get("prod", core.SecretAdminKey); v != "" {
+		t.Fatalf("DeleteEnv must clear stored secrets, got admin_key=%q", v)
+	}
+	// DeleteEnv on an unknown env surfaces the same error RemoveEnv returns.
+	if err := deps.DeleteEnv("ghost"); err == nil {
+		t.Fatal("DeleteEnv on an unknown env must error")
+	}
+}
+
+// TestTuiDeps_UpdateEnvErrors covers the not-found path of UpdateEnv on the
+// other side of the if/return — important because a UI race (env list
+// stale, env deleted in another session) lands here, and we must surface
+// the error rather than silently re-create the env.
+func TestTuiDeps_UpdateEnvErrors(t *testing.T) {
+	a := &App{Store: fakeStore{m: map[string]string{}}, ConfigPath: filepath.Join(t.TempDir(), "c.toml")}
+	if err := a.ensureEnv(); err != nil {
+		t.Fatalf("ensureEnv: %v", err)
+	}
+	deps := a.tuiDeps()
+	if _, _, _, err := deps.UpdateEnv("ghost", "https://x", "https://x", false); err == nil {
+		t.Fatal("UpdateEnv on an unknown env must error")
+	}
+}
+
+// errorDeleteStore wraps an in-memory SecretStore and forces Delete to
+// return a non-ErrSecretNotFound error so the DeleteEnv loop's `return err`
+// branch is exercised. Without this branch covered, a keychain
+// permission-denied (the real-world failure mode) would silently swallow
+// and proceed.
+type errorDeleteStore struct{ inner fakeStore }
+
+func (s errorDeleteStore) Get(env, key string) (string, error) { return s.inner.Get(env, key) }
+func (s errorDeleteStore) Set(env, key, val string) error      { return s.inner.Set(env, key, val) }
+func (s errorDeleteStore) Delete(_, _ string) error            { return errors.New("keychain unavailable") }
+
+// TestTuiDeps_DeleteEnvSurfacesStoreError covers the rarely-hit branch of
+// the DeleteEnv loop: an operating-system keychain that refuses to delete
+// must surface its error rather than be silently treated as
+// ErrSecretNotFound (which would leak a stale credential into a future env
+// reusing the same name).
+func TestTuiDeps_DeleteEnvSurfacesStoreError(t *testing.T) {
+	a := &App{
+		Store:      errorDeleteStore{inner: fakeStore{m: map[string]string{}}},
+		ConfigPath: filepath.Join(t.TempDir(), "c.toml"),
+	}
+	if err := a.ensureEnv(); err != nil {
+		t.Fatalf("ensureEnv: %v", err)
+	}
+	a.Cfg.SetEnv(core.Env{Name: "doomed", CPBaseURL: "https://d"})
+	deps := a.tuiDeps()
+	err := deps.DeleteEnv("doomed")
+	if err == nil || !strings.Contains(err.Error(), "keychain unavailable") {
+		t.Fatalf("a Store.Delete error must propagate: %v", err)
+	}
 }
 
 func TestEnvUse_Errors(t *testing.T) {
@@ -306,7 +406,7 @@ func TestEnvUse_Errors(t *testing.T) {
 
 func TestGuard_ConfigCommandsSkipAuth(t *testing.T) {
 	// `env ls` manages config and must work with no credential (skipLoad).
-	a := &App{Store: fakeStore{m: map[string]string{}}, Cfg: &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: "http://x"}}}}
+	a := &App{Store: fakeStore{m: map[string]string{}}, Cfg: &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: "http://x"}}}}
 	if _, err := runCLI(t, a, "env", "ls"); err != nil {
 		t.Fatalf("env ls should not require a credential: %v", err)
 	}

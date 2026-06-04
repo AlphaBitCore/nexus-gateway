@@ -38,11 +38,11 @@
 package codecs
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"strings"
 )
 
@@ -132,8 +132,8 @@ func openAIResponsesFieldSpec(d core.Direction) core.FieldSpec {
 // Request side
 
 type openaiResponsesRequest struct {
-	Model        string                     `json:"model,omitempty"`
-	Instructions string                     `json:"instructions,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Instructions string `json:"instructions,omitempty"`
 	// Per OpenAI Responses-API spec, `input` is polymorphic: either a
 	// string shorthand ("hello") that maps to a single user message,
 	// or an array of input items with role+content blocks. We decode as
@@ -150,8 +150,8 @@ type openaiResponsesRequest struct {
 }
 
 type openaiResponsesInputItem struct {
-	Role    string                          `json:"role,omitempty"`
-	Content []openaiResponsesInputContent   `json:"content,omitempty"`
+	Role    string                        `json:"role,omitempty"`
+	Content []openaiResponsesInputContent `json:"content,omitempty"`
 	// Some clients emit `input` items WITHOUT role (raw string parts);
 	// we treat those as user-role for safety.
 	Type string `json:"type,omitempty"`
@@ -300,21 +300,21 @@ func openaiResponsesInputContentToBlocks(parts []openaiResponsesInputContent) []
 // Response side
 
 type openaiResponsesResponse struct {
-	ID     string                       `json:"id,omitempty"`
-	Object string                       `json:"object,omitempty"`
-	Model  string                       `json:"model,omitempty"`
-	Status string                       `json:"status,omitempty"`
-	Output []openaiResponsesOutputItem  `json:"output,omitempty"`
-	Usage  *openaiResponsesUsage        `json:"usage,omitempty"`
+	ID     string                      `json:"id,omitempty"`
+	Object string                      `json:"object,omitempty"`
+	Model  string                      `json:"model,omitempty"`
+	Status string                      `json:"status,omitempty"`
+	Output []openaiResponsesOutputItem `json:"output,omitempty"`
+	Usage  *openaiResponsesUsage       `json:"usage,omitempty"`
 }
 
 type openaiResponsesOutputItem struct {
-	Type    string                        `json:"type,omitempty"`
-	ID      string                        `json:"id,omitempty"`
-	Role    string                        `json:"role,omitempty"`
-	Status  string                        `json:"status,omitempty"`
-	Summary []openaiResponsesSummaryPart  `json:"summary,omitempty"` // for type=reasoning
-	Content []openaiResponsesOutputPart   `json:"content,omitempty"` // for type=message
+	Type    string                       `json:"type,omitempty"`
+	ID      string                       `json:"id,omitempty"`
+	Role    string                       `json:"role,omitempty"`
+	Status  string                       `json:"status,omitempty"`
+	Summary []openaiResponsesSummaryPart `json:"summary,omitempty"` // for type=reasoning
+	Content []openaiResponsesOutputPart  `json:"content,omitempty"` // for type=message
 	// Function/tool call fields.
 	Name      string         `json:"name,omitempty"`
 	CallID    string         `json:"call_id,omitempty"`
@@ -333,10 +333,10 @@ type openaiResponsesOutputPart struct {
 }
 
 type openaiResponsesUsage struct {
-	InputTokens        int                            `json:"input_tokens,omitempty"`
-	OutputTokens       int                            `json:"output_tokens,omitempty"`
-	TotalTokens        int                            `json:"total_tokens,omitempty"`
-	InputTokensDetails *openaiResponsesInputDetails   `json:"input_tokens_details,omitempty"`
+	InputTokens         int                           `json:"input_tokens,omitempty"`
+	OutputTokens        int                           `json:"output_tokens,omitempty"`
+	TotalTokens         int                           `json:"total_tokens,omitempty"`
+	InputTokensDetails  *openaiResponsesInputDetails  `json:"input_tokens_details,omitempty"`
 	OutputTokensDetails *openaiResponsesOutputDetails `json:"output_tokens_details,omitempty"`
 }
 

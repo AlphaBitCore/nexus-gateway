@@ -18,11 +18,11 @@ func InitPlatform(bridgeAddr string) platform.Platform {
 
 // ConnectionBridgeConfig groups everything InitConnectionBridge needs.
 type ConnectionBridgeConfig struct {
-	PolicyEngine        *policy.Engine
-	AgentPipeline       *agentcompliance.AgentPipeline
-	AuditQueue *auditqueue.Queue
-	ThingID    string
-	KillSwitch *killswitch.Switch
+	PolicyEngine  *policy.Engine
+	AgentPipeline *agentcompliance.AgentPipeline
+	AuditQueue    *auditqueue.Queue
+	ThingID       string
+	KillSwitch    *killswitch.Switch
 	// InspectBodyCap is the per-flow buffer ceiling (default 256 MiB).
 	InspectBodyCap          int64
 	ProviderTrafficNotifier func()

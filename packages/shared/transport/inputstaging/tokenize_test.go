@@ -141,3 +141,66 @@ func TestEstimateTokens_OtherUnicode(t *testing.T) {
 		t.Errorf("EstimateTokens(%q) = %d, want >= 1", "résumé", got)
 	}
 }
+
+func TestTruncateToTokens_FitsUnchanged(t *testing.T) {
+	in := "hello world"
+	if got := TruncateToTokens(in, 1000); got != in {
+		t.Errorf("fits-within-budget should be unchanged: got %q", got)
+	}
+}
+
+func TestTruncateToTokens_EdgeCases(t *testing.T) {
+	if got := TruncateToTokens("", 10); got != "" {
+		t.Errorf("empty: got %q", got)
+	}
+	if got := TruncateToTokens("anything", 0); got != "anything" {
+		t.Errorf("maxTokens=0 → unchanged: got %q", got)
+	}
+	if got := TruncateToTokens("anything", -5); got != "anything" {
+		t.Errorf("maxTokens<0 → unchanged: got %q", got)
+	}
+}
+
+// The cut must KEEP THE TAIL (newest content) and discard the old head.
+func TestTruncateToTokens_KeepsNewestTail(t *testing.T) {
+	old := strings.Repeat("O", 400)
+	newest := "THE-NEWEST-QUESTION"
+	in := old + newest
+	out := TruncateToTokens(in, 20)
+
+	if out == in {
+		t.Fatal("expected truncation, got the full string")
+	}
+	if !strings.HasSuffix(in, out) {
+		t.Fatalf("result must be a trailing SUFFIX of the input; got %q", out)
+	}
+	if !strings.HasSuffix(out, newest) {
+		t.Fatalf("must retain the newest tail %q; got %q", newest, out)
+	}
+	if strings.Contains(out, strings.Repeat("O", 200)) {
+		t.Fatalf("should have dropped the old head, but a large old run survived: %q", out)
+	}
+}
+
+// Result must stay within budget (with the safety margin) and on a rune
+// boundary for multibyte (CJK) input.
+func TestTruncateToTokens_BudgetAndRuneBoundary(t *testing.T) {
+	in := strings.Repeat("你好", 500) // 1000 CJK runes ≈ 500 tokens
+	const maxTokens = 50
+	out := TruncateToTokens(in, maxTokens)
+
+	if EstimateTokens(out) > maxTokens {
+		t.Fatalf("estimated tokens %d exceed budget %d", EstimateTokens(out), maxTokens)
+	}
+	if EstimateTokens(out) > maxTokens*85/100+1 {
+		t.Errorf("expected ~85%% margin, got %d tokens for budget %d", EstimateTokens(out), maxTokens)
+	}
+	for _, r := range out {
+		if r == '�' {
+			t.Fatal("result contains a broken UTF-8 rune (not on a boundary)")
+		}
+	}
+	if !strings.HasSuffix(in, out) {
+		t.Fatal("CJK result must also be a trailing suffix")
+	}
+}

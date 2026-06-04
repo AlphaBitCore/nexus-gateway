@@ -46,7 +46,7 @@ func TestExtractIngressModel_Anthropic_FromBody(t *testing.T) {
 
 func TestExtractIngressModel_Gemini_FromPath_NonStreaming(t *testing.T) {
 	in := Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatGemini,
 	}
 	body := []byte(`{"contents":[]}`)
@@ -67,7 +67,7 @@ func TestExtractIngressModel_Gemini_FromPath_NonStreaming(t *testing.T) {
 
 func TestExtractIngressModel_Gemini_FromPath_Streaming(t *testing.T) {
 	in := Ingress{
-		WireShape:       typology.WireShapeOpenAIChat,
+		WireShape:      typology.WireShapeOpenAIChat,
 		BodyFormat:     provcore.FormatGemini,
 		Stream:         true,
 		StreamFromPath: true,

@@ -38,7 +38,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -47,6 +46,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // extractRequestContentForHooks / extractResponseForHooks
@@ -662,7 +662,7 @@ func TestServeProxy_CacheHIT_AnthropicIngress(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatAnthropic,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))

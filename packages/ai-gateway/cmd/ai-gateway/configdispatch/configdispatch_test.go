@@ -46,11 +46,11 @@ func TestBuildConfigLoader_AllKeysRegistered(t *testing.T) {
 		"providers",
 		"quota_overrides",
 		"quota_policies",
-		"response_cache.extract_config",           // fleet extract-cache push
-		"response_cache.time_sensitive_patterns",  // time-sensitive cache patterns
+		"response_cache.extract_config",          // fleet extract-cache push
+		"response_cache.time_sensitive_patterns", // time-sensitive cache patterns
 		"routing_rules",
-		"semantic_cache.config",  // semantic cache config
-		"streaming_compliance",   // #115 — admin streaming policy → Store.ApplyShadowState
+		"semantic_cache.config", // semantic cache config
+		"streaming_compliance",  // #115 — admin streaming policy → Store.ApplyShadowState
 		"virtual_keys",
 	}
 	got := loader.Keys()

@@ -17,9 +17,9 @@ import (
 func EncodeRaw(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 
 var (
-	tNow   = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
-	tFrom  = tNow.Add(-time.Hour)
-	tTo    = tNow
+	tNow  = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
+	tFrom = tNow.Add(-time.Hour)
+	tTo   = tNow
 )
 
 var dimD = "d"
@@ -184,7 +184,9 @@ func TestGetOpsMetricsTimeseries_Rollup(t *testing.T) {
 
 func TestGetOpsMetricsFleet(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`FROM metric_ops_rollup_1h`).WithArgs("agent", "cpu", pgxmock.AnyArg(), tFrom, tTo).
+	// tFrom/tTo span exactly 1h → SelectGranularity returns "raw"; fleet has no
+	// raw slice so the handler bumps to the smallest fleet tier, "5m".
+	m.ExpectQuery(`FROM metric_ops_rollup_5m`).WithArgs("agent", "cpu", pgxmock.AnyArg(), tFrom, tTo).
 		WillReturnRows(pgxmock.NewRows(bucketCols).AddRow(tNow, nil, "agent", "cpu", "gauge", "", fp(1), fp(2), fp(0), fp(3), int32(7), []byte(`{}`)))
 	out, err := s.GetOpsMetricsFleet(context.Background(), OpsFleetParams{ThingType: "agent", MetricName: "cpu", DimensionKey: &dimD, From: tFrom, To: tTo})
 	if err != nil || len(out) != 1 || out[0].ThingID != nil {

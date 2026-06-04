@@ -25,17 +25,17 @@ import (
 // fleet kill switch, time-sensitive rule overrides. Per-route policy lives
 // on routing_rule.response_cache_policy.semantic — not here.
 type SemanticCacheConfigRow struct {
-	ID                   string    `json:"id"`
-	EmbeddingProviderID  *string   `json:"embeddingProviderId"`
-	EmbeddingModelID     *string   `json:"embeddingModelId"`
-	EmbeddingDimension   *int      `json:"embeddingDimension"`
-	EmbeddingFingerprint string    `json:"embeddingFingerprint"`
+	ID                   string  `json:"id"`
+	EmbeddingProviderID  *string `json:"embeddingProviderId"`
+	EmbeddingModelID     *string `json:"embeddingModelId"`
+	EmbeddingDimension   *int    `json:"embeddingDimension"`
+	EmbeddingFingerprint string  `json:"embeddingFingerprint"`
 	// RedisIndexName is the versioned Redis Vector index name used in
 	// FT.CREATE / FT.SEARCH. Default: "nexus:semantic-cache:v1".
 	// Bumped from v1 → v2 → v3 on (provider, model, dimension) changes
 	// to achieve atomic blue/green index swap without dropping live traffic.
-	RedisIndexName string    `json:"redisIndexName"`
-	Enabled        bool      `json:"enabled"`
+	RedisIndexName string `json:"redisIndexName"`
+	Enabled        bool   `json:"enabled"`
 	// Threshold is the fleet-wide cosine similarity gate for L2 hits.
 	// Range [0.0, 1.0]; default 0.96. Fleet-level only; per-route
 	// policy is not supported.
@@ -66,6 +66,81 @@ type SemanticCacheConfigRow struct {
 	EmbeddingProviderBaseURL      string  `json:"embeddingProviderBaseUrl,omitempty"`
 	EmbeddingProviderModelID      string  `json:"embeddingProviderModelId,omitempty"`
 	EmbeddingInputPricePerMillion float64 `json:"embeddingInputPricePerMillion,omitempty"`
+	// EmbeddingMaxInputTokens is the embedding model's context window
+	// (capabilityJson.embeddings.max_input_tokens), joined at Get/Save time so
+	// the gateway can truncate the embed input to the model's real limit
+	// instead of a hardcoded fallback. 0 when the model declares no limit.
+	EmbeddingMaxInputTokens int `json:"embeddingMaxInputTokens,omitempty"`
+}
+
+// ErrUnsupportedEmbeddingDimension is returned by Save when the requested
+// embedding dimension is not one the chosen model can produce (per its
+// capabilityJson.embeddings.supported_dimensions). Surfaced as 400 by the
+// admin handler so an operator cannot persist a config the gateway would
+// 400 on every embed call (the failure that wedged prod: a 3072 dim on
+// text-embedding-3-small, which only supports [512,1024,1536]).
+var ErrUnsupportedEmbeddingDimension = errors.New("configstore: embedding dimension not supported by model")
+
+// ErrEmbeddingDimensionRequired is returned by Save when a model is set, no
+// dimension was supplied, and the model declares no default_dimension to
+// derive one from — so there is nothing to build the index with.
+var ErrEmbeddingDimensionRequired = errors.New("configstore: embedding dimension required (model has no default_dimension)")
+
+// embeddingCapability is the parsed embeddings block of a Model's
+// capabilityJson. Zero values mean "model declares no constraint", which the
+// caller treats as "skip the check" rather than "reject".
+type embeddingCapability struct {
+	MaxInputTokens      int   `json:"max_input_tokens"`
+	DefaultDimension    int   `json:"default_dimension"`
+	SupportedDimensions []int `json:"supported_dimensions"`
+}
+
+// parseEmbeddingCapability extracts the embeddings capability block from a
+// Model.capabilityJson payload. Returns a zero-valued struct on empty or
+// unparseable input — capability constraints are advisory, never a hard
+// dependency for saving.
+func parseEmbeddingCapability(raw []byte) embeddingCapability {
+	if len(raw) == 0 {
+		return embeddingCapability{}
+	}
+	var wrap struct {
+		Embeddings embeddingCapability `json:"embeddings"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return embeddingCapability{}
+	}
+	return wrap.Embeddings
+}
+
+// resolveEmbeddingDimension applies the capability to the requested dimension:
+//   - nil dimension → derive the model's default_dimension (error if none).
+//   - supplied dimension → must be in supported_dimensions when that list is
+//     non-empty (else ErrUnsupportedEmbeddingDimension).
+//
+// A model that declares neither supported_dimensions nor default_dimension is
+// treated permissively: any supplied dimension passes (legacy models without
+// capability metadata still work). Returns the resolved dimension.
+func resolveEmbeddingDimension(requested *int, capb embeddingCapability) (*int, error) {
+	if requested == nil {
+		if capb.DefaultDimension > 0 {
+			d := capb.DefaultDimension
+			return &d, nil
+		}
+		return nil, ErrEmbeddingDimensionRequired
+	}
+	if len(capb.SupportedDimensions) > 0 {
+		ok := false
+		for _, d := range capb.SupportedDimensions {
+			if d == *requested {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w: %d (supported: %v)", ErrUnsupportedEmbeddingDimension, *requested, capb.SupportedDimensions)
+		}
+	}
+	return requested, nil
 }
 
 // TimeSensitiveOverridesBlob is the JSONB payload stored in
@@ -144,13 +219,15 @@ func (s *SemanticCacheStore) Get(ctx context.Context) (*SemanticCacheConfigRow, 
 		       sc.updated_at, sc.updated_by, sc.time_sensitive_overrides,
 		       COALESCE(p."baseUrl", '') AS provider_base_url,
 		       COALESCE(m."providerModelId", '') AS provider_model_id,
-		       COALESCE(m."inputPricePerMillion"::float8, 0) AS provider_input_price_per_m
+		       COALESCE(m."inputPricePerMillion"::float8, 0) AS provider_input_price_per_m,
+		       COALESCE(m."capabilityJson"::text, '') AS model_capability_json
 		FROM semantic_cache_config sc
 		LEFT JOIN "Provider" p ON p.id = sc.embedding_provider_id
 		LEFT JOIN "Model"    m ON m.id = sc.embedding_model_id
 		WHERE sc.id = 'singleton'`
 	row := &SemanticCacheConfigRow{}
 	var rawOverrides []byte
+	var capabilityJSON string
 	scanErr := s.pool.QueryRow(ctx, q).Scan(
 		&row.ID, &row.EmbeddingProviderID, &row.EmbeddingModelID, &row.EmbeddingDimension,
 		&row.EmbeddingFingerprint, &row.RedisIndexName, &row.Enabled,
@@ -159,7 +236,11 @@ func (s *SemanticCacheStore) Get(ctx context.Context) (*SemanticCacheConfigRow, 
 		&rawOverrides,
 		&row.EmbeddingProviderBaseURL, &row.EmbeddingProviderModelID,
 		&row.EmbeddingInputPricePerMillion,
+		&capabilityJSON,
 	)
+	if scanErr == nil {
+		row.EmbeddingMaxInputTokens = parseEmbeddingCapability([]byte(capabilityJSON)).MaxInputTokens
+	}
 	if err := parseSemanticCacheScan(row, rawOverrides, scanErr); err != nil {
 		return nil, fmt.Errorf("configstore: load semantic_cache_config: %w", err)
 	}
@@ -297,7 +378,42 @@ func (s *SemanticCacheStore) Save(ctx context.Context, in SaveInput) (*SemanticC
 		return nil, fmt.Errorf("configstore: save semantic_cache_config: load current: %w", err)
 	}
 
-	newFP := computeSemanticFingerprint(in.EmbeddingProviderID, in.EmbeddingModelID, in.EmbeddingDimension)
+	// Resolve the joined provider/model fields up front so they are available
+	// for both dimension validation (capability) and the returned snapshot. A
+	// join miss leaves the values zero — the gateway logs a warning and skips
+	// L2 rather than failing the save.
+	var baseURL, providerModelID string
+	var inputPricePerMillion float64
+	var maxInputTokens int
+	var embCap embeddingCapability
+	if in.EmbeddingProviderID != nil && in.EmbeddingModelID != nil {
+		const joinQ = `
+			SELECT COALESCE(p."baseUrl", ''),
+			       COALESCE(m."providerModelId", ''),
+			       COALESCE(m."inputPricePerMillion"::float8, 0),
+			       COALESCE(m."capabilityJson"::text, '')
+			FROM "Provider" p, "Model" m
+			WHERE p.id = $1 AND m.id = $2`
+		var capabilityJSON string
+		_ = s.pool.QueryRow(ctx, joinQ, *in.EmbeddingProviderID, *in.EmbeddingModelID).
+			Scan(&baseURL, &providerModelID, &inputPricePerMillion, &capabilityJSON)
+		embCap = parseEmbeddingCapability([]byte(capabilityJSON))
+		maxInputTokens = embCap.MaxInputTokens
+	}
+
+	// Validate / derive the embedding dimension against the model's capability
+	// before it is baked into the fingerprint and index.
+	dim := in.EmbeddingDimension
+	if in.EmbeddingProviderID != nil && *in.EmbeddingProviderID != "" &&
+		in.EmbeddingModelID != nil && *in.EmbeddingModelID != "" {
+		resolved, derr := resolveEmbeddingDimension(in.EmbeddingDimension, embCap)
+		if derr != nil {
+			return nil, derr
+		}
+		dim = resolved
+	}
+
+	newFP := computeSemanticFingerprint(in.EmbeddingProviderID, in.EmbeddingModelID, dim)
 	indexName := current.RedisIndexName
 	if indexName == "" {
 		indexName = defaultIndexName()
@@ -340,7 +456,7 @@ func (s *SemanticCacheStore) Save(ctx context.Context, in SaveInput) (*SemanticC
 			updated_at            = NOW(),
 			updated_by            = EXCLUDED.updated_by`
 	_, err = s.pool.Exec(ctx, q,
-		in.EmbeddingProviderID, in.EmbeddingModelID, in.EmbeddingDimension,
+		in.EmbeddingProviderID, in.EmbeddingModelID, dim,
 		newFP, indexName, in.Enabled,
 		threshold, varyBy, embedStrategy, in.AllowCrossModel,
 		updatedByPtr,
@@ -349,30 +465,14 @@ func (s *SemanticCacheStore) Save(ctx context.Context, in SaveInput) (*SemanticC
 		return nil, fmt.Errorf("configstore: save semantic_cache_config: %w", err)
 	}
 
-	// Resolve the joined provider/model fields with a single targeted
-	// query so the Hub-pushed snapshot carries them — gateway L2 reads
-	// them straight from ConfigSnapshot instead of doing per-request
-	// catalog lookups.
-	var baseURL, providerModelID string
-	var inputPricePerMillion float64
-	if in.EmbeddingProviderID != nil && in.EmbeddingModelID != nil {
-		const joinQ = `
-			SELECT COALESCE(p."baseUrl", ''),
-			       COALESCE(m."providerModelId", ''),
-			       COALESCE(m."inputPricePerMillion"::float8, 0)
-			FROM "Provider" p, "Model" m
-			WHERE p.id = $1 AND m.id = $2`
-		_ = s.pool.QueryRow(ctx, joinQ, *in.EmbeddingProviderID, *in.EmbeddingModelID).
-			Scan(&baseURL, &providerModelID, &inputPricePerMillion)
-		// Best-effort: empty strings on join miss leave the gateway to
-		// log a warning and skip L2 — much better than a save failure.
-	}
-
+	// The provider/model fields (baseURL, providerModelID, price, capability)
+	// were resolved up front; the Hub-pushed snapshot carries them so the
+	// gateway L2 path reads them straight from ConfigSnapshot.
 	saved := &SemanticCacheConfigRow{
 		ID:                            "singleton",
 		EmbeddingProviderID:           in.EmbeddingProviderID,
 		EmbeddingModelID:              in.EmbeddingModelID,
-		EmbeddingDimension:            in.EmbeddingDimension,
+		EmbeddingDimension:            dim,
 		EmbeddingFingerprint:          newFP,
 		RedisIndexName:                indexName,
 		Enabled:                       in.Enabled,
@@ -386,6 +486,7 @@ func (s *SemanticCacheStore) Save(ctx context.Context, in SaveInput) (*SemanticC
 		EmbeddingProviderBaseURL:      baseURL,
 		EmbeddingProviderModelID:      providerModelID,
 		EmbeddingInputPricePerMillion: inputPricePerMillion,
+		EmbeddingMaxInputTokens:       maxInputTokens,
 	}
 	return saved, nil
 }

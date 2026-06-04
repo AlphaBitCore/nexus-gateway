@@ -62,7 +62,9 @@ type specAdapter struct {
 
 func (a *specAdapter) Format() Format { return a.spec.Format }
 
-func (a *specAdapter) SupportsShape(shape typology.WireShape) bool { return a.spec.SupportsShape(shape) }
+func (a *specAdapter) SupportsShape(shape typology.WireShape) bool {
+	return a.spec.SupportsShape(shape)
+}
 
 // effectiveAllowlist returns the adapter's wired allowlist, or the
 // package-level embedded default when a caller (typically a test) did

@@ -62,7 +62,6 @@ type bootstrapResponse struct {
 // agent-facing surface normalises so existing agents can drive both
 // device-auth modes through their single browser-SSO branch without a
 // binary rebuild. Other values pass through unchanged.
-//
 func normaliseAgentBootstrapMode(rawMode string) string {
 	if rawMode == "local-login" {
 		return "enterprise-login"

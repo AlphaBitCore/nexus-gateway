@@ -34,26 +34,26 @@ func TestClassifyCachePreLookup(t *testing.T) {
 		// Cache off short-circuits before all other checks (matches
 		// production: a nil cache module never sees a request).
 		{
-			name: "cache disabled wins over no-cache header",
+			name:         "cache disabled wins over no-cache header",
 			cacheEnabled: false, hasNoCacheHeader: true, targets: true, passthroughBypassCache: false,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonDisabled,
 		},
 		{
-			name: "cache disabled with no targets",
+			name:         "cache disabled with no targets",
 			cacheEnabled: false, targets: false,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonDisabled,
 		},
 
 		// No-cache header skip when cache enabled and targets present.
 		{
-			name: "client opt-out",
+			name:         "client opt-out",
 			cacheEnabled: true, hasNoCacheHeader: true, targets: true,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonNoCache,
 		},
 
 		// Empty target list — defensive Skipped + disabled reason.
 		{
-			name: "empty targets",
+			name:         "empty targets",
 			cacheEnabled: true, targets: false,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonDisabled,
 		},
@@ -68,17 +68,17 @@ func TestClassifyCachePreLookup(t *testing.T) {
 		// end-user-supplied control header) but loses to cache disabled
 		// / no targets (those are precondition failures).
 		{
-			name: "passthrough bypass when cache enabled",
+			name:         "passthrough bypass when cache enabled",
 			cacheEnabled: true, targets: true, passthroughBypassCache: true,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonPassthrough,
 		},
 		{
-			name: "passthrough overrides client no-cache",
+			name:         "passthrough overrides client no-cache",
 			cacheEnabled: true, hasNoCacheHeader: true, targets: true, passthroughBypassCache: true,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonPassthrough,
 		},
 		{
-			name: "cache disabled still wins over passthrough",
+			name:         "cache disabled still wins over passthrough",
 			cacheEnabled: false, targets: true, passthroughBypassCache: true,
 			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonDisabled,
 		},
@@ -89,28 +89,28 @@ func TestClassifyCachePreLookup(t *testing.T) {
 			cacheEnabled: true, targets: true,
 			detector: alwaysSensitive, msgs: []freshness.ChatMessage{{Role: "user", Content: "what time is it?"}},
 			skipTimeSensitive: true,
-			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonTimeSensitive,
+			wantStatus:        audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonTimeSensitive,
 		},
 		{
 			name:         "time_sensitive detector but policy flag off → proceeds",
 			cacheEnabled: true, targets: true,
 			detector: alwaysSensitive, msgs: []freshness.ChatMessage{{Role: "user", Content: "what time is it?"}},
 			skipTimeSensitive: false,
-			wantStatus: "", wantReason: "",
+			wantStatus:        "", wantReason: "",
 		},
 		{
 			name:         "time_sensitive policy on but nil detector → proceeds",
 			cacheEnabled: true, targets: true,
 			detector: nil, msgs: []freshness.ChatMessage{{Role: "user", Content: "what time is it?"}},
 			skipTimeSensitive: true,
-			wantStatus: "", wantReason: "",
+			wantStatus:        "", wantReason: "",
 		},
 		{
 			name:         "time_sensitive policy on + detector + no messages → proceeds",
 			cacheEnabled: true, targets: true,
 			detector: alwaysSensitive, msgs: nil,
 			skipTimeSensitive: true,
-			wantStatus: "", wantReason: "",
+			wantStatus:        "", wantReason: "",
 		},
 	}
 	for _, tc := range tests {

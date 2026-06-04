@@ -12,18 +12,18 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/errgroup"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/cmd/ai-gateway/configdispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/cmd/ai-gateway/wiring"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
 	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
@@ -70,10 +70,10 @@ func run() int {
 		Tp: d.Tp, ObsState: &d.ObsState,
 		PayloadCapture: d.PayloadCapture, StreamingPolicy: d.StreamingPolicy,
 		Reliability: d.Reliability, PolicyCache: d.PolicyCache,
-		AiguardGetter:    func() *aiguard.ConfigCache { return d.AiguardConfigCache },
-		NormEngine:       d.NormEngine, PassthroughCache: d.PassthroughCache,
-		AuditWriter:      d.AuditWriter, ConfigKeyRecorder: d.ConfigKeyRecorder,
-		OpsReg:           d.OpsReg, ProcessStartTime: d.ProcessStartTime,
+		AiguardGetter: func() *aiguard.ConfigCache { return d.AiguardConfigCache },
+		NormEngine:    d.NormEngine, PassthroughCache: d.PassthroughCache,
+		AuditWriter: d.AuditWriter, ConfigKeyRecorder: d.ConfigKeyRecorder,
+		OpsReg: d.OpsReg, ProcessStartTime: d.ProcessStartTime,
 		MqProducer: d.MqProducer, Logger: logger, BuildVersion: buildVersion,
 		CfgLoaderBuilder: func(agID string, outcomes *thingclient.OutcomeTracker) *cfgloader.Loader {
 			return configdispatch.BuildConfigLoader(configdispatch.Deps{
@@ -84,12 +84,12 @@ func run() int {
 				ObservabilityState:   &d.ObsState,
 				PayloadCaptureStore:  d.PayloadCapture,
 				StreamingPolicyStore: d.StreamingPolicy,
-				Reliability: d.Reliability, PolicyCache: d.PolicyCache,
+				Reliability:          d.Reliability, PolicyCache: d.PolicyCache,
 				AIGuardConfigCache: func() *aiguard.ConfigCache { return d.AiguardConfigCache },
-				NormEngine: d.NormEngine, PassthroughCache: d.PassthroughCache,
+				NormEngine:         d.NormEngine, PassthroughCache: d.PassthroughCache,
 				SemanticIndexLifecycle: d.Semantic.IndexLifecycle,
 				FreshnessDetector:      d.Semantic.Detector,
-				ResponseCache: d.ResponseCache,
+				ResponseCache:          d.ResponseCache,
 				OnModelsReloaded: func(models []store.Model) {
 					if d.CapCache != nil {
 						d.CapCache.Replace(capability.NewSnapshot(models))

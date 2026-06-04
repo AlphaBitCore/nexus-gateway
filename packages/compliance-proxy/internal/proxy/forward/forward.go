@@ -45,7 +45,7 @@ type Config struct {
 	ConnID     string // "<sourceAddr>-><targetHost>" or ""
 
 	// Lifecycle
-	ConnStart   time.Time
+	ConnStart         time.Time
 	KillSwitchChecker func() bool
 
 	// TLS interception
@@ -56,12 +56,12 @@ type Config struct {
 	PinningTracker *tlsbump.PinningTracker
 
 	// Compliance kernel
-	CompliancePipeline    *compliance.PolicyResolver
-	AuditEmitter          *compliance.AuditEmitter
-	StreamingTuning       StreamingTuning
-	StreamingConfig       streaming.LiveConfig
-	ParallelHooks         bool
-	StreamingPolicyStore  *streampolicy.Store
+	CompliancePipeline   *compliance.PolicyResolver
+	AuditEmitter         *compliance.AuditEmitter
+	StreamingTuning      StreamingTuning
+	StreamingConfig      streaming.LiveConfig
+	ParallelHooks        bool
+	StreamingPolicyStore *streampolicy.Store
 
 	// ExemptionStore holds temporarily exempted source/host pairs.
 	ExemptionStore *exemption.Store

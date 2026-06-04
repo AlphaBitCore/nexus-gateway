@@ -23,7 +23,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/pkce"
 )
 
-
 func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -574,7 +573,6 @@ func TestSSOEnroll_IAMEngineError_Returns500(t *testing.T) {
 		t.Errorf("status=%d want 500 (IAM engine error)", rec.Code)
 	}
 }
-
 
 func TestNewEnrollJTI_Unique(t *testing.T) {
 	seen := make(map[string]bool, 100)

@@ -14,6 +14,7 @@ func TestNew_NilPool(t *testing.T) {
 	h := New(Deps{Pool: nil, Logger: nil})
 	if h == nil {
 		t.Fatal("expected non-nil Handler")
+		return
 	}
 	if h.pool != nil {
 		t.Errorf("pool should be nil when Pool nil; got %T", h.pool)

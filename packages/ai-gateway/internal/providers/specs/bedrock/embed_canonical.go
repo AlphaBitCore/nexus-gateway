@@ -311,8 +311,8 @@ func canonicalToTitanEmbedResponse(canonical []byte) ([]byte, error) {
 		tokenCount = gjson.GetBytes(canonical, "usage.total_tokens").Int()
 	}
 	out := map[string]any{
-		"embedding":            row,
-		"inputTextTokenCount":  tokenCount,
+		"embedding":           row,
+		"inputTextTokenCount": tokenCount,
 	}
 	return json.Marshal(out)
 }

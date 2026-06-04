@@ -240,6 +240,7 @@ func TestNew_DefaultsLoggerWhenNil(t *testing.T) {
 	h := New(Deps{})
 	if h == nil {
 		t.Fatal("expected non-nil Handler")
+		return
 	}
 	if h.logger == nil {
 		t.Error("expected logger defaulted to slog.Default()")

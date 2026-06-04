@@ -14,16 +14,8 @@ import (
 
 var tNow = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
 
-func anyArgs(n int) []any {
-	a := make([]any, n)
-	for i := range a {
-		a[i] = pgxmock.AnyArg()
-	}
-	return a
-}
-
 func sp(s string) *string { return &s }
-func bp(b bool) *bool      { return &b }
+func bp(b bool) *bool     { return &b }
 
 func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
 	t.Helper()
@@ -679,8 +671,8 @@ func TestLoadPolicies(t *testing.T) {
 			AddRow("pbad", "polbad", []byte(`not json`)))
 	m.ExpectQuery(`FROM "IamGroupMembership" m\s+JOIN "IamGroup"`).WithArgs("nexus_user", "u1").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "document", "name2"}).
-			AddRow("p1", "pol1", []byte(`{}`), "grp").       // dup → skipped
-			AddRow("p3", "pol3", []byte(`{}`), "grp").        // new → added (group)
+			AddRow("p1", "pol1", []byte(`{}`), "grp").         // dup → skipped
+			AddRow("p3", "pol3", []byte(`{}`), "grp").         // new → added (group)
 			AddRow("pbad2", "polbad2", []byte(`nope`), "grp")) // malformed → skipped
 	pols, err := s.LoadPolicies(context.Background(), "nexus_user", "u1")
 	if err != nil {

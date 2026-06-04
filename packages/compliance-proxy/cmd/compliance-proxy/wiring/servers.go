@@ -10,40 +10,40 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/access"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
+	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/access"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/config/cache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/exemption"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/conn"
 	proxyserver "github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/server"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/killswitch"
 	runtimeserver "github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/server"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 )
 
 // ProxyServerDeps is a compact view of the deps needed by InitProxyServerFull.
 type ProxyServerDeps struct {
-	Cfg                   *config.Config
-	Logger                *slog.Logger
-	AccessChecker         *access.Checker
-	ConnManager           *conn.Manager
-	ShutdownCoord         *conn.ShutdownCoordinator
-	UpstreamTransport     *tlsbump.UpstreamTransport
-	CertResult            CertResult
-	CompRes               ComplianceResult
-	DomainEngine          *domain.Engine
-	AdapterRegistry       *traffic.AdapterRegistry
-	NormalizeRegistry     *normalizecore.Registry
-	KillSwitch            *killswitch.KillSwitch
-	ExemptionStore        *exemption.Store
-	PayloadCaptureStore   *payloadcapture.Store
+	Cfg                  *config.Config
+	Logger               *slog.Logger
+	AccessChecker        *access.Checker
+	ConnManager          *conn.Manager
+	ShutdownCoord        *conn.ShutdownCoordinator
+	UpstreamTransport    *tlsbump.UpstreamTransport
+	CertResult           CertResult
+	CompRes              ComplianceResult
+	DomainEngine         *domain.Engine
+	AdapterRegistry      *traffic.AdapterRegistry
+	NormalizeRegistry    *normalizecore.Registry
+	KillSwitch           *killswitch.KillSwitch
+	ExemptionStore       *exemption.Store
+	PayloadCaptureStore  *payloadcapture.Store
 	StreamingPolicyStore *streampolicy.Store
 }
 
@@ -51,29 +51,29 @@ type ProxyServerDeps struct {
 // deps struct. This is the preferred entry point from main.go.
 func InitProxyServerFull(d ProxyServerDeps) *proxyserver.ProxyServer {
 	return InitProxyServer(ListenerDeps{
-		Cfg:                   d.Cfg,
-		Logger:                d.Logger,
-		AccessChecker:         d.AccessChecker,
-		ConnManager:           d.ConnManager,
-		IdleTimeout:           ParseDurationOrDefault(d.Cfg.Connections.IdleTimeout, 300*time.Second),
-		ShutdownCord:          d.ShutdownCoord,
-		PinningTracker:        InitPinningTracker(d.Cfg),
-		ExemptionStore:        d.ExemptionStore,
-		KillSwitch:            d.KillSwitch,
-		PayloadCaptureStore:   d.PayloadCaptureStore,
-		DomainEngine:          d.DomainEngine,
-		AdapterRegistry:       d.AdapterRegistry,
-		NormalizeRegistry:     d.NormalizeRegistry,
-		UpstreamTransport:     d.UpstreamTransport,
-		CertCache:             d.CertResult.CertCache,
-		ComplianceResolver:    d.CompRes.Resolver,
-		AuditEmitter:          d.CompRes.Emitter,
-		StreamingLiveConfig:   d.CompRes.LiveConfig,
-		PerHookTimeout:        d.CompRes.PerHookTmout,
-		TotalTimeout:          d.CompRes.TotalTmout,
-		ParallelHooks:         d.CompRes.Parallel,
-		StreamingPolicyStore:  d.StreamingPolicyStore,
-		AttestationVerifier:   InitAttestationVerifier(d.Cfg, d.Logger),
+		Cfg:                  d.Cfg,
+		Logger:               d.Logger,
+		AccessChecker:        d.AccessChecker,
+		ConnManager:          d.ConnManager,
+		IdleTimeout:          ParseDurationOrDefault(d.Cfg.Connections.IdleTimeout, 300*time.Second),
+		ShutdownCord:         d.ShutdownCoord,
+		PinningTracker:       InitPinningTracker(d.Cfg),
+		ExemptionStore:       d.ExemptionStore,
+		KillSwitch:           d.KillSwitch,
+		PayloadCaptureStore:  d.PayloadCaptureStore,
+		DomainEngine:         d.DomainEngine,
+		AdapterRegistry:      d.AdapterRegistry,
+		NormalizeRegistry:    d.NormalizeRegistry,
+		UpstreamTransport:    d.UpstreamTransport,
+		CertCache:            d.CertResult.CertCache,
+		ComplianceResolver:   d.CompRes.Resolver,
+		AuditEmitter:         d.CompRes.Emitter,
+		StreamingLiveConfig:  d.CompRes.LiveConfig,
+		PerHookTimeout:       d.CompRes.PerHookTmout,
+		TotalTimeout:         d.CompRes.TotalTmout,
+		ParallelHooks:        d.CompRes.Parallel,
+		StreamingPolicyStore: d.StreamingPolicyStore,
+		AttestationVerifier:  InitAttestationVerifier(d.Cfg, d.Logger),
 	})
 }
 

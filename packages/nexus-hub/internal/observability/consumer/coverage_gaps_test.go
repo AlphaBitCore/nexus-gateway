@@ -218,7 +218,6 @@ func TestTrafficWriter_HandleMessage_NoRegistryDoesNotPanic(t *testing.T) {
 //  1. increments errorsTotal{error_type="db_begin"} and flushTotal{result="error"}
 //  2. calls nakAll on every item (so each message's Nak is invoked)
 //  3. returns a wrapped error containing "begin tx"
-//
 func TestTrafficWriter_Flush_BeginFailureNaksAllAndCountsError(t *testing.T) {
 	pool := closedPool(t)
 	w := NewTrafficEventWriter(pool, nil, TrafficEventWriterConfig{BatchSize: 1}, discardLogger(), newTestRegistry())
@@ -271,7 +270,6 @@ func TestTrafficWriter_HandleMessage_SyncFlushErrorPropagates(t *testing.T) {
 //  2. handler returns ErrDeferAck for well-formed JSON (so the fake driver
 //     sees a defer signal, not an auto-ack)
 //  3. Start returns nil once ctx cancels (no goroutine leak)
-//
 func TestTrafficWriter_Start_DrainsAllThreeQueuesAndStopsOnCtxCancel(t *testing.T) {
 	pool := closedPool(t)
 	defer pool.Close()
@@ -465,7 +463,7 @@ func TestAdminAuditWriter_InsertAdminEvents_PgxmockChain(t *testing.T) {
 			mock.ExpectQuery(`SELECT "integrityHash" FROM "AdminAuditLog"`).
 				WillReturnRows(pgxmock.NewRows([]string{"integrityHash"}).AddRow(&prior))
 		}
-		mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(15)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+		mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(16)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	}
 	mock.ExpectCommit()
 
@@ -543,7 +541,7 @@ func TestAdminAuditWriter_InsertAdminEvents_InsertErrorPropagates(t *testing.T) 
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(anyArgs(1)...).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
 	mock.ExpectQuery(`SELECT "integrityHash" FROM "AdminAuditLog"`).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(15)...).WillReturnError(errors.New("write-rejected"))
+	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(16)...).WillReturnError(errors.New("write-rejected"))
 
 	tx, _ := mock.Begin(ctx)
 	defer tx.Rollback(ctx) //nolint:errcheck
@@ -576,7 +574,7 @@ func TestAdminAuditWriter_InsertAdminEvents_MarshalFailureStillInsertsRow(t *tes
 	// Row still goes in: the marshal-failure WARNs, leaves before/after NULL,
 	// then proceeds to NextHash + INSERT (canonicalize hashes the typed
 	// payload, not the unmarshallable raw).
-	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(15)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(16)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	tx, _ := mock.Begin(ctx)
@@ -657,10 +655,10 @@ func TestTrafficWriter_InsertTrafficEvents_FullRowSendBatch(t *testing.T) {
 			ID: "evt-1", Source: src, Timestamp: time.Now().UTC(),
 			Method: &method, Path: &path,
 			PromptTokens: &pt, CompletionTokens: &ct, TotalTokens: &tt,
-			EstimatedCostUSD:  &cost,
-			ComplianceTags:    []string{"pii\x00", "tag2"}, // strip path
-			Identity:          json.RawMessage(`{"sub":"x"}`),
-			Details:           json.RawMessage(`{"model":"gpt-4"}`),
+			EstimatedCostUSD: &cost,
+			ComplianceTags:   []string{"pii\x00", "tag2"}, // strip path
+			Identity:         json.RawMessage(`{"sub":"x"}`),
+			Details:          json.RawMessage(`{"model":"gpt-4"}`),
 			PassthroughFlags: []string{"bypassHooks"},
 		}},
 	}
@@ -874,7 +872,6 @@ func TestTrafficWriter_InsertPayloads_BatchExecErrorPropagates(t *testing.T) {
 //   - writes when EITHER request_normalized or response_normalized populated
 //   - propagates batch errors
 //   - defaults NormalizeVersion to "1" when caller omits it
-//
 func TestTrafficWriter_InsertNormalizedPayloads_SkippedWhenAbsent(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {

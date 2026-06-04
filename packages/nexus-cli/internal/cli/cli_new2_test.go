@@ -10,8 +10,83 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
+
+// stubCanvas is a no-op capabilities.Canvas for wiring the conversation agent in
+// tests — the agent is built but never driven, so the drives need not do anything.
+type stubCanvas struct{}
+
+func (stubCanvas) Navigate(string, core.TrafficFilter) error { return nil }
+func (stubCanvas) ShowEvent(string) error                    { return nil }
+func (stubCanvas) Highlight(string) error                    { return nil }
+
+// TestTuiDeps_BuildAgentWired asserts the dashboard's conversation gets a real
+// agent: tuiDeps wires BuildAgent, and invoking it returns a runnable agent built
+// over the live env (no network — the agent is assembled, not run). A nil seam
+// would silently disable the entire conversation sidebar, so this guards Phase 5.
+func TestTuiDeps_BuildAgentWired(t *testing.T) {
+	// Redirect the user config dir so memory/session/skill paths land in a temp
+	// tree rather than touching the developer's real ~/.config/nexus.
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	a := appWithVK(srv)
+
+	build := a.tuiDeps().BuildAgent
+	if build == nil {
+		t.Fatal("tuiDeps must wire BuildAgent so the conversation sidebar has an agent")
+	}
+	var sawText bool
+	runner, err := build(
+		stubCanvas{},
+		func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return false, nil },
+		func(string) { sawText = true },
+		func(string) {},
+		func(string, []byte) {},
+		func(string, []byte, bool) {},
+		func(agent.ContextStats, int) {},
+		func(agent.CompactStat) {},
+	)
+	if err != nil {
+		t.Fatalf("BuildAgent: %v", err)
+	}
+	if runner == nil {
+		t.Fatal("BuildAgent must return a runnable agent, not nil")
+	}
+	_ = sawText // the callback is wired into the agent; exercised by the agent loop, not here
+}
+
+// TestTuiDeps_BuildAgentConfigDirError asserts the seam surfaces a config-dir
+// resolution failure (named failure mode) instead of returning a half-built agent.
+func TestTuiDeps_BuildAgentConfigDirError(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	a := appWithVK(srv)
+
+	runner, err := a.tuiDeps().BuildAgent(
+		stubCanvas{},
+		func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return false, nil },
+		func(string) {}, func(string) {}, func(string, []byte) {},
+		func(string, []byte, bool) {},
+		func(agent.ContextStats, int) {},
+		func(agent.CompactStat) {},
+	)
+	if err == nil {
+		t.Fatal("BuildAgent must surface a config-dir resolution failure")
+	}
+	if runner != nil {
+		t.Fatal("a failed build must return a nil agent, not a half-built one")
+	}
+}
 
 func TestLaunchTUI_Hook(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -30,7 +105,7 @@ func TestTUIDeps_Closures(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir() + "/config.toml"
-	cfg, err := core.Load(dir) // default config carries a writable path
+	cfg, err := local.Load(dir) // default config carries a writable path
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -138,7 +213,7 @@ func TestSLOCmd_FallbackAndSparklineErrors(t *testing.T) {
 func TestTUIDeps_HasSessionViaAccessToken(t *testing.T) {
 	store := fakeStore{m: map[string]string{"local:" + core.SecretAccessToken: "jwt-token"}}
 	a := &App{
-		Cfg: &core.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
+		Cfg: &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local"}}},
 		Env: core.Env{Name: "local"}, Store: store, HTTP: http.DefaultClient,
 	}
 	if !a.tuiDeps().HasSession() {

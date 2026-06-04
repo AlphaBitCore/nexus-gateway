@@ -11,9 +11,9 @@ import (
 
 	"sync"
 
-	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
@@ -183,7 +183,6 @@ type bumpOptions struct {
 	procName   string
 	procBundle string
 	procUser   string
-
 }
 
 // AttestationVerifierFunc verifies an inbound X-Nexus-Attestation

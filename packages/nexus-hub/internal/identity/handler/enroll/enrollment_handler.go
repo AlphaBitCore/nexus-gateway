@@ -16,10 +16,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/agentca"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/store/enrollstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 )
 
 // enrollRandReader is the entropy source for resolveThingID's random ID

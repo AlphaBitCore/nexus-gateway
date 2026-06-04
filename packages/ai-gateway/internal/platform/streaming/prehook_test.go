@@ -127,4 +127,3 @@ func TestLockedByteBuffer_ConcurrentWriteSnapshot(t *testing.T) {
 		t.Errorf("snap1 mutated by later Write; got %q", snap1)
 	}
 }
-

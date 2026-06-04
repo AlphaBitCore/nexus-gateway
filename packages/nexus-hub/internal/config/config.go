@@ -22,19 +22,19 @@ type HubConfig struct {
 	// Prod: "https://hub.example.com"; dev: "http://localhost:3060".
 	// Reported to the Thing Registry as part of staticInfo so the CP
 	// admin API can surface it to the UI without hardcoded hostnames.
-	PublicURL string             `yaml:"publicURL"`
-	Server    ServerConfig       `yaml:"server"`
-	Database  DatabaseConfig     `yaml:"database"`
-	Redis     redisfactory.Config `yaml:"redis"`
-	MQ        MQConfig        `yaml:"mq"`
-	Consumers ConsumerConfig  `yaml:"consumers"`
-	Scheduler SchedulerConfig `yaml:"scheduler"`
-	Auth       AuthConfig       `yaml:"auth"`
-	AuthServer AuthServerConfig `yaml:"authServer"`
-	AgentCA    AgentCAConfig    `yaml:"agentCA"`
-	OTEL      OTELConfig      `yaml:"otel"`
-	Log       LogConfig       `yaml:"log"`
-	Hub       HubIdentity     `yaml:"hub"`
+	PublicURL  string              `yaml:"publicURL"`
+	Server     ServerConfig        `yaml:"server"`
+	Database   DatabaseConfig      `yaml:"database"`
+	Redis      redisfactory.Config `yaml:"redis"`
+	MQ         MQConfig            `yaml:"mq"`
+	Consumers  ConsumerConfig      `yaml:"consumers"`
+	Scheduler  SchedulerConfig     `yaml:"scheduler"`
+	Auth       AuthConfig          `yaml:"auth"`
+	AuthServer AuthServerConfig    `yaml:"authServer"`
+	AgentCA    AgentCAConfig       `yaml:"agentCA"`
+	OTEL       OTELConfig          `yaml:"otel"`
+	Log        LogConfig           `yaml:"log"`
+	Hub        HubIdentity         `yaml:"hub"`
 	// Spill configures out-of-band body storage. Hub uses it on the
 	// agent_audit handler to spill large agent-uploaded payloads (agents
 	// send raw bytes; Hub decides inline vs spill based on size). All
@@ -147,6 +147,11 @@ type RetentionConfig struct {
 	Rollup1hDays            int `yaml:"rollup1hDays"`
 	Rollup1dDays            int `yaml:"rollup1dDays"`
 	Rollup1moDays           int `yaml:"rollup1moDays"`
+	// OpsRawDays is the retention horizon (in days) for the partitioned
+	// metric_ops_raw table. The ops-raw-partition job drops whole-day
+	// partitions older than this. Defaults to 30. Env:
+	// NEXUS_HUB_SCHEDULER_OPS_RAW_DAYS.
+	OpsRawDays int `yaml:"opsRawDays"`
 }
 
 // JobIntervalConfig holds per-job intervals. Defaults match the values CP
@@ -166,12 +171,18 @@ type JobIntervalConfig struct {
 	ExemptionGC               time.Duration `yaml:"exemptionGC"`
 	ThingOfflineAlerts        time.Duration `yaml:"thingOfflineAlerts"`
 	ProviderUnavailableAlerts time.Duration `yaml:"providerUnavailableAlerts"`
-	AgentCertExpiry time.Duration `yaml:"agentCertExpiry"`
-	CredentialStale time.Duration `yaml:"credentialStale"`
-	// OpsRollup1h is the cadence for the metric_ops_raw → metric_ops_rollup_1h
-	// aggregation. Defaults to 5 minutes — the natural seal margin for the
-	// hourly bucket plus headroom for late-arriving samples.
+	AgentCertExpiry           time.Duration `yaml:"agentCertExpiry"`
+	CredentialStale           time.Duration `yaml:"credentialStale"`
+	// OpsRollup5m is the cadence for the metric_ops_raw → metric_ops_rollup_5m
+	// aggregation (the tier that owns the raw read). Defaults to 1 minute.
+	OpsRollup5m time.Duration `yaml:"opsRollup5m"`
+	// OpsRollup1h is the cadence for the metric_ops_rollup_5m → metric_ops_rollup_1h
+	// cascade. Defaults to 5 minutes — the natural seal margin for the hourly
+	// bucket plus headroom for late-arriving 5m rollups.
 	OpsRollup1h time.Duration `yaml:"opsRollup1h"`
+	// OpsRawPartition is the cadence for the ops-raw-partition maintenance job
+	// (pre-create upcoming day partitions, drop aged ones). Defaults to 6h.
+	OpsRawPartition time.Duration `yaml:"opsRawPartition"`
 	// OpsRollup1d is the cadence for metric_ops_rollup_1h → metric_ops_rollup_1d.
 	// Defaults to 1 hour.
 	OpsRollup1d time.Duration `yaml:"opsRollup1d"`
@@ -349,6 +360,7 @@ func defaults() *HubConfig {
 				Rollup1hDays:            90,
 				Rollup1dDays:            365,
 				Rollup1moDays:           1825,
+				OpsRawDays:              30,
 			},
 			Intervals: JobIntervalConfig{
 				MetricsRollup:               time.Hour,
@@ -364,10 +376,12 @@ func defaults() *HubConfig {
 				ExemptionGC:                 5 * time.Minute,
 				ThingOfflineAlerts:          60 * time.Second,
 				ProviderUnavailableAlerts:   60 * time.Second,
+				OpsRollup5m:                 time.Minute,
 				OpsRollup1h:                 5 * time.Minute,
 				OpsRollup1d:                 time.Hour,
 				OpsRollup1mo:                24 * time.Hour,
 				OpsRetention:                24 * time.Hour,
+				OpsRawPartition:             6 * time.Hour,
 				CacheQualityMonitor:         5 * time.Minute,
 				ProviderHealthRollup:        5 * time.Minute,
 				CredentialExpiry:            time.Hour,
@@ -455,6 +469,7 @@ func applyEnvOverrides(cfg *HubConfig) {
 	parseIntEnv("NEXUS_HUB_RETENTION_ROLLUP_1H_DAYS", &cfg.Scheduler.Retention.Rollup1hDays)
 	parseIntEnv("NEXUS_HUB_RETENTION_ROLLUP_1D_DAYS", &cfg.Scheduler.Retention.Rollup1dDays)
 	parseIntEnv("NEXUS_HUB_RETENTION_ROLLUP_1MO_DAYS", &cfg.Scheduler.Retention.Rollup1moDays)
+	parseIntEnv("NEXUS_HUB_SCHEDULER_OPS_RAW_DAYS", &cfg.Scheduler.Retention.OpsRawDays)
 
 	// Per-job intervals.
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_METRICS_ROLLUP_INTERVAL", &cfg.Scheduler.Intervals.MetricsRollup)
@@ -470,7 +485,9 @@ func applyEnvOverrides(cfg *HubConfig) {
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_EXEMPTION_GC_INTERVAL", &cfg.Scheduler.Intervals.ExemptionGC)
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_THING_OFFLINE_ALERTS_INTERVAL", &cfg.Scheduler.Intervals.ThingOfflineAlerts)
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_PROVIDER_UNAVAILABLE_ALERTS_INTERVAL", &cfg.Scheduler.Intervals.ProviderUnavailableAlerts)
+	parseDurationEnv("NEXUS_HUB_SCHEDULER_OPS_ROLLUP_5M_INTERVAL", &cfg.Scheduler.Intervals.OpsRollup5m)
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_OPS_ROLLUP_1H_INTERVAL", &cfg.Scheduler.Intervals.OpsRollup1h)
+	parseDurationEnv("NEXUS_HUB_SCHEDULER_OPS_RAW_PARTITION_INTERVAL", &cfg.Scheduler.Intervals.OpsRawPartition)
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_OPS_ROLLUP_1D_INTERVAL", &cfg.Scheduler.Intervals.OpsRollup1d)
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_OPS_ROLLUP_1MO_INTERVAL", &cfg.Scheduler.Intervals.OpsRollup1mo)
 	parseDurationEnv("NEXUS_HUB_SCHEDULER_OPS_RETENTION_INTERVAL", &cfg.Scheduler.Intervals.OpsRetention)

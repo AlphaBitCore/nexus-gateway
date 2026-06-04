@@ -7,8 +7,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 )
 
 // InitQuota constructs and seeds the policy cache and quota engine.

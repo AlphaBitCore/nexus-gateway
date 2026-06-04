@@ -36,7 +36,6 @@ func TestNewCodec_returnsFunctionalCodec(t *testing.T) {
 	}
 }
 
-
 func TestStringifyOpenAIToolResultContent_string(t *testing.T) {
 	// JSON string value → unwrapped string.
 	r := gjson.Parse(`"plain text"`)
@@ -54,7 +53,6 @@ func TestStringifyOpenAIToolResultContent_nonString_returnsRaw(t *testing.T) {
 		t.Error("non-string content should return raw JSON, got empty")
 	}
 }
-
 
 func TestParseDataURL_valid(t *testing.T) {
 	// Standard base64 data URL with image/png media type.
@@ -98,7 +96,6 @@ func TestParseDataURL_commaAtEnd_notOk(t *testing.T) {
 	}
 }
 
-
 func TestMapStopReason_allVariants(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -117,7 +114,6 @@ func TestMapStopReason_allVariants(t *testing.T) {
 		}
 	}
 }
-
 
 func TestUsageToNormalize_zero_returnsNil(t *testing.T) {
 	u := provcore.Usage{}
@@ -139,7 +135,6 @@ func TestUsageToNormalize_nonZero_returnsPointer(t *testing.T) {
 	}
 }
 
-
 func TestAnthropicModelMaxOutput_claude37Sonnet(t *testing.T) {
 	got := AnthropicModelMaxOutput("claude-3-7-sonnet-20250219")
 	if got != 8192 {
@@ -153,7 +148,6 @@ func TestAnthropicModelMaxOutput_claude3Haiku(t *testing.T) {
 		t.Errorf("claude-3-haiku: got %d, want 4096", got)
 	}
 }
-
 
 func TestDecodeResponse_emptyBody_returnsEmpty(t *testing.T) {
 	var c Codec

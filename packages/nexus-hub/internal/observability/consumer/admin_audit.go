@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/traffic/chain"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
 // AdminAuditWriterConfig holds configuration for the admin audit writer.
@@ -250,6 +250,9 @@ func (w *AdminAuditWriter) insertAdminEvents(ctx context.Context, tx pgx.Tx, ite
 		payload.BeforeState = beforeRaw
 		payload.AfterState = afterRaw
 		payload.NexusRequestID = e.NexusRequestID
+		// Via rides into the canonical hash (omitempty): an "assistant" row is
+		// tamper-evident, an empty (human) row hashes exactly as before.
+		payload.Via = e.Via
 		prevHash, integrityHash, hashInput, err := chain.NextHash(ctx, tx, payload)
 		if err != nil {
 			return fmt.Errorf("compute chain hash: %w", err)
@@ -275,6 +278,7 @@ func (w *AdminAuditWriter) insertAdminEvents(ctx context.Context, tx pgx.Tx, ite
 			beforeArg, afterArg,
 			nilIfEmpty(e.NexusRequestID),
 			prevArg, integrityHash, hashInput,
+			nilIfEmpty(e.Via),
 		); err != nil {
 			return fmt.Errorf("insert admin audit row: %w", err)
 		}
@@ -290,7 +294,8 @@ INSERT INTO "AdminAuditLog" (
     action, "entityType", "entityId",
     "beforeState", "afterState",
     "nexusRequestId",
-    "previousHash", "integrityHash", "hashInput"
+    "previousHash", "integrityHash", "hashInput",
+    "via"
 ) VALUES (
     $1, $2,
     $3, $4, $5,
@@ -298,7 +303,8 @@ INSERT INTO "AdminAuditLog" (
     $7, $8, $9,
     $10, $11,
     $12,
-    $13, $14, $15
+    $13, $14, $15,
+    $16
 ) ON CONFLICT (id) DO NOTHING
 `
 

@@ -3,10 +3,10 @@ package core
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"reflect"
 	"strings"
 	"testing"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // TestLimitedReadAllN_HonorsRuntimeCap pins the contract that the

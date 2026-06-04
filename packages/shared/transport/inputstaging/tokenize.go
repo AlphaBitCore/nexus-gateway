@@ -1,6 +1,9 @@
 package inputstaging
 
-import "unicode"
+import (
+	"unicode"
+	"unicode/utf8"
+)
 
 // EstimateTokens returns an approximate token count for text using a
 // fast character-based heuristic.  The approximation is intentionally
@@ -36,17 +39,7 @@ func EstimateTokens(text string) int {
 	}
 	var score float64
 	for _, r := range text {
-		switch {
-		case r < 128:
-			// ASCII path — 0.25 tokens per character.
-			score += 0.25
-		case isCJKLike(r):
-			// Wide-script path — 0.5 tokens per character.
-			score += 0.5
-		default:
-			// Other Unicode (diacritics, symbols, emoji, etc.) — 0.4 tokens.
-			score += 0.4
-		}
+		score += runeTokenScore(r)
 	}
 	// Round up: a non-empty string always costs at least 1 token.
 	n := int(score)
@@ -54,6 +47,60 @@ func EstimateTokens(text string) int {
 		n++
 	}
 	return n
+}
+
+// runeTokenScore returns the heuristic token weight of a single rune. Shared by
+// EstimateTokens and TruncateToTokens so the cut and the count agree exactly.
+func runeTokenScore(r rune) float64 {
+	switch {
+	case r < 128:
+		// ASCII path — 0.25 tokens per character (≈4 chars/token).
+		return 0.25
+	case isCJKLike(r):
+		// Wide-script path — 0.5 tokens per character (≈2 chars/token).
+		return 0.5
+	default:
+		// Other Unicode (diacritics, symbols, emoji, etc.) — 0.4 tokens.
+		return 0.4
+	}
+}
+
+// TruncateToTokens returns the longest TRAILING suffix of text whose estimated
+// token count stays within maxTokens, applying a safety margin. It is the
+// last-resort hard cut for callers (L2 embedding input, ai-guard classify
+// input) that join inputstaging.Plan output into a single string: Plan drops
+// whole messages but never cuts WITHIN one, so a single oversized message would
+// otherwise be sent to the model over-limit and 400.
+//
+// It keeps the TAIL, not the head: the newest content (the latest user turn)
+// sits at the end of the joined input and is what the embedding / classifier
+// must reflect — dropping recent content to preserve an old system preamble
+// would defeat the purpose. Oldest content (head) is discarded first.
+//
+// Because EstimateTokens is coarse and can UNDER-count dense content, the cut
+// targets ~85% of maxTokens so the provider's real tokenizer is very unlikely
+// to exceed the true limit. Returns text unchanged when it already fits, when
+// maxTokens <= 0, or when text is empty. The returned suffix always lands on a
+// UTF-8 rune boundary.
+func TruncateToTokens(text string, maxTokens int) string {
+	if maxTokens <= 0 || text == "" {
+		return text
+	}
+	if EstimateTokens(text) <= maxTokens {
+		return text
+	}
+	target := float64(maxTokens) * 0.85
+	var score float64
+	offset := len(text) // start byte of the kept suffix; len means "nothing yet"
+	for offset > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:offset])
+		if score+runeTokenScore(r) > target {
+			break // including this older rune would exceed the budget — stop
+		}
+		score += runeTokenScore(r)
+		offset -= size
+	}
+	return text[offset:]
 }
 
 // isCJKLike reports whether r falls in a script range that tokenises at

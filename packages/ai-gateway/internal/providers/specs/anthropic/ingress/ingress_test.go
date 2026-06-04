@@ -19,7 +19,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-
 func TestMessagesRequest_emptyBody_returnsError(t *testing.T) {
 	_, err := ingress.MessagesRequestToOpenAIChatCompletion(nil, "")
 	if err == nil {
@@ -366,7 +365,6 @@ func TestMessagesRequest_noMessages_returnsError(t *testing.T) {
 	}
 }
 
-
 func TestOpenAIToMessages_basicTextContent(t *testing.T) {
 	openai := []byte(`{
 		"id":"chatcmpl-1",
@@ -539,7 +537,6 @@ func TestOpenAIToMessages_finishReasonMapping(t *testing.T) {
 	}
 }
 
-
 func TestMapOpenAIFinishToStopReason_allVariants(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -558,7 +555,6 @@ func TestMapOpenAIFinishToStopReason_allVariants(t *testing.T) {
 		}
 	}
 }
-
 
 func TestStringifyOpenAIMessageContent_string(t *testing.T) {
 	r := gjson.Parse(`"hello world"`)
@@ -584,7 +580,6 @@ func TestStringifyOpenAIMessageContent_missing(t *testing.T) {
 		t.Errorf("missing field should return empty, got %q", got)
 	}
 }
-
 
 func TestStringifyAnthropicToolResult_string(t *testing.T) {
 	r := gjson.Parse(`"result text"`)

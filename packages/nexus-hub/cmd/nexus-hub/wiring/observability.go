@@ -11,13 +11,13 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/config"
 	selfreg "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/self/reg"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
-	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	sharedopsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
+	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
 	normalizecodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
 )
 
 // InitDiagSink wires the Hub SlogSink so Hub's own ERROR+ slog records are
@@ -68,7 +68,7 @@ func InitDiagSink(
 
 // OTELResult holds the tracer provider and its initial config.
 type OTELResult struct {
-	Provider  *telemetry.SwappableTracerProvider
+	Provider   *telemetry.SwappableTracerProvider
 	InitialCfg telemetry.Config
 }
 
@@ -164,4 +164,3 @@ func InitNormalizeRegistry(buildVersion string) normalizecore.AuditFn {
 	agentNormMetrics := normalizecore.MustRegisterPrometheus(prometheus.DefaultRegisterer, "nexus_hub_agent")
 	return normalizecore.BuildAuditFn(agentNormRegistry, agentNormMetrics)
 }
-

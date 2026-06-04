@@ -10,10 +10,11 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
 )
 
 // RegisterCredentialRoutes registers credential CRUD routes.
@@ -369,9 +370,20 @@ func (h *Handler) CredentialRotationStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"data": data})
 }
 
-// CircuitReset clears the Redis circuit breaker state for a credential, allowing
-// it to re-enter the eligible pool. Admin action; required when a credential
-// opened its circuit due to repeated auth failures (401/403).
+// CircuitReset force-closes a credential's circuit breaker, allowing it to
+// re-enter the eligible pool. Admin action; used after a credential opened its
+// circuit (repeated 401/403 auth failures, or a 429 rate-limit).
+//
+// A reset MUST reconcile BOTH stores or it does not take effect:
+//   - Redis cred:circuit:{id} is the live state the AI Gateway reads.
+//   - The Credential.circuit* DB columns are what the UI badge shows AND what
+//     the Hub rehydrate-on-restart path re-arms Redis from.
+//
+// Deleting only Redis (the historical behavior) left the DB row "open": the UI
+// stayed "Open" forever, and because the reset never marked the dirty set, the
+// Hub flush job never reconciled it — so nothing ever closed the row. Worse, a
+// later Hub restart re-armed the live circuit from the stale DB row. We now
+// clear the DB columns directly so the reset is durable and instantly visible.
 func (h *Handler) CircuitReset(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -382,10 +394,24 @@ func (h *Handler) CircuitReset(c echo.Context) error {
 	if cred == nil {
 		return c.JSON(http.StatusNotFound, errJSON("Credential not found", "not_found", "NOT_FOUND"))
 	}
+	// Clear the durable DB state first — it is the source of truth for the UI
+	// and rehydrate. A failure here is fatal to the reset (return 500); a stale
+	// Redis key alone self-heals (cooldown promote / reconcile), but a stale DB
+	// row does not.
+	if err := h.creds.ClearCircuit(ctx, id); err != nil {
+		h.logger.Error("circuit-reset: db clear failed", "credentialID", id, "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Failed to reset circuit", "server_error", "INTERNAL_ERROR"))
+	}
+	// Clear the live Redis hash so the gateway sees the credential as closed
+	// immediately, and drop any pending dirty marker so a concurrent flush
+	// cannot re-derive the just-cleared state. Best-effort: the DB is already
+	// authoritative and the Hub reconcile will converge any residue.
 	if h.redis != nil {
-		key := "cred:circuit:" + id
-		if err := h.redis.Del(ctx, key).Err(); err != nil {
+		if err := h.redis.Del(ctx, credstate.CircuitKey(id)).Err(); err != nil {
 			h.logger.Warn("circuit-reset: redis del failed", "credentialID", id, "error", err)
+		}
+		if err := h.redis.SRem(ctx, credstate.CircuitDirtySet, id).Err(); err != nil {
+			h.logger.Warn("circuit-reset: redis dirty-set srem failed", "credentialID", id, "error", err)
 		}
 	}
 	ae := audit.EntryFor(c, iam.ResourceCredential, iam.VerbUpdate)

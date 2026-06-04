@@ -12,11 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/idptest"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/scim/scimstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -66,14 +65,14 @@ func (h *Handler) RegisterIdentityProviderRoutes(g *echo.Group, iamMW func(actio
 	// SCIM tokens — IdP-scoped subresource. Gated by IdP update because
 	// generating a SCIM token effectively grants provisioning authority
 	// to the IdP it's attached to.
-	g.GET("/identity-provider/:idpId/scim-tokens", h.ListScimTokens, iamMW(idp.Action(iam.VerbUpdate)))
-	g.POST("/identity-provider/:idpId/scim-tokens", h.CreateScimToken, iamMW(idp.Action(iam.VerbUpdate)))
-	g.DELETE("/identity-provider/:idpId/scim-tokens/:tokenId", h.RevokeScimToken, iamMW(idp.Action(iam.VerbUpdate)))
+	g.GET("/identity-providers/:idpId/scim-tokens", h.ListScimTokens, iamMW(idp.Action(iam.VerbUpdate)))
+	g.POST("/identity-providers/:idpId/scim-tokens", h.CreateScimToken, iamMW(idp.Action(iam.VerbUpdate)))
+	g.DELETE("/identity-providers/:idpId/scim-tokens/:tokenId", h.RevokeScimToken, iamMW(idp.Action(iam.VerbUpdate)))
 
 	// IdP group → IamGroup mappings.
-	g.GET("/identity-provider/:idpId/group-mappings", h.ListIdpGroupMappings, iamMW(idp.Action(iam.VerbUpdate)))
-	g.POST("/identity-provider/:idpId/group-mappings", h.CreateIdpGroupMapping, iamMW(idp.Action(iam.VerbUpdate)))
-	g.DELETE("/identity-provider/:idpId/group-mappings/:mappingId", h.DeleteIdpGroupMapping, iamMW(idp.Action(iam.VerbUpdate)))
+	g.GET("/identity-providers/:idpId/group-mappings", h.ListIdpGroupMappings, iamMW(idp.Action(iam.VerbUpdate)))
+	g.POST("/identity-providers/:idpId/group-mappings", h.CreateIdpGroupMapping, iamMW(idp.Action(iam.VerbUpdate)))
+	g.DELETE("/identity-providers/:idpId/group-mappings/:mappingId", h.DeleteIdpGroupMapping, iamMW(idp.Action(iam.VerbUpdate)))
 }
 
 // idpResponse is the JSON shape returned by list/get/create/update.
@@ -501,130 +500,4 @@ func (h *Handler) TestSavedIdentityProvider(c echo.Context) error {
 	ae.AfterState = map[string]any{"type": existing.Type, "ok": result.OK}
 	h.audit.LogObserved(c.Request().Context(), ae)
 	return c.JSON(http.StatusOK, result)
-}
-
-// GET /api/admin/identity-provider/:idpId/scim-tokens
-func (h *Handler) ListScimTokens(c echo.Context) error {
-	idpID := c.Param("idpId")
-	tokens, err := h.scim.ListScimTokens(c.Request().Context(), &idpID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-	// Never return tokenHash in the response.
-	type tokenResp struct {
-		ID                 string  `json:"id"`
-		Name               string  `json:"name"`
-		TokenPrefix        string  `json:"tokenPrefix"`
-		IdentityProviderID *string `json:"identityProviderId,omitempty"`
-		CreatedBy          string  `json:"createdBy"`
-		CreatedAt          any     `json:"createdAt"`
-		LastUsedAt         any     `json:"lastUsedAt"`
-	}
-	out := make([]tokenResp, len(tokens))
-	for i, t := range tokens {
-		out[i] = tokenResp{
-			ID: t.ID, Name: t.Name, TokenPrefix: t.TokenPrefix,
-			IdentityProviderID: t.IdentityProviderID,
-			CreatedBy:          t.CreatedBy, CreatedAt: t.CreatedAt, LastUsedAt: t.LastUsedAt,
-		}
-	}
-	return c.JSON(http.StatusOK, map[string]any{"data": out, "total": len(out)})
-}
-
-// POST /api/admin/identity-provider/:idpId/scim-tokens
-func (h *Handler) CreateScimToken(c echo.Context) error {
-	idpID := c.Param("idpId")
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := c.Bind(&body); err != nil || body.Name == "" {
-		return c.JSON(http.StatusBadRequest, errJSON("name is required", "validation_error", ""))
-	}
-
-	createdBy := "unknown"
-	if aa := middleware.AdminAuthFromContext(c); aa != nil {
-		createdBy = aa.KeyID
-	}
-
-	rawToken, prefix, err := scimstore.GenerateScimToken()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Token generation failed", "server_error", ""))
-	}
-	tokenHash := scimstore.HashScimToken(rawToken)
-
-	tok, err := h.scim.CreateScimToken(c.Request().Context(), scimstore.CreateScimTokenParams{
-		Name:               body.Name,
-		TokenHash:          tokenHash,
-		TokenPrefix:        prefix,
-		IdentityProviderID: &idpID,
-		CreatedBy:          createdBy,
-	})
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create token", "server_error", ""))
-	}
-
-	// Return the raw token ONCE — never stored, never retrievable again.
-	return c.JSON(http.StatusCreated, map[string]any{
-		"id":                 tok.ID,
-		"name":               tok.Name,
-		"token":              rawToken, // shown once
-		"tokenPrefix":        tok.TokenPrefix,
-		"identityProviderId": tok.IdentityProviderID,
-		"createdAt":          tok.CreatedAt,
-	})
-}
-
-// DELETE /api/admin/identity-provider/:idpId/scim-tokens/:tokenId
-func (h *Handler) RevokeScimToken(c echo.Context) error {
-	if err := h.scim.RevokeScimToken(c.Request().Context(), c.Param("tokenId")); err != nil {
-		return c.JSON(http.StatusNotFound, errJSON("Token not found", "not_found", ""))
-	}
-	return c.NoContent(http.StatusNoContent)
-}
-
-// GET /api/admin/identity-provider/:idpId/group-mappings
-func (h *Handler) ListIdpGroupMappings(c echo.Context) error {
-	mappings, err := h.scim.ListIdpGroupMappings(c.Request().Context(), c.Param("idpId"))
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-	if mappings == nil {
-		mappings = []scimstore.IdpGroupMapping{}
-	}
-	return c.JSON(http.StatusOK, map[string]any{"data": mappings, "total": len(mappings)})
-}
-
-// POST /api/admin/identity-provider/:idpId/group-mappings
-func (h *Handler) CreateIdpGroupMapping(c echo.Context) error {
-	idpID := c.Param("idpId")
-	var body struct {
-		ExternalGroupID   string  `json:"externalGroupId"`
-		ExternalGroupName *string `json:"externalGroupName"`
-		IamGroupID        string  `json:"iamGroupId"`
-	}
-	if err := c.Bind(&body); err != nil {
-		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
-	}
-	if body.ExternalGroupID == "" || body.IamGroupID == "" {
-		return c.JSON(http.StatusBadRequest, errJSON("externalGroupId and iamGroupId are required", "validation_error", ""))
-	}
-
-	m, err := h.scim.CreateIdpGroupMapping(c.Request().Context(), scimstore.CreateIdpGroupMappingParams{
-		IdentityProviderID: idpID,
-		ExternalGroupID:    body.ExternalGroupID,
-		ExternalGroupName:  body.ExternalGroupName,
-		IamGroupID:         body.IamGroupID,
-	})
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create mapping", "server_error", ""))
-	}
-	return c.JSON(http.StatusCreated, m)
-}
-
-// DELETE /api/admin/identity-provider/:idpId/group-mappings/:mappingId
-func (h *Handler) DeleteIdpGroupMapping(c echo.Context) error {
-	if err := h.scim.DeleteIdpGroupMapping(c.Request().Context(), c.Param("mappingId")); err != nil {
-		return c.JSON(http.StatusNotFound, errJSON("Mapping not found", "not_found", ""))
-	}
-	return c.NoContent(http.StatusNoContent)
 }

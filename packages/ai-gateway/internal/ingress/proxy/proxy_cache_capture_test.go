@@ -25,8 +25,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // stubVKAuthCacheTest returns a fixed VKMeta — no DB lookup. The cache
@@ -190,7 +190,7 @@ func TestServeProxy_CacheHIT_RespectsResponseBodyCapture(t *testing.T) {
 			}
 
 			h := NewHandler(deps).ServeProxy(Ingress{
-				WireShape:   typology.WireShapeOpenAIChat,
+				WireShape:  typology.WireShapeOpenAIChat,
 				BodyFormat: provcore.FormatOpenAI,
 			})
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))

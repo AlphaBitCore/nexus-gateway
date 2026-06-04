@@ -38,11 +38,11 @@ type Deps struct {
 // Handler is the per-domain admin handler for /api/admin/cache/*
 // endpoints.
 type Handler struct {
-	pool    cachestore.PgxPool // interface — accepts *pgxpool.Pool in prod, pgxmock in tests
-	cache   *cachestore.Store
-	hub     HubConfigChanger
-	audit   *audit.Writer
-	logger  *slog.Logger
+	pool   cachestore.PgxPool // interface — accepts *pgxpool.Pool in prod, pgxmock in tests
+	cache  *cachestore.Store
+	hub    HubConfigChanger
+	audit  *audit.Writer
+	logger *slog.Logger
 	// tsStore provides DB persistence for time-sensitive rule overrides.
 	// Nil when no DB pool is available (test/dev mode without DB).
 	tsStore TimeSensitiveStore

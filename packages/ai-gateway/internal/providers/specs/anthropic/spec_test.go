@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 func adapter() provcore.Adapter {
@@ -261,7 +261,7 @@ func TestAnthropic_Execute_Translate(t *testing.T) {
 
 	a := adapter()
 	resp, err := a.Execute(context.Background(), provcore.Request{
-		WireShape:   typology.WireShapeAnthropicMessages,
+		WireShape:  typology.WireShapeAnthropicMessages,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{"model":"claude","messages":[{"role":"user","content":"hi"}]}`),
 		Target: provcore.CallTarget{

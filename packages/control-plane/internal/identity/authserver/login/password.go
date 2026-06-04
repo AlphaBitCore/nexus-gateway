@@ -8,9 +8,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/idp"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 )
 
 const authCodeTTL = 5 * time.Minute

@@ -18,8 +18,8 @@ var (
 	tEnd   = tNow
 )
 
-func sp(s string) *string  { return &s }
-func ip(i int) *int        { return &i }
+func sp(s string) *string   { return &s }
+func ip(i int) *int         { return &i }
 func fp(f float64) *float64 { return &f }
 
 func anyArgs(n int) []any {

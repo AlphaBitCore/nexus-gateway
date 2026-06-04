@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 )
 
 // ConnectionStage returns an HTTP middleware that evaluates connection-stage

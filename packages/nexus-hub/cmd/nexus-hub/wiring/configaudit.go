@@ -67,6 +67,6 @@ type pgxRowsAdapter struct {
 	rows pgx.Rows
 }
 
-func (p *pgxRowsAdapter) Next() bool                  { return p.rows.Next() }
-func (p *pgxRowsAdapter) Scan(dest ...any) error      { return p.rows.Scan(dest...) }
-func (p *pgxRowsAdapter) Close()                      { p.rows.Close() }
+func (p *pgxRowsAdapter) Next() bool             { return p.rows.Next() }
+func (p *pgxRowsAdapter) Scan(dest ...any) error { return p.rows.Scan(dest...) }
+func (p *pgxRowsAdapter) Close()                 { p.rows.Close() }

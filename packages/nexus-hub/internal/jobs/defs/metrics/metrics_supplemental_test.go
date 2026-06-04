@@ -164,7 +164,7 @@ func TestOpsRollup1h_ResolveCursor_GetWatermarkError(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnError(sentinel)
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	if err := j.Run(context.Background()); !errors.Is(err, sentinel) {
@@ -200,7 +200,7 @@ func TestOpsRollup1h_ResolveCursor_AdvanceFromWatermark(t *testing.T) {
 	mock.ExpectQuery(`SELECT MIN\(sampled_at\)`).
 		WillReturnRows(pgxmock.NewRows([]string{"min"}).AddRow(&oneHourAgo))
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	cursor, ok, err := j.resolveCursor(context.Background())
@@ -227,16 +227,16 @@ func TestOpsRollup1h_ProcessOneBucket_SetWatermarkError(t *testing.T) {
 	expectWatermarkAndMin(mock, bucket)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM metric_ops_rollup_1h`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	mock.ExpectQuery(`SELECT DISTINCT thing_id`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"thing_id"}))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
 	// insertHistograms: empty result set
@@ -250,7 +250,7 @@ func TestOpsRollup1h_ProcessOneBucket_SetWatermarkError(t *testing.T) {
 		WillReturnError(sentinel)
 	mock.ExpectRollback()
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	if err := j.Run(context.Background()); err == nil {
@@ -270,7 +270,7 @@ func TestOpsRollup1h_DiagAgentsInWindow_ScanError(t *testing.T) {
 	expectWatermarkAndMin(mock, bucket)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM metric_ops_rollup_1h`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	// diagAgentsInWindow: one row whose column type is wrong → Scan returns error
@@ -279,7 +279,7 @@ func TestOpsRollup1h_DiagAgentsInWindow_ScanError(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"thing_id"}).AddRow(42)) // int instead of string
 	mock.ExpectRollback()
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	if err := j.Run(context.Background()); err == nil {
@@ -297,16 +297,16 @@ func TestOpsRollup1h_InsertHistograms_ScanError(t *testing.T) {
 	expectWatermarkAndMin(mock, bucket)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM metric_ops_rollup_1h`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	mock.ExpectQuery(`SELECT DISTINCT thing_id`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"thing_id"}))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
 
@@ -318,7 +318,7 @@ func TestOpsRollup1h_InsertHistograms_ScanError(t *testing.T) {
 			AddRow(99, "agent", "m", "", []byte(`{}`))) // int for thing_id → Scan error
 	mock.ExpectRollback()
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	if err := j.Run(context.Background()); err == nil {
@@ -339,16 +339,16 @@ func TestOpsRollup1h_InsertHistograms_UnparseableMeta(t *testing.T) {
 	expectWatermarkAndMin(mock, bucket)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM metric_ops_rollup_1h`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	mock.ExpectQuery(`SELECT DISTINCT thing_id`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"thing_id"}))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
 
@@ -364,7 +364,7 @@ func TestOpsRollup1h_InsertHistograms_UnparseableMeta(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectCommit()
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	if err := j.Run(context.Background()); err != nil {
@@ -392,17 +392,17 @@ func TestOpsRollup1h_InsertHistograms_AccumulatorKeyCollision(t *testing.T) {
 	diagID := "agent-diag"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM metric_ops_rollup_1h`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	// diagAgentsInWindow: diagID is in the diag set
 	mock.ExpectQuery(`SELECT DISTINCT thing_id`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"thing_id"}).AddRow(diagID))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
 
@@ -426,7 +426,7 @@ func TestOpsRollup1h_InsertHistograms_AccumulatorKeyCollision(t *testing.T) {
 
 	// 3 INSERT histogram rows: one per unique accumulator key.
 	for range 3 {
-		mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+		mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 			WithArgs(
 				pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -438,7 +438,7 @@ func TestOpsRollup1h_InsertHistograms_AccumulatorKeyCollision(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectCommit()
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	if err := j.Run(context.Background()); err != nil {
@@ -461,16 +461,16 @@ func TestOpsRollup1h_InsertHistograms_InsertRowError(t *testing.T) {
 	histMeta, _ := json.Marshal(map[string]any{"buckets": []int{2, 1, 0, 0, 0, 0}})
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM metric_ops_rollup_1h`).
+	mock.ExpectExec(`DELETE FROM metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	mock.ExpectQuery(`SELECT DISTINCT thing_id`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"thing_id"}))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 0))
 	// One valid histogram row → acc entry created → INSERT fails
@@ -479,7 +479,7 @@ func TestOpsRollup1h_InsertHistograms_InsertRowError(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"thing_id", "thing_type", "metric_name", "dimension_key", "metadata"}).
 			AddRow("svc-x", "compliance-proxy", "m", "", histMeta))
 	sentinel := errors.New("insert histogram row boom")
-	mock.ExpectExec(`INSERT INTO metric_ops_rollup_1h`).
+	mock.ExpectExec(`INSERT INTO metric_ops_rollup_5m`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -487,7 +487,7 @@ func TestOpsRollup1h_InsertHistograms_InsertRowError(t *testing.T) {
 		).WillReturnError(sentinel)
 	mock.ExpectRollback()
 
-	j := NewOpsRollup1h(nil, time.Hour, testLogger())
+	j := NewOpsRollup5m(nil, time.Hour, testLogger())
 	j.pool = mock
 
 	if err := j.Run(context.Background()); err == nil {
@@ -499,6 +499,7 @@ func TestOpsRollup1h_InsertHistograms_InsertRowError(t *testing.T) {
 
 func TestOpsRollupCascade_RunFixed_ResolveCursorError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	sentinel := errors.New("watermark boom")
@@ -518,6 +519,7 @@ func TestOpsRollupCascade_RunFixed_ResolveCursorError(t *testing.T) {
 
 func TestOpsRollupCascade_RunCalendarMonth_ResolveCursorError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	sentinel := errors.New("watermark boom")
@@ -539,6 +541,7 @@ func TestOpsRollupCascade_RunCalendarMonth_ResolveCursorError(t *testing.T) {
 // branch where processOneBucket returns an error during the calendar-month loop.
 func TestOpsRollupCascade_RunCalendarMonth_ProcessOneBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	now := time.Now().UTC()
@@ -570,6 +573,7 @@ func TestOpsRollupCascade_RunCalendarMonth_ProcessOneBucketError(t *testing.T) {
 
 func TestOpsRollupCascade_ResolveFixedCursor_MinSourceBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	mock.ExpectQuery(`FROM "rollup_watermark"`).
@@ -592,6 +596,7 @@ func TestOpsRollupCascade_ResolveFixedCursor_MinSourceBucketError(t *testing.T) 
 
 func TestOpsRollupCascade_ResolveCalendarCursor_MinSourceBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	mock.ExpectQuery(`FROM "rollup_watermark"`).
@@ -614,6 +619,7 @@ func TestOpsRollupCascade_ResolveCalendarCursor_MinSourceBucketError(t *testing.
 
 func TestOpsRollupCascade_ProcessOneBucket_InsertHistogramsError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -655,6 +661,7 @@ func TestOpsRollupCascade_ProcessOneBucket_InsertHistogramsError(t *testing.T) {
 
 func TestOpsRollupCascade_InsertHistograms_ScanError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -686,6 +693,7 @@ func TestOpsRollupCascade_InsertHistograms_ScanError(t *testing.T) {
 
 func TestOpsRollupCascade_InsertHistograms_UnparseableMeta(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()
@@ -727,6 +735,7 @@ func TestOpsRollupCascade_InsertHistograms_UnparseableMeta(t *testing.T) {
 // with the same key → each pair merges into one INSERT.
 func TestOpsRollupCascade_InsertHistograms_AccumulatorKeyCollision(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
+	mock.MatchExpectationsInOrder(false) // histogram INSERT order is map-iteration nondeterministic
 	defer mock.Close()
 
 	day := sealedDayBucket()

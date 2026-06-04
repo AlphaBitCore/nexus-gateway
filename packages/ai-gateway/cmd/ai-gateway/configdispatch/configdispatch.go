@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/cmd/ai-gateway/wiring"
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/freshness"
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
@@ -17,20 +18,19 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/cacheconfig"
 	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
+	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/cmd/ai-gateway/wiring"
 )
 
 // HookConfigReloader narrows the shared HookConfigCache surface to Reload-only.
@@ -55,24 +55,24 @@ type Deps struct {
 	CacheLayer          *cachelayer.Layer
 	CredManager         *credmanager.Manager
 	GeminiCacheMgrSet   *geminicache.ManagerSet
-	HookConfigCache     HookConfigReloader            // may be nil
+	HookConfigCache     HookConfigReloader                 // may be nil
 	TelemetryProvider   *telemetry.SwappableTracerProvider // may be nil
 	ObservabilityState  *atomic.Pointer[telemetry.Config]
-	PayloadCaptureStore  *payloadcapture.Store
+	PayloadCaptureStore *payloadcapture.Store
 	// StreamingPolicyStore — #115. Hub's streaming_compliance shadow
 	// pushes route raw JSON directly into Store.ApplyShadowState;
 	// proxy_cache.go's SSE handler reads Store.Get() per request.
 	// Three-service alignment with agent + compliance-proxy.
 	StreamingPolicyStore *streampolicy.Store
-	Reliability         ReliabilityReloader // may be nil
-	PolicyCache         *quota.PolicyCache  // may be nil
+	Reliability          ReliabilityReloader // may be nil
+	PolicyCache          *quota.PolicyCache  // may be nil
 	// AIGuardConfigCache is fetched via a getter because the singleton is
 	// assigned after OnConfigChanged registration in main.go. Reading at
 	// apply-time (not construction time) ensures the late assignment is
 	// visible when shadow ticks arrive.
-	AIGuardConfigCache  func() *aiguard.ConfigCache
-	NormEngine          *wirerewrite.Engine
-	PassthroughCache    *passthrough.Cache
+	AIGuardConfigCache func() *aiguard.ConfigCache
+	NormEngine         *wirerewrite.Engine
+	PassthroughCache   *passthrough.Cache
 
 	// SemanticIndexLifecycle receives the latest ConfigSnapshot from the Hub
 	// shadow and ensures the Valkey index is up to date. May be nil when the
@@ -387,6 +387,7 @@ type semanticCacheConfigBlob struct {
 	EmbeddingProviderBaseURL      string  `json:"embeddingProviderBaseUrl,omitempty"`
 	EmbeddingProviderModelID      string  `json:"embeddingProviderModelId,omitempty"`
 	EmbeddingInputPricePerMillion float64 `json:"embeddingInputPricePerMillion,omitempty"`
+	EmbeddingMaxInputTokens       int     `json:"embeddingMaxInputTokens,omitempty"`
 }
 
 // registerAGSemanticCacheConfig registers the semantic_cache.config handler.
@@ -420,6 +421,7 @@ func registerAGSemanticCacheConfig(l *cfgloader.Loader, d Deps) {
 			EmbeddingProviderBaseURL:      blob.EmbeddingProviderBaseURL,
 			EmbeddingProviderModelID:      blob.EmbeddingProviderModelID,
 			EmbeddingInputPricePerMillion: blob.EmbeddingInputPricePerMillion,
+			EmbeddingMaxInputTokens:       blob.EmbeddingMaxInputTokens,
 		}
 		if blob.EmbeddingProviderID != nil {
 			snap.EmbeddingProviderID = *blob.EmbeddingProviderID
@@ -521,4 +523,3 @@ func registerAGLogLevel(l *cfgloader.Loader, d Deps) {
 		},
 	})
 }
-

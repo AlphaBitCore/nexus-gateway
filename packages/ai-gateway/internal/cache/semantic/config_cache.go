@@ -27,9 +27,15 @@ type ConfigSnapshot struct {
 	// and multiplies by the embedding response's promptTokens to stamp
 	// rec.EmbeddingCostUsd. Snapshot-resident so no per-call DB lookup.
 	EmbeddingInputPricePerMillion float64
-	EmbeddingDimension  int
-	Fingerprint         string // sha256(provider:model:dim) — drives blue/green index lifecycle
-	RedisIndexName      string // versioned, e.g. "nexus:semantic-cache:v1"
+	EmbeddingDimension            int
+	// EmbeddingMaxInputTokens is the embedding model's context window (from the
+	// model's capabilityJson.embeddings.max_input_tokens, joined at CP push
+	// time). The L2 input shaper truncates the embed text to this many tokens
+	// so a large chat context never exceeds the embedding model's limit. 0 →
+	// the shaper falls back to a conservative default.
+	EmbeddingMaxInputTokens int
+	Fingerprint             string // sha256(provider:model:dim) — drives blue/green index lifecycle
+	RedisIndexName          string // versioned, e.g. "nexus:semantic-cache:v1"
 	// Threshold is the fleet-wide cosine similarity gate for L2 hits.
 	// 0 → ConfigCache.Set fills the schema default (0.96) so a stale
 	// snapshot from a pre-migration Hub never produces threshold=0.

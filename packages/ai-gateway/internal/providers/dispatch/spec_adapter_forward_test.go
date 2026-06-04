@@ -1,8 +1,8 @@
 package dispatch
 
 import (
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"io"
 	"net/http"
 	"strings"
@@ -63,7 +63,7 @@ func TestSpecAdapter_ForwardsAnthropicBeta(t *testing.T) {
 	}
 	ad := NewSpecAdapter(spec, slog.Default())
 	_, err := ad.Execute(context.Background(), Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: FormatAnthropic,
 		Body:       []byte(`{"model":"x","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`),
 		Target:     CallTarget{BaseURL: "http://example.invalid"},

@@ -497,7 +497,6 @@ func TestDiagDrain_ZeroOccurredAt(t *testing.T) {
 	}
 }
 
-
 func TestDiagHelpers_BadRequest(t *testing.T) {
 	e := echo.New()
 	c := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())

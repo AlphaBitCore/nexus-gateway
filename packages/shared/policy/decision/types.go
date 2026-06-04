@@ -102,8 +102,8 @@ type HookResult struct {
 	ReasonCode       string   `json:"reasonCode,omitempty"`
 	LatencyMs        int      `json:"latencyMs"`
 	// Tags emitted by this hook; merged into the pipeline-wide set.
-	Tags  []string `json:"tags,omitempty"`
-	Error string   `json:"error,omitempty"` // non-empty if the hook errored
+	Tags            []string       `json:"tags,omitempty"`
+	Error           string         `json:"error,omitempty"` // non-empty if the hook errored
 	ModifiedContent []ContentBlock `json:"modifiedContent,omitempty"`
 	// TransformSpans are the byte-level modifications this hook produced.
 	TransformSpans []normalize.TransformSpan `json:"transformSpans,omitempty"`

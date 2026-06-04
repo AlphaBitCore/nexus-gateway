@@ -254,6 +254,7 @@ func TestMountWithFactory_NilFactoryWarnReturn(t *testing.T) {
 	}, nil)
 	if mounted == nil {
 		t.Fatal("MountWithFactory must return non-nil *Mounted even on nil factory")
+		return
 	}
 	if mounted.RefreshHelper != nil {
 		t.Fatal("RefreshHelper must be nil when factory is nil (no stores to wire)")

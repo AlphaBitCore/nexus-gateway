@@ -120,6 +120,7 @@ func TestVerify_ValidToken(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("Verify returned nil claims with nil error")
+		return
 	}
 
 	if c.Issuer != testIssuer { //nolint:staticcheck // SA5011: t.Fatal above terminates the test goroutine

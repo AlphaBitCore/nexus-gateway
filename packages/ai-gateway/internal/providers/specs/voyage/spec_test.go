@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/voyage"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // NewSpec — constructor + wiring.
@@ -718,7 +718,7 @@ func TestVoyage_Execute_ReturnsEmbeddings(t *testing.T) {
 
 	a := provdispatch.NewSpecAdapter(voyage.NewSpec(slog.Default()), slog.Default())
 	resp, err := a.Execute(context.Background(), provcore.Request{
-		WireShape:   typology.WireShapeVoyageEmbeddings,
+		WireShape:  typology.WireShapeVoyageEmbeddings,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{"model":"voyage-3-lite","input":"hello"}`),
 		Target: provcore.CallTarget{

@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 type fakeAdapter struct {
@@ -18,8 +18,10 @@ type fakeAdapter struct {
 	stubErr    error
 }
 
-func (f *fakeAdapter) Format() provcore.Format         { return provcore.FormatOpenAI }
-func (f *fakeAdapter) SupportsShape(shape typology.WireShape) bool { return shape == typology.WireShapeOpenAIChat }
+func (f *fakeAdapter) Format() provcore.Format { return provcore.FormatOpenAI }
+func (f *fakeAdapter) SupportsShape(shape typology.WireShape) bool {
+	return shape == typology.WireShapeOpenAIChat
+}
 
 func (f *fakeAdapter) Execute(_ context.Context, req provcore.Request) (*provcore.Response, error) {
 	f.called = true

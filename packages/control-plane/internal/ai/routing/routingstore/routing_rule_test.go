@@ -94,7 +94,6 @@ func TestJsonOrNil(t *testing.T) {
 	}
 }
 
-
 func TestListRoutingRules_Happy_NoFilters(t *testing.T) {
 	s, mock := newStoreWithMock(t)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -199,7 +198,6 @@ func TestListRoutingRules_ScanError(t *testing.T) {
 	}
 }
 
-
 func TestGetRoutingRule_Happy(t *testing.T) {
 	s, mock := newStoreWithMock(t)
 	now := time.Now()
@@ -243,7 +241,6 @@ func TestGetRoutingRule_DBError(t *testing.T) {
 	}
 }
 
-
 func TestCreateRoutingRule_Happy(t *testing.T) {
 	s, mock := newStoreWithMock(t)
 	now := time.Now()
@@ -278,7 +275,6 @@ func TestCreateRoutingRule_DBError(t *testing.T) {
 		t.Fatal("want DB error")
 	}
 }
-
 
 func TestUpdateRoutingRule_NoRetryPolicyChange(t *testing.T) {
 	s, mock := newStoreWithMock(t)
@@ -336,7 +332,6 @@ func TestUpdateRoutingRule_DBError(t *testing.T) {
 		t.Fatal("want DB error")
 	}
 }
-
 
 func TestDeleteRoutingRule_Happy(t *testing.T) {
 	s, mock := newStoreWithMock(t)

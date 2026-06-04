@@ -41,9 +41,9 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 )
 
 // adapterID is the canonical adapter identifier. Must match

@@ -1737,7 +1737,6 @@ func TestIsStringJSON_LeadingWhitespace(t *testing.T) {
 	}
 }
 
-
 // approxEq compares two floats with a small tolerance — confidence
 // values are constructed via constant adds so exact equality holds
 // in practice, but the helper avoids brittle assertions if numeric

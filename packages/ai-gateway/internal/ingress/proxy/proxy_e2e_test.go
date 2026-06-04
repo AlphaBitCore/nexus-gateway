@@ -31,13 +31,13 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // e2eUpstreamResolver returns the test upstream as the only credentialed
@@ -132,8 +132,8 @@ func TestServeProxy_NonStreamHappyPath_DriversHandleNonStream(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -209,8 +209,8 @@ func TestServeProxy_NonStream_UpstreamErrorPath(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -304,8 +304,8 @@ func TestServeProxy_NonStream_CacheMISS_DirectPath(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi cache miss"}]}`
@@ -408,8 +408,8 @@ func TestServeProxy_NonStream_BrokerMISS_LeaderWritesCache(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"broker miss"}]}`
@@ -513,9 +513,9 @@ func TestServeProxy_Stream_DirectPath(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`
@@ -623,9 +623,9 @@ func TestServeProxy_Stream_BrokerMISS_LeaderPath(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"stream miss"}]}`

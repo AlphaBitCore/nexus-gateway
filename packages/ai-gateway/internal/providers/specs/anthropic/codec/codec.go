@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
-	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -580,10 +580,10 @@ func stringifyContent(content gjson.Result) string {
 //     wire metadata (id, model, finish-reason) into OpenAI chat-completion JSON.
 //  3. Anthropic-specific extras are layered in:
 //     a. usage.prompt_tokens_details.cache_creation_tokens — the write-side
-//        cache counter (no OpenAI standard equivalent).
+//     cache counter (no OpenAI standard equivalent).
 //     b. nexus.ext.anthropic.cache_creation_input_tokens — same value under
-//        the canonical-extension namespace so the encode path can round-trip
-//        it back to Anthropic targets (provider-adapter-architecture.md §3a Rule 4).
+//     the canonical-extension namespace so the encode path can round-trip
+//     it back to Anthropic targets (provider-adapter-architecture.md §3a Rule 4).
 func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
 	if endpoint != typology.WireShapeAnthropicMessages {
 		// Models endpoint and anything else is passthrough.

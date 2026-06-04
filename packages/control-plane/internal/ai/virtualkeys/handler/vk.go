@@ -9,9 +9,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -166,8 +166,8 @@ func (h *Handler) CreateVirtualKey(c echo.Context) error {
 		"projectId": vk.ProjectID, "sourceApp": vk.SourceApp,
 		"enabled": vk.Enabled, "rateLimitRpm": vk.RateLimitRpm,
 		"allowedModels": vk.AllowedModels,
-		"ownerId":   vk.OwnerID,
-		"createdAt": vk.CreatedAt, "updatedAt": vk.UpdatedAt,
+		"ownerId":       vk.OwnerID,
+		"createdAt":     vk.CreatedAt, "updatedAt": vk.UpdatedAt,
 		"key": rawKey,
 	}
 	return c.JSON(http.StatusCreated, resp)
@@ -196,12 +196,12 @@ func (h *Handler) UpdateVirtualKey(c echo.Context) error {
 	c.Request().Body = io.NopCloser(bytes.NewReader(rawBody))
 
 	var body struct {
-		ProjectID                   *string  `json:"projectId"`
-		SourceApp                   *string  `json:"sourceApp"`
-		Enabled                     *bool    `json:"enabled"`
-		RateLimitRpm                *int     `json:"rateLimitRpm"`
-		CompareEndpointRateLimitRpm *int     `json:"compareEndpointRateLimitRpm"`
-		AllowedModels               any      `json:"allowedModels"`
+		ProjectID                   *string `json:"projectId"`
+		SourceApp                   *string `json:"sourceApp"`
+		Enabled                     *bool   `json:"enabled"`
+		RateLimitRpm                *int    `json:"rateLimitRpm"`
+		CompareEndpointRateLimitRpm *int    `json:"compareEndpointRateLimitRpm"`
+		AllowedModels               any     `json:"allowedModels"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))

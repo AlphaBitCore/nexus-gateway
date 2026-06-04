@@ -94,8 +94,8 @@ func (l *AgentExemptionsLoader) Load(ctx context.Context, _ string) (any, int64,
 	var maxUpdated time.Time
 	for rows.Next() {
 		var (
-			host    string
-			latest  *time.Time
+			host   string
+			latest *time.Time
 		)
 		if err := rows.Scan(&host, &latest); err != nil {
 			return nil, 0, fmt.Errorf("catb: scan agent exemptions: %w", err)

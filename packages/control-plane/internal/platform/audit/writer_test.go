@@ -44,6 +44,50 @@ func (p *memProducer) msgs() []memMsg {
 	return cp
 }
 
+// TestLog_PropagatesViaToMQ pins the middle link of the E90 I5 chain: a Via set on
+// the Entry (by EntryFor from the in-process initiator context value) must ride on the published
+// AdminAuditMessage so the Hub consumer can fold it into the hash chain. A human
+// Entry (empty Via) must serialise with via omitted (omitempty) so the wire — and
+// the downstream hash — is byte-identical to the pre-via format.
+func TestLog_PropagatesViaToMQ(t *testing.T) {
+	prod := &memProducer{}
+	w := NewWriter(prod, "nexus.event.admin-audit", slog.Default())
+
+	w.LogObserved(context.Background(), Entry{
+		ActorID: "user-admin-1", Action: "create", EntityType: "virtual-key", EntityID: "vk-1",
+		Via: ViaAssistant,
+	})
+	w.LogObserved(context.Background(), Entry{
+		ActorID: "user-admin-2", Action: "create", EntityType: "virtual-key", EntityID: "vk-2",
+	})
+
+	msgs := prod.msgs()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+
+	var assistantMsg mq.AdminAuditMessage
+	if err := json.Unmarshal(msgs[0].data, &assistantMsg); err != nil {
+		t.Fatalf("unmarshal assistant msg: %v", err)
+	}
+	if assistantMsg.Via != ViaAssistant {
+		t.Errorf("assistant msg Via = %q, want %q", assistantMsg.Via, ViaAssistant)
+	}
+
+	// Human row: via must be ABSENT from the JSON (omitempty), not just empty —
+	// this is what guarantees the hash chain stays byte-identical for human writes.
+	if bytes.Contains(msgs[1].data, []byte(`"via"`)) {
+		t.Errorf("human msg JSON should omit the via field, got: %s", msgs[1].data)
+	}
+	var humanMsg mq.AdminAuditMessage
+	if err := json.Unmarshal(msgs[1].data, &humanMsg); err != nil {
+		t.Fatalf("unmarshal human msg: %v", err)
+	}
+	if humanMsg.Via != "" {
+		t.Errorf("human msg Via = %q, want empty", humanMsg.Via)
+	}
+}
+
 func TestLog_PublishesToMQ(t *testing.T) {
 	prod := &memProducer{}
 	logger := slog.Default()

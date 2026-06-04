@@ -460,7 +460,7 @@ func TestAdminAuditWriter_Flush_HappyPathViaSeam(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(anyArgs(1)...).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
 	mock.ExpectQuery(`SELECT "integrityHash" FROM "AdminAuditLog"`).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(15)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(16)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	var ackCount, nakCount int32
@@ -489,6 +489,67 @@ func TestAdminAuditWriter_Flush_HappyPathViaSeam(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("expectations: %v", err)
+	}
+}
+
+// viaArg matches the AdminAuditLog INSERT's 16th positional argument (via). The
+// consumer passes nilIfEmpty(e.Via), i.e. a *string for an assistant row and an
+// untyped nil for a human row. want==nil asserts the human (NULL) case.
+type viaArg struct{ want *string }
+
+func (a viaArg) Match(v interface{}) bool {
+	// nilIfEmpty always yields a typed *string: nil for a human row (→ SQL NULL),
+	// non-nil for an assistant row.
+	got, _ := v.(*string)
+	if a.want == nil {
+		return got == nil
+	}
+	return got != nil && *got == *a.want
+}
+
+func strptr(s string) *string { return &s }
+
+// TestAdminAuditWriter_Flush_PersistsViaValue pins the consumer end of the E90 I5
+// chain: an assistant-stamped MQ message must INSERT via="assistant" (16th arg),
+// and a human message must INSERT NULL — never an empty string, so the column /
+// index cleanly distinguishes "AI-initiated" from "direct human action".
+func TestAdminAuditWriter_Flush_PersistsViaValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		via  string
+		want *string
+	}{
+		{"assistant row persists marker", "assistant", strptr("assistant")},
+		{"human row persists NULL", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, mock := adminFlushWriter(t)
+			mock.ExpectBegin()
+			mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(anyArgs(1)...).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+			mock.ExpectQuery(`SELECT "integrityHash" FROM "AdminAuditLog"`).WillReturnError(pgx.ErrNoRows)
+			// First 15 args are matched loosely; the 16th (via) is matched exactly.
+			mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).
+				WithArgs(append(anyArgs(15), viaArg{want: tc.want})...).
+				WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+			mock.ExpectCommit()
+
+			var ack, nak int32
+			items := []pendingAdminMessage{{
+				event: mq.AdminAuditMessage{
+					ID: uuid.NewString(), Timestamp: time.Now().UTC(),
+					ActorID: "u-1", ActorLabel: "u-1",
+					Action: "create", EntityType: "provider", EntityID: "ent-1",
+					Via: tc.via,
+				},
+				msg: countingMsg(&ack, &nak),
+			}}
+			if err := w.flush(context.Background(), items); err != nil {
+				t.Fatalf("flush: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("expectations: %v", err)
+			}
+		})
 	}
 }
 
@@ -524,7 +585,7 @@ func TestAdminAuditWriter_Flush_InsertFailureNaksAll(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(anyArgs(1)...).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
 	mock.ExpectQuery(`SELECT "integrityHash" FROM "AdminAuditLog"`).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(15)...).WillReturnError(errors.New("write-blocked"))
+	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(16)...).WillReturnError(errors.New("write-blocked"))
 	mock.ExpectRollback()
 
 	var ackCount, nakCount int32
@@ -554,7 +615,7 @@ func TestAdminAuditWriter_Flush_CommitFailureNaksAll(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(anyArgs(1)...).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
 	mock.ExpectQuery(`SELECT "integrityHash" FROM "AdminAuditLog"`).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(15)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(16)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit().WillReturnError(errors.New("commit-rejected"))
 	mock.ExpectRollback()
 
@@ -596,7 +657,7 @@ func TestAdminAuditWriter_Flush_NilRegistryHappyPath(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(anyArgs(1)...).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
 	mock.ExpectQuery(`SELECT "integrityHash" FROM "AdminAuditLog"`).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(15)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mock.ExpectExec(`INSERT INTO "AdminAuditLog"`).WithArgs(anyArgs(16)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	var ackCount, nakCount int32

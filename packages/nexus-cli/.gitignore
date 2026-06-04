@@ -1,0 +1,2 @@
+# Compiled maintainer tool binary (go build ./cmd/openapi-gen)
+/openapi-gen

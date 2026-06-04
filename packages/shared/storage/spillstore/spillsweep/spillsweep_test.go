@@ -47,8 +47,8 @@ func (f *fakeStore) Put(context.Context, io.Reader, int64, spillstore.PutOptions
 }
 func (f *fakeStore) Get(context.Context, audit.SpillRef) (io.ReadCloser, error) { return nil, nil }
 func (f *fakeStore) Delete(context.Context, audit.SpillRef) error               { return nil }
-func (f *fakeStore) Stat(context.Context) (spillstore.Stats, error)            { return spillstore.Stats{}, nil }
-func (f *fakeStore) Backend() string                                           { return "fake" }
+func (f *fakeStore) Stat(context.Context) (spillstore.Stats, error)             { return spillstore.Stats{}, nil }
+func (f *fakeStore) Backend() string                                            { return "fake" }
 
 // runWithTimeout runs Run and fails the test if it does not return promptly,
 // so a stuck loop surfaces as a failure rather than a hang.

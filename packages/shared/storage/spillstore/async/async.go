@@ -84,13 +84,13 @@ type Options struct {
 // store MUST implement spillstore.Presigner (for KeyFor); production
 // backends (s3, localfs) both do.
 type AsyncStore struct {
-	inner   spillstore.SpillStore
-	keyer   spillstore.Presigner
-	opts    Options
-	logger  *slog.Logger
-	queue   chan asyncJob
-	done    chan struct{}
-	wg      sync.WaitGroup
+	inner     spillstore.SpillStore
+	keyer     spillstore.Presigner
+	opts      Options
+	logger    *slog.Logger
+	queue     chan asyncJob
+	done      chan struct{}
+	wg        sync.WaitGroup
 	closeOnce sync.Once
 
 	// drops counts uploads dropped because the queue was full at Put
@@ -114,10 +114,10 @@ type AsyncStore struct {
 // opts come from the caller; the buffered body is owned by the job
 // for the lifetime of the upload.
 type asyncJob struct {
-	body  []byte
-	size  int64
-	opts  spillstore.PutOptions
-	key   string
+	body []byte
+	size int64
+	opts spillstore.PutOptions
+	key  string
 }
 
 // New wraps inner with an async upload queue. The returned store

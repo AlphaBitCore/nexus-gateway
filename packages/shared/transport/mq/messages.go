@@ -59,30 +59,30 @@ type TrafficEventMessage struct {
 	// in ai-gateway/internal/execution/estimator/.
 	EndpointType string `json:"endpointType,omitempty"`
 
-	ProviderID   string `json:"providerId,omitempty"`
-	ProviderName string `json:"providerName,omitempty"`
-	ModelID      string `json:"modelId,omitempty"`
-	ModelName    string `json:"modelName,omitempty"`
+	ProviderID       string `json:"providerId,omitempty"`
+	ProviderName     string `json:"providerName,omitempty"`
+	ModelID          string `json:"modelId,omitempty"`
+	ModelName        string `json:"modelName,omitempty"`
 	PromptTokens     int64  `json:"promptTokens,omitempty"`
 	CompletionTokens int64  `json:"completionTokens,omitempty"`
 	TotalTokens      int64  `json:"totalTokens,omitempty"`
 	// ReasoningTokens are chain-of-thought / thinking tokens reported by the
 	// provider. omitempty keeps older publishers wire-compatible (consumer
 	// treats absent as 0 → NULL in traffic_event.reasoning_tokens).
-	ReasoningTokens    int64   `json:"reasoningTokens,omitempty"`
+	ReasoningTokens int64 `json:"reasoningTokens,omitempty"`
 	// ReasoningCostUsd is the cost subset attributable to ReasoningTokens.
 	// Already counted inside EstimatedCostUsd; surfaced for cost breakdown.
-	ReasoningCostUsd   float64 `json:"reasoningCostUsd,omitempty"`
-	EstimatedCostUsd   float64 `json:"estimatedCostUsd,omitempty"`
+	ReasoningCostUsd float64 `json:"reasoningCostUsd,omitempty"`
+	EstimatedCostUsd float64 `json:"estimatedCostUsd,omitempty"`
 	// CacheStatus is the UNIFIED rollup ("HIT" | "MISS") per
 	// cost-estimation-architecture.md § 6.4. Producer derives via
 	// audit.DeriveCacheStatus(GatewayCacheStatus, ProviderCacheStatus).
 	// The four detail columns below are drill-down only; the audit drawer
 	// renders them via the three layouts in § 6.4 — never as filter values.
-	CacheStatus            string  `json:"cacheStatus,omitempty"`
-	GatewayCacheStatus     string  `json:"gatewayCacheStatus,omitempty"`
-	GatewayCacheSkipReason string  `json:"gatewayCacheSkipReason,omitempty"`
-	GatewayCacheKind       string  `json:"gatewayCacheKind,omitempty"`
+	CacheStatus            string `json:"cacheStatus,omitempty"`
+	GatewayCacheStatus     string `json:"gatewayCacheStatus,omitempty"`
+	GatewayCacheSkipReason string `json:"gatewayCacheSkipReason,omitempty"`
+	GatewayCacheKind       string `json:"gatewayCacheKind,omitempty"`
 	// GatewayCacheL2EntryKey is the Redis HASH key of the L2 semantic-cache
 	// entry that served this row, format "<redis_index_name>:<sha256(EmbeddingInput)[:16]>".
 	// Stamped only on rows where GatewayCacheKind == "semantic"; empty
@@ -92,13 +92,13 @@ type TrafficEventMessage struct {
 	// IsPoisoned check.
 	GatewayCacheL2EntryKey string  `json:"gatewayCacheL2EntryKey,omitempty"`
 	ProviderCacheStatus    string  `json:"providerCacheStatus,omitempty"`
-	OriginTZ           *string `json:"originTz,omitempty"`
-	RoutedProviderID   string  `json:"routedProviderId,omitempty"`
-	RoutedProviderName string  `json:"routedProviderName,omitempty"`
-	RoutedModelID      string  `json:"routedModelId,omitempty"`
-	RoutedModelName    string  `json:"routedModelName,omitempty"`
-	RoutingRuleID      string  `json:"routingRuleId,omitempty"`
-	RoutingRuleName    string  `json:"routingRuleName,omitempty"`
+	OriginTZ               *string `json:"originTz,omitempty"`
+	RoutedProviderID       string  `json:"routedProviderId,omitempty"`
+	RoutedProviderName     string  `json:"routedProviderName,omitempty"`
+	RoutedModelID          string  `json:"routedModelId,omitempty"`
+	RoutedModelName        string  `json:"routedModelName,omitempty"`
+	RoutingRuleID          string  `json:"routingRuleId,omitempty"`
+	RoutingRuleName        string  `json:"routingRuleName,omitempty"`
 
 	// Dual hook pipeline — each stage (request + response) records its own
 	// decision, reason, reason_code, executions, and blocking rule.
@@ -281,4 +281,9 @@ type AdminAuditMessage struct {
 	BeforeState    any       `json:"beforeState,omitempty"`
 	AfterState     any       `json:"afterState,omitempty"`
 	NexusRequestID string    `json:"nexusRequestId,omitempty"`
+	// Via records the channel that initiated the mutation — "assistant" for an
+	// AI-initiated admin write performed by the web assistant, empty for a direct
+	// human/UI action. The Hub consumer feeds it into the audit hash chain so the
+	// AI-attribution marker is tamper-evident (E90 I5).
+	Via string `json:"via,omitempty"`
 }

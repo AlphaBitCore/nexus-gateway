@@ -127,9 +127,9 @@ func (n *GLMEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta) (
 // body. Embedding vectors are intentionally ignored per SDD §T2.3.
 // The shape is identical to OpenAI /v1/embeddings.
 type glmEmbeddingsResponse struct {
-	Object string            `json:"object"`
-	Model  string            `json:"model"`
-	Usage  *glmEmbedUsage    `json:"usage,omitempty"`
+	Object string         `json:"object"`
+	Model  string         `json:"model"`
+	Usage  *glmEmbedUsage `json:"usage,omitempty"`
 }
 
 type glmEmbedUsage struct {

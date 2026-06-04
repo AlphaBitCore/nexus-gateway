@@ -99,7 +99,6 @@ func miniredisCache(t *testing.T) (*cachecore.Cache, *miniredis.Miniredis) {
 	return c, mini
 }
 
-
 func TestHandler_RoutingRules_NilDB_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.DB = nil
@@ -107,7 +106,6 @@ func TestHandler_RoutingRules_NilDB_NoOp(t *testing.T) {
 		t.Fatalf("routing_rules with nil DB: unexpected error: %v", err)
 	}
 }
-
 
 func TestHandler_Credentials_NilCacheLayer_NoOp(t *testing.T) {
 	d := newTestDeps(t)
@@ -118,7 +116,6 @@ func TestHandler_Credentials_NilCacheLayer_NoOp(t *testing.T) {
 	}
 }
 
-
 func TestHandler_Providers_NilCacheLayer_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
@@ -128,7 +125,6 @@ func TestHandler_Providers_NilCacheLayer_NoOp(t *testing.T) {
 	}
 }
 
-
 func TestHandler_Models_NilCacheLayer_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
@@ -136,7 +132,6 @@ func TestHandler_Models_NilCacheLayer_NoOp(t *testing.T) {
 		t.Fatalf("models with nil cacheLayer: unexpected error: %v", err)
 	}
 }
-
 
 func TestHandler_Hooks_NilHookCache_NoOp(t *testing.T) {
 	d := newTestDeps(t)
@@ -181,7 +176,6 @@ func TestHandler_Hooks_ReloadError_Propagates(t *testing.T) {
 	}
 }
 
-
 func TestHandler_Observability_NilTelemetryProvider_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.TelemetryProvider = nil
@@ -190,7 +184,6 @@ func TestHandler_Observability_NilTelemetryProvider_NoOp(t *testing.T) {
 		t.Fatalf("observability with nil TelemetryProvider: unexpected error: %v", err)
 	}
 }
-
 
 func TestHandler_PayloadCapture_NilDB_NoOp(t *testing.T) {
 	d := newTestDeps(t)
@@ -239,7 +232,6 @@ func TestHandler_StreamingCompliance_MalformedRaw_ErrorWrapped(t *testing.T) {
 	}
 }
 
-
 func TestHandler_CredentialReliability_NilReliability_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.Reliability = nil
@@ -282,7 +274,6 @@ func TestHandler_QuotaPolicies_NilPolicyCache_NoOp(t *testing.T) {
 	}
 }
 
-
 func TestHandler_VirtualKeys_NilCacheLayer_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
@@ -298,7 +289,6 @@ func TestHandler_VirtualKeys_EmptyPayload_NilCacheLayer_NoOp(t *testing.T) {
 		t.Fatalf("virtual_keys with nil payload and nil cacheLayer: unexpected error: %v", err)
 	}
 }
-
 
 func TestHandler_AIGuard_NilGetter_NoOp(t *testing.T) {
 	d := newTestDeps(t)
@@ -378,7 +368,6 @@ func TestHandler_Cache_ValidJSON_NormEngine_CallsReload(t *testing.T) {
 	}
 }
 
-
 func TestHandler_GatewayPassthrough_NilCache_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.PassthroughCache = nil
@@ -438,7 +427,6 @@ func TestHandler_GatewayPassthrough_ValidSnapshot_StoresGlobal(t *testing.T) {
 	}
 }
 
-
 func TestHandler_LogLevel_EmptyLevel_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	payload := []byte(`{"level":""}`)
@@ -478,7 +466,6 @@ func TestHandler_LogLevel_KnownLevels(t *testing.T) {
 		}
 	}
 }
-
 
 func TestHandler_SemanticCacheConfig_NilLifecycle_NoOp(t *testing.T) {
 	d := newTestDeps(t)
@@ -603,7 +590,6 @@ func TestHandler_SemanticCacheConfig_AllProviderJoinFields(t *testing.T) {
 	}
 }
 
-
 func TestHandler_TimeSensitivePatterns_NilDetector_NoOp(t *testing.T) {
 	d := newTestDeps(t)
 	d.FreshnessDetector = nil
@@ -694,7 +680,6 @@ func TestHandler_TimeSensitivePatterns_ReloadWithEmptyArray_ClearsPreviousRules(
 		t.Fatal("time_sensitive_patterns: after clearing with empty array, expected no match")
 	}
 }
-
 
 func TestHandler_ExtractCacheConfig_NilCache_NoOp(t *testing.T) {
 	d := newTestDeps(t)

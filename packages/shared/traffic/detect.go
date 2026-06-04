@@ -88,7 +88,7 @@ const (
 type UsageMeta struct {
 	PromptTokens        *int
 	CompletionTokens    *int
-	CacheReadTokens        *int
+	CacheReadTokens     *int
 	ReasoningTokens     *int
 	CacheCreationTokens *int
 	Status              UsageStatus

@@ -21,9 +21,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/exemption"
 	proxyserver "github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/server"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/killswitch"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
@@ -42,11 +42,11 @@ type HookConfigReloader interface {
 // through a single struct keeps the Register chain readable and forces
 // callers (currently only main.go) to be explicit about the wiring contract.
 type Deps struct {
-	Logger              *slog.Logger
-	ThingID             string
-	Outcomes            *thingclient.OutcomeTracker
-	KillSwitch          *killswitch.KillSwitch
-	ExemptionStore      *exemption.Store
+	Logger               *slog.Logger
+	ThingID              string
+	Outcomes             *thingclient.OutcomeTracker
+	KillSwitch           *killswitch.KillSwitch
+	ExemptionStore       *exemption.Store
 	HookConfigCache      HookConfigReloader // may be nil
 	ConfigDB             *sql.DB            // may be nil
 	CacheManager         *cache.Manager
@@ -337,4 +337,3 @@ func registerLogLevel(l *cfgloader.Loader, d Deps) {
 		},
 	})
 }
-

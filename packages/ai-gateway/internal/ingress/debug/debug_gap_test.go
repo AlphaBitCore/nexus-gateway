@@ -29,13 +29,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 var dbgLogger = slog.Default()
-
 
 // probeOnlyAdapter is a separate test double for ProviderTestHandler tests.
 // Uses value receivers (not pointer) to avoid conflict with the pointer-receiver
@@ -46,8 +45,10 @@ type probeOnlyAdapter struct {
 	probeE error
 }
 
-func (a probeOnlyAdapter) Format() provcore.Format      { return a.format }
-func (a probeOnlyAdapter) SupportsShape(sh typology.WireShape) bool { return sh == typology.WireShapeOpenAIChat }
+func (a probeOnlyAdapter) Format() provcore.Format { return a.format }
+func (a probeOnlyAdapter) SupportsShape(sh typology.WireShape) bool {
+	return sh == typology.WireShapeOpenAIChat
+}
 func (a probeOnlyAdapter) PrepareBody(req provcore.Request) ([]byte, []string, error) {
 	return req.Body, nil, nil
 }
@@ -173,7 +174,6 @@ func TestProviderTestHandler_probeSuccess_returns200WithSuccess(t *testing.T) {
 	}
 }
 
-
 func TestNormalizeIngressBodyFormat_empty_returnsOpenAI(t *testing.T) {
 	got := normalizeIngressBodyFormat("")
 	if got != provcore.FormatOpenAI {
@@ -194,7 +194,6 @@ func TestNormalizeIngressBodyFormat_unknown_returnsOpenAI(t *testing.T) {
 		t.Errorf("unknown: got %q, want openai", got)
 	}
 }
-
 
 func TestSchemaMode_nilBridge_sameFormats_passthrough(t *testing.T) {
 	got := schemaMode(provcore.FormatOpenAI, provcore.FormatOpenAI, typology.WireShapeOpenAIChat, nil)
@@ -292,7 +291,6 @@ func TestSchemaMode_nonNilBridge_routable_differentFormat_translated(t *testing.
 	}
 }
 
-
 func TestSimulateEndpointToProvider_allCases(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -312,7 +310,6 @@ func TestSimulateEndpointToProvider_allCases(t *testing.T) {
 		}
 	}
 }
-
 
 func TestProjectTargets_invalidAdapterType_skipsFormat(t *testing.T) {
 	targets := []routingcore.RoutingTarget{

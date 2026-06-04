@@ -46,7 +46,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/ratelimit"
 	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
@@ -55,6 +54,7 @@ import (
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	trafficbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // Shared helpers — these mirror conventions in proxy_e2e_test.go but stand
@@ -327,7 +327,7 @@ func computeStreamCacheKey(t *testing.T, deps *Deps, provider, model string, bod
 		t.Fatalf("provider registry has no adapter for %q", provider)
 	}
 	prepReq := provcore.Request{
-		WireShape:   typology.WireShapeOpenAIChat,
+		WireShape:  typology.WireShapeOpenAIChat,
 		Body:       body,
 		BodyFormat: provcore.Format(provider),
 		Stream:     isStream,
@@ -376,9 +376,9 @@ func TestServeProxy_Stream_CacheHIT_DrivesHandleStreamHit(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
@@ -432,9 +432,9 @@ func TestServeProxy_Stream_CacheHIT_WithReasoningTokens(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -494,8 +494,8 @@ func TestServeProxy_CheckQuota_PolicyReject(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
@@ -531,8 +531,8 @@ func TestServeProxy_CheckQuota_NotifyAndProceed(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
@@ -575,8 +575,8 @@ func TestServeProxy_CheckQuota_DowngradeNoAffordableModel(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
@@ -619,8 +619,8 @@ func TestServeProxy_CheckQuota_PolicyAllowsWithPricing(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
@@ -651,8 +651,8 @@ func TestServeProxy_NonStream_ResponseHook_RejectHard(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseRejectHook{}))
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -679,8 +679,8 @@ func TestServeProxy_NonStream_ResponseHook_BlockSoft(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseBlockSoftHook{}))
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -709,8 +709,8 @@ func TestServeProxy_NonStream_ResponseHook_Modify(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseModifyHook{}))
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -767,8 +767,8 @@ func TestServeProxy_NonStream_BypassResponseHooks(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -812,8 +812,8 @@ func TestServeProxy_CacheHIT_NonStream_ResponseHook_RejectHard(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -846,8 +846,8 @@ func TestServeProxy_CacheHIT_NonStream_ResponseHook_BlockSoft(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -880,8 +880,8 @@ func TestServeProxy_CacheHIT_NonStream_ResponseHook_Modify(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -913,8 +913,8 @@ func TestServeProxy_NonStream_BrokerMISS_ResponseHook_RejectHard(t *testing.T) {
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseRejectHook{}), cacheOpt, brokerOpt)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"broker hook"}]}`
@@ -946,8 +946,8 @@ func TestServeProxy_NonStream_BrokerMISS_ResponseHook_BlockSoft(t *testing.T) {
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseBlockSoftHook{}), cacheOpt, brokerOpt)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"broker soft"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -978,8 +978,8 @@ func TestServeProxy_NonStream_BrokerMISS_ResponseHook_Modify(t *testing.T) {
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseModifyHook{}), cacheOpt, brokerOpt)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"broker modify"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1012,9 +1012,9 @@ func TestServeProxy_Stream_BrokerMISS_Leader(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), cacheOpt, brokerOpt)
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"stream broker"}]}`
@@ -1070,9 +1070,9 @@ func TestServeProxy_Stream_CacheHIT_AnthropicIngress(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatAnthropic,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatAnthropic,
+		Stream:     true,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -1118,9 +1118,9 @@ func TestServeProxy_Stream_BrokerMISS_LiveUsageExtraction(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"live"}]}`
@@ -1162,8 +1162,8 @@ func TestServeProxy_NonStream_BrokerMISS_WithQuotaEngine(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"nonstream broker quota"}]}`
@@ -1210,8 +1210,8 @@ func TestServeProxy_CacheHIT_NonStream_WithQuotaEngine_StoreResponseBody(t *test
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -1265,8 +1265,8 @@ func TestServeProxy_CacheHIT_NonStream_DoesNotReconcileQuota(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -1326,9 +1326,9 @@ func TestServeProxy_Stream_CacheHIT_WithStoreResponseBody(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -1358,9 +1358,9 @@ func TestServeProxy_Stream_NoUsageInEnd(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t))
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"no usage"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1401,8 +1401,8 @@ func TestServeProxy_NonStream_BrokerHIT_LIVE_Joiner(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), cacheOpt, brokerOpt)
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"shared"}]}`
 
@@ -1465,9 +1465,9 @@ func TestServeProxy_Stream_BrokerHIT_LIVE_Joiner(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), cacheOpt, brokerOpt)
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"shared stream"}]}`
 
@@ -1524,8 +1524,8 @@ func TestServeProxy_NonStream_WithReasoningAndCacheTokens(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"reasoning"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1553,8 +1553,8 @@ func TestServeProxy_NonStream_NoUsageInResponse(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t))
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1599,8 +1599,8 @@ func TestServeProxy_NonStream_ResponseHook_BlockingRule(t *testing.T) {
 
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseHookWithBlockingRule{}))
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1629,8 +1629,8 @@ func TestServeProxy_NonStream_WithMetricsRecorder(t *testing.T) {
 		d.Metrics = &trackingMetricsRecorder{}
 	})
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1666,8 +1666,8 @@ func TestServeProxy_CacheHIT_NonStream_WithReasoningTokens(t *testing.T) {
 	}
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -1702,8 +1702,8 @@ func TestServeProxy_CacheHIT_NonStream_WithMetricsRecorder(t *testing.T) {
 		t.Fatalf("StoreResponse: %v", err)
 	}
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -1737,8 +1737,8 @@ func TestServeProxy_NonStream_UpstreamError_WithStoreResponseBody(t *testing.T) 
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1773,9 +1773,9 @@ func TestServeProxy_Stream_DirectPath_WithResponseHook(t *testing.T) {
 	deps := makeOpenAIDeps(t, upstream.URL, hookCache)
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
-		Stream:       true,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
+		Stream:     true,
 	})
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1852,8 +1852,8 @@ func TestServeProxy_CheckQuota_DowngradeSuccess(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","max_tokens":100,"messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1901,8 +1901,8 @@ func TestServeProxy_CheckQuota_DowngradeFetchError(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1939,8 +1939,8 @@ func TestServeProxy_NonStream_VKMeta_OwnerAndRateLimitVisible(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -1979,8 +1979,8 @@ func TestServeProxy_NonStream_RateLimited(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -2000,8 +2000,8 @@ func TestServeProxy_NonStream_RateLimited(t *testing.T) {
 func TestServeProxy_BadBodyFormatHeader(t *testing.T) {
 	deps := makeOpenAIDeps(t, "", emptyHookCache(t))
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -2040,8 +2040,8 @@ func TestServeProxy_RoutingError(t *testing.T) {
 		d.Router = stubRouterErr{}
 	})
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -2063,8 +2063,8 @@ func TestServeProxy_RoutingNoMatch_NoFallback(t *testing.T) {
 		d.Router = stubRouterEmpty{}
 	})
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -2086,8 +2086,8 @@ func TestServeProxy_AuthFailed(t *testing.T) {
 		d.VKAuth = &stubVKAuthErr{err: vkauth.ErrMissing}
 	})
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"x"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -2130,8 +2130,8 @@ func TestServeProxy_NonStream_NoPolicyChain_AllowedByDefault(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -2237,8 +2237,8 @@ func TestServeProxy_LatencyDetail_StampsSubMsAndAuditEmit(t *testing.T) {
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -2304,8 +2304,8 @@ func TestServeProxy_LatencyDetail_OffDoesNotStampSubMs(t *testing.T) {
 	deps := makeOpenAIDeps(t, upstream.URL, newResponseHookCache(t, responseApproveHook{}))
 	// LatencyDetail intentionally left at zero value (false).
 	h := NewHandler(deps).ServeProxy(Ingress{
-		WireShape:     typology.WireShapeOpenAIChat,
-		BodyFormat:   provcore.FormatOpenAI,
+		WireShape:  typology.WireShapeOpenAIChat,
+		BodyFormat: provcore.FormatOpenAI,
 	})
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`

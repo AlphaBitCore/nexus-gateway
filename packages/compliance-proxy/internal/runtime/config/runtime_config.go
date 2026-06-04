@@ -165,7 +165,7 @@ func snapshotFor(deps RuntimeDeps, key string) any {
 	case "killswitch":
 		if deps.KillswitchSnap == nil {
 			return interception.Killswitch{}
-}
+		}
 		return deps.KillswitchSnap.Snapshot()
 	case "exemptions":
 		if deps.ExemptionSnap == nil {

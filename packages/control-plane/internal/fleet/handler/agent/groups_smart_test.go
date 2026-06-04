@@ -37,7 +37,6 @@ func TestLoadPreviewDevices_FnSeam(t *testing.T) {
 	}
 }
 
-
 func TestPreviewMembership_Happy(t *testing.T) {
 	h := newHandlerForTest(nil, &fakeHub{}, nil)
 	h.previewDevicesFn = func(context.Context) ([]previewDevice, error) {
@@ -142,7 +141,6 @@ func TestPreviewMembership_BadPredicate(t *testing.T) {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
-
 
 func TestSetGroupMembershipQuery_HappySmart(t *testing.T) {
 	mock := newMockPool(t)

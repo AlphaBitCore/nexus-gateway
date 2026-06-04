@@ -3,15 +3,18 @@
 //
 // Named failure modes:
 //   - nil ModelLookup → 500 JSON error
+//   - nil VKAuthenticator → 500 JSON error (authenticator not configured)
+//   - VK auth failure (missing/invalid) → 401
 //   - ListEnabledModels error → 500 JSON error
 //   - No anthropic-version header → OpenAI shape
 //   - anthropic-version header → Anthropic shape (type:"model", display_name, first_id/last_id)
 //   - VK with AllowedModels → filtered list
-//   - VK auth error (or nil vkAuth) → unfiltered list
-//   - ModelDetailHandler: nil store → 500
-//   - ModelDetailHandler: missing path param → 400
-//   - ModelDetailHandler: not found → 404
-//   - ModelDetailHandler: OpenAI shape vs Anthropic shape
+//   - VK with no AllowedModels → full list
+//   - Enriched fields (aliases, features, pricing, context window, lifecycle) surfaced in both shapes
+//   - ModelDetailHandler: nil store → 500; nil vkAuth → 500; auth failure → 401
+//   - ModelDetailHandler: missing path param → 400; not found → 404
+//   - ModelDetailHandler: model outside VK AllowedModels → 404 (hidden, not 403)
+//   - ModelDetailHandler: OpenAI shape vs Anthropic shape + enriched fields
 package models
 
 import (
@@ -27,7 +30,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 )
-
 
 // stubModelLookup implements ModelLookup.
 type stubModelLookup struct {
@@ -59,6 +61,10 @@ func (s *stubVKAuth) Authenticate(_ context.Context, _ *http.Request) (*vkauth.V
 	return s.meta, s.authErr
 }
 
+// okVKAuth returns an authenticator that accepts any request with an
+// unrestricted VK (no AllowedModels filter).
+func okVKAuth() *stubVKAuth { return &stubVKAuth{meta: &vkauth.VKMeta{}} }
+
 var devLogger = slog.Default()
 
 // newReq builds a test GET request to /v1/models.
@@ -70,9 +76,8 @@ func newReq(headers map[string]string) *http.Request {
 	return r
 }
 
-
 func TestModelsHandler_nilModels_returns500(t *testing.T) {
-	h := ModelsHandler(nil, nil, devLogger)
+	h := ModelsHandler(nil, okVKAuth(), devLogger)
 	w := httptest.NewRecorder()
 	h(w, newReq(nil))
 	if w.Code != http.StatusInternalServerError {
@@ -85,9 +90,35 @@ func TestModelsHandler_nilModels_returns500(t *testing.T) {
 	}
 }
 
+func TestModelsHandler_nilVKAuth_returns500(t *testing.T) {
+	lk := &stubModelLookup{models: []store.Model{{ID: "m1", Code: "gpt-5"}}}
+	h := ModelsHandler(lk, nil, devLogger)
+	w := httptest.NewRecorder()
+	h(w, newReq(nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want 500 (authenticator not configured)", w.Code)
+	}
+}
+
+func TestModelsHandler_authFailure_returns401(t *testing.T) {
+	lk := &stubModelLookup{models: []store.Model{{ID: "m1", Code: "gpt-5"}}}
+	vkAuth := &stubVKAuth{authErr: errors.New("vkauth: virtual key missing")}
+	h := ModelsHandler(lk, vkAuth, devLogger)
+	w := httptest.NewRecorder()
+	h(w, newReq(nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401", w.Code)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] == nil {
+		t.Error("expected error envelope on 401")
+	}
+}
+
 func TestModelsHandler_listError_returns500(t *testing.T) {
 	lk := &stubModelLookup{listErr: errors.New("db down")}
-	h := ModelsHandler(lk, nil, devLogger)
+	h := ModelsHandler(lk, okVKAuth(), devLogger)
 	w := httptest.NewRecorder()
 	h(w, newReq(nil))
 	if w.Code != http.StatusInternalServerError {
@@ -99,7 +130,7 @@ func TestModelsHandler_openAIShape_noAnthropicHeader(t *testing.T) {
 	models := []store.Model{
 		{ID: "m1", Code: "gpt-5", Name: "GPT-5", ProviderID: "p1", ProviderName: "openai"},
 	}
-	h := ModelsHandler(&stubModelLookup{models: models}, nil, devLogger)
+	h := ModelsHandler(&stubModelLookup{models: models}, okVKAuth(), devLogger)
 	w := httptest.NewRecorder()
 	h(w, newReq(nil))
 	if w.Code != http.StatusOK {
@@ -138,7 +169,7 @@ func TestModelsHandler_anthropicShape_withAnthropicVersionHeader(t *testing.T) {
 			MaxContextTokens: &maxCtx, MaxOutputTokens: &maxOut,
 		},
 	}
-	h := ModelsHandler(&stubModelLookup{models: models}, nil, devLogger)
+	h := ModelsHandler(&stubModelLookup{models: models}, okVKAuth(), devLogger)
 	w := httptest.NewRecorder()
 	h(w, newReq(map[string]string{"anthropic-version": "2023-06-01"}))
 	if w.Code != http.StatusOK {
@@ -201,32 +232,11 @@ func TestModelsHandler_vkFilterApplied(t *testing.T) {
 	}
 }
 
-func TestModelsHandler_vkAuthError_unfilteredList(t *testing.T) {
-	models := []store.Model{
-		{ID: "m1", Code: "gpt-5", ProviderID: "p1", ProviderName: "openai"},
-	}
-	vkAuth := &stubVKAuth{authErr: errors.New("bad key")}
-	h := ModelsHandler(&stubModelLookup{models: models}, vkAuth, devLogger)
-	w := httptest.NewRecorder()
-	h(w, newReq(nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("status: got %d", w.Code)
-	}
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	data, _ := resp["data"].([]any)
-	// Auth error → VK allowed models not applied → unfiltered
-	if len(data) != 1 {
-		t.Errorf("unfiltered list: got %d, want 1", len(data))
-	}
-}
-
-func TestModelsHandler_vkWithNoAllowedModels_unfilteredList(t *testing.T) {
+func TestModelsHandler_vkWithNoAllowedModels_fullList(t *testing.T) {
 	models := []store.Model{
 		{ID: "m1", Code: "gpt-5", ProviderID: "p1", ProviderName: "openai"},
 		{ID: "m2", Code: "claude-3", ProviderID: "p2", ProviderName: "anthropic"},
 	}
-	// VK has no allowed models restriction
 	vkAuth := &stubVKAuth{meta: &vkauth.VKMeta{AllowedModels: nil}}
 	h := ModelsHandler(&stubModelLookup{models: models}, vkAuth, devLogger)
 	w := httptest.NewRecorder()
@@ -239,9 +249,122 @@ func TestModelsHandler_vkWithNoAllowedModels_unfilteredList(t *testing.T) {
 	}
 }
 
+func TestModelsHandler_enrichedFields_openAIShape(t *testing.T) {
+	inP, outP, cacheR := 2.5, 10.0, 1.25
+	maxCtx, maxOut := 128000, 16384
+	models := []store.Model{
+		{
+			ID: "m1", Code: "gpt-4o", Name: "GPT-4o", ProviderID: "p1", ProviderName: "openai",
+			Type:             "chat",
+			Aliases:          []string{"gpt-4o-2024-08-06"},
+			Features:         []string{"vision", "function_calling"},
+			InputModalities:  []string{"text", "image"},
+			OutputModalities: []string{"text"},
+			MaxContextTokens: &maxCtx, MaxOutputTokens: &maxOut,
+			Lifecycle:              "ga",
+			InputPricePM:           &inP,
+			OutputPricePM:          &outP,
+			CachedInputReadPricePM: &cacheR,
+		},
+		// Second model with no price configured → pricing key omitted.
+		{ID: "m2", Code: "free-model", ProviderID: "p1", ProviderName: "openai"},
+	}
+	h := ModelsHandler(&stubModelLookup{models: models}, okVKAuth(), devLogger)
+	w := httptest.NewRecorder()
+	h(w, newReq(nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d", w.Code)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	data, _ := resp["data"].([]any)
+	entry, _ := data[0].(map[string]any)
+
+	if got := toStrings(entry["aliases"]); len(got) != 1 || got[0] != "gpt-4o-2024-08-06" {
+		t.Errorf("aliases: got %v", entry["aliases"])
+	}
+	if got := toStrings(entry["features"]); len(got) != 2 {
+		t.Errorf("features: got %v", entry["features"])
+	}
+	if entry["type"] != "chat" {
+		t.Errorf("type: got %v", entry["type"])
+	}
+	if entry["maxContextTokens"] != float64(128000) {
+		t.Errorf("maxContextTokens: got %v", entry["maxContextTokens"])
+	}
+	if entry["maxOutputTokens"] != float64(16384) {
+		t.Errorf("maxOutputTokens: got %v", entry["maxOutputTokens"])
+	}
+	if entry["lifecycle"] != "ga" {
+		t.Errorf("lifecycle: got %v", entry["lifecycle"])
+	}
+	pricing, ok := entry["pricing"].(map[string]any)
+	if !ok {
+		t.Fatalf("pricing block missing: %v", entry["pricing"])
+	}
+	if pricing["inputPerMillion"] != 2.5 {
+		t.Errorf("inputPerMillion: got %v", pricing["inputPerMillion"])
+	}
+	if pricing["outputPerMillion"] != 10.0 {
+		t.Errorf("outputPerMillion: got %v", pricing["outputPerMillion"])
+	}
+	if pricing["cachedInputReadPerMillion"] != 1.25 {
+		t.Errorf("cachedInputReadPerMillion: got %v", pricing["cachedInputReadPerMillion"])
+	}
+	if pricing["currency"] != "USD" {
+		t.Errorf("currency: got %v", pricing["currency"])
+	}
+	if pricing["unit"] != "per_million_tokens" {
+		t.Errorf("unit: got %v", pricing["unit"])
+	}
+	// cachedInputWritePerMillion was not configured → omitted.
+	if _, present := pricing["cachedInputWritePerMillion"]; present {
+		t.Error("cachedInputWritePerMillion should be omitted when unset")
+	}
+
+	// Second model: no price → no pricing key at all.
+	entry2, _ := data[1].(map[string]any)
+	if _, present := entry2["pricing"]; present {
+		t.Error("pricing key should be omitted when the model has no configured price")
+	}
+}
+
+func TestModelsHandler_enrichedFields_anthropicShape(t *testing.T) {
+	inP := 3.0
+	models := []store.Model{
+		{
+			ID: "m1", Code: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6",
+			ProviderID: "p1", ProviderName: "anthropic",
+			Aliases:      []string{"claude-sonnet-latest"},
+			Features:     []string{"thinking"},
+			Lifecycle:    "preview",
+			InputPricePM: &inP,
+		},
+	}
+	h := ModelsHandler(&stubModelLookup{models: models}, okVKAuth(), devLogger)
+	w := httptest.NewRecorder()
+	h(w, newReq(map[string]string{"anthropic-version": "2023-06-01"}))
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	data, _ := resp["data"].([]any)
+	entry, _ := data[0].(map[string]any)
+	if got := toStrings(entry["aliases"]); len(got) != 1 || got[0] != "claude-sonnet-latest" {
+		t.Errorf("aliases: got %v", entry["aliases"])
+	}
+	if got := toStrings(entry["features"]); len(got) != 1 || got[0] != "thinking" {
+		t.Errorf("features: got %v", entry["features"])
+	}
+	if entry["lifecycle"] != "preview" {
+		t.Errorf("lifecycle: got %v", entry["lifecycle"])
+	}
+	pricing, ok := entry["pricing"].(map[string]any)
+	if !ok || pricing["inputPerMillion"] != 3.0 {
+		t.Errorf("pricing: got %v", entry["pricing"])
+	}
+}
 
 func TestModelDetailHandler_nilModels_returns500(t *testing.T) {
-	h := ModelDetailHandler(nil, devLogger)
+	h := ModelDetailHandler(nil, okVKAuth(), devLogger)
 	r := httptest.NewRequest(http.MethodGet, "/v1/models/gpt-5", nil)
 	r.SetPathValue("model", "gpt-5")
 	w := httptest.NewRecorder()
@@ -251,10 +374,34 @@ func TestModelDetailHandler_nilModels_returns500(t *testing.T) {
 	}
 }
 
+func TestModelDetailHandler_nilVKAuth_returns500(t *testing.T) {
+	lk := &stubModelLookup{model: &store.Model{ID: "m1", Code: "gpt-5"}}
+	h := ModelDetailHandler(lk, nil, devLogger)
+	r := httptest.NewRequest(http.MethodGet, "/v1/models/gpt-5", nil)
+	r.SetPathValue("model", "gpt-5")
+	w := httptest.NewRecorder()
+	h(w, r)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want 500", w.Code)
+	}
+}
+
+func TestModelDetailHandler_authFailure_returns401(t *testing.T) {
+	lk := &stubModelLookup{model: &store.Model{ID: "m1", Code: "gpt-5"}}
+	vkAuth := &stubVKAuth{authErr: errors.New("vkauth: virtual key invalid")}
+	h := ModelDetailHandler(lk, vkAuth, devLogger)
+	r := httptest.NewRequest(http.MethodGet, "/v1/models/gpt-5", nil)
+	r.SetPathValue("model", "gpt-5")
+	w := httptest.NewRecorder()
+	h(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", w.Code)
+	}
+}
+
 func TestModelDetailHandler_emptyModelID_returns400(t *testing.T) {
 	lk := &stubModelLookup{}
-	h := ModelDetailHandler(lk, devLogger)
-	// No path value set → PathValue returns ""
+	h := ModelDetailHandler(lk, okVKAuth(), devLogger)
 	r := httptest.NewRequest(http.MethodGet, "/v1/models/", nil)
 	w := httptest.NewRecorder()
 	h(w, r)
@@ -265,7 +412,7 @@ func TestModelDetailHandler_emptyModelID_returns400(t *testing.T) {
 
 func TestModelDetailHandler_notFound_returns404(t *testing.T) {
 	lk := &stubModelLookup{getErr: errors.New("not found")}
-	h := ModelDetailHandler(lk, devLogger)
+	h := ModelDetailHandler(lk, okVKAuth(), devLogger)
 	r := httptest.NewRequest(http.MethodGet, "/v1/models/unknown", nil)
 	r.SetPathValue("model", "unknown")
 	w := httptest.NewRecorder()
@@ -275,12 +422,38 @@ func TestModelDetailHandler_notFound_returns404(t *testing.T) {
 	}
 }
 
-func TestModelDetailHandler_openAIShape(t *testing.T) {
-	m := &store.Model{ID: "m1", Code: "gpt-5", Name: "GPT-5", ProviderName: "openai"}
+func TestModelDetailHandler_disallowedModel_returns404(t *testing.T) {
+	// VK scoped to an openai model; requested model belongs to anthropic →
+	// must be hidden as 404, not revealed.
+	m := &store.Model{ID: "m2", Code: "claude-sonnet-4-6", ProviderID: "prov-anthropic", ProviderModelID: "claude-sonnet-4-6"}
 	lk := &stubModelLookup{model: m}
-	h := ModelDetailHandler(lk, devLogger)
-	r := httptest.NewRequest(http.MethodGet, "/v1/models/gpt-5", nil)
-	r.SetPathValue("model", "gpt-5")
+	vkAuth := &stubVKAuth{
+		meta: &vkauth.VKMeta{
+			AllowedModels: []store.AllowedModelRef{{ProviderID: "prov-openai", ModelID: "gpt-5"}},
+		},
+	}
+	h := ModelDetailHandler(lk, vkAuth, devLogger)
+	r := httptest.NewRequest(http.MethodGet, "/v1/models/claude-sonnet-4-6", nil)
+	r.SetPathValue("model", "claude-sonnet-4-6")
+	w := httptest.NewRecorder()
+	h(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404 (disallowed model hidden)", w.Code)
+	}
+}
+
+func TestModelDetailHandler_openAIShape_enriched(t *testing.T) {
+	inP := 2.5
+	maxCtx := 128000
+	m := &store.Model{
+		ID: "m1", Code: "gpt-4o", Name: "GPT-4o", ProviderName: "openai",
+		Type: "chat", Aliases: []string{"gpt-4o-2024-08-06"}, Features: []string{"vision"},
+		MaxContextTokens: &maxCtx, Lifecycle: "ga", InputPricePM: &inP,
+	}
+	lk := &stubModelLookup{model: m}
+	h := ModelDetailHandler(lk, okVKAuth(), devLogger)
+	r := httptest.NewRequest(http.MethodGet, "/v1/models/gpt-4o", nil)
+	r.SetPathValue("model", "gpt-4o")
 	w := httptest.NewRecorder()
 	h(w, r)
 	if w.Code != http.StatusOK {
@@ -288,7 +461,7 @@ func TestModelDetailHandler_openAIShape(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["id"] != "gpt-5" {
+	if resp["id"] != "gpt-4o" {
 		t.Errorf("id: got %v", resp["id"])
 	}
 	if resp["object"] != "model" {
@@ -297,17 +470,30 @@ func TestModelDetailHandler_openAIShape(t *testing.T) {
 	if resp["owned_by"] != "openai" {
 		t.Errorf("owned_by: got %v", resp["owned_by"])
 	}
+	if got := toStrings(resp["aliases"]); len(got) != 1 {
+		t.Errorf("aliases: got %v", resp["aliases"])
+	}
+	if resp["maxContextTokens"] != float64(128000) {
+		t.Errorf("maxContextTokens: got %v", resp["maxContextTokens"])
+	}
+	if resp["lifecycle"] != "ga" {
+		t.Errorf("lifecycle: got %v", resp["lifecycle"])
+	}
+	if _, ok := resp["pricing"].(map[string]any); !ok {
+		t.Errorf("pricing block missing on detail: %v", resp["pricing"])
+	}
 }
 
-func TestModelDetailHandler_anthropicShape(t *testing.T) {
+func TestModelDetailHandler_anthropicShape_enriched(t *testing.T) {
 	maxCtx := 100000
 	maxOut := 4096
 	m := &store.Model{
 		ID: "m1", Code: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6",
 		MaxContextTokens: &maxCtx, MaxOutputTokens: &maxOut,
+		Aliases: []string{"claude-latest"},
 	}
 	lk := &stubModelLookup{model: m}
-	h := ModelDetailHandler(lk, devLogger)
+	h := ModelDetailHandler(lk, okVKAuth(), devLogger)
 	r := httptest.NewRequest(http.MethodGet, "/v1/models/claude-sonnet-4-6", nil)
 	r.SetPathValue("model", "claude-sonnet-4-6")
 	r.Header.Set("anthropic-version", "2023-06-01")
@@ -327,12 +513,13 @@ func TestModelDetailHandler_anthropicShape(t *testing.T) {
 	if resp["max_input_tokens"] == nil {
 		t.Error("max_input_tokens should be present")
 	}
+	if got := toStrings(resp["aliases"]); len(got) != 1 || got[0] != "claude-latest" {
+		t.Errorf("aliases: got %v", resp["aliases"])
+	}
 }
 
-// writeJSONError / jsonString (via handler responses)
-
 func TestModelsHandler_errorResponseIsValidJSON(t *testing.T) {
-	h := ModelsHandler(nil, nil, devLogger)
+	h := ModelsHandler(nil, okVKAuth(), devLogger)
 	w := httptest.NewRecorder()
 	h(w, newReq(nil))
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
@@ -341,4 +528,19 @@ func TestModelsHandler_errorResponseIsValidJSON(t *testing.T) {
 	if !json.Valid(w.Body.Bytes()) {
 		t.Errorf("response is not valid JSON: %s", w.Body.Bytes())
 	}
+}
+
+// toStrings converts a decoded JSON array of strings to []string.
+func toStrings(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }

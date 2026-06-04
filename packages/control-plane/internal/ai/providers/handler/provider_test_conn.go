@@ -12,8 +12,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterProviderTestRoutes registers provider connectivity test + health routes.

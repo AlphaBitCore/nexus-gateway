@@ -458,7 +458,6 @@ func (h *Handler) DeleteInterceptionPath(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-
 // validateDomainEnums checks every enum-shaped field on a create/update
 // payload. Returns "" when everything is in range, or a 400-friendly
 // message otherwise.

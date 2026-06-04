@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // TestHandler_ReadBody_HonorsMaxRequestBytes verifies that the AI
@@ -82,8 +82,8 @@ func TestHandler_ReadBody_HonorsMaxRequestBytes(t *testing.T) {
 			h := &Handler{deps: &Deps{PayloadCapture: tc.store}}
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
 			in := Ingress{
-				WireShape:     typology.WireShapeOpenAIChat,
-				BodyFormat:   provcore.FormatOpenAI,
+				WireShape:  typology.WireShapeOpenAIChat,
+				BodyFormat: provcore.FormatOpenAI,
 			}
 			body, _, _, err := h.readBody(req, in)
 			if tc.wantErr != nil {

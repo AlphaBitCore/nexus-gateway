@@ -36,7 +36,12 @@ import (
 const (
 	credCircuitFlushJobID          = "credential-circuit-flush"
 	credCircuitFlushJobName        = "Credential Circuit Flush"
-	credCircuitFlushJobDescription = "Drains cred:circuit:dirty into Credential.circuit* columns. Uses an in-flight working set for at-least-once delivery. Rehydrates Redis from DB on first run after restart. See docs/developers/architecture/control-plane/credentials-architecture.md."
+	credCircuitFlushJobDescription = "Drains cred:circuit:dirty into Credential.circuit* columns. Uses an in-flight working set for at-least-once delivery. Rehydrates Redis from DB on first run after restart, and periodically self-heals DB rows left 'open' with no live Redis circuit. See docs/developers/architecture/cross-cutting/safety/credentials-architecture.md §6."
+
+	// circuitReconcileInterval throttles the orphan self-heal scan. The flush
+	// itself runs every ~30s; a full-table reconcile that often is wasteful, so
+	// it runs at most this often.
+	circuitReconcileInterval = 5 * time.Minute
 )
 
 // CircuitFlushMetrics owns the Prometheus collectors for the job. A nil
@@ -45,6 +50,7 @@ type CircuitFlushMetrics struct {
 	cyclesTotal      *prometheus.CounterVec
 	flushedTotal     prometheus.Counter
 	reclaimedTotal   prometheus.Counter
+	reconciledTotal  prometheus.Counter
 	rehydrateTotal   *prometheus.CounterVec
 	dirtySetSize     prometheus.Gauge
 	runDurationSec   prometheus.Histogram
@@ -76,6 +82,12 @@ func NewCircuitFlushMetrics(reg prometheus.Registerer) *CircuitFlushMetrics {
 			Subsystem: "credential_circuit_flush",
 			Name:      "reclaimed_total",
 			Help:      "Members reclaimed from a prior in-flight set (crash recovery).",
+		}),
+		reconciledTotal: f.NewCounter(prometheus.CounterOpts{
+			Namespace: "nexus",
+			Subsystem: "credential_circuit_flush",
+			Name:      "reconciled_total",
+			Help:      "Orphaned DB rows (non-closed circuitState, no live Redis hash) force-closed by the self-heal reconcile.",
 		}),
 		rehydrateTotal: f.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "nexus",
@@ -120,6 +132,11 @@ func (m *CircuitFlushMetrics) reclaimed(n int) {
 		m.reclaimedTotal.Add(float64(n))
 	}
 }
+func (m *CircuitFlushMetrics) reconciled(n int) {
+	if m != nil && n > 0 {
+		m.reconciledTotal.Add(float64(n))
+	}
+}
 func (m *CircuitFlushMetrics) rehydrate(outcome string) {
 	if m != nil {
 		m.rehydrateTotal.WithLabelValues(outcome).Inc()
@@ -152,6 +169,12 @@ type CredentialCircuitFlushJob struct {
 	logger        *slog.Logger
 	metrics       *CircuitFlushMetrics
 	rehydrateOnce sync.Once
+	// reconcileEvery throttles the orphan self-heal scan (a full-table SELECT)
+	// so it does not run on every 30s flush tick; lastReconcile tracks the last
+	// successful-or-attempted run. Mutated only from Run, which the scheduler
+	// never invokes concurrently with itself.
+	reconcileEvery time.Duration
+	lastReconcile  time.Time
 }
 
 // NewCredentialCircuitFlush constructs the job. interval defaults to 30s;
@@ -164,12 +187,13 @@ func NewCredentialCircuitFlush(pool *pgxpool.Pool, rdb redis.UniversalClient, hu
 		hubID = "hub-unknown"
 	}
 	return &CredentialCircuitFlushJob{
-		pool:     pool,
-		rdb:      rdb,
-		hubID:    hubID,
-		interval: interval,
-		logger:   logger.With("job", credCircuitFlushJobID),
-		metrics:  metrics,
+		pool:           pool,
+		rdb:            rdb,
+		hubID:          hubID,
+		interval:       interval,
+		logger:         logger.With("job", credCircuitFlushJobID),
+		metrics:        metrics,
+		reconcileEvery: circuitReconcileInterval,
 	}
 }
 
@@ -226,6 +250,21 @@ func (j *CredentialCircuitFlushJob) Run(ctx context.Context) error {
 				"error", err)
 		}
 	})
+
+	// 3b. Throttled self-heal: close orphaned DB rows whose live circuit is
+	//     gone (e.g. an admin reset, a Redis eviction, or a cooldown-elapsed
+	//     rate-limit rehydrate did not re-arm). Runs AFTER rehydrate so it sees
+	//     the post-rehydrate Redis state, and BEFORE the idle early-return so
+	//     orphans are healed even when no fresh transitions are pending. Claim
+	//     the slot before running so a transient error does not turn it into a
+	//     per-tick table scan.
+	if j.reconcileDue() {
+		j.lastReconcile = time.Now()
+		if err := j.reconcileOrphans(ctx, inFlightKey); err != nil {
+			j.logger.Warn("orphan reconcile failed; will retry next interval", "error", err)
+		}
+	}
+
 	j.metrics.setDirty(len(moved))
 	if len(moved) == 0 {
 		j.metrics.cycle("ok_idle")
@@ -253,11 +292,11 @@ func (j *CredentialCircuitFlushJob) Run(ctx context.Context) error {
 		}
 		j.metrics.cycle("ok")
 	} else {
-		// Partial failure: keep in-flight set so failed entries get retried.
-		// Remove successfully-flushed entries to avoid re-processing them.
-		// Because flushOne and the SREM run in different connections, we
-		// race against fresh dirty additions, but a fresh dirty for the
-		// same credID will be picked up next cycle anyway.
+		// Partial failure: keep the whole in-flight set so the failed entries
+		// get retried next cycle. Successfully-flushed entries stay in the set
+		// too and are simply re-flushed — every DB write is idempotent
+		// (writeClosed / the transition UPDATE are last-write-wins on the same
+		// row), so re-processing them is harmless.
 		j.metrics.cycle("ok_partial")
 	}
 
@@ -328,20 +367,7 @@ func (j *CredentialCircuitFlushJob) flushOne(ctx context.Context, credID string)
 	if state == "" || state == credstate.CircuitClosed {
 		// Empty hash → CLOSED. Reset every circuit column on the row so
 		// the admin API and reliability-alerts job see a consistent view.
-		_, err := j.pool.Exec(ctx, `
-			UPDATE "Credential" SET
-				"circuitState"        = $2,
-				"circuitReason"       = NULL,
-				"circuitOpenedAt"     = NULL,
-				"circuitNextProbeAt"  = NULL,
-				"updatedAt"           = NOW()
-			WHERE id = $1
-		`, credID, credstate.CircuitClosed)
-		if err != nil {
-			return fmt.Errorf("update closed: %w", err)
-		}
-		j.metrics.transition(credstate.CircuitClosed, "")
-		return nil
+		return j.writeClosed(ctx, credID)
 	}
 
 	reason := nilIfEmpty(fields[credstate.CircuitFieldOpenReason])
@@ -366,6 +392,93 @@ func (j *CredentialCircuitFlushJob) flushOne(ctx context.Context, credID string)
 	}
 	j.metrics.transition(state, reasonLabel)
 	return nil
+}
+
+// writeClosed resets every circuit column on a credential row to the closed
+// state. Shared by flushOne's recovery branch and the orphan reconcile so the
+// "what closed looks like in the DB" SQL lives in exactly one place.
+func (j *CredentialCircuitFlushJob) writeClosed(ctx context.Context, credID string) error {
+	if _, err := j.pool.Exec(ctx, `
+		UPDATE "Credential" SET
+			"circuitState"        = $2,
+			"circuitReason"       = NULL,
+			"circuitOpenedAt"     = NULL,
+			"circuitNextProbeAt"  = NULL,
+			"updatedAt"           = NOW()
+		WHERE id = $1
+	`, credID, credstate.CircuitClosed); err != nil {
+		return fmt.Errorf("update closed: %w", err)
+	}
+	j.metrics.transition(credstate.CircuitClosed, "")
+	return nil
+}
+
+// reconcileOrphans closes any Credential row whose durable circuitState is
+// non-closed but whose live Redis hash is ABSENT. Such a row is an orphan the
+// steady-state flush can never fix: the flush is driven by cred:circuit:dirty,
+// and an orphan was never added to it. Orphans arise from an admin reset that
+// cleared Redis, a Redis eviction, or a cooldown-elapsed rate-limit that the
+// restart rehydrate intentionally did not re-arm. In every case Redis-absent
+// means the live state is already CLOSED (the gateway treats a missing hash as
+// closed), so converging the DB to closed only removes stale "open" the UI
+// shows — it can never close a circuit that is genuinely open (those have a
+// live Redis hash, which we skip). In-flight members are skipped so this never
+// races the flush writer for the same row.
+func (j *CredentialCircuitFlushJob) reconcileOrphans(ctx context.Context, inFlightKey string) error {
+	// Collect the candidate IDs first and close the rows before issuing any
+	// per-ID Redis/Exec calls — interleaving a second statement while the
+	// SELECT's rows are open is unsafe on a single pooled connection.
+	rows, err := j.pool.Query(ctx, `SELECT id FROM "Credential" WHERE "circuitState" <> $1`, credstate.CircuitClosed)
+	if err != nil {
+		return fmt.Errorf("select non-closed circuits: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate rows: %w", err)
+	}
+
+	var closed int
+	for _, id := range ids {
+		// A fresh transition the flush just claimed — let the flush win.
+		if inFlightKey != "" {
+			if m, mErr := j.rdb.SIsMember(ctx, inFlightKey, id).Result(); mErr == nil && m {
+				continue
+			}
+		}
+		n, exErr := j.rdb.Exists(ctx, credstate.CircuitKey(id)).Result()
+		if exErr != nil {
+			j.logger.Warn("reconcile: redis exists check failed", "credentialID", id, "error", exErr)
+			continue
+		}
+		if n > 0 {
+			continue // live circuit present → DB row is legitimately non-closed
+		}
+		if wErr := j.writeClosed(ctx, id); wErr != nil {
+			j.logger.Warn("reconcile: close orphan failed", "credentialID", id, "error", wErr)
+			continue
+		}
+		closed++
+	}
+	if closed > 0 {
+		j.metrics.reconciled(closed)
+		j.logger.Info("reconciled orphaned circuit rows to closed", "count", closed)
+	}
+	return nil
+}
+
+// reconcileDue reports whether the throttled orphan reconcile should run this
+// cycle. The zero lastReconcile makes the first cycle (post-rehydrate) due.
+func (j *CredentialCircuitFlushJob) reconcileDue() bool {
+	return time.Since(j.lastReconcile) >= j.reconcileEvery
 }
 
 // rehydrateFromDB copies persisted circuit state back into Redis for

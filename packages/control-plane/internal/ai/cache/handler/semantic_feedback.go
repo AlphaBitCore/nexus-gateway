@@ -217,9 +217,9 @@ func (h *SemanticCacheHandler) GetSemanticFeedback(c echo.Context) error {
 // Redis-backed PoisonAdder
 
 const (
-	cpPoisonKeyPrefix      = "nexus:l2:poison:"
-	cpPoisonTTLMultiplier  = 10
-	cpPoisonMaxTTL         = 30 * 24 * time.Hour
+	cpPoisonKeyPrefix     = "nexus:l2:poison:"
+	cpPoisonTTLMultiplier = 10
+	cpPoisonMaxTTL        = 30 * 24 * time.Hour
 )
 
 // redisPoisonAdder is the control-plane Redis-backed implementation of

@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/traffic/chain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/traffic/chain"
 	configtypes "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 )
 

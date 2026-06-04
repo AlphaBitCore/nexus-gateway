@@ -231,7 +231,6 @@ func TestErrorNormalizer_rawFieldPopulated(t *testing.T) {
 	}
 }
 
-
 func TestParseRetryAfter_emptyString_nil(t *testing.T) {
 	got := gemerrors.ParseRetryAfter("")
 	if got != nil {

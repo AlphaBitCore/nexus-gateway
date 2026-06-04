@@ -44,12 +44,12 @@ const attestationDefaultWindow = 5 * time.Minute
 // vs "fall through to MITM" (everything else) per the fail-open
 // architecture contract.
 type AttestationVerifier struct {
-	keys        *tlsbump.AttestationKeyCache
-	replay      *tlsbump.AttestationReplayCache
-	window      time.Duration
-	enabled     atomic.Bool
-	logger      *slog.Logger
-	now         func() time.Time // injected for deterministic tests
+	keys    *tlsbump.AttestationKeyCache
+	replay  *tlsbump.AttestationReplayCache
+	window  time.Duration
+	enabled atomic.Bool
+	logger  *slog.Logger
+	now     func() time.Time // injected for deterministic tests
 }
 
 // NewAttestationVerifier wires a verifier with production defaults:

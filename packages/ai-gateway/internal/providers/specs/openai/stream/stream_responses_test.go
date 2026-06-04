@@ -19,12 +19,12 @@ package stream_test
 import (
 	"context"
 	"errors"
+	ostream "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/stream"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
-	ostream "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/openai/stream"
 )
 
 // responsesBody creates an io.ReadCloser from SSE event lines.
