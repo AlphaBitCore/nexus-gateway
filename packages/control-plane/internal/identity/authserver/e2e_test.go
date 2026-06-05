@@ -46,8 +46,8 @@ func TestE2E_LocalIdPFlow(t *testing.T) {
 	var idpID string
 	idpName := "e2e-local-" + suffix
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO "IdentityProvider"(id,type,name,enabled,config,"roleMapping","defaultRole","jitEnabled","updatedAt")
-		 VALUES (gen_random_uuid(),'local',$1,TRUE,'{}'::jsonb,'[]'::jsonb,'developer',TRUE,NOW())
+		`INSERT INTO "IdentityProvider"(id,type,name,enabled,config,"defaultRole","jitEnabled","updatedAt")
+		 VALUES (gen_random_uuid(),'local',$1,TRUE,'{}'::jsonb,'developer',TRUE,NOW())
 		 RETURNING id`, idpName,
 	).Scan(&idpID); err != nil {
 		t.Fatalf("seed idp: %v", err)

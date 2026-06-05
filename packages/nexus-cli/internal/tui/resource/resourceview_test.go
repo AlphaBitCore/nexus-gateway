@@ -681,3 +681,41 @@ func TestRenderMarkdownEdges(t *testing.T) {
 		t.Fatalf("markdown should be rendered, not literal:\n%s", out)
 	}
 }
+
+// TestResourceMenuShowsSummaries: operation menu rows render the operation's
+// OpenAPI summary (truncated to the pane budget) and fall back to the label
+// when an op carries no summary — the S3 "menus speak spec language" change.
+func TestResourceMenuShowsSummaries(t *testing.T) {
+	gw := &fakeGateway{adminRaw: json.RawMessage(`{"backendMode":"builtin"}`)}
+	r := newResource(gw)
+	r.filter.SetValue("ai-guard")
+	r.kindCur = 0
+	r.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if r.top().mode != frameMenu {
+		t.Fatalf("ai-guard should land on a menu, got %v", r.top().mode)
+	}
+	view := r.View(120, 30)
+	// Real OpenAPI summaries, not synthesized path tails:
+	for _, want := range []string{"Get the AI Guard configuration", "Dry-run an AI Guard classification"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("menu must show the operation summary %q:\n%s", want, view)
+		}
+	}
+	// Truncation: a synthetic long-summary op must clip at the pane budget.
+	r.top().menu = append(r.top().menu, capres.OperationInfo{
+		Kind: "ai-guard", OperationID: "longOne", Method: "GET", Path: "/api/admin/ai-guard/x",
+		Summary: strings.Repeat("verylongword ", 10),
+	})
+	view = r.View(120, 30)
+	if !strings.Contains(view, "…") {
+		t.Fatalf("an over-budget summary must be ellipsized:\n%s", view)
+	}
+	// Fallback: an op with no summary renders its label.
+	r.top().menu = append(r.top().menu, capres.OperationInfo{
+		Kind: "ai-guard", OperationID: "bare", Method: "GET", Path: "/api/admin/ai-guard/y",
+		Label: "bare-label-fallback",
+	})
+	if view := r.View(120, 30); !strings.Contains(view, "bare-label-fallback") {
+		t.Fatalf("a summary-less op must fall back to its label:\n%s", view)
+	}
+}

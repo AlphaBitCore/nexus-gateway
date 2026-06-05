@@ -122,6 +122,42 @@ func TestValidateJWT_Valid(t *testing.T) {
 	}
 }
 
+// TestValidateJWT_IssuerTrailingSlash asserts a token whose `iss` differs from
+// the configured issuer only by a trailing slash still validates — Auth0/Okta
+// advertise "https://host/" while admins routinely configure "https://host".
+func TestValidateJWT_IssuerTrailingSlash(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid := "test-kid-slash"
+	srv := startJWKSServer(t, kid, &priv.PublicKey)
+
+	config := &OidcConfig{
+		Enabled:    true,
+		Issuer:     "https://idp.example.com", // configured without slash
+		JwksUri:    srv.URL,
+		Audience:   "nexus-gateway",
+		EmailClaim: "email",
+	}
+	cache := NewJWKSCache(srv.URL, slog.Default())
+
+	token := buildJWT(t,
+		map[string]any{"alg": "RS256", "kid": kid},
+		map[string]any{
+			"sub": "user-1",
+			"iss": "https://idp.example.com/", // token carries the slash
+			"aud": "nexus-gateway",
+			"exp": float64(time.Now().Add(time.Hour).Unix()),
+		},
+		priv,
+	)
+
+	if _, err := ValidateJWT(token, config, cache); err != nil {
+		t.Fatalf("trailing-slash issuer must validate: %v", err)
+	}
+}
+
 func TestValidateJWT_Expired(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	kid := "test-kid-2"

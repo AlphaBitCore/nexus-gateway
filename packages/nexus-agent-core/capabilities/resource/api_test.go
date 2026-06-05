@@ -20,8 +20,8 @@ func TestResourceKindsSortedWithSummary(t *testing.T) {
 			vk = &ks[i]
 		}
 	}
-	if vk == nil || vk.OpCount == 0 || len(vk.Verbs) == 0 {
-		t.Fatalf("virtual-keys must be present with an op count + canonical verbs, got %+v", vk)
+	if vk == nil || vk.OpCount == 0 || len(vk.Capabilities) == 0 {
+		t.Fatalf("virtual-keys must be present with an op count + capability profile, got %+v", vk)
 	}
 }
 
@@ -60,17 +60,14 @@ func TestResolveOperationSubstitutes(t *testing.T) {
 	}
 }
 
-func TestSearchOperationInfos(t *testing.T) {
-	got := SearchInfos("node override", 5)
-	var found bool
-	for _, op := range got {
-		if op.OperationID == "setNodeOverride" && op.Kind == "nodes" {
-			found = true
+func TestSearchCardsSurfacesKindAndOp(t *testing.T) {
+	res := SearchCards("node override", 5, 20)
+	for _, c := range res.Cards {
+		if c.OperationID == "setNodeOverride" && c.Kind == "nodes" {
+			return
 		}
 	}
-	if !found {
-		t.Fatalf("SearchInfos must surface setNodeOverride with its kind, got %+v", got)
-	}
+	t.Fatalf("SearchCards must surface setNodeOverride with its kind, got %+v", res.Cards)
 }
 
 func TestDescribeOperation(t *testing.T) {

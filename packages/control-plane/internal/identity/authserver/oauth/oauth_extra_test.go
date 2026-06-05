@@ -922,6 +922,8 @@ func (e erroringUsers) GetByID(_ context.Context, _ string) (*store.User, error)
 	return nil, e.err
 }
 
+func (e erroringUsers) TouchLastLogin(_ context.Context, _ string) error { return nil }
+
 // TestToken_Refresh_UserNotFoundReturns400 pins the user-not-found branch.
 // A refresh chain whose owner was deleted MUST end the session (400
 // invalid_grant) rather than 500 -- the client is supposed to restart the

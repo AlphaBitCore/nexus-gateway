@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
 
 // newSetupCmd is the friendly interactive environment setup. `nexus setup [name]`
@@ -63,6 +64,17 @@ func newSetupCmd(a *App) *cobra.Command {
 			}
 			if env.CPBaseURL == "" {
 				return fmt.Errorf("%w: Control Plane base URL is required", errUsage)
+			}
+			if err := local.ValidateBaseURL("Control Plane base URL", env.CPBaseURL); err != nil {
+				return fmt.Errorf("%w: %v", errUsage, err)
+			}
+			// An empty AI Gateway URL defaults to the Control Plane URL (the prompt
+			// default could not see the just-entered CP URL for a brand-new env).
+			if env.AIGatewayBaseURL == "" {
+				env.AIGatewayBaseURL = env.CPBaseURL
+			}
+			if err := local.ValidateBaseURL("AI Gateway base URL", env.AIGatewayBaseURL); err != nil {
+				return fmt.Errorf("%w: %v", errUsage, err)
 			}
 
 			a.Cfg.SetEnv(env)

@@ -18,18 +18,20 @@ type IdPPgxPool interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// IdentityProvider is the auth-server view of an IdP registration. Config and
-// RoleMapping are decoded from JSONB columns at load time so callers work with
-// native Go values.
+// IdentityProvider is the auth-server view of an IdP registration. Config is
+// decoded from the JSONB column at load time so callers work with native Go
+// values.
 type IdentityProvider struct {
 	ID          string
 	Type        string // "local" | "oidc" | "saml"
 	Name        string
 	Enabled     bool
 	Config      map[string]any
-	RoleMapping []map[string]any
 	DefaultRole string
-	JITEnabled  bool
+	// DefaultControlPlaneAccess seeds NexusUser.canAccessControlPlane for users
+	// JIT-provisioned through this IdP.
+	DefaultControlPlaneAccess bool
+	JITEnabled                bool
 }
 
 // IdPStore loads IdentityProvider rows.
@@ -50,7 +52,7 @@ var ErrIdPNotFound = errors.New("identity_provider: not found")
 // ListEnabled returns all enabled IdPs ordered by name.
 func (s *IdPStore) ListEnabled(ctx context.Context) ([]IdentityProvider, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled"
+		`SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled"
 		   FROM "IdentityProvider"
 		  WHERE enabled = TRUE
 		  ORDER BY name`)
@@ -72,7 +74,7 @@ func (s *IdPStore) ListEnabled(ctx context.Context) ([]IdentityProvider, error) 
 // GetByID returns the IdP with the given id or ErrIdPNotFound.
 func (s *IdPStore) GetByID(ctx context.Context, id string) (*IdentityProvider, error) {
 	row := s.db.QueryRow(ctx,
-		`SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled"
+		`SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled"
 		   FROM "IdentityProvider"
 		  WHERE id = $1`, id)
 	p, err := scanIdP(row)
@@ -90,7 +92,7 @@ func (s *IdPStore) GetByID(ctx context.Context, id string) (*IdentityProvider, e
 // ordering via createdAt ASC).
 func (s *IdPStore) GetLocal(ctx context.Context) (*IdentityProvider, error) {
 	row := s.db.QueryRow(ctx,
-		`SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled"
+		`SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled"
 		   FROM "IdentityProvider"
 		  WHERE type = 'local' AND enabled = TRUE
 		  ORDER BY "createdAt" ASC
@@ -111,17 +113,12 @@ type scannable interface {
 
 func scanIdP(r scannable) (*IdentityProvider, error) {
 	var p IdentityProvider
-	var configJSON, roleMapJSON []byte
-	if err := r.Scan(&p.ID, &p.Type, &p.Name, &p.Enabled, &configJSON, &roleMapJSON, &p.DefaultRole, &p.JITEnabled); err != nil {
+	var configJSON []byte
+	if err := r.Scan(&p.ID, &p.Type, &p.Name, &p.Enabled, &configJSON, &p.DefaultRole, &p.DefaultControlPlaneAccess, &p.JITEnabled); err != nil {
 		return nil, err
 	}
 	if len(configJSON) > 0 {
 		if err := json.Unmarshal(configJSON, &p.Config); err != nil {
-			return nil, err
-		}
-	}
-	if len(roleMapJSON) > 0 {
-		if err := json.Unmarshal(roleMapJSON, &p.RoleMapping); err != nil {
 			return nil, err
 		}
 	}

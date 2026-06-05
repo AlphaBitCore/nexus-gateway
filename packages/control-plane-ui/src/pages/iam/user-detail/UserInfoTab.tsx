@@ -10,7 +10,7 @@ import styles from '../_shared/Iam.module.css';
 
 function SourceBadge({ source }: { source?: string }) {
   if (!source || source === 'local') return null;
-  const label = source === 'oidc' ? 'SSO (OIDC)' : source === 'scim' ? 'SCIM' : source.toUpperCase();
+  const label = source === 'oidc' ? 'SSO (OIDC)' : source === 'saml' ? 'SSO (SAML)' : source === 'scim' ? 'SCIM' : source.toUpperCase();
   return <Badge variant="info">Synced · {label}</Badge>;
 }
 
@@ -54,7 +54,7 @@ export function UserInfoTab({
 
   if (!user) return null;
 
-  const isIdPManaged = user.source === 'oidc' || user.source === 'scim';
+  const isIdPManaged = user.source === 'oidc' || user.source === 'saml' || user.source === 'scim';
 
   return (
     <Card>

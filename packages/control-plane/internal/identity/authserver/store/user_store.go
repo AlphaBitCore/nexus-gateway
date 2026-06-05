@@ -47,22 +47,26 @@ func NewUserStoreWithPool(db UserPgxPool) *UserStore { return &UserStore{db: db}
 // ErrUserNotFound is returned when a NexusUser lookup misses.
 var ErrUserNotFound = errors.New("nexus_user: not found")
 
-// GetByEmail returns (userID, passwordHash, disabledAt, err). passwordHash is
-// the empty string when the column is NULL (e.g. SSO-only user).
-func (s *UserStore) GetByEmail(ctx context.Context, email string) (string, string, *time.Time, error) {
+// GetByEmail returns (userID, passwordHash, source, disabledAt, err).
+// passwordHash is the empty string when the column is NULL (e.g. SSO-only
+// user). source is the provisioning origin ("local" | "oidc" | "saml" | "scim") and is
+// never empty — the NexusUser.source column defaults to "local". The login
+// adapter uses source to fail closed for federated accounts that still carry a
+// stale local hash, so it must be read here.
+func (s *UserStore) GetByEmail(ctx context.Context, email string) (string, string, string, *time.Time, error) {
 	row := s.db.QueryRow(ctx,
-		`SELECT id, COALESCE("passwordHash", ''), "disabledAt"
+		`SELECT id, COALESCE("passwordHash", ''), source, "disabledAt"
 		   FROM "NexusUser"
 		  WHERE email = $1`, email)
-	var id, pwd string
+	var id, pwd, source string
 	var disabledAt *time.Time
-	if err := row.Scan(&id, &pwd, &disabledAt); err != nil {
+	if err := row.Scan(&id, &pwd, &source, &disabledAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", nil, ErrUserNotFound
+			return "", "", "", nil, ErrUserNotFound
 		}
-		return "", "", nil, err
+		return "", "", "", nil, err
 	}
-	return id, pwd, disabledAt, nil
+	return id, pwd, source, disabledAt, nil
 }
 
 // GetByID returns the user row by primary key or ErrUserNotFound.

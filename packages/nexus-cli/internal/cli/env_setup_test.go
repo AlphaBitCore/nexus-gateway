@@ -166,11 +166,11 @@ func TestEnvAdd_RmUsageErrors(t *testing.T) {
 		t.Fatalf("env rm with no name should be usage error, got %v", err)
 	}
 	// explicit --aigw-url is kept (not defaulted to --cp-url).
-	if _, err := runCLIWithIn(t, a, "", "env", "add", "p2", "--cp-url", "https://cp", "--aigw-url", "https://sep"); err != nil {
+	if _, err := runCLIWithIn(t, a, "", "env", "add", "p2", "--cp-url", "https://cp.example.com", "--aigw-url", "https://sep.example.com"); err != nil {
 		t.Fatalf("env add: %v", err)
 	}
 	cfg, _ := local.Load(a.ConfigPath)
-	if cfg.Envs["p2"].AIGatewayBaseURL != "https://sep" {
+	if cfg.Envs["p2"].AIGatewayBaseURL != "https://sep.example.com" {
 		t.Fatalf("explicit --aigw-url should be kept, got %q", cfg.Envs["p2"].AIGatewayBaseURL)
 	}
 }
@@ -178,11 +178,11 @@ func TestEnvAdd_RmUsageErrors(t *testing.T) {
 func TestSetup_NameArgAndEditPreservesProd(t *testing.T) {
 	a := newConfigApp(t)
 	// create "stage" via positional name; prod = yes.
-	if _, err := runCLIWithIn(t, a, "https://cp\n\ncp-ui\n\ny\n", "setup", "stage"); err != nil {
+	if _, err := runCLIWithIn(t, a, "https://cp.example.com\n\ncp-ui\n\ny\n", "setup", "stage"); err != nil {
 		t.Fatalf("setup create: %v", err)
 	}
 	cfg, _ := local.Load(a.ConfigPath)
-	if e := cfg.Envs["stage"]; e.CPBaseURL != "https://cp" || !e.IsProd {
+	if e := cfg.Envs["stage"]; e.CPBaseURL != "https://cp.example.com" || !e.IsProd {
 		t.Fatalf("setup create wrong: %+v", e)
 	}
 	// edit "stage" with all-empty input → every field (incl. prod=yes) preserved.
@@ -191,7 +191,7 @@ func TestSetup_NameArgAndEditPreservesProd(t *testing.T) {
 		t.Fatalf("setup edit: %v", err)
 	}
 	cfg, _ = local.Load(a.ConfigPath)
-	if e := cfg.Envs["stage"]; e.CPBaseURL != "https://cp" || e.OAuthClientID != "cp-ui" || !e.IsProd {
+	if e := cfg.Envs["stage"]; e.CPBaseURL != "https://cp.example.com" || e.OAuthClientID != "cp-ui" || !e.IsProd {
 		t.Fatalf("setup edit should preserve fields incl. prod: %+v", e)
 	}
 }
@@ -203,7 +203,7 @@ func TestEnvAdd_SetsDefaultWhenNone(t *testing.T) {
 		t.Fatalf("env rm local: %v", err)
 	}
 	a2 := &App{Store: fakeStore{m: map[string]string{}}, ConfigPath: a.ConfigPath}
-	if _, err := runCLIWithIn(t, a2, "", "env", "add", "first", "--cp-url", "https://f"); err != nil {
+	if _, err := runCLIWithIn(t, a2, "", "env", "add", "first", "--cp-url", "https://f.example.com"); err != nil {
 		t.Fatalf("env add: %v", err)
 	}
 	cfg, _ := local.Load(a.ConfigPath)
@@ -215,7 +215,7 @@ func TestEnvAdd_SetsDefaultWhenNone(t *testing.T) {
 func TestEnvCmds_ConfigLoadError(t *testing.T) {
 	dir := t.TempDir() // a directory, not a file → local.Load fails to read it
 	for _, args := range [][]string{
-		{"env", "add", "x", "--cp-url", "https://x"},
+		{"env", "add", "x", "--cp-url", "https://x.example.com"},
 		{"env", "rm", "x"},
 		{"setup", "x"},
 	} {
@@ -249,12 +249,12 @@ func TestTuiDeps_SwitchAndCreateEnv(t *testing.T) {
 
 	// CreateEnv persists a new prod env (CP host + separately-collected AI
 	// Gateway host), sets it default, and switches to it.
-	gw, sess, err = deps.CreateEnv("prod", "https://prod", "https://aigw.prod", true)
+	gw, sess, err = deps.CreateEnv("prod", "https://prod.example.com", "https://aigw.prod", true)
 	if err != nil || gw == nil || sess.EnvName != "prod" || a.Env.Name != "prod" {
 		t.Fatalf("CreateEnv wrong: sess=%+v env=%q err=%v", sess, a.Env.Name, err)
 	}
 	cfg, _ := local.Load(a.ConfigPath)
-	if e := cfg.Envs["prod"]; e.CPBaseURL != "https://prod" || e.AIGatewayBaseURL != "https://aigw.prod" || !e.IsProd {
+	if e := cfg.Envs["prod"]; e.CPBaseURL != "https://prod.example.com" || e.AIGatewayBaseURL != "https://aigw.prod" || !e.IsProd {
 		t.Fatalf("CreateEnv did not persist correctly: %+v", e)
 	}
 	if cfg.DefaultEnv != "prod" {
@@ -292,7 +292,7 @@ func TestTuiDeps_SwitchAndCreateEnv(t *testing.T) {
 	// EnvDetail returns the URLs + prod flag for the named env so the wizard
 	// can show "where each env points" under the cursor row.
 	cpURL, aigwURL, isProd, err := deps.EnvDetail("prod")
-	if err != nil || cpURL != "https://prod" || aigwURL != "https://aigw.prod" || !isProd {
+	if err != nil || cpURL != "https://prod.example.com" || aigwURL != "https://aigw.prod" || !isProd {
 		t.Fatalf("EnvDetail(prod) wrong: cp=%q aigw=%q prod=%v err=%v", cpURL, aigwURL, isProd, err)
 	}
 	if _, _, _, err := deps.EnvDetail("ghost"); err == nil {
@@ -313,7 +313,7 @@ func TestTuiDeps_SwitchAndCreateEnv(t *testing.T) {
 		t.Fatalf("UpdateEnv must preserve remembered selection, got %+v", e)
 	}
 	// UpdateEnv on an unknown env errors instead of silently creating one.
-	if _, _, _, err := deps.UpdateEnv("ghost", "https://x", "https://x", false); err == nil {
+	if _, _, _, err := deps.UpdateEnv("ghost", "https://x.example.com", "https://x.example.com", false); err == nil {
 		t.Fatal("UpdateEnv on an unknown env must error")
 	}
 	// loggedIn reflects whether the stored secret survives the URL edit (we
@@ -350,7 +350,7 @@ func TestTuiDeps_UpdateEnvErrors(t *testing.T) {
 		t.Fatalf("ensureEnv: %v", err)
 	}
 	deps := a.tuiDeps()
-	if _, _, _, err := deps.UpdateEnv("ghost", "https://x", "https://x", false); err == nil {
+	if _, _, _, err := deps.UpdateEnv("ghost", "https://x.example.com", "https://x.example.com", false); err == nil {
 		t.Fatal("UpdateEnv on an unknown env must error")
 	}
 }
@@ -409,5 +409,58 @@ func TestGuard_ConfigCommandsSkipAuth(t *testing.T) {
 	a := &App{Store: fakeStore{m: map[string]string{}}, Cfg: &local.Config{DefaultEnv: "local", Envs: map[string]core.Env{"local": {Name: "local", CPBaseURL: "http://x"}}}}
 	if _, err := runCLI(t, a, "env", "ls"); err != nil {
 		t.Fatalf("env ls should not require a credential: %v", err)
+	}
+}
+
+// TestEnvAdd_RejectsUnreachableURL locks the guard that prevents the "https://prod"
+// footgun: a bare-label host (not a domain/localhost/IP) is rejected at entry
+// instead of failing every later admin call with "lookup prod: no such host".
+func TestEnvAdd_RejectsUnreachableURL(t *testing.T) {
+	a := newConfigApp(t)
+	_, err := runCLIWithIn(t, a, "", "env", "add", "bad", "--cp-url", "https://prod")
+	if err == nil || exitCode(err) != 2 {
+		t.Fatalf("env add with an unreachable cp-url should be a usage error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "not reachable") {
+		t.Errorf("error should explain the host is unreachable, got: %v", err)
+	}
+	// And nothing was persisted.
+	cfg, _ := local.Load(a.ConfigPath)
+	if _, ok := cfg.Envs["bad"]; ok {
+		t.Error("the invalid environment must not have been saved")
+	}
+}
+
+func TestEnvAdd_RejectsUnreachableAigwURL(t *testing.T) {
+	a := newConfigApp(t)
+	_, err := runCLIWithIn(t, a, "", "env", "add", "bad", "--cp-url", "https://ok.example.com", "--aigw-url", "https://gw")
+	if err == nil || !strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("an unreachable --aigw-url should be rejected, got %v", err)
+	}
+}
+
+func TestSetup_RejectsUnreachableURL(t *testing.T) {
+	a := newConfigApp(t)
+	// CP URL input is the unreachable "https://prod"; remaining prompts blank, prod=no.
+	_, err := runCLIWithIn(t, a, "https://prod\n\n\n\nn\n", "setup", "bad")
+	if err == nil || !strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("setup with an unreachable CP URL should be rejected, got %v", err)
+	}
+}
+
+func TestTuiDeps_CreateUpdateEnv_RejectUnreachableURL(t *testing.T) {
+	a := &App{Store: fakeStore{m: map[string]string{}}, ConfigPath: filepath.Join(t.TempDir(), "c.toml")}
+	if err := a.ensureEnv(); err != nil {
+		t.Fatalf("ensureEnv: %v", err)
+	}
+	deps := a.tuiDeps()
+
+	if _, _, err := deps.CreateEnv("bad", "https://prod", "https://aigw.example.com", true); err == nil ||
+		!strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("CreateEnv with an unreachable CP URL should be rejected, got %v", err)
+	}
+	if _, _, _, err := deps.UpdateEnv("local", "https://nope", "https://aigw.example.com", false); err == nil ||
+		!strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("UpdateEnv with an unreachable CP URL should be rejected, got %v", err)
 	}
 }

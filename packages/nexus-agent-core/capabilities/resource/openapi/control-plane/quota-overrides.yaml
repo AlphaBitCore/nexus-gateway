@@ -197,6 +197,7 @@ paths:
             x-nexus-tier: auto
             parameters:
                 - name: id
+                  description: The quota override id.
                   in: path
                   required: true
                   schema:

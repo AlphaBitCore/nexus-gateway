@@ -74,18 +74,6 @@ func adminResult(method, path string, raw json.RawMessage, status int, err error
 	return jsonResult(out)
 }
 
-// resourceSearchMatch is one candidate the resource_search tool returns: enough
-// for the model to choose an operation and call resource_read / resource_invoke,
-// without the full per-kind schema (that comes from resource_describe).
-type resourceSearchMatch struct {
-	Kind        string `json:"kind"`
-	OperationID string `json:"operationId"`
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Label       string `json:"label"`
-	Write       bool   `json:"write"`
-}
-
 // executeOp is the single execution path for every resource operation (searched
 // reads and writes alike): substitute the named path params, attach the query,
 // send the body, and relay the HTTP outcome verbatim so the model self-corrects on
@@ -115,23 +103,20 @@ func executeOp(ctx context.Context, gw Gateway, op resource.Operation, params, q
 func resourceReadTools(gw Gateway) []agent.Tool {
 	return []agent.Tool{
 		&funcTool{name: "resource_search", tier: agent.TierAuto,
-			schema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"free text matched against kind/operationId/path/label, e.g. \"node override\" or \"cache stats\""},"limit":{"type":"integer","description":"max candidates (default 20)"}},"required":["query"]}`),
-			desc:   "Search the Control Plane admin API for operations matching a query (ranked, code-level match over kind, operationId, path, label, and each op's summary). Use this for ANY admin resource or entity named by the operator — hooks, routing rules, providers, virtual keys, IAM, caches, jobs, and more. Call it FIRST to find the operationId you need — it returns a short candidate list, not the whole catalog. Then resource_describe the kind for its body schema, and resource_read (GET) or resource_invoke (write) to act.",
+			schema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"free text matched against kind/operationId/path/label and each op's summary, e.g. \"node override\" or \"cache stats\""},"limit":{"type":"integer","description":"max candidates (default 20)"}},"required":["query"]}`),
+			desc:   "Search the Control Plane admin API for operations matching a query (ranked, code-level match over kind, operationId, path, label, and each op's summary). Use this for ANY admin resource or entity named by the operator — hooks, routing rules, providers, virtual keys, IAM, caches, jobs, and more. Call it FIRST. The top candidates come back as full cards — summary, params, and body skeleton — so a card that matches is DIRECTLY executable with resource_read (GET) or resource_invoke (write) in the same turn; resource_describe is only needed when no card covers the target (e.g. a thin `more` entry looks right).",
 			run: func(_ context.Context, in json.RawMessage) (agent.Result, error) {
 				var a struct {
 					Query string `json:"query"`
 					Limit int    `json:"limit"`
 				}
 				_ = json.Unmarshal(in, &a)
-				cands := resource.Search(a.Query, a.Limit)
-				matches := make([]resourceSearchMatch, 0, len(cands))
-				for _, op := range cands {
-					matches = append(matches, resourceSearchMatch{
-						Kind: op.Kind, OperationID: op.OperationID, Method: op.Method,
-						Path: op.Path, Label: op.Label(), Write: op.Mutating(),
-					})
-				}
-				return jsonResult(map[string]any{"query": a.Query, "matches": matches})
+				res := resource.SearchCards(a.Query, 0, a.Limit)
+				out := struct {
+					Query string `json:"query"`
+					resource.SearchResult
+				}{a.Query, res}
+				return jsonResult(out)
 			}},
 
 		&funcTool{name: "resource_describe", tier: agent.TierAuto,

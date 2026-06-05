@@ -19,15 +19,20 @@ type fakeLookup struct {
 type fakeUser struct {
 	id         string
 	pwdHash    string
+	source     string // "local" | "oidc" | "scim"; empty defaults to "local"
 	disabledAt *time.Time
 }
 
-func (f fakeLookup) GetByEmail(_ context.Context, email string) (string, string, *time.Time, error) {
+func (f fakeLookup) GetByEmail(_ context.Context, email string) (string, string, string, *time.Time, error) {
 	u, ok := f.users[email]
 	if !ok {
-		return "", "", nil, errors.New("user not found")
+		return "", "", "", nil, errors.New("user not found")
 	}
-	return u.id, u.pwdHash, u.disabledAt, nil
+	source := u.source
+	if source == "" {
+		source = "local" // mirror the NexusUser.source DB default
+	}
+	return u.id, u.pwdHash, source, u.disabledAt, nil
 }
 
 const localIdPID = "00000000-0000-0000-0000-000000000001"
@@ -164,6 +169,34 @@ func TestLocal_Authenticate_SSOOnlyUser(t *testing.T) {
 	})
 	if !errors.Is(err, idp.ErrInvalidCredentials) {
 		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
+	}
+}
+
+// TestLocal_Authenticate_FederatedWithStaleHash is the regression guard for the
+// Steve case: a federated (oidc/scim) account that still carries a VALID local
+// passwordHash from a prior life must NOT be allowed to log in with the correct
+// password — federated accounts authenticate only through their IdP. The error
+// must be the generic ErrInvalidCredentials (not a distinct SSO signal) so the
+// rejection is indistinguishable from a wrong password (anti-enumeration).
+func TestLocal_Authenticate_FederatedWithStaleHash(t *testing.T) {
+	for _, source := range []string{"oidc", "scim"} {
+		t.Run(source, func(t *testing.T) {
+			lookup := fakeLookup{users: map[string]fakeUser{
+				"steve@corp.com": {id: "usr_steve", pwdHash: mustHash(t, "hunter2"), source: source},
+			}}
+			l := idp.NewLocal(lookup, localIdPID)
+
+			res, err := l.Authenticate(context.Background(), map[string]string{
+				"email":    "steve@corp.com",
+				"password": "hunter2", // the CORRECT password
+			})
+			if res != nil {
+				t.Fatalf("federated account must not authenticate; got %+v", res)
+			}
+			if !errors.Is(err, idp.ErrInvalidCredentials) {
+				t.Fatalf("expected generic ErrInvalidCredentials, got %v", err)
+			}
+		})
 	}
 }
 

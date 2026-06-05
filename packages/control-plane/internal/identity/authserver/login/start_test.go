@@ -14,6 +14,7 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
 )
 
 // startIdPRow builds a GetByID result row with an explicit type so the start
@@ -21,8 +22,8 @@ import (
 // "saml"). Column order matches store.scanIdP.
 func startIdPRow(id, typ, name string, enabled, jit bool, cfg []byte) *pgxmock.Rows {
 	return pgxmock.NewRows([]string{
-		"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
-	}).AddRow(id, typ, name, enabled, cfg, []byte(`[]`), "developer", jit)
+		"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
+	}).AddRow(id, typ, name, enabled, cfg, "developer", false, jit)
 }
 
 // startOIDCCfg is the minimal OIDC config blob StartHandler's oidc arm needs:
@@ -89,6 +90,160 @@ func assertStartBounce(t *testing.T, rec *httptest.ResponseRecorder, authctx str
 
 func liveEntry() store.PendingAuthzEntry {
 	return store.PendingAuthzEntry{ClientID: "cli", RedirectURI: "http://127.0.0.1/cb", ExpiresAt: time.Now().Add(time.Minute)}
+}
+
+// startOIDCCfgIssuerOnly mirrors the real Add-IdP form output: only issuer +
+// clientId + redirectUri are stored, with the authorize/token/jwks endpoints
+// left to discovery. This is the config shape the discovery bug surfaced on.
+func startOIDCCfgIssuerOnly(issuer, clientID, redirectURI string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"issuer":      issuer,
+		"clientId":    clientID,
+		"redirectUri": redirectURI,
+	})
+	return b
+}
+
+// TestStartHandler_OIDCDiscovery covers the SSO-start leg resolving the
+// authorize endpoint from the issuer's discovery document when the saved
+// config omits it (the admin form's issuer-only path).
+func TestStartHandler_OIDCDiscovery(t *testing.T) {
+	t.Run("issuer-only config → discover authorize endpoint → 302 to IdP", func(t *testing.T) {
+		var disco *httptest.Server
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"authorization_endpoint":"` + disco.URL + `/authorize",` +
+				`"token_endpoint":"` + disco.URL + `/token","jwks_uri":"` + disco.URL + `/jwks"}`))
+		})
+		disco = httptest.NewServer(mux)
+		t.Cleanup(disco.Close)
+
+		mock, _ := pgxmock.NewPool()
+		t.Cleanup(mock.Close)
+		cfg := startOIDCCfgIssuerOnly(disco.URL, "client-disco", "https://app/cb")
+		mock.ExpectQuery(idpRowQuery).WithArgs("idp-disco").
+			WillReturnRows(startIdPRow("idp-disco", "oidc", "Auth0", true, true, cfg))
+		d, pending, _ := newStartDeps(t, mock)
+		d.Resolver = oidcdisco.NewResolver()
+		pending.Put("ctxd", liveEntry())
+
+		c, rec := newStartCtx("idp-disco", "ctxd")
+		if err := StartHandler(d)(c); err != nil {
+			t.Fatalf("handler: %v", err)
+		}
+		if rec.Code != http.StatusFound {
+			t.Fatalf("got %d, want 302 (body=%q)", rec.Code, rec.Body.String())
+		}
+		loc, _ := url.Parse(rec.Header().Get("Location"))
+		if loc.Path != "/authorize" || loc.Host != mustHost(t, disco.URL) {
+			t.Fatalf("Location = %q, want discovered authorize endpoint", rec.Header().Get("Location"))
+		}
+		if loc.Query().Get("client_id") != "client-disco" || loc.Query().Get("state") != "ctxd" {
+			t.Fatalf("authorize query missing client_id/state: %v", loc.Query())
+		}
+	})
+
+	t.Run("discovery unreachable → bounce to login (no server error body)", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		t.Cleanup(mock.Close)
+		// Issuer points at a dead port → discovery fetch fails.
+		cfg := startOIDCCfgIssuerOnly("http://127.0.0.1:1", "cid", "https://app/cb")
+		mock.ExpectQuery(idpRowQuery).WithArgs("idp-dead").
+			WillReturnRows(startIdPRow("idp-dead", "oidc", "Dead", true, true, cfg))
+		d, pending, _ := newStartDeps(t, mock)
+		d.Resolver = oidcdisco.NewResolver()
+		pending.Put("ctxdead", liveEntry())
+
+		c, rec := newStartCtx("idp-dead", "ctxdead")
+		_ = StartHandler(d)(c)
+		assertStartBounce(t, rec, "ctxdead")
+	})
+}
+
+func mustHost(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+	return u.Host
+}
+
+func mustQuery(t *testing.T, raw string) url.Values {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+	return u.Query()
+}
+
+// TestStartHandler_OIDCSendsNonce asserts the SSO-start leg generates a nonce,
+// sends it as the authorize `nonce` parameter, and stamps the same value on the
+// pending entry for the callback to verify.
+func TestStartHandler_OIDCSendsNonce(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	t.Cleanup(mock.Close)
+	cfg := startOIDCCfg("https://idp.example.com/authorize", "cid", "https://app/cb")
+	mock.ExpectQuery(idpRowQuery).WithArgs("idp-nonce").
+		WillReturnRows(startIdPRow("idp-nonce", "oidc", "Okta", true, true, cfg))
+	d, pending, _ := newStartDeps(t, mock)
+	pending.Put("ctxn", liveEntry())
+
+	c, rec := newStartCtx("idp-nonce", "ctxn")
+	if err := StartHandler(d)(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	nonce := mustQuery(t, rec.Header().Get("Location")).Get("nonce")
+	if nonce == "" {
+		t.Fatal("authorize URL missing nonce")
+	}
+	e, ok := pending.Take("ctxn")
+	if !ok || e.IdPNonce != nonce {
+		t.Fatalf("pending IdPNonce = %q (ok=%v), want %q stamped", e.IdPNonce, ok, nonce)
+	}
+}
+
+// TestStartHandler_OIDCAuthorizeParams covers the extra-authorize-params
+// config: admin-supplied key/value pairs are appended to the IdP authorize
+// URL, while reserved OAuth params can never be overridden.
+func TestStartHandler_OIDCAuthorizeParams(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	t.Cleanup(mock.Close)
+	cfg, _ := json.Marshal(map[string]any{
+		"authorizeUrl": "https://idp.example.com/authorize",
+		"clientId":     "client-xyz",
+		"redirectUri":  "https://app/cb",
+		"issuer":       "https://idp.example.com",
+		"authorizeParams": []map[string]string{
+			{"key": "organization", "value": "org_abc123"},
+			{"key": "prompt", "value": "login"},
+			{"key": "scope", "value": "HACKED"}, // reserved → must be ignored
+			{"key": "", "value": "skipme"},      // empty key → skipped
+		},
+	})
+	mock.ExpectQuery(idpRowQuery).WithArgs("idp-params").
+		WillReturnRows(startIdPRow("idp-params", "oidc", "Auth0", true, true, cfg))
+	d, pending, _ := newStartDeps(t, mock)
+	pending.Put("ctxp", liveEntry())
+
+	c, rec := newStartCtx("idp-params", "ctxp")
+	if err := StartHandler(d)(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("got %d, want 302 (body=%q)", rec.Code, rec.Body.String())
+	}
+	q := mustQuery(t, rec.Header().Get("Location"))
+	if q.Get("organization") != "org_abc123" || q.Get("prompt") != "login" {
+		t.Fatalf("extra params not appended: %v", q)
+	}
+	if q.Get("scope") != "openid profile email" {
+		t.Fatalf("reserved param scope was overridden by config: %q", q.Get("scope"))
+	}
+	if q.Get("client_id") != "client-xyz" || q.Get("state") != "ctxp" {
+		t.Fatalf("standard params lost: %v", q)
+	}
 }
 
 func TestStartHandler(t *testing.T) {

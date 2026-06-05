@@ -168,7 +168,7 @@ export function IamUsersWithOrgsPage() {
       label: t('pages:iam.source'),
       render: (r) => {
         if (!r.source || r.source === 'local') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
-        const label = r.source === 'oidc' ? 'SSO' : r.source === 'scim' ? 'SCIM' : r.source;
+        const label = r.source === 'oidc' || r.source === 'saml' ? 'SSO' : r.source === 'scim' ? 'SCIM' : r.source;
         return <Badge variant="info">{label}</Badge>;
       },
     },

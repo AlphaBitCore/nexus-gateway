@@ -852,8 +852,8 @@ export interface AdminUser {
   email?: string;
   status: string;
   canAccessControlPlane: boolean;
-  /** Provisioning source: 'local' | 'oidc' | 'scim'. */
-  source?: 'local' | 'oidc' | 'scim';
+  /** Provisioning source: 'local' | 'oidc' | 'saml' | 'scim'. */
+  source?: 'local' | 'oidc' | 'saml' | 'scim';
   roles: string[];
   /** Full policy attachments (direct + group-inherited). Present on GET /users/:id detail response. */
   policyAttachments?: IamPolicyAttachment[];
@@ -1371,8 +1371,9 @@ export interface IdentityProvider {
   /** OIDC fields when type='oidc'; SAML fields when type='saml'. Secret-bearing
    *  fields (`clientSecret`, `certificatePem`) come back masked as "********". */
   config?: Record<string, unknown>;
-  roleMapping?: unknown;
   defaultRole?: string;
+  /** Whether JIT-provisioned users from this IdP get Control Plane access. */
+  defaultControlPlaneAccess?: boolean;
   jitEnabled?: boolean;
   createdAt: string;
   updatedAt?: string;
@@ -1388,8 +1389,8 @@ export interface IdentityProviderWriteRequest {
   name: string;
   enabled?: boolean;
   config: Record<string, unknown>;
-  roleMapping?: unknown;
   defaultRole?: string;
+  defaultControlPlaneAccess?: boolean;
   jitEnabled?: boolean;
 }
 
@@ -1403,6 +1404,21 @@ export interface IdentityProviderProbeResult {
   detail?: Record<string, unknown>;
   error?: string;
   elapsedMs: number;
+}
+
+/**
+ * Response from POST /api/admin/identity-providers/parse-saml-metadata —
+ * the SP-relevant fields extracted from an uploaded/pasted IdP metadata XML,
+ * used to pre-fill the SAML Add-IdP form. `emailAttribute`/`groupsAttribute`
+ * are present only when the metadata declared an attribute that looks like
+ * email / groups.
+ */
+export interface SamlMetadataParseResult {
+  entityId: string;
+  ssoUrl: string;
+  certificatePem: string;
+  emailAttribute?: string;
+  groupsAttribute?: string;
 }
 
 export interface ScimToken {

@@ -9,6 +9,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
 	capabilities "github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/capabilities/runtime"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 	tui "github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/shell"
 )
 
@@ -72,6 +73,12 @@ func (a *App) tuiDeps() tui.Deps {
 			return a.client(), a.tuiSession(), a.loggedIn(), nil
 		},
 		CreateEnv: func(name, cpBaseURL, aigwBaseURL string, prod bool) (tui.Gateway, tui.Session, error) {
+			if err := local.ValidateBaseURL("Control Plane URL", cpBaseURL); err != nil {
+				return nil, tui.Session{}, err
+			}
+			if err := local.ValidateBaseURL("AI Gateway URL", aigwBaseURL); err != nil {
+				return nil, tui.Session{}, err
+			}
 			env := core.Env{
 				Name:             name,
 				CPBaseURL:        cpBaseURL,
@@ -91,6 +98,12 @@ func (a *App) tuiDeps() tui.Deps {
 			return a.client(), a.tuiSession(), nil
 		},
 		UpdateEnv: func(name, cpBaseURL, aigwBaseURL string, prod bool) (tui.Gateway, tui.Session, bool, error) {
+			if err := local.ValidateBaseURL("Control Plane URL", cpBaseURL); err != nil {
+				return nil, tui.Session{}, false, err
+			}
+			if err := local.ValidateBaseURL("AI Gateway URL", aigwBaseURL); err != nil {
+				return nil, tui.Session{}, false, err
+			}
 			// Preserve OAuth client + redirect + remembered selections from the
 			// existing row — we are only changing the URLs and prod flag.
 			old, ok := a.Cfg.Envs[name]

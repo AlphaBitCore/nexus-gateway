@@ -45,7 +45,7 @@ type TrafficEvent struct {
 	TraceID           *string `json:"traceId,omitempty"`
 	ExternalRequestID *string `json:"externalRequestId,omitempty"`
 	// Entity attribution
-	EntityType *string `json:"entityType,omitempty"` // "user" | "project" | "unknown"
+	EntityType *string `json:"entityType,omitempty"` // "user" | "project" (unclassified rows store empty)
 	EntityID   *string `json:"entityId,omitempty"`
 	EntityName *string `json:"entityName,omitempty"`
 	OrgID      *string `json:"orgId,omitempty"`
@@ -178,7 +178,7 @@ type TrafficEventListParams struct {
 	Provider   string
 	EntityID   string
 	OrgID      string
-	EntityType string // "user" | "project" | "unknown"
+	EntityType string // "user" | "project" (unclassified rows store empty)
 	// ProjectID / VirtualKeyID select against the structured identity JSON —
 	// traffic_event has no project_id / virtual_key_id columns because the
 	// identity snapshot varies by source. Matches use
@@ -219,9 +219,9 @@ type TrafficEventListParams struct {
 	// Exact match on a.routing_rule_id.
 	RoutingRuleID string
 	// ErrorCode filters by the structured failure-reason classification stored
-	// in a.error_code. Exact match (case-insensitive not applied — stored values
-	// are already upper-case e.g. "PROVIDER_ERROR" or lower-case canonical
-	// e.g. "no_compatible_capability"). Pass the raw stored value.
+	// in a.error_code. Exact match on the raw stored value (upper-case codes
+	// such as "PROVIDER_ERROR"; "no_compatible_capability"-style reason codes
+	// live on request_hook_reason_code, not here).
 	ErrorCode string
 	StartTime *time.Time
 	EndTime   *time.Time

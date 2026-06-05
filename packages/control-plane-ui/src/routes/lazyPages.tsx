@@ -12,6 +12,7 @@ export const LazyForgotPasswordPage = L(() =>
   import('../auth/pages/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })),
 );
 export const LazyCallbackPage = L(() => import('../auth/pages/CallbackPage').then((m) => ({ default: m.CallbackPage })));
+export const LazySsoErrorPage = L(() => import('../auth/pages/SsoErrorPage').then((m) => ({ default: m.SsoErrorPage })));
 
 export const LazyDashboardPage = L(() => import('../pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })));
 export const LazyTrafficAnalyticsPage = L(() => import('../pages/traffic/analytics/TrafficAnalyticsPage').then((m) => ({ default: m.TrafficAnalyticsPage })));

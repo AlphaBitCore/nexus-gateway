@@ -46,7 +46,7 @@ func newLivePending(t *testing.T, authctx string) *store.PendingAuthzStore {
 
 // TestIdpsHandler_Mock_Success drives the happy path through pgxmock —
 // proving the handler iterates rows and emits ID/Type/Name unchanged
-// without leaking config/roleMapping/jitEnabled fields.
+// without leaking config/jitEnabled fields.
 func TestIdpsHandler_Mock_Success(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {
@@ -55,11 +55,11 @@ func TestIdpsHandler_Mock_Success(t *testing.T) {
 	t.Cleanup(mock.Close)
 
 	rows := pgxmock.NewRows([]string{
-		"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
+		"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
 	}).
-		AddRow("idp-local-1", "local", "Local IdP", true, []byte(`{}`), []byte(`[]`), "developer", true).
-		AddRow("idp-oidc-1", "oidc", "Corp Okta", true, []byte(`{"clientId":"abc"}`), []byte(`[]`), "developer", true)
-	mock.ExpectQuery(`SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled"`).
+		AddRow("idp-local-1", "local", "Local IdP", true, []byte(`{}`), "developer", false, true).
+		AddRow("idp-oidc-1", "oidc", "Corp Okta", true, []byte(`{"clientId":"abc"}`), "developer", false, true)
+	mock.ExpectQuery(`SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled"`).
 		WillReturnRows(rows)
 
 	authctx := "ctx-success-" + time.Now().Format("150405.000000000")
@@ -100,9 +100,6 @@ func TestIdpsHandler_Mock_Success(t *testing.T) {
 	}
 	if _, ok := keys["config"]; ok {
 		t.Fatal("response leaks `config` field (contains secrets such as clientSecret)")
-	}
-	if _, ok := keys["roleMapping"]; ok {
-		t.Fatal("response leaks `roleMapping` field")
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -201,7 +198,7 @@ func TestIdpsHandler_Mock_StoreFailure(t *testing.T) {
 		t.Fatalf("new mock: %v", err)
 	}
 	t.Cleanup(mock.Close)
-	mock.ExpectQuery(`SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled"`).
+	mock.ExpectQuery(`SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled"`).
 		WillReturnError(errors.New("connection refused"))
 
 	authctx := "ctx-err-" + time.Now().Format("150405.000000000")

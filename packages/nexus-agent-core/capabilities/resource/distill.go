@@ -60,7 +60,12 @@ type DistilledField struct {
 // --- minimal OpenAPI shapes (only the fields the distiller reads) ---
 
 type oapiDoc struct {
-	Paths map[string]map[string]oapiOp `yaml:"paths"`
+	Paths      map[string]map[string]oapiOp `yaml:"paths"`
+	Components oapiComponents               `yaml:"components"`
+}
+
+type oapiComponents struct {
+	Schemas map[string]oapiSchema `yaml:"schemas"`
 }
 
 type oapiOp struct {
@@ -85,10 +90,41 @@ type oapiReqBody struct {
 }
 
 type oapiSchema struct {
+	Ref        string                `yaml:"$ref"` // same-document ref: #/components/schemas/<Name>
 	Type       any                   `yaml:"type"` // string, or []any for 3.1 unions ([string,null])
 	Enum       []any                 `yaml:"enum"`
 	Properties map[string]oapiSchema `yaml:"properties"`
 	Required   []string              `yaml:"required"`
+}
+
+// refMaxHops caps $ref chain following. The embedded corpus's deepest real
+// chain is 3 hops (the device-groups membership-query bodies), and every ref
+// is same-document (#/components/schemas/...) — measured 2026-06-05, guarded
+// by TestDistillRefBodiesNonEmpty. The cap is inclusive: a 3-hop chain resolves.
+const refMaxHops = 3
+
+// resolveSchema follows a schema's $ref chain through the document's
+// components/schemas, up to refMaxHops hops, with a visited set so a cyclic
+// ref terminates. An unresolvable ref (unknown name, non-local ref, cycle,
+// or a chain deeper than the cap) yields the zero schema — the body then
+// distills empty, exactly the pre-resolution behavior.
+func resolveSchema(s oapiSchema, doc *oapiDoc, seen map[string]bool) oapiSchema {
+	for hops := 0; s.Ref != "" && hops < refMaxHops; hops++ {
+		name, ok := strings.CutPrefix(s.Ref, "#/components/schemas/")
+		if !ok || seen[name] {
+			return oapiSchema{}
+		}
+		seen[name] = true
+		next, ok := doc.Components.Schemas[name]
+		if !ok {
+			return oapiSchema{}
+		}
+		s = next
+	}
+	if s.Ref != "" { // chain deeper than the cap
+		return oapiSchema{}
+	}
+	return s
 }
 
 // Distill returns the compact, model-facing schema for a kind by name — every
@@ -146,20 +182,24 @@ func distillKind(rk resourceKind, raw []byte) (DistilledKind, error) {
 			// still finds the op.
 			d.searchText = strings.ToLower(strings.TrimSpace(spec.Summary + " " + spec.Description))
 			for _, p := range spec.Parameters {
+				ps := resolveSchema(p.Schema, &doc, map[string]bool{})
 				d.Params = append(d.Params, DistilledParam{
 					Name: p.Name, In: p.In, Required: p.Required,
-					Type: typeStr(p.Schema.Type), Desc: strings.TrimSpace(p.Description), Enum: p.Schema.Enum,
+					Type: typeStr(ps.Type), Desc: strings.TrimSpace(p.Description), Enum: ps.Enum,
 				})
 			}
-			d.Body = distillBody(spec.RequestBody)
+			d.Body = distillBody(spec.RequestBody, &doc)
 		}
 		out.Operations = append(out.Operations, d)
 	}
 	return out, nil
 }
 
-// distillBody extracts the JSON request body's fields (name/type/required/enum).
-func distillBody(rb *oapiReqBody) []DistilledField {
+// distillBody extracts the JSON request body's fields (name/type/required/enum),
+// resolving same-document $refs at both the body root and each property (37 of
+// the catalog's 117 JSON bodies are a root $ref — without resolution they
+// distill to nothing and a "directly executable" search card ships no skeleton).
+func distillBody(rb *oapiReqBody, doc *oapiDoc) []DistilledField {
 	if rb == nil {
 		return nil
 	}
@@ -167,12 +207,14 @@ func distillBody(rb *oapiReqBody) []DistilledField {
 	if !ok {
 		return nil
 	}
-	req := make(map[string]bool, len(media.Schema.Required))
-	for _, r := range media.Schema.Required {
+	schema := resolveSchema(media.Schema, doc, map[string]bool{})
+	req := make(map[string]bool, len(schema.Required))
+	for _, r := range schema.Required {
 		req[r] = true
 	}
-	fields := make([]DistilledField, 0, len(media.Schema.Properties))
-	for name, prop := range media.Schema.Properties {
+	fields := make([]DistilledField, 0, len(schema.Properties))
+	for name, prop := range schema.Properties {
+		prop = resolveSchema(prop, doc, map[string]bool{})
 		fields = append(fields, DistilledField{
 			Name: name, Type: typeStr(prop.Type), Required: req[name], Enum: prop.Enum,
 		})

@@ -12,6 +12,8 @@ interface MyProfile {
   displayName: string;
   email?: string | null;
   status: string;
+  /** Provisioning origin: "local" | "oidc" | "scim". Non-local = SSO account. */
+  source?: string;
   roles?: string[];
   createdAt: string;
   /** IANA TZ name (e.g. "Asia/Shanghai") or null = use browser default. */
@@ -155,6 +157,9 @@ export function AccountProfileTab() {
   if (!user) return null;
 
   const canEdit = principalType === 'admin_user';
+  // Federated (SSO) accounts have no local password — sign in is delegated to
+  // the external IdP, so the change-password surface is replaced with guidance.
+  const isSsoAccount = !!user.source && user.source !== 'local';
 
   // Use the project-wide TZ-aware formatter for consistent timestamp rendering.
   const fmtDate = (s?: string | null) => formatDateTime(s);
@@ -254,16 +259,20 @@ export function AccountProfileTab() {
         <Card>
           <div className={styles.sectionHeader}>
             <h2 className={styles.sectionTitle}>{t('pages:account.changePassword')}</h2>
-            {!changingPassword && (
+            {!isSsoAccount && !changingPassword && (
               <Button variant="danger" onClick={() => { setChangingPassword(true); setPwError(''); setPwSuccess(''); }}>
                 {t('pages:account.changePassword')}
               </Button>
             )}
           </div>
 
-          {pwSuccess && <p className={styles.successText}>{pwSuccess}</p>}
+          {isSsoAccount && (
+            <p className={styles.helperText}>{t('pages:account.passwordSsoManaged')}</p>
+          )}
 
-          {changingPassword && (
+          {!isSsoAccount && pwSuccess && <p className={styles.successText}>{pwSuccess}</p>}
+
+          {!isSsoAccount && changingPassword && (
             <div className={styles.editForm}>
               <div className={styles.formField}>
                 <label className={styles.formLabel}>{t('pages:account.currentPassword')}</label>

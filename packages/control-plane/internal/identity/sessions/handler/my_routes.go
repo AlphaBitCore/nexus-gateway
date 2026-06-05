@@ -67,6 +67,7 @@ func (h *Handler) GetMyProfile(c echo.Context) error {
 		"displayName":       user.DisplayName,
 		"email":             user.Email,
 		"status":            user.Status,
+		"source":            user.Source,
 		"roles":             groups,
 		"createdAt":         user.CreatedAt,
 		"preferredTimezone": user.PreferredTimezone,
@@ -126,6 +127,16 @@ func (h *Handler) UpdateMyProfile(c echo.Context) error {
 		existing, err := h.users.FindNexusUserByID(c.Request().Context(), userID)
 		if err != nil || existing == nil {
 			return c.JSON(http.StatusInternalServerError, errJSON("Failed to load user", "server_error", ""))
+		}
+		// Federated (SSO) accounts have no local password to change — guide the
+		// user to their IdP with an explicit message instead of the confusing
+		// "current password is incorrect" they'd otherwise hit. This is an
+		// authenticated self-service path, so there is no enumeration concern in
+		// being explicit (unlike the anonymous login endpoint).
+		if existing.Source != "local" {
+			return c.JSON(http.StatusBadRequest, errJSON(
+				"Your account signs in through single sign-on (SSO); there is no local password to change. Manage your credentials with your identity provider.",
+				"sso_account", "newPassword"))
 		}
 		if existing.PasswordHash == nil || !authpkg.VerifyPassword(*body.CurrentPassword, *existing.PasswordHash) {
 			return c.JSON(http.StatusUnauthorized, errJSON("Current password is incorrect", "authorization_error", ""))

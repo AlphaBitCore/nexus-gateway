@@ -134,28 +134,28 @@ func (store *Store) RevokeScimToken(ctx context.Context, id string) error {
 }
 
 // IdentityProviderRecord is the admin-API view of an IdentityProvider row.
-// `Config` and `RoleMapping` are returned as raw JSON; the handler layer
-// masks secret fields before writing the response.
+// `Config` is returned as raw JSON; the handler layer masks secret fields
+// before writing the response.
 //
 // This struct represents an *external* IdP (OIDC or SAML). The seed `local`
 // row also lives in the same table but the admin UI filters it out; the `Type`
 // field carries the distinction.
 type IdentityProviderRecord struct {
-	ID          string    `json:"id"`
-	Type        string    `json:"type"` // "local" | "oidc" | "saml"
-	Name        string    `json:"name"`
-	Enabled     bool      `json:"enabled"`
-	Config      []byte    `json:"-"` // raw JSONB; handler decodes + masks
-	RoleMapping []byte    `json:"-"` // raw JSONB
-	DefaultRole string    `json:"defaultRole"`
-	JITEnabled  bool      `json:"jitEnabled"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID                        string    `json:"id"`
+	Type                      string    `json:"type"` // "local" | "oidc" | "saml"
+	Name                      string    `json:"name"`
+	Enabled                   bool      `json:"enabled"`
+	Config                    []byte    `json:"-"` // raw JSONB; handler decodes + masks
+	DefaultRole               string    `json:"defaultRole"`
+	DefaultControlPlaneAccess bool      `json:"defaultControlPlaneAccess"`
+	JITEnabled                bool      `json:"jitEnabled"`
+	CreatedAt                 time.Time `json:"createdAt"`
+	UpdatedAt                 time.Time `json:"updatedAt"`
 }
 
 func (store *Store) ListIdentityProviders(ctx context.Context) ([]IdentityProviderRecord, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled", "createdAt", "updatedAt"
+		SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled", "createdAt", "updatedAt"
 		FROM "IdentityProvider"
 		ORDER BY "createdAt" DESC
 	`)
@@ -167,7 +167,7 @@ func (store *Store) ListIdentityProviders(ctx context.Context) ([]IdentityProvid
 	var out []IdentityProviderRecord
 	for rows.Next() {
 		var r IdentityProviderRecord
-		if err := rows.Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.RoleMapping, &r.DefaultRole, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.DefaultRole, &r.DefaultControlPlaneAccess, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -182,27 +182,27 @@ func (store *Store) ListIdentityProviders(ctx context.Context) ([]IdentityProvid
 func (store *Store) GetIdentityProvider(ctx context.Context, id string) (*IdentityProviderRecord, error) {
 	var r IdentityProviderRecord
 	err := store.pool.QueryRow(ctx, `
-		SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled", "createdAt", "updatedAt"
+		SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled", "createdAt", "updatedAt"
 		FROM "IdentityProvider"
 		WHERE id = $1
-	`, id).Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.RoleMapping, &r.DefaultRole, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt)
+	`, id).Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.DefaultRole, &r.DefaultControlPlaneAccess, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
-// CreateIdentityProviderParams is the write input for POST. `Config` and
-// `RoleMapping` are accepted as raw JSON bytes; callers are expected to
-// validate + encrypt secret fields before passing them in.
+// CreateIdentityProviderParams is the write input for POST. `Config` is
+// accepted as raw JSON bytes; callers are expected to validate + encrypt secret
+// fields before passing them in.
 type CreateIdentityProviderParams struct {
-	Type        string
-	Name        string
-	Enabled     bool
-	Config      []byte // JSONB
-	RoleMapping []byte // JSONB; nil → []
-	DefaultRole string
-	JITEnabled  bool
+	Type                      string
+	Name                      string
+	Enabled                   bool
+	Config                    []byte // JSONB
+	DefaultRole               string
+	DefaultControlPlaneAccess bool
+	JITEnabled                bool
 }
 
 // CreateIdentityProvider inserts a new IdP row and returns the persisted record.
@@ -210,19 +210,18 @@ func (store *Store) CreateIdentityProvider(ctx context.Context, p CreateIdentity
 	if p.Config == nil {
 		p.Config = []byte(`{}`)
 	}
-	if p.RoleMapping == nil {
-		p.RoleMapping = []byte(`[]`)
-	}
 	if p.DefaultRole == "" {
-		p.DefaultRole = "developer"
+		// "developers" is a seeded IamGroup name; the JIT path resolves
+		// defaultRole by group name, so this baseline must match a real group.
+		p.DefaultRole = "developers"
 	}
 	var r IdentityProviderRecord
 	err := store.pool.QueryRow(ctx, `
-		INSERT INTO "IdentityProvider" (id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled", "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, NOW(), NOW())
-		RETURNING id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled", "createdAt", "updatedAt"
-	`, p.Type, p.Name, p.Enabled, p.Config, p.RoleMapping, p.DefaultRole, p.JITEnabled).
-		Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.RoleMapping, &r.DefaultRole, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt)
+		INSERT INTO "IdentityProvider" (id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled", "createdAt", "updatedAt")
+		VALUES (gen_random_uuid(), $1, $2, $3, $4::jsonb, $5, $6, $7, NOW(), NOW())
+		RETURNING id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled", "createdAt", "updatedAt"
+	`, p.Type, p.Name, p.Enabled, p.Config, p.DefaultRole, p.DefaultControlPlaneAccess, p.JITEnabled).
+		Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.DefaultRole, &r.DefaultControlPlaneAccess, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create identity provider: %w", err)
 	}
@@ -231,14 +230,14 @@ func (store *Store) CreateIdentityProvider(ctx context.Context, p CreateIdentity
 
 // UpdateIdentityProviderParams mirrors CreateIdentityProviderParams plus the id.
 type UpdateIdentityProviderParams struct {
-	ID          string
-	Type        string
-	Name        string
-	Enabled     bool
-	Config      []byte
-	RoleMapping []byte
-	DefaultRole string
-	JITEnabled  bool
+	ID                        string
+	Type                      string
+	Name                      string
+	Enabled                   bool
+	Config                    []byte
+	DefaultRole               string
+	DefaultControlPlaneAccess bool
+	JITEnabled                bool
 }
 
 // UpdateIdentityProvider replaces an existing row. Returns pgx.ErrNoRows if id missing.
@@ -246,18 +245,15 @@ func (store *Store) UpdateIdentityProvider(ctx context.Context, p UpdateIdentity
 	if p.Config == nil {
 		p.Config = []byte(`{}`)
 	}
-	if p.RoleMapping == nil {
-		p.RoleMapping = []byte(`[]`)
-	}
 	var r IdentityProviderRecord
 	err := store.pool.QueryRow(ctx, `
 		UPDATE "IdentityProvider"
-		SET type = $2, name = $3, enabled = $4, config = $5::jsonb, "roleMapping" = $6::jsonb,
-		    "defaultRole" = $7, "jitEnabled" = $8, "updatedAt" = NOW()
+		SET type = $2, name = $3, enabled = $4, config = $5::jsonb,
+		    "defaultRole" = $6, "defaultControlPlaneAccess" = $7, "jitEnabled" = $8, "updatedAt" = NOW()
 		WHERE id = $1
-		RETURNING id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled", "createdAt", "updatedAt"
-	`, p.ID, p.Type, p.Name, p.Enabled, p.Config, p.RoleMapping, p.DefaultRole, p.JITEnabled).
-		Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.RoleMapping, &r.DefaultRole, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt)
+		RETURNING id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled", "createdAt", "updatedAt"
+	`, p.ID, p.Type, p.Name, p.Enabled, p.Config, p.DefaultRole, p.DefaultControlPlaneAccess, p.JITEnabled).
+		Scan(&r.ID, &r.Type, &r.Name, &r.Enabled, &r.Config, &r.DefaultRole, &r.DefaultControlPlaneAccess, &r.JITEnabled, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("update identity provider: %w", err)
 	}

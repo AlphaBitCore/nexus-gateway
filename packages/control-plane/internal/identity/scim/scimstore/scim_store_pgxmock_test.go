@@ -118,10 +118,10 @@ func TestTouchAndRevokeScimToken(t *testing.T) {
 	}
 }
 
-var idpCols = []string{"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled", "createdAt", "updatedAt"}
+var idpCols = []string{"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled", "createdAt", "updatedAt"}
 
 func idpRow(id string) []any {
-	return []any{id, "oidc", "Okta", true, []byte(`{}`), []byte(`[]`), "developer", true, tNow, tNow}
+	return []any{id, "oidc", "Okta", true, []byte(`{}`), "developers", false, true, tNow, tNow}
 }
 
 func TestIdentityProviderCRUD(t *testing.T) {
@@ -159,9 +159,10 @@ func TestIdentityProviderCRUD(t *testing.T) {
 	if _, err := s.GetIdentityProvider(context.Background(), "e"); err == nil {
 		t.Fatal("get error should surface")
 	}
-	// Create with defaults (Config nil→{}, RoleMapping nil→[], DefaultRole ""→developer)
+	// Create with defaults (Config nil→{}, DefaultRole ""→developers,
+	// DefaultControlPlaneAccess→false)
 	m.ExpectQuery(`INSERT INTO "IdentityProvider"`).
-		WithArgs("oidc", "Okta", true, []byte(`{}`), []byte(`[]`), "developer", false).
+		WithArgs("oidc", "Okta", true, []byte(`{}`), "developers", false, false).
 		WillReturnRows(pgxmock.NewRows(idpCols).AddRow(idpRow("idp1")...))
 	if r, err := s.CreateIdentityProvider(context.Background(), CreateIdentityProviderParams{Type: "oidc", Name: "Okta", Enabled: true}); err != nil || r == nil {
 		t.Fatalf("CreateIdentityProvider: %+v %v", r, err)
