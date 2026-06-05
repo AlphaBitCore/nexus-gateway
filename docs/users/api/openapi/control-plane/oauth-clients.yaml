@@ -76,6 +76,7 @@ paths:
             x-nexus-tier: auto
             parameters:
                 - name: id
+                  description: The OAuth client id.
                   in: path
                   required: true
                   schema:
@@ -109,6 +110,7 @@ paths:
             x-nexus-tier: confirm
             parameters:
                 - name: id
+                  description: The OAuth client id.
                   in: path
                   required: true
                   schema:
@@ -155,6 +157,7 @@ paths:
             x-nexus-tier: confirm
             parameters:
                 - name: id
+                  description: The OAuth client id.
                   in: path
                   required: true
                   schema:
@@ -184,6 +187,7 @@ paths:
             x-nexus-tier: confirm
             parameters:
                 - name: id
+                  description: The OAuth client id.
                   in: path
                   required: true
                   schema:

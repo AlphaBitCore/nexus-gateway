@@ -116,6 +116,13 @@ if echo "$staged" | grep -qE '\.go$'; then
   run_hard "go coverage ≥95%" bash scripts/check-go-coverage.sh --staged
 fi
 
+# 9b. OpenAPI semantic gate (binding; design doc 2026-06-05 resource-catalog
+# §3.4). Param descriptions = 100% and enriched summaries must not regress to
+# generator placeholders — these strings are the AI search cards' semantics.
+if echo "$staged" | grep -qE '^docs/users/api/openapi/control-plane/.*\.yaml$'; then
+  run_hard "openapi semantics" node scripts/check-openapi-semantics.mjs --staged
+fi
+
 # 10. Theme pack completeness (binding; new theme JSON must cover the
 # REQUIRED_THEME_TOKENS contract in both light + dark — otherwise the
 # previous theme's tokens silently bleed through customer screens).

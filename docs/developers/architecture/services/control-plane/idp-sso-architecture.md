@@ -21,8 +21,9 @@ The subsystem has five parts, each its own section below:
 ## IdentityProvider model
 
 Every provider is one `IdentityProvider` row. `type` is `local`, `oidc`, or
-`saml`. The row carries `name`, `enabled`, a per-protocol `config` JSONB blob, a
-`roleMapping` JSONB array, `defaultRole`, and `jitEnabled`.
+`saml`. The row carries `name`, `enabled`, a per-protocol `config` JSONB blob,
+`defaultRole`, `defaultControlPlaneAccess`, and `jitEnabled`. Group-to-role
+mapping lives in the separate `IdpGroupMapping` table, not on the row.
 
 Two stores read the same table for different audiences:
 
@@ -37,7 +38,32 @@ The per-protocol `config` blob is decoded into a typed shape at use time.
 `redirectUri`, `authorizeUrl`, `tokenUrl`, `audience`, `emailClaim` (defaulting
 `emailClaim` to `email`). `DecodeSAMLConfig` reads `entityId`, `ssoUrl`,
 `certificatePem`, and the email/groups attribute names (defaulting to `email`
-and `groups`).
+and `groups`). The configured attribute name is authoritative at login, but it
+is not the only chance to resolve the value: when the assertion carries nothing
+under the configured name, `saml.go` probes a fixed list of well-known
+email/groups attribute names, claim URIs, and LDAP OIDs (e.g. the
+`…/claims/emailaddress` URI Auth0/ADFS emit, `mail`, `memberOf`, the Azure AD
+groups claim), and as a last resort treats a NameID declared in emailAddress
+format as the email. This means a tenant whose IdP emits the value under a long
+claim URI still federates without the admin renaming claims on the IdP side.
+
+OIDC deliberately has **no** equivalent runtime fallback: the OIDC `email` claim
+is standardized by the spec, so the `emailClaim` default (`email`) reliably
+matches and the divergent-claim-name problem that motivates the SAML fallback
+does not arise. An OIDC IdP that emits a non-standard email claim is handled by
+the admin setting `emailClaim` explicitly.
+
+**OIDC endpoints are discovered, not hand-entered.** The Add-IdP form collects
+only the `issuer`; the `authorizeUrl`, `tokenUrl`, and `jwksUri` are normally
+absent from the saved config. Both the interactive login path and the
+connectivity probe resolve them at request time from the issuer's
+`<issuer>/.well-known/openid-configuration` document through one shared package,
+`packages/control-plane/internal/identity/oidcdisco`. Its `Resolver` fetches the
+document, fills only the missing endpoints (an explicitly pinned `authorizeUrl`
+/ `tokenUrl` / `jwksUri` always wins), and caches the result per issuer with a
+10-minute TTL; a config that already carries all three endpoints triggers no
+network call. The login handlers share one `Resolver` instance, so the document
+fetched on the SSO-start leg is a cache hit on the OIDC callback leg.
 
 Roles are **not** an IdP-adapter concern: `NexusUser` has no role column, and a
 principal's permissions are resolved from IamPolicy at token-issuance time. The
@@ -53,6 +79,12 @@ registers the admin surface under the admin API group:
   `/identity-providers/:idpId`.
 - Connectivity probe: `POST /identity-providers/test` (a candidate, unsaved
   config) and `POST /identity-providers/:idpId/test` (a saved row).
+- SAML metadata import: `POST /identity-providers/parse-saml-metadata` parses an
+  uploaded/pasted IdP metadata XML (server-side, no metadata-URL fetch, so no
+  SSRF surface) and returns the `entityId`, `ssoUrl`, signing `certificatePem`,
+  and any detected email/groups attribute names, pre-filling the Add-IdP form so
+  the admin doesn't hand-copy the certificate. Gated by the same `probe` action
+  as the connectivity probe; pure parse, no persistence.
 - SCIM tokens: `GET`/`POST`/`DELETE` `/identity-provider/:idpId/scim-tokens`.
 - Group mappings: `GET`/`POST`/`DELETE`
   `/identity-provider/:idpId/group-mappings`.
@@ -73,10 +105,12 @@ so the admin UI round-trips a provider without ever holding the secret. Create
 requires the real secret.
 
 **The probe** (`packages/control-plane/internal/identity/idptest`) checks
-reachability without persisting: `ProbeOIDC` fetches the discovery document
-and/or JWKS and confirms it parses with at least one key; `ProbeSAML` parses the
-certificate PEM, rejects an expired certificate, and validates the SSO URL
-shape. Both are bounded by a 10-second timeout.
+reachability without persisting: `ProbeOIDC` resolves the endpoints through the
+same `oidcdisco` resolver the login path uses (with a fresh, uncached resolver
+so an admin retesting a just-changed issuer sees the live document) and confirms
+the JWKS parses with at least one key; `ProbeSAML` parses the certificate PEM,
+rejects an expired certificate, and validates the SSO URL shape. Both are
+bounded by a 10-second timeout.
 
 **Disabling or deleting an IdP invalidates its users' sessions.** On an
 enabled→disabled update, and on a forced delete, the handler snapshots the users
@@ -111,12 +145,29 @@ browser to `GET /authserver/idp/:idpId/start?authctx=<handle>`
 (`packages/control-plane/internal/identity/authserver/login/start.go`). One
 handler owns the protocol divergence so the front end stays protocol-agnostic:
 
-- `oidc` — builds the authorization URL, stamps the chosen IdP id onto the
-  pending entry, and 302-redirects the browser to the provider, carrying the
-  `authctx` as `state`.
+- `oidc` — resolves the authorization endpoint from the issuer's discovery
+  document (see "OIDC endpoints are discovered" above), builds the authorization
+  URL, stamps the chosen IdP id onto the pending entry, and 302-redirects the
+  browser to the provider, carrying the `authctx` as `state`. A discovery
+  failure bounces to `/login` rather than emitting a server error body. The
+  config's `authorizeParams` (admin-supplied key/value pairs — e.g. Auth0's
+  required `organization`, or `prompt` / `connection` / `audience`) are appended
+  to the authorize request; the reserved OAuth params (`response_type`,
+  `client_id`, `redirect_uri`, `scope`, `state`, `nonce`) always win and cannot
+  be overridden by config. The start leg also generates a single-use `nonce`,
+  stamps it on the pending entry, and sends it as the authorize `nonce`
+  parameter — the callback verifies the returned ID token's `nonce` claim
+  against it to defeat ID-token replay/injection (OIDC Core §3.1.2.1).
 - `saml` — builds an SP-initiated AuthnRequest, records its ID against the
   `authctx`, and returns an auto-submitting HTML POST form that delivers the
-  request to the IdP with `RelayState=<authctx>` (HTTP-POST binding).
+  request to the IdP with `RelayState=<authctx>` (HTTP-POST binding). The
+  config's `ssoParams` (admin-supplied key/value pairs — the SAML analogue of
+  OIDC `authorizeParams`, e.g. Auth0 Organizations' required `organization`) are
+  appended to the SSO endpoint URL the form posts to; the SAML protocol params
+  (`SAMLRequest`, `RelayState`, `SigAlg`, `Signature`) are reserved and cannot be
+  overridden by config. The AuthnRequest requests an Unspecified NameID format
+  (the SP omits the NameIDPolicy Format constraint) so the IdP returns its native
+  stable NameID — see the `DecodeSAMLConfig` note above.
 - `local` / unknown / disabled / unconfigured — 302 back to the SPA `/login`
   page rather than emitting a server error body, so the user always lands on the
   front-end login UI.
@@ -125,8 +176,21 @@ handler owns the protocol divergence so the front end stays protocol-agnostic:
 
 - OIDC — `GET /authserver/oidc/callback`
   (`packages/control-plane/internal/identity/authserver/login/oidc.go`):
-  exchanges the code at the IdP token endpoint, validates the ID token against
-  that IdP's JWKS, and refuses a disabled IdP.
+  resolves the token + JWKS endpoints from the issuer's discovery document (a
+  cache hit from the start leg), exchanges the code at the IdP token endpoint,
+  validates the ID token against that IdP's JWKS (issuer compared with a
+  trailing slash trimmed; audience defaults to the client_id when unset; the
+  `nonce` claim must echo the one stamped at start), and refuses a disabled IdP.
+  An
+  IdP that redirects back with `error`/`error_description` instead of a code
+  (e.g. a missing `organization`) is logged at WARN with the full description
+  and the browser is sent to the SPA's terminal SSO-error page
+  (`/auth/sso-error?code=<oauth-error>`) — carrying only the bounded OAuth error
+  code, never the free-text description (which would be reflected on an
+  unauthenticated page). The page shows the failure and a "sign in again" button
+  rather than auto-redirecting, so the operator can read it; the detailed reason
+  stays in the Control Plane logs. This replaces the prior `authctx_expired` JSON
+  body, which masked the real cause.
 - SAML — `POST /authserver/saml/acs`
   (`packages/control-plane/internal/identity/authserver/login/saml.go`):
   `ServiceProvider.ParseResponse` validates the XML signature against the IdP
@@ -137,14 +201,33 @@ handler owns the protocol divergence so the front end stays protocol-agnostic:
   (entityID + ACS URL derived from the auth-server issuer) for admins to import
   into their IdP.
 
-Both return legs extract the external subject (and email/groups), run the shared
-match-or-provision path, mint a single-use authorization code into the
+Both return legs extract the external subject (and email/groups — SAML applying
+the well-known-attribute fallback described above when the configured name
+misses), run the shared match-or-provision path, mint a single-use authorization code into the
 `AuthCodeStore` bound to the pending request, and redirect to the client's
 redirect URI — rejoining the OAuth + PKCE token exchange. The `authctx` is the
 join key throughout: it is the OIDC `state` and the SAML `RelayState`, and it
 keys the single-use `PendingAuthzStore` entry that carries the client id,
 redirect URI, PKCE challenge, scope, and chosen IdP id. The minted code records
 the authentication method reference (`pwd` for local, `sso` for federated).
+
+**Display name.** The JIT user's display name is derived zero-config from the
+assertion / ID token (cosmetic enrichment, so there is no admin attribute field
+for it, unlike email/groups): OIDC reads the standard profile claims (`name`,
+then `given_name`+`family_name`, then `preferred_username` — the `profile` scope
+is always requested); SAML probes well-known name attributes (the `…/claims/name`
+URI, `displayName`, `cn`, or `givenName`+`sn`). Precedence is name → email →
+subject, so a miss falls back to email, which is harmless.
+
+**Logout.** `GET /authserver/idp/:idpId/logout` performs RP-initiated logout: the
+SPA drops its own tokens, then (for a federated session — `amr` contains `sso`)
+navigates here. For an OIDC IdP whose discovery advertises an
+`end_session_endpoint`, the handler 302s to it with `post_logout_redirect_uri`
+back to the SPA `/login` and the `client_id`, so the IdP ends its own session and
+returns the user to login; otherwise it 302s straight to `/login`. SAML Single
+Logout is out of scope (it needs an SP signing keypair the SP deliberately does
+not hold). The admin must register the post-logout redirect on the IdP side
+(e.g. Auth0 "Allowed Logout URLs").
 
 **SP-initiated only.** A SAML response with no outstanding AuthnRequest — an
 IdP-initiated response or a replay — is rejected; the ServiceProvider is built
@@ -159,13 +242,28 @@ externalSubject)` binding. Both return legs resolve the external subject the sam
 way:
 
 - `FindByIdPSubject` hit → use the linked user.
-- miss and the IdP has JIT enabled → `JITProvisionUser` creates a `NexusUser`
-  (`source` `oidc`, `canAccessControlPlane` false), the federated-identity row,
-  and zero-or-more group memberships, in one transaction.
+- miss and the IdP has JIT enabled → `JITProvisionUser` creates a `NexusUser`,
+  the federated-identity row, and zero-or-more group memberships, in one
+  transaction.
 - miss and JIT disabled → the login is refused (`user_not_provisioned`).
 
-Group membership is derived from the provider's groups claim/attribute: each
-external group is resolved through `IdpGroupMapping` (`identityProviderId`,
+Two per-IdP columns govern the authority a JIT user is provisioned with, so a
+federated user is never stranded with zero permissions:
+
+- **`defaultControlPlaneAccess`** seeds the new user's `canAccessControlPlane`.
+  It is per-IdP (not a global JIT constant) because one IdP may federate both
+  Control Plane admins and agent end-users; it defaults false and is opted in on
+  the IdP form. Note `canAccessControlPlane` is not itself a login gate — it
+  governs admin-API-key eligibility and the CP-vs-agent user split; effective
+  Control Plane authority comes from the user's IAM group memberships.
+- **`defaultRole`** names an `IamGroup` the user joins as a baseline, resolved by
+  group name inside the same transaction and added on top of any mapped groups.
+  An empty or unresolvable name is a silent skip (the IdP form picks from
+  existing groups). The default is `developers`, matching the seeded group of
+  that name.
+
+Mapped group membership is derived from the provider's groups claim/attribute:
+each external group is resolved through `IdpGroupMapping` (`identityProviderId`,
 `externalGroupId`) to a local IAM group, and a matching `IamGroupMembership` row
 (principal type `nexus_user`) is written. External groups with no mapping are
 silently skipped — administrators consume only the mappings they opted into. The

@@ -369,7 +369,7 @@ ALTER TABLE public."HookConfig" ENABLE TRIGGER ALL;
 
 ALTER TABLE public."IdentityProvider" DISABLE TRIGGER ALL;
 
-INSERT INTO public."IdentityProvider" (id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled", "createdAt", "updatedAt") VALUES ('00000000-0000-0000-0000-000000000001', 'local', 'Nexus Local', true, '{}', '[]', 'developer', false, '2026-05-08 14:49:37.561+00', '2026-05-10 16:44:23.72+00');
+INSERT INTO public."IdentityProvider" (id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled", "createdAt", "updatedAt") VALUES ('00000000-0000-0000-0000-000000000001', 'local', 'Nexus Local', true, '{}', 'developers', false, false, '2026-05-08 14:49:37.561+00', '2026-05-10 16:44:23.72+00');
 
 
 ALTER TABLE public."IdentityProvider" ENABLE TRIGGER ALL;
@@ -591,7 +591,7 @@ ALTER TABLE public."ModelPricing" ENABLE TRIGGER ALL;
 ALTER TABLE public."OAuthClient" DISABLE TRIGGER ALL;
 
 INSERT INTO public."OAuthClient" (id, name, type, "redirectUris", "allowedScopes", "requirePkce", "accessTtlSeconds", "refreshTtlSeconds", "clientSecretHash", "createdAt", "updatedAt") VALUES ('agent-desktop', 'Nexus Agent (Desktop)', 'public', '{http://127.0.0.1:*/callback}', '{traffic:write,shadow:read,openid,profile,email}', true, 3600, 86400, NULL, '2026-05-08 14:49:40.066+00', '2026-05-10 16:44:25.585+00');
-INSERT INTO public."OAuthClient" (id, name, type, "redirectUris", "allowedScopes", "requirePkce", "accessTtlSeconds", "refreshTtlSeconds", "clientSecretHash", "createdAt", "updatedAt") VALUES ('cp-ui', 'Nexus Control Plane UI', 'public', '{https://cp.nexus.ai/auth/callback,https://console.dev.nexus.ai:3000/auth/callback,https://localhost:3000/auth/callback,http://localhost:3000/auth/callback}', '{admin,openid,profile,email}', true, 3600, 86400, NULL, '2026-05-08 14:49:40.692+00', '2026-05-10 16:44:25.828+00');
+INSERT INTO public."OAuthClient" (id, name, type, "redirectUris", "allowedScopes", "requirePkce", "accessTtlSeconds", "refreshTtlSeconds", "clientSecretHash", "createdAt", "updatedAt") VALUES ('cp-ui', 'Nexus Control Plane UI', 'public', '{https://cp.nexus.ai/auth/callback,https://console.dev.nexus.ai:3000/auth/callback,https://localhost:3000/auth/callback,http://localhost:3000/auth/callback,http://127.0.0.1:3000/auth/callback}', '{admin,openid,profile,email}', true, 3600, 86400, NULL, '2026-05-08 14:49:40.692+00', '2026-05-10 16:44:25.828+00');
 INSERT INTO public."OAuthClient" (id, name, type, "redirectUris", "allowedScopes", "requirePkce", "accessTtlSeconds", "refreshTtlSeconds", "clientSecretHash", "createdAt", "updatedAt") VALUES ('tui', 'Nexus Operator Toolkit (CLI/TUI)', 'public', '{http://127.0.0.1:*/callback}', '{admin,openid,profile,email}', true, 3600, 86400, NULL, '2026-05-08 14:49:40.692+00', '2026-05-10 16:44:25.828+00');
 
 

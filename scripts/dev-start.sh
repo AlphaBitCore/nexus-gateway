@@ -250,6 +250,27 @@ else
   ok "Database schema pushed (data preserved — use --force-reset to wipe)"
 fi
 
+# ─── 4a-bis. Apply raw-SQL migrations `prisma db push` cannot express ─────────
+# db push is declarative: it reconciles the DB to schema.prisma's model graph.
+# PostgreSQL-native features (RANGE partitioning, partial/expression indexes)
+# have no Prisma representation and live only in hand-written SQL under
+# tools/db-migrate/migrations/, which db push ignores entirely. Without
+# re-applying them, metric_ops_raw stays a plain table and the Hub
+# `ops-raw-partition` job fails every cycle with
+# "metric_ops_raw is not partitioned (SQLSTATE 42P17)". The migration is
+# re-runnable (DROP IF EXISTS + CREATE … IF NOT EXISTS) and dev telemetry is
+# disposable (dev-phase policy), so apply it unconditionally after every push.
+PARTITION_SQL="$ROOT_DIR/tools/db-migrate/migrations/20260613000002_partition_metric_ops_raw/migration.sql"
+if [[ -f "$PARTITION_SQL" ]]; then
+  if docker exec -i nexus-postgres psql -U postgres -d nexus_gateway -q -v ON_ERROR_STOP=1 < "$PARTITION_SQL" >/dev/null 2>&1; then
+    ok "Applied raw-SQL partition migration (metric_ops_raw → RANGE-partitioned)"
+  else
+    warn "Could not apply metric_ops_raw partition migration — Hub ops-raw-partition job will error until fixed"
+  fi
+else
+  warn "Partition migration SQL not found at $PARTITION_SQL — Hub ops-raw-partition job may error"
+fi
+
 # ─── 4b. Seed database ─────────────────────────────────────────────────────
 
 log "Seeding database..."

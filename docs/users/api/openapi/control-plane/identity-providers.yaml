@@ -54,7 +54,6 @@ paths:
                                         clientId: 0oa1b2c3d4
                                         clientSecret: '********'
                                         redirectUri: https://nexus.example.com/authserver/callback
-                                      roleMapping: []
                                       defaultRole: viewer
                                       jitEnabled: true
                                       createdAt: 2026-01-01T00:00:00Z
@@ -375,6 +374,88 @@ paths:
                                 ok: false
                                 error: 'discovery returned HTTP 404'
                                 elapsedMs: 212
+    /api/admin/identity-providers/parse-saml-metadata:
+        post:
+            operationId: parseSAMLMetadata
+            summary: Parse SAML IdP metadata
+            description: |-
+                Parses an uploaded or pasted SAML IdP metadata XML document and returns
+                the SP-relevant fields, used by the Add-IdP wizard to pre-fill the SAML
+                form instead of the admin hand-copying the signing certificate. The parse
+                is pure and server-side: the request carries the document bytes directly
+                and the server never fetches a metadata URL, so there is no SSRF surface.
+                Returns the entityId, the HTTP-POST SSO URL (falling back to the first
+                declared endpoint), the signing certificate re-encoded as canonical PEM,
+                and — when the metadata declares attributes that look like email / groups —
+                the detected attribute names. Gated by the same probe action as the
+                connectivity probe; nothing is persisted.
+            x-nexus-iam-action: idp.Action(iam.VerbProbe)
+            x-nexus-tier: confirm
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required:
+                                - metadataXml
+                            properties:
+                                metadataXml:
+                                    type: string
+                                    description: The raw SAML IdP metadata XML (an EntityDescriptor, or an EntitiesDescriptor wrapper whose first IDPSSODescriptor wins).
+                        example:
+                            metadataXml: "<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"urn:idp.auth0.test\">…</EntityDescriptor>"
+            responses:
+                "400":
+                    description: |-
+                        Bad Request — invalid body or unparseable metadata. The error
+                        message is the specific reason: empty document, no IDPSSODescriptor,
+                        no entityID, no SingleSignOnService location, no signing certificate,
+                        or a malformed certificate.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                            example:
+                                error:
+                                    message: saml metadata has no IDPSSODescriptor
+                                    type: validation_error
+                                    code: metadataXml
+                "200":
+                    description: OK — the extracted SP fields.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required:
+                                    - entityId
+                                    - ssoUrl
+                                    - certificatePem
+                                properties:
+                                    entityId:
+                                        type: string
+                                        description: The IdP's SAML entityID (the issuer of its assertions).
+                                    ssoUrl:
+                                        type: string
+                                        description: The IdP's SingleSignOnService location (HTTP-POST binding preferred).
+                                    certificatePem:
+                                        type: string
+                                        description: The IdP signing certificate, re-encoded as canonical PEM.
+                                    emailAttribute:
+                                        type: string
+                                        description: Detected email attribute name; omitted when the metadata declares none.
+                                    groupsAttribute:
+                                        type: string
+                                        description: Detected groups attribute name; omitted when the metadata declares none.
+                            example:
+                                entityId: urn:idp.auth0.test
+                                ssoUrl: https://idp.auth0.test/samlp/abc
+                                certificatePem: |-
+                                    -----BEGIN CERTIFICATE-----
+                                    MIIC…
+                                    -----END CERTIFICATE-----
+                                emailAttribute: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress
     /api/admin/identity-providers/{idpId}/group-mappings:
         get:
             operationId: listIdpGroupMappings
@@ -717,11 +798,12 @@ components:
                     type: object
                     additionalProperties: {}
                     description: Protocol-specific configuration. Secret fields (OIDC clientSecret, SAML certificatePem) are returned masked with a fixed placeholder.
-                roleMapping:
-                    description: External-group-to-role mapping rules; defaults to an empty array when unset.
                 defaultRole:
                     type: string
-                    description: Role assigned to just-in-time provisioned users when no mapping matches.
+                    description: Name of the IamGroup every just-in-time provisioned user from this provider joins as a baseline (in addition to any external-group mapping matches). Resolved by group name at provisioning time.
+                defaultControlPlaneAccess:
+                    type: boolean
+                    description: Whether just-in-time provisioned users from this provider are granted Control Plane access (NexusUser.canAccessControlPlane). Per-provider because one IdP may federate both Control Plane admins and agent end-users.
                 jitEnabled:
                     type: boolean
                     description: Whether just-in-time user provisioning is enabled for this provider.
@@ -737,8 +819,8 @@ components:
                 - name
                 - enabled
                 - config
-                - roleMapping
                 - defaultRole
+                - defaultControlPlaneAccess
                 - jitEnabled
                 - createdAt
                 - updatedAt
@@ -769,11 +851,14 @@ components:
                         create). For SAML: entityId, ssoUrl (and certificatePem,
                         required non-masked on create). On update, a secret field sent
                         as the mask placeholder is preserved from the stored config.
-                roleMapping:
-                    description: External-group-to-role mapping rules. Optional; defaults to an empty array.
                 defaultRole:
                     type: string
-                    description: Role for just-in-time provisioned users when no mapping matches. Optional; preserved from existing on update when blank.
+                    description: Name of the IamGroup just-in-time provisioned users join as a baseline. Optional; preserved from existing on update when blank, defaults to "developers" on create.
+                defaultControlPlaneAccess:
+                    type:
+                        - boolean
+                        - "null"
+                    description: Whether just-in-time provisioned users from this provider get Control Plane access. Defaults to false on create and to the existing value on update when omitted.
                 jitEnabled:
                     type:
                         - boolean
