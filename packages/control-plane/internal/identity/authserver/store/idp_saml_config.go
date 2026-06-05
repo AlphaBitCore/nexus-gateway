@@ -29,6 +29,20 @@ type SAMLConfig struct {
 	// GroupsAttr names the assertion attribute carrying the user's group
 	// memberships (resolved through IdpGroupMapping). Defaults to "groups".
 	GroupsAttr string `json:"groupsAttribute"`
+
+	// SSOParams are extra key/value pairs appended verbatim to the IdP SSO URL
+	// when the SP-initiated AuthnRequest is delivered — e.g. Auth0
+	// Organizations' required `organization`. Mirrors OIDCConfig.AuthorizeParams
+	// so a per-IdP provider quirk stays in config, not code. The SAML protocol
+	// params (SAMLRequest, RelayState) are reserved and cannot be overridden.
+	SSOParams []SAMLSSOParam `json:"ssoParams"`
+}
+
+// SAMLSSOParam is one extra query parameter appended to the IdP SSO URL on the
+// SP-initiated AuthnRequest.
+type SAMLSSOParam struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // DecodeSAMLConfig converts an IdentityProvider row into a runtime SAMLConfig.

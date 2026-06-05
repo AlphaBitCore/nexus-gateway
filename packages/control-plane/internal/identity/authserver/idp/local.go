@@ -13,7 +13,7 @@ import (
 // The signature matches store.UserStore.GetByEmail exactly so production
 // code can pass the real store and tests can pass a fake.
 type UserLookup interface {
-	GetByEmail(ctx context.Context, email string) (userID string, pwdHash string, disabledAt *time.Time, err error)
+	GetByEmail(ctx context.Context, email string) (userID string, pwdHash string, source string, disabledAt *time.Time, err error)
 }
 
 // Local is the password-based adapter backed by NexusUser.passwordHash.
@@ -81,15 +81,29 @@ func (l *Local) Authenticate(ctx context.Context, input map[string]string) (*Aut
 		return nil, ErrInvalidCredentials
 	}
 
-	uid, hash, disabledAt, err := l.users.GetByEmail(ctx, email)
+	uid, hash, source, disabledAt, err := l.users.GetByEmail(ctx, email)
 	if err != nil {
 		// Burn time against the dummy so missing users take as long as present
 		// ones. Ignore the boolean result.
 		_ = auth.VerifyPassword(password, dummyHash)
 		return nil, ErrInvalidCredentials
 	}
+	if source != "local" {
+		// Federated (oidc/scim) accounts NEVER authenticate via a local
+		// password — even if a stale passwordHash lingers on the row from a
+		// prior local life or a mis-provisioning. Fail closed with the generic
+		// invalid-credentials (after burning time) so an anonymous caller
+		// cannot tell an SSO account apart from a wrong password; real SSO
+		// users are guided by the per-provider buttons the login page renders.
+		_ = auth.VerifyPassword(password, dummyHash)
+		return nil, ErrInvalidCredentials
+	}
 	if hash == "" {
-		// User exists but has no local password (e.g. SSO-only account).
+		// User exists but has no local password (e.g. SSO-only account). Return
+		// the generic invalid-credentials so an anonymous caller cannot tell an
+		// SSO-only account apart from a wrong password — the login page already
+		// renders each provider's SSO button to guide real users. Burn time
+		// against the dummy to keep the wrong-password path uniform.
 		_ = auth.VerifyPassword(password, dummyHash)
 		return nil, ErrInvalidCredentials
 	}

@@ -25,6 +25,8 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/login"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 )
 
 // RSA / JWKS / token-endpoint helpers — mirror packages/control-plane/internal/
@@ -83,6 +85,15 @@ func newOIDCServer(t *testing.T, kid string) *oidcServer {
 	jwksBody, _ := json.Marshal(jwks)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":                 o.srv.URL,
+			"authorization_endpoint": o.srv.URL + "/authorize",
+			"token_endpoint":         o.srv.URL + "/token",
+			"jwks_uri":               o.srv.URL + "/jwks",
+		})
+	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(jwksBody)
@@ -140,7 +151,7 @@ func oidcConfigJSON(authzURL, tokenURL, jwksURL, clientID, redirectURI, audience
 	return b
 }
 
-const idpQuery = `SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled"`
+const idpQuery = `SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled"`
 
 func newOIDCCallbackCtx(code, state string) (echo.Context, *httptest.ResponseRecorder) {
 	target := "/authserver/oidc/callback"
@@ -236,8 +247,8 @@ func newCallbackFixture(t *testing.T, withJIT bool) callbackFixture {
 func expectGetByID(mock pgxmock.PgxPoolIface, id string, cfgJSON []byte, jit bool) {
 	mock.ExpectQuery(idpQuery).WithArgs(id).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
-		}).AddRow(id, "oidc", "CB IdP", true, cfgJSON, []byte(`[]`), "developer", jit))
+			"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
+		}).AddRow(id, "oidc", "CB IdP", true, cfgJSON, "developer", false, jit))
 }
 
 func mintIDToken(t *testing.T, srv *oidcServer, subject, email string, exp time.Time) string {
@@ -255,6 +266,8 @@ func mintIDToken(t *testing.T, srv *oidcServer, subject, email string, exp time.
 // browser redirected back to client with code+state.
 func TestOIDCCallbackHandler_Success_ExistingUser(t *testing.T) {
 	fx := newCallbackFixture(t, false)
+	prod := &capturingProducer{}
+	fx.deps.Audit = audit.NewWriter(prod, "admin-audit", nil)
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, false)
 	// FederatedStore.FindByIdPSubject hits the DB; existing user — one row.
 	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
@@ -310,6 +323,18 @@ func TestOIDCCallbackHandler_Success_ExistingUser(t *testing.T) {
 	if _, ok := fx.pending.Take(fx.authctx); ok {
 		t.Fatal("pending entry survived consumption")
 	}
+	// A successful OIDC login must emit the admin.login.succeeded audit row.
+	msgs := waitForAuditMsg(t, prod, 1)
+	var ev map[string]any
+	if err := json.Unmarshal(msgs[0], &ev); err != nil {
+		t.Fatalf("audit unmarshal: %v", err)
+	}
+	if ev["action"] != "admin.login.succeeded" {
+		t.Errorf("audit action = %v, want admin.login.succeeded", ev["action"])
+	}
+	if ev["actorLabel"] != "alice@example.com" {
+		t.Errorf("audit actorLabel = %v, want alice@example.com", ev["actorLabel"])
+	}
 }
 
 // ptrStr returns *string for sql nullable column.
@@ -327,14 +352,23 @@ func TestOIDCCallbackHandler_Success_JIT(t *testing.T) {
 		WillReturnError(pgx.ErrNoRows)
 	// JITProvisionUser runs in a tx.
 	fx.mock.ExpectBegin()
+	fx.mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
+	// DisplayName is the humanized email local-part ("alice@example.com" →
+	// "alice") since this token carries no name claim.
 	fx.mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs("alice@example.com", pgxmock.AnyArg(), "oidc-jit").
+		WithArgs("org-1", "alice", pgxmock.AnyArg(), "oidc", false, "oidc-jit").
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "displayName", "email", "status", "source",
-		}).AddRow("user-jit", "alice@example.com", ptrStr("alice@example.com"), "active", "oidc"))
+		}).AddRow("user-jit", "alice", ptrStr("alice@example.com"), "active", "oidc"))
 	fx.mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
 		WithArgs("user-jit", fx.idpID, fx.subject).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("fi-new"))
+	// Baseline-role lookup: the fixture IdP carries defaultRole "developer";
+	// it resolves to no live group here, so the membership is skipped.
+	fx.mock.ExpectQuery(`SELECT id FROM "IamGroup" WHERE name`).
+		WithArgs("developer").
+		WillReturnError(pgx.ErrNoRows)
 	fx.mock.ExpectCommit()
 
 	tok := mintIDToken(t, fx.server, fx.subject, "alice@example.com", time.Now().Add(time.Hour))
@@ -481,8 +515,8 @@ func TestOIDCCallbackHandler_ConfigMissingTokenURL(t *testing.T) {
 	})
 	fx.mock.ExpectQuery(idpQuery).WithArgs(fx.idpID).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
-		}).AddRow(fx.idpID, "oidc", "Thin", true, cfg, []byte(`[]`), "developer", true))
+			"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
+		}).AddRow(fx.idpID, "oidc", "Thin", true, cfg, "developer", false, true))
 
 	c, rec := newOIDCCallbackCtx("code", fx.authctx)
 	if err := login.OIDCCallbackHandler(fx.deps)(c); err != nil {
@@ -681,14 +715,19 @@ func TestOIDCCallbackHandler_JITUsesSubjectAsDisplayWhenEmailMissing(t *testing.
 	// JITProvisionParams.DisplayName = claims.Subject when email is empty,
 	// so the NexusUser INSERT receives subject as the first arg.
 	fx.mock.ExpectBegin()
+	fx.mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	fx.mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(fx.subject, (*string)(nil), "oidc-jit").
+		WithArgs("org-1", fx.subject, (*string)(nil), "oidc", false, "oidc-jit").
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "displayName", "email", "status", "source",
 		}).AddRow("user-anon", fx.subject, (*string)(nil), "active", "oidc"))
 	fx.mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
 		WithArgs("user-anon", fx.idpID, fx.subject).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("fi-anon"))
+	fx.mock.ExpectQuery(`SELECT id FROM "IamGroup" WHERE name`).
+		WithArgs("developer").
+		WillReturnError(pgx.ErrNoRows)
 	fx.mock.ExpectCommit()
 
 	// Token with NO email claim — DisplayName falls back to subject.
@@ -771,8 +810,8 @@ func TestOIDCCallbackHandler_TokenEndpointUnreachable(t *testing.T) {
 	})
 	fx.mock.ExpectQuery(idpQuery).WithArgs(fx.idpID).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
-		}).AddRow(fx.idpID, "oidc", "CB IdP", true, cfg, []byte(`[]`), "developer", false))
+			"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
+		}).AddRow(fx.idpID, "oidc", "CB IdP", true, cfg, "developer", false, false))
 
 	c, rec := newOIDCCallbackCtx("code", fx.authctx)
 	if err := login.OIDCCallbackHandler(fx.deps)(c); err != nil {
@@ -801,8 +840,8 @@ func TestOIDCCallbackHandler_TokenURLMalformedRequestBuild(t *testing.T) {
 	})
 	fx.mock.ExpectQuery(idpQuery).WithArgs(fx.idpID).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
-		}).AddRow(fx.idpID, "oidc", "CB IdP", true, cfg, []byte(`[]`), "developer", false))
+			"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
+		}).AddRow(fx.idpID, "oidc", "CB IdP", true, cfg, "developer", false, false))
 
 	c, rec := newOIDCCallbackCtx("code", fx.authctx)
 	if err := login.OIDCCallbackHandler(fx.deps)(c); err != nil {
@@ -810,6 +849,297 @@ func TestOIDCCallbackHandler_TokenURLMalformedRequestBuild(t *testing.T) {
 	}
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status: got %d, want 401", rec.Code)
+	}
+}
+
+// TestOIDCCallbackHandler_DiscoversEndpointsFromIssuer drives the callback's
+// discovery wiring: the saved config carries only the issuer (the Add-IdP
+// form's issuer-only shape), so the handler must resolve token + jwks
+// endpoints from `<issuer>/.well-known/openid-configuration` before exchanging
+// the code and validating the ID token. A missing resolver would 400 with
+// oidc_not_configured; with it, login completes end to end.
+func TestOIDCCallbackHandler_DiscoversEndpointsFromIssuer(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("new mock: %v", err)
+	}
+	t.Cleanup(mock.Close)
+
+	srv := newOIDCServer(t, "kid-disco")
+	issuer := srv.URL() // the mock serves /.well-known/openid-configuration here
+	const idpID = "idp-disco-cb"
+	const subject = "subject-disco"
+
+	// Issuer-only config: no tokenUrl / jwksUri / authorizeUrl persisted.
+	cfgJSON, _ := json.Marshal(map[string]any{
+		"issuer":       issuer,
+		"clientId":     "client-disco-cb",
+		"clientSecret": "shh",
+		"redirectUri":  "https://app/cb",
+		"audience":     "nexus-audience",
+		"emailClaim":   "email",
+	})
+
+	pending := store.NewPendingAuthzStore()
+	t.Cleanup(pending.Close)
+	authctx := "state-disco"
+	pending.Put(authctx, store.PendingAuthzEntry{
+		ClientID:    "cli-disco",
+		RedirectURI: "https://app/cb",
+		Scope:       "openid",
+		State:       "sso-state",
+		IdPID:       idpID,
+		ExpiresAt:   time.Now().Add(5 * time.Minute),
+	})
+	codes := store.NewAuthCodeStore(5 * time.Minute)
+	t.Cleanup(codes.Close)
+
+	deps := login.OIDCDeps{
+		IdPs:      store.NewIdPStoreWithPool(mock),
+		Federated: store.NewFederatedStoreWithPool(mock),
+		Pending:   pending,
+		AuthCodes: codes,
+		Resolver:  oidcdisco.NewResolver(),
+	}
+
+	expectGetByID(mock, idpID, cfgJSON, false)
+	mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+		WithArgs(idpID, subject).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
+		}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("bob@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+	mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
+		WithArgs("fi-1", pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	// The id_token issuer must match the configured issuer (server URL).
+	tok := srv.MakeIDToken(t, map[string]any{
+		"iss":   issuer,
+		"aud":   "nexus-audience",
+		"sub":   subject,
+		"email": "bob@example.com",
+		"exp":   float64(time.Now().Add(time.Hour).Unix()),
+	})
+	srv.SetIDToken(tok)
+
+	c, rec := newOIDCCallbackCtx("auth-code-disco", authctx)
+	if err := login.OIDCCallbackHandler(deps)(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status: got %d, want 302 via discovery (body=%q)", rec.Code, rec.Body.String())
+	}
+	u, perr := url.Parse(rec.Header().Get("Location"))
+	if perr != nil {
+		t.Fatalf("parse Location: %v", perr)
+	}
+	code := u.Query().Get("code")
+	if code == "" {
+		t.Fatal("no auth code minted on the discovery path")
+	}
+	entry, ok := codes.Get(code)
+	if !ok || entry.UserID != "user-real" {
+		t.Fatalf("auth code/user wrong via discovery: ok=%v entry=%+v", ok, entry)
+	}
+}
+
+// TestOIDCCallbackHandler_IdPError asserts that when the IdP redirects back
+// with error/error_description instead of a code (e.g. Auth0 "parameter
+// organization is required"), the handler sends the browser to the terminal
+// SSO-error page carrying only the bounded OAuth error code — never the
+// free-text description — instead of masking it as an authctx_expired JSON 400.
+func TestOIDCCallbackHandler_IdPError(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/authserver/oidc/callback?error=invalid_request&error_description=parameter+organization+is+required&state=state-x", nil)
+	rec := httptest.NewRecorder()
+	c := echo.New().NewContext(req, rec)
+
+	// No stores are touched on the error path — empty deps are fine.
+	if err := login.OIDCCallbackHandler(login.OIDCDeps{})(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("got %d, want 302 (body=%q)", rec.Code, rec.Body.String())
+	}
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	if loc.Path != "/auth/sso-error" {
+		t.Fatalf("redirect path = %q, want /auth/sso-error", loc.Path)
+	}
+	if loc.Query().Get("code") != "invalid_request" {
+		t.Fatalf("error code = %q, want invalid_request", loc.Query().Get("code"))
+	}
+	// The free-text description must NOT be reflected into the redirect URL.
+	if strings.Contains(loc.RawQuery, "organization") {
+		t.Fatalf("error_description leaked into redirect: %q", loc.RawQuery)
+	}
+}
+
+// TestOIDCCallbackHandler_AudienceDefaultsToClientID covers two real-world
+// Auth0 quirks at once: the saved config carries no `audience` (so the ID
+// token's aud=client_id must be accepted), and the token's `iss` ends in a
+// trailing slash the configured issuer lacks. Both must still validate.
+func TestOIDCCallbackHandler_AudienceDefaultsToClientID(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("new mock: %v", err)
+	}
+	t.Cleanup(mock.Close)
+
+	srv := newOIDCServer(t, "kid-aud")
+	issuer := srv.URL()
+	const idpID = "idp-aud"
+	const subject = "subject-aud"
+	const clientID = "client-aud-xyz"
+
+	// Issuer-only config: no audience, no token/jwks endpoints (discovered).
+	cfgJSON, _ := json.Marshal(map[string]any{
+		"issuer":       issuer,
+		"clientId":     clientID,
+		"clientSecret": "shh",
+		"redirectUri":  "https://app/cb",
+		"emailClaim":   "email",
+	})
+
+	pending := store.NewPendingAuthzStore()
+	t.Cleanup(pending.Close)
+	authctx := "state-aud"
+	pending.Put(authctx, store.PendingAuthzEntry{
+		ClientID:    "cli-aud",
+		RedirectURI: "https://app/cb",
+		Scope:       "openid",
+		State:       "sso-state",
+		IdPID:       idpID,
+		ExpiresAt:   time.Now().Add(5 * time.Minute),
+	})
+	codes := store.NewAuthCodeStore(5 * time.Minute)
+	t.Cleanup(codes.Close)
+
+	deps := login.OIDCDeps{
+		IdPs:      store.NewIdPStoreWithPool(mock),
+		Federated: store.NewFederatedStoreWithPool(mock),
+		Pending:   pending,
+		AuthCodes: codes,
+		Resolver:  oidcdisco.NewResolver(),
+	}
+
+	expectGetByID(mock, idpID, cfgJSON, false)
+	mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+		WithArgs(idpID, subject).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
+		}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("bob@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+	mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
+		WithArgs("fi-1", pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	// aud = client_id (config has no audience), iss WITH a trailing slash.
+	tok := srv.MakeIDToken(t, map[string]any{
+		"iss":   issuer + "/",
+		"aud":   clientID,
+		"sub":   subject,
+		"email": "bob@example.com",
+		"exp":   float64(time.Now().Add(time.Hour).Unix()),
+	})
+	srv.SetIDToken(tok)
+
+	c, rec := newOIDCCallbackCtx("auth-code-aud", authctx)
+	if err := login.OIDCCallbackHandler(deps)(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status: got %d, want 302 (aud=client_id default + trailing-slash iss; body=%q)", rec.Code, rec.Body.String())
+	}
+}
+
+// nonceCallbackDeps builds a callback against a fresh mock IdP for the nonce
+// tests, with the pending entry carrying expectNonce and the ID token carrying
+// tokenNonce. Returns the wired context + recorder. The federated lookup is
+// only expected when the nonce is expected to match (the mismatch path bails
+// before any DB read).
+func nonceCallbackDeps(t *testing.T, expectNonce, tokenNonce string, federatedExpected bool) (echo.HandlerFunc, echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("new mock: %v", err)
+	}
+	t.Cleanup(mock.Close)
+
+	srv := newOIDCServer(t, "kid-nonce")
+	issuer := srv.URL()
+	const idpID = "idp-nonce"
+	const subject = "subject-nonce"
+	const clientID = "client-nonce"
+
+	cfgJSON, _ := json.Marshal(map[string]any{
+		"issuer":       issuer,
+		"clientId":     clientID,
+		"clientSecret": "shh",
+		"redirectUri":  "https://app/cb",
+		"emailClaim":   "email",
+	})
+
+	pending := store.NewPendingAuthzStore()
+	t.Cleanup(pending.Close)
+	authctx := "state-nonce"
+	pending.Put(authctx, store.PendingAuthzEntry{
+		ClientID: "cli", RedirectURI: "https://app/cb", Scope: "openid",
+		State: "sso-state", IdPID: idpID, IdPNonce: expectNonce,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	})
+	codes := store.NewAuthCodeStore(5 * time.Minute)
+	t.Cleanup(codes.Close)
+
+	deps := login.OIDCDeps{
+		IdPs:      store.NewIdPStoreWithPool(mock),
+		Federated: store.NewFederatedStoreWithPool(mock),
+		Pending:   pending,
+		AuthCodes: codes,
+		Resolver:  oidcdisco.NewResolver(),
+	}
+	expectGetByID(mock, idpID, cfgJSON, false)
+	if federatedExpected {
+		mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+			WithArgs(idpID, subject).
+			WillReturnRows(pgxmock.NewRows([]string{
+				"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
+			}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("z@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+		mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
+			WithArgs("fi-1", pgxmock.AnyArg()).
+			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	}
+
+	tok := srv.MakeIDToken(t, map[string]any{
+		"iss": issuer, "aud": clientID, "sub": subject,
+		"email": "z@example.com", "nonce": tokenNonce,
+		"exp": float64(time.Now().Add(time.Hour).Unix()),
+	})
+	srv.SetIDToken(tok)
+
+	c, rec := newOIDCCallbackCtx("auth-code-nonce", authctx)
+	return login.OIDCCallbackHandler(deps), c, rec
+}
+
+// TestOIDCCallbackHandler_NonceMismatch asserts a token whose nonce does not
+// echo the one we sent at SSO start is rejected — ID-token replay/injection.
+func TestOIDCCallbackHandler_NonceMismatch(t *testing.T) {
+	h, c, rec := nonceCallbackDeps(t, "expected-nonce", "WRONG-nonce", false)
+	if err := h(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401 on nonce mismatch (body=%q)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestOIDCCallbackHandler_NonceMatch asserts a token echoing the sent nonce
+// passes the binding check and completes login.
+func TestOIDCCallbackHandler_NonceMatch(t *testing.T) {
+	h, c, rec := nonceCallbackDeps(t, "good-nonce", "good-nonce", true)
+	if err := h(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status: got %d, want 302 on nonce match (body=%q)", rec.Code, rec.Body.String())
 	}
 }
 

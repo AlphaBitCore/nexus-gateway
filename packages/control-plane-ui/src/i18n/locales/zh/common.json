@@ -102,7 +102,8 @@
     "authctxExpired": "登录会话已过期，正在刷新页面…",
     "rateLimited": "尝试次数过多，请稍后再试。",
     "internalError": "服务暂时异常，请稍后重试。",
-    "loadProvidersFailed": "无法加载登录方式，请刷新页面重试。"
+    "loadProvidersFailed": "无法加载登录方式，请刷新页面重试。",
+    "ssoFailed": "通过身份提供商登录失败（{{code}}）。请检查该提供商的配置或重试；管理员可在服务端日志中查看详细原因。"
   },
   "localIdpDefaultName": "本地账户",
   "methodPickerHint": "请选择登录方式。",

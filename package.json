@@ -30,6 +30,8 @@
     "check:iam-routes": "node scripts/check-iam-route-coverage.mjs",
     "check:doc-lockstep": "node scripts/check-doc-lockstep.mjs",
     "check:doc-lockstep:staged": "node scripts/check-doc-lockstep.mjs --staged",
+    "check:openapi-semantics": "node scripts/check-openapi-semantics.mjs",
+    "check:openapi-semantics:staged": "node scripts/check-openapi-semantics.mjs --staged",
     "check:migration-timestamps": "bash scripts/check-migration-timestamps.sh",
     "check:useapi-querykey": "node scripts/check-useapi-querykey.mjs",
     "check:useapi-querykey:strict": "node scripts/check-useapi-querykey.mjs --strict",
@@ -48,7 +50,7 @@
     "check:coverage": "bash scripts/check-go-coverage.sh",
     "check:coverage:strict": "bash scripts/check-go-coverage.sh --strict-allowlist",
     "check:coverage:ui": "bash scripts/check-ui-coverage.sh",
-    "check:all": "npm-run-all -p check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:arch-doc-triggers check:e2e-matrix check:iam-routes check:doc-lockstep check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:no-yaml-secrets check:coverage check:coverage:ui || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
+    "check:all": "npm-run-all -p check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:arch-doc-triggers check:e2e-matrix check:iam-routes check:doc-lockstep check:openapi-semantics check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:no-yaml-secrets check:coverage check:coverage:ui || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
   },
   "engines": {
     "node": ">=20.0.0"

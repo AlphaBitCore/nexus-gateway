@@ -48,15 +48,21 @@ describe('StepProvider', () => {
 
   it('validates a missing API key once a template is chosen', async () => {
     const { container } = wrap({ status: 'incomplete', data: { providers: [], credentials: [] } });
-    await waitFor(() => expect(screen.getByRole('combobox').querySelectorAll('option').length).toBeGreaterThan(1));
+    await waitFor(() => expect(screen.getByRole('combobox').querySelectorAll('option').length).toBeGreaterThan(1), { timeout: 5000 });
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'openai' } });
     // Selecting a template kicks off an async loadTemplateDetail; under full-run
-    // load it resolves after the change event, so wait for the API-key input it
-    // renders before clicking Create — otherwise validation runs against a
-    // not-yet-ready form and the toast never fires (full-run flake).
-    await waitFor(() => expect(container.querySelector('input[type=password]')).toBeTruthy());
+    // load it resolves after the change event, so wait for the selection to
+    // commit AND the API-key input it renders before clicking Create — otherwise
+    // validation runs against a not-yet-ready form and the toast never fires
+    // (full-run flake). The extended waitFor timeouts give a busy CI runner
+    // headroom over the 1000 ms default.
+    await waitFor(() => expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('openai'), { timeout: 5000 });
+    await waitFor(() => expect(container.querySelector('input[type=password]')).toBeTruthy(), { timeout: 5000 });
     fireEvent.click(createBtn());
-    await waitFor(() => expect(addToast).toHaveBeenCalledWith(i18n.t('pages:setup.apiKeyRequired', 'API Key is required'), 'error'));
+    await waitFor(
+      () => expect(addToast).toHaveBeenCalledWith(i18n.t('pages:setup.apiKeyRequired', 'API Key is required'), 'error'),
+      { timeout: 5000 },
+    );
     expect(container.querySelector('input[type=password]')).toBeTruthy();
   });
 
@@ -65,7 +71,7 @@ describe('StepProvider', () => {
     // wait for the async template fetch to populate the <option>s before
     // selecting — under full-run load the fetch resolves after the combobox
     // mounts, so selecting before options exist was a no-op (full-run flake).
-    await waitFor(() => expect(screen.getByRole('combobox').querySelectorAll('option').length).toBeGreaterThan(1));
+    await waitFor(() => expect(screen.getByRole('combobox').querySelectorAll('option').length).toBeGreaterThan(1), { timeout: 5000 });
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'openai' } });
     fireEvent.change(container.querySelector('input[type=password]')!, { target: { value: 'sk-abc' } });
     fireEvent.click(createBtn());

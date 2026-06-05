@@ -102,7 +102,8 @@
     "authctxExpired": "Su sesión de inicio expiró. Actualizando la página…",
     "rateLimited": "Demasiados intentos. Espere un momento antes de reintentar.",
     "internalError": "Algo salió mal en nuestro lado. Intente de nuevo en unos momentos.",
-    "loadProvidersFailed": "No se pudieron cargar los métodos de inicio de sesión. Actualice la página para reintentar."
+    "loadProvidersFailed": "No se pudieron cargar los métodos de inicio de sesión. Actualice la página para reintentar.",
+    "ssoFailed": "El inicio de sesión a través del proveedor de identidad falló ({{code}}). Revise la configuración del proveedor o inténtelo de nuevo; un administrador puede consultar los detalles en los registros del servidor."
   },
   "localIdpDefaultName": "Cuenta local",
   "methodPickerHint": "Elija cómo desea iniciar sesión.",

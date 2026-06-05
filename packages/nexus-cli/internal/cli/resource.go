@@ -60,9 +60,9 @@ func newResourceKindsCmd(a *App) *cobra.Command {
 			}
 			cells := make([][]string, 0, len(kinds))
 			for _, k := range kinds {
-				cells = append(cells, []string{k.Kind, fmt.Sprintf("%d", k.OpCount), strings.Join(k.Verbs, " ")})
+				cells = append(cells, []string{k.Kind, fmt.Sprintf("%d", k.OpCount), dashEmpty(strings.Join(k.Capabilities, " "))})
 			}
-			return a.table([]string{"KIND", "OPS", "CANONICAL VERBS"}, cells)
+			return a.table([]string{"KIND", "OPS", "CAPABILITIES"}, cells)
 		},
 	}
 }
@@ -77,22 +77,25 @@ func newResourceSearchCmd(a *App) *cobra.Command {
 		Args:        cobra.MinimumNArgs(1),
 		Annotations: map[string]string{"skipLoad": "true"}, // catalog is embedded; no env/auth needed
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ops := resource.SearchInfos(strings.Join(args, " "), limit)
+			res := resource.SearchCards(strings.Join(args, " "), 0, limit)
 			if a.isJSON() {
-				return a.renderJSON(ops)
+				return a.renderJSON(res) // the SAME card projection the agent tool emits
 			}
-			if len(ops) == 0 {
+			if len(res.Cards) == 0 && len(res.More) == 0 {
 				a.printf("no operations match %q\n", strings.Join(args, " "))
 				return nil
 			}
-			cells := make([][]string, 0, len(ops))
-			for _, op := range ops {
-				cells = append(cells, []string{op.Kind, op.OperationID, op.Method, op.Label, op.Path})
+			cells := make([][]string, 0, len(res.Cards)+len(res.More))
+			for _, c := range res.Cards {
+				cells = append(cells, []string{c.Kind, c.OperationID, c.Method, clipCell(c.Summary), c.Path})
 			}
-			return a.table([]string{"KIND", "OPERATION", "METHOD", "LABEL", "PATH"}, cells)
+			for _, m := range res.More {
+				cells = append(cells, []string{m.Kind, m.OperationID, m.Method, "—", m.Path})
+			}
+			return a.table([]string{"KIND", "OPERATION", "METHOD", "SUMMARY", "PATH"}, cells)
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", 20, "maximum candidates to return")
+	cmd.Flags().IntVar(&limit, "limit", 20, "maximum candidates to return (the top candidates always fill the card window, min 5)")
 	return cmd
 }
 
@@ -105,35 +108,44 @@ func newResourceDescribeCmd(a *App) *cobra.Command {
 		Annotations: map[string]string{"skipLoad": "true"}, // catalog is embedded; no env/auth needed
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kind := args[0]
-			ops := resource.Operations(kind)
-			if ops == nil {
+			d, ok := resource.Distill(kind)
+			if !ok {
 				return fmt.Errorf("%w: unknown kind %q — run `nexus resource kinds`", errUsage, kind)
 			}
-			descs := make([]resource.OperationSchema, 0, len(ops))
-			for _, op := range ops {
-				if s, ok := resource.DescribeOperation(kind, op.OperationID); ok {
-					descs = append(descs, s)
-				}
-			}
 			if a.isJSON() {
-				return a.renderJSON(map[string]any{"kind": kind, "operations": descs})
+				return a.renderJSON(d) // the SAME distilled projection the resource_describe tool emits
 			}
-			cells := make([][]string, 0, len(ops))
-			for _, op := range ops {
-				params := strings.Join(op.Params, ",")
-				body := ""
-				if s, ok := resource.DescribeOperation(kind, op.OperationID); ok {
-					body = fieldNames(s.Body)
-					if q := queryNames(s.Params); q != "" {
-						if params != "" {
-							params += " "
-						}
-						params += "?" + q
+			cells := make([][]string, 0, len(d.Operations))
+			for _, op := range d.Operations {
+				var paths, queries []string
+				for _, p := range op.Params {
+					if p.In == "query" {
+						queries = append(queries, p.Name)
+					} else {
+						paths = append(paths, p.Name)
 					}
 				}
-				cells = append(cells, []string{op.OperationID, op.Method, op.Label, dashEmpty(params), dashEmpty(body)})
+				params := strings.Join(paths, ",")
+				if len(queries) > 0 {
+					if params != "" {
+						params += " "
+					}
+					params += "?" + strings.Join(queries, ",")
+				}
+				body := make([]string, 0, len(op.Body))
+				for _, f := range op.Body {
+					n := f.Name
+					if f.Required {
+						n += "*"
+					}
+					body = append(body, n)
+				}
+				cells = append(cells, []string{
+					op.OperationID, op.Method, op.Path, clipCell(op.Summary),
+					dashEmpty(params), dashEmpty(strings.Join(body, ",")),
+				})
 			}
-			return a.table([]string{"OPERATION", "METHOD", "LABEL", "PARAMS", "BODY"}, cells)
+			return a.table([]string{"OPERATION", "METHOD", "PATH", "SUMMARY", "PARAMS", "BODY"}, cells)
 		},
 	}
 }
@@ -321,33 +333,25 @@ func toValues(m map[string]string) url.Values {
 	return v
 }
 
-// fieldNames joins required-marked field names for a compact describe column.
-func fieldNames(fs []resource.FieldInfo) string {
-	parts := make([]string, 0, len(fs))
-	for _, f := range fs {
-		n := f.Name
-		if f.Required {
-			n += "*"
-		}
-		parts = append(parts, n)
-	}
-	return strings.Join(parts, ",")
-}
-
-// queryNames joins the in=query parameter names of an operation.
-func queryNames(fs []resource.FieldInfo) string {
-	parts := make([]string, 0, len(fs))
-	for _, f := range fs {
-		if f.In == "query" {
-			parts = append(parts, f.Name)
-		}
-	}
-	return strings.Join(parts, ",")
-}
-
 func dashEmpty(s string) string {
 	if s == "" {
 		return "—"
 	}
 	return s
+}
+
+// clipCell bounds the SUMMARY column so a 6-column table survives an 80-100
+// col terminal: summaries are clipped (with an ellipsis) in preference to
+// paths, which operators copy verbatim. Empty stays "—".
+const summaryCellWidth = 48
+
+func clipCell(s string) string {
+	if s == "" {
+		return "—"
+	}
+	r := []rune(s) // rune-safe: a byte cut could split a multibyte character
+	if len(r) <= summaryCellWidth {
+		return s
+	}
+	return string(r[:summaryCellWidth-1]) + "…"
 }

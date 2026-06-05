@@ -96,9 +96,17 @@ func (a *App) ensureConfig() error {
 		// connection; without this a NAT-dropped connection is reused dead and every
 		// request hangs to the timeout with no recovery. See local.EnableH2Health.
 		local.EnableH2Health(base)
+		// Reactive retry on top: prod closes each h2 connection at a max-age (~30
+		// min). The dashboard polls keep that connection too "active" for the idle
+		// PING to evict it, so the kill surfaces as a mid-request
+		// "http2: client connection lost". RetryTransport re-sends idempotent GETs
+		// once on a fresh connection so the hang is invisible. See local.RetryTransport.
 		a.HTTP = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: &local.LoggingTransport{Base: base, Log: a.Log},
+			Timeout: 30 * time.Second,
+			Transport: &local.RetryTransport{
+				Next: &local.LoggingTransport{Base: base, Log: a.Log},
+				Idle: base,
+			},
 		}
 	}
 	return nil

@@ -57,13 +57,71 @@ func TestResourceSearchTool(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("resource_search errored: %s", res.Content)
 	}
-	for _, want := range []string{`"matches"`, "listVirtualKeys", `"operationId"`} {
+	// The top candidates are full executable cards: the structural identity PLUS
+	// the spec semantics (summary) the model previously never saw — the blind
+	// re-rank fix. "List virtual keys" is listVirtualKeys' OpenAPI summary.
+	for _, want := range []string{`"cards"`, "listVirtualKeys", `"operationId"`, `"summary"`, "List virtual keys"} {
 		if !strings.Contains(res.Content, want) {
 			t.Fatalf("resource_search missing %q:\n%s", want, res.Content)
 		}
 	}
 	if len(gw.adminCalls) != 0 {
 		t.Fatal("search is local — it must not hit the admin API")
+	}
+}
+
+// TestResourceSearchToolCardIsExecutable asserts the one-step contract end to
+// end: a write card returned by resource_search carries the body skeleton
+// (field names + required markers) the model needs to resource_invoke it in
+// the same turn, without a resource_describe round trip.
+func TestResourceSearchToolCardIsExecutable(t *testing.T) {
+	gw := &fakeGateway{}
+	res := runResourceTool(t, findTool(resourceReadTools(gw), "resource_search"),
+		map[string]any{"query": "create virtual key"})
+	var out struct {
+		Cards []struct {
+			OperationID string `json:"operationId"`
+			Write       bool   `json:"write"`
+			Body        []struct {
+				Name     string `json:"name"`
+				Required bool   `json:"required"`
+			} `json:"body"`
+		} `json:"cards"`
+		More []map[string]any `json:"more"`
+	}
+	if err := json.Unmarshal([]byte(res.Content), &out); err != nil {
+		t.Fatalf("search result is not the two-segment shape: %v\n%s", err, res.Content)
+	}
+	var card *struct {
+		OperationID string `json:"operationId"`
+		Write       bool   `json:"write"`
+		Body        []struct {
+			Name     string `json:"name"`
+			Required bool   `json:"required"`
+		} `json:"body"`
+	}
+	for i := range out.Cards {
+		if out.Cards[i].OperationID == "createVirtualKey" {
+			card = &out.Cards[i]
+			break
+		}
+	}
+	if card == nil {
+		t.Fatalf("createVirtualKey not in the card window for its own words:\n%s", res.Content)
+	}
+	if !card.Write {
+		t.Fatal("createVirtualKey card must be marked write")
+	}
+	if len(card.Body) == 0 {
+		t.Fatal("a write card must carry its body skeleton — one-step execution is the point")
+	}
+	// thin tail entries stay thin: no summary/params/body keys
+	for _, m := range out.More {
+		for _, k := range []string{"summary", "params", "body", "write"} {
+			if _, ok := m[k]; ok {
+				t.Fatalf("thin tail entry leaked %q — tail must stay 4-field", k)
+			}
+		}
 	}
 }
 

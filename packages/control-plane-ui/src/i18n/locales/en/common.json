@@ -104,7 +104,8 @@
     "authctxExpired": "Your sign-in session expired. Refreshing the page…",
     "rateLimited": "Too many attempts. Wait a moment before trying again.",
     "internalError": "Something went wrong on our side. Try again shortly.",
-    "loadProvidersFailed": "Unable to load sign-in methods. Refresh the page to retry."
+    "loadProvidersFailed": "Unable to load sign-in methods. Refresh the page to retry.",
+    "ssoFailed": "Sign-in via the identity provider failed ({{code}}). Check the provider configuration or try again; an administrator can find the details in the server logs."
   },
   "localIdpDefaultName": "Local account",
   "methodPickerHint": "Choose how you want to sign in.",

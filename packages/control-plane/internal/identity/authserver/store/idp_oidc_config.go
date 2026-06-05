@@ -26,6 +26,19 @@ type OIDCConfig struct {
 	TokenURL     string `json:"tokenUrl"`
 	Audience     string `json:"audience"`
 	EmailClaim   string `json:"emailClaim"`
+	GroupClaim   string `json:"groupClaim"`
+	// AuthorizeParams are extra key/value pairs appended verbatim to the IdP
+	// authorization request — e.g. Auth0's required `organization`, or
+	// `prompt`/`connection`/`audience`. Admin-configured per IdP so provider
+	// quirks stay in config, not code. Reserved OAuth params (response_type,
+	// client_id, redirect_uri, scope, state) cannot be overridden.
+	AuthorizeParams []OIDCAuthorizeParam `json:"authorizeParams"`
+}
+
+// OIDCAuthorizeParam is one extra authorization-request query parameter.
+type OIDCAuthorizeParam struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // DecodeOIDCConfig converts an IdentityProvider row into a runtime

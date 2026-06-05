@@ -26,12 +26,17 @@ import (
 type fakeUserLookup struct {
 	userID     string
 	pwdHash    string
+	source     string // "local" | "oidc" | "scim"; empty defaults to "local"
 	disabledAt *time.Time
 	err        error
 }
 
-func (f *fakeUserLookup) GetByEmail(_ context.Context, _ string) (string, string, *time.Time, error) {
-	return f.userID, f.pwdHash, f.disabledAt, f.err
+func (f *fakeUserLookup) GetByEmail(_ context.Context, _ string) (string, string, string, *time.Time, error) {
+	source := f.source
+	if source == "" {
+		source = "local" // mirror the NexusUser.source DB default
+	}
+	return f.userID, f.pwdHash, source, f.disabledAt, f.err
 }
 
 // hashOrFail is a tiny helper so test setup doesn't keep paying the bcrypt

@@ -16,8 +16,8 @@ func TestIdPStore_ListEnabled(t *testing.T) {
 
 	var id string
 	err := pool.QueryRow(ctx,
-		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"roleMapping","defaultRole","jitEnabled","updatedAt")
-		 VALUES ('oidc','test-oidc-list',TRUE,'{"issuer":"https://idp.example"}'::jsonb,'[]'::jsonb,'developer',TRUE,NOW())
+		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"defaultRole","jitEnabled","updatedAt")
+		 VALUES ('oidc','test-oidc-list',TRUE,'{"issuer":"https://idp.example"}'::jsonb,'developer',TRUE,NOW())
 		 RETURNING id`,
 	).Scan(&id)
 	if err != nil {
@@ -55,8 +55,8 @@ func TestIdPStore_GetByID(t *testing.T) {
 
 	var id string
 	err := pool.QueryRow(ctx,
-		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"roleMapping","defaultRole","jitEnabled","updatedAt")
-		 VALUES ('oidc','test-oidc-byid',TRUE,'{}'::jsonb,'[{"claim":"groups","value":"admins","role":"admin"}]'::jsonb,'viewer',TRUE,NOW())
+		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"defaultRole","jitEnabled","updatedAt")
+		 VALUES ('oidc','test-oidc-byid',TRUE,'{}'::jsonb,'viewer',TRUE,NOW())
 		 RETURNING id`,
 	).Scan(&id)
 	if err != nil {
@@ -70,11 +70,8 @@ func TestIdPStore_GetByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if p.DefaultRole != "viewer" || len(p.RoleMapping) != 1 {
-		t.Fatalf("role mapping round-trip failed: %+v", p)
-	}
-	if p.RoleMapping[0]["role"] != "admin" {
-		t.Fatalf("unexpected role mapping payload: %v", p.RoleMapping)
+	if p.DefaultRole != "viewer" {
+		t.Fatalf("defaultRole round-trip failed: %+v", p)
 	}
 
 	if _, err := s.GetByID(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, store.ErrIdPNotFound) {
@@ -89,8 +86,8 @@ func TestIdPStore_GetLocal(t *testing.T) {
 
 	var id string
 	err := pool.QueryRow(ctx,
-		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"roleMapping","defaultRole","jitEnabled","updatedAt")
-		 VALUES ('local','test-local',TRUE,'{}'::jsonb,'[]'::jsonb,'developer',TRUE,NOW())
+		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"defaultRole","jitEnabled","updatedAt")
+		 VALUES ('local','test-local',TRUE,'{}'::jsonb,'developer',TRUE,NOW())
 		 RETURNING id`,
 	).Scan(&id)
 	if err != nil {

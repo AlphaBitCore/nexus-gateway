@@ -77,6 +77,37 @@ func TestBuildSAMLServiceProvider(t *testing.T) {
 			t.Errorf("signing cert not embedded in IdP metadata")
 		}
 	})
+
+	// Regression: SAML login matches a returning user by the NameID subject, so
+	// the subject must be stable across logins. crewjam defaults an unset format
+	// to "transient" (a per-session pseudonym that changes every login), which
+	// breaks that matching on any compliant IdP — and which some IdPs reject
+	// outright with a top-level status:Requester. The SP must request Unspecified
+	// (let the IdP issue its native stable NameID); the AuthnRequest must never
+	// carry transient.
+	t.Run("AuthnRequest does not demand transient NameID (Auth0 compat)", func(t *testing.T) {
+		cfg := &store.SAMLConfig{
+			EntityID:    "https://idp.acme.test/metadata",
+			SSOURL:      "https://idp.acme.test/sso",
+			Certificate: kp.CertPEM,
+		}
+		sp, err := buildSAMLServiceProvider(cfg, issuer)
+		if err != nil {
+			t.Fatalf("buildSAMLServiceProvider: %v", err)
+		}
+		if sp.AuthnNameIDFormat != saml.UnspecifiedNameIDFormat {
+			t.Fatalf("AuthnNameIDFormat = %q, want Unspecified", sp.AuthnNameIDFormat)
+		}
+		req, err := sp.MakeAuthenticationRequest(cfg.SSOURL, saml.HTTPPostBinding, saml.HTTPPostBinding)
+		if err != nil {
+			t.Fatalf("MakeAuthenticationRequest: %v", err)
+		}
+		if req.NameIDPolicy != nil && req.NameIDPolicy.Format != nil {
+			if got := *req.NameIDPolicy.Format; got == string(saml.TransientNameIDFormat) {
+				t.Errorf("AuthnRequest NameIDPolicy.Format = %q; must not be transient", got)
+			}
+		}
+	})
 }
 
 func TestParseCertificatePEM(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -265,7 +266,9 @@ func TestUpdateMyProfile_WrongCurrentPassword_Returns401(t *testing.T) {
 	}
 	email := "u1@example.com"
 	us := &stubMeUserStore{
-		findResult: &userstore.NexusUser{ID: "u1", Email: &email, PasswordHash: &hash},
+		// Source "local" mirrors the DB default; a password-backed account is
+		// always local-sourced (SSO accounts are blocked before this check).
+		findResult: &userstore.NexusUser{ID: "u1", Email: &email, Source: "local", PasswordHash: &hash},
 	}
 	h := buildHandler(us, &stubMeIAMStore{}, &stubMeTrafficStore{})
 	current := "wrong-pass"
@@ -277,6 +280,29 @@ func TestUpdateMyProfile_WrongCurrentPassword_Returns401(t *testing.T) {
 	}
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("code=%d want 401 (wrong current password)", rec.Code)
+	}
+}
+
+// TestUpdateMyProfile_SSOAccount_PasswordChangeReturns400 is the regression
+// guard for the /account self-service path: a federated (oidc/scim) user must
+// get an explicit sso_account 400 — not the confusing "current password is
+// incorrect" 401 — when attempting to change a local password they don't have.
+func TestUpdateMyProfile_SSOAccount_PasswordChangeReturns400(t *testing.T) {
+	email := "steve@example.com"
+	us := &stubMeUserStore{
+		findResult: &userstore.NexusUser{ID: "u1", Email: &email, Source: "oidc"},
+	}
+	h := buildHandler(us, &stubMeIAMStore{}, &stubMeTrafficStore{})
+	body, _ := json.Marshal(map[string]any{"currentPassword": "whatever", "newPassword": "new-pass"})
+	c, rec := echoCtx(http.MethodPatch, "/api/my/profile", body, adminAuth("u1", "admin_user"))
+	if err := h.UpdateMyProfile(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d want 400 (SSO account); body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "sso_account") {
+		t.Errorf("body=%s want sso_account code", rec.Body.String())
 	}
 }
 
@@ -960,7 +986,7 @@ func TestUpdateMyProfile_CorrectPassword_ChangesPassword(t *testing.T) {
 	email := "u1@example.com"
 	safe := &userstore.NexusUserSafe{ID: "u1", Email: &email, Status: "active"}
 	us := &stubMeUserStore{
-		findResult:   &userstore.NexusUser{ID: "u1", Email: &email, PasswordHash: &hash},
+		findResult:   &userstore.NexusUser{ID: "u1", Email: &email, Source: "local", PasswordHash: &hash},
 		updateResult: safe,
 	}
 	h := buildHandler(us, &stubMeIAMStore{}, &stubMeTrafficStore{})

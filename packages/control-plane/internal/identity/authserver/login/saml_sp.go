@@ -33,6 +33,20 @@ var errSAMLIncompleteConfig = errors.New("saml: incomplete idp config (entityId 
 // IdP signs the response) and assertions are not encrypted, so neither signing
 // nor decryption keys are needed. AllowIDPInitiated is left false so a
 // response without an InResponseTo we issued is rejected.
+//
+// AuthnNameIDFormat is Unspecified so crewjam omits the NameIDPolicy Format
+// constraint and the IdP returns its native NameID. This is a deliberate,
+// IdP-agnostic choice driven by our identity model: SAML login matches a
+// returning user by the NameID subject (resolveOrProvision →
+// FindByIdPSubject), so that subject must be a STABLE per-user identifier.
+// crewjam otherwise defaults an unset format to "transient" — a per-session
+// pseudonym that changes every login — which silently breaks subject matching
+// on any spec-compliant IdP (and which some IdPs reject outright with a
+// top-level status:Requester; Auth0, whose default NameID is unspecified, is
+// one such IdP). A specific format (persistent / emailAddress) is avoided
+// because it re-introduces IdP-rejection / onboarding friction; letting the IdP
+// issue its native stable NameID is the most interoperable, zero-IdP-config
+// option.
 func buildSAMLServiceProvider(cfg *store.SAMLConfig, issuer string) (*saml.ServiceProvider, error) {
 	if cfg == nil {
 		return nil, errSAMLIncompleteConfig
@@ -54,10 +68,11 @@ func buildSAMLServiceProvider(cfg *store.SAMLConfig, issuer string) (*saml.Servi
 		return nil, fmt.Errorf("saml: parse metadata url: %w", err)
 	}
 	return &saml.ServiceProvider{
-		EntityID:    metaURL.String(),
-		AcsURL:      *acsURL,
-		MetadataURL: *metaURL,
-		IDPMetadata: idpEntityDescriptor(cfg.EntityID, cfg.SSOURL, idpCert),
+		EntityID:          metaURL.String(),
+		AcsURL:            *acsURL,
+		MetadataURL:       *metaURL,
+		IDPMetadata:       idpEntityDescriptor(cfg.EntityID, cfg.SSOURL, idpCert),
+		AuthnNameIDFormat: saml.UnspecifiedNameIDFormat,
 	}, nil
 }
 

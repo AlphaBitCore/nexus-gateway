@@ -63,4 +63,22 @@ func TestDecodeSAMLConfig(t *testing.T) {
 			t.Errorf("empty config defaults wrong: %+v", cfg)
 		}
 	})
+
+	t.Run("ssoParams decoded", func(t *testing.T) {
+		cfg := DecodeSAMLConfig(&IdentityProvider{
+			Type: "saml",
+			Config: map[string]any{
+				"entityId": "x", "ssoUrl": "y", "certificatePem": "z",
+				"ssoParams": []any{
+					map[string]any{"key": "organization", "value": "org_abc123"},
+				},
+			},
+		})
+		if cfg == nil || len(cfg.SSOParams) != 1 {
+			t.Fatalf("ssoParams not decoded: %+v", cfg)
+		}
+		if cfg.SSOParams[0].Key != "organization" || cfg.SSOParams[0].Value != "org_abc123" {
+			t.Errorf("ssoParams wrong: %+v", cfg.SSOParams)
+		}
+	})
 }

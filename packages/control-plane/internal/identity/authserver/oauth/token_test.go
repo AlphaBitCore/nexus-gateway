@@ -84,6 +84,8 @@ func (f *fakeRefresh) Rotate(_ context.Context, incoming string, _ time.Duration
 // fakeUsers returns a pre-built user by id; missing ids yield ErrUserNotFound.
 type fakeUsers map[string]*store.User
 
+func (f fakeUsers) TouchLastLogin(_ context.Context, _ string) error { return nil }
+
 func (f fakeUsers) GetByID(_ context.Context, id string) (*store.User, error) {
 	u, ok := f[id]
 	if !ok {

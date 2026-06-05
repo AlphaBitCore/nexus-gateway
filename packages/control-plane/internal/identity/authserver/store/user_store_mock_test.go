@@ -22,24 +22,24 @@ func newUserMock(t *testing.T) (pgxmock.PgxPoolIface, *store.UserStore) {
 	return mock, store.NewUserStoreWithPool(mock)
 }
 
-// TestUserStore_GetByEmail_HappyPath asserts the (id, passwordHash,
-// disabledAt) triple is returned in scan-order with disabledAt left nil
+// TestUserStore_GetByEmail_HappyPath asserts the (id, passwordHash, source,
+// disabledAt) tuple is returned in scan-order with disabledAt left nil
 // when the column is NULL.
 func TestUserStore_GetByEmail_HappyPath(t *testing.T) {
 	mock, s := newUserMock(t)
 	ctx := context.Background()
 
-	mock.ExpectQuery(`SELECT id, COALESCE\("passwordHash", ''\), "disabledAt"`).
+	mock.ExpectQuery(`SELECT id, COALESCE\("passwordHash", ''\), source, "disabledAt"`).
 		WithArgs("alice@nexus.ai").
-		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "disabledAt"}).
-			AddRow("u_1", "argon2id$hash", (*time.Time)(nil)))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "source", "disabledAt"}).
+			AddRow("u_1", "argon2id$hash", "local", (*time.Time)(nil)))
 
-	id, pwd, disabledAt, err := s.GetByEmail(ctx, "alice@nexus.ai")
+	id, pwd, source, disabledAt, err := s.GetByEmail(ctx, "alice@nexus.ai")
 	if err != nil {
 		t.Fatalf("GetByEmail: %v", err)
 	}
-	if id != "u_1" || pwd != "argon2id$hash" || disabledAt != nil {
-		t.Fatalf("unexpected result: id=%q pwd=%q disabledAt=%v", id, pwd, disabledAt)
+	if id != "u_1" || pwd != "argon2id$hash" || source != "local" || disabledAt != nil {
+		t.Fatalf("unexpected result: id=%q pwd=%q source=%q disabledAt=%v", id, pwd, source, disabledAt)
 	}
 }
 
@@ -53,10 +53,10 @@ func TestUserStore_GetByEmail_DisabledAtPopulated(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT id, COALESCE`).
 		WithArgs("blocked@nexus.ai").
-		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "disabledAt"}).
-			AddRow("u_blocked", "argon2id$hash", &disabled))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "passwordHash", "source", "disabledAt"}).
+			AddRow("u_blocked", "argon2id$hash", "local", &disabled))
 
-	_, _, got, err := s.GetByEmail(ctx, "blocked@nexus.ai")
+	_, _, _, got, err := s.GetByEmail(ctx, "blocked@nexus.ai")
 	if err != nil {
 		t.Fatalf("GetByEmail: %v", err)
 	}
@@ -75,9 +75,9 @@ func TestUserStore_GetByEmail_NotFound(t *testing.T) {
 		WithArgs("nobody@nexus.ai").
 		WillReturnError(pgx.ErrNoRows)
 
-	id, pwd, da, err := s.GetByEmail(ctx, "nobody@nexus.ai")
-	if id != "" || pwd != "" || da != nil {
-		t.Fatalf("on not-found expected zero values; got id=%q pwd=%q da=%v", id, pwd, da)
+	id, pwd, source, da, err := s.GetByEmail(ctx, "nobody@nexus.ai")
+	if id != "" || pwd != "" || source != "" || da != nil {
+		t.Fatalf("on not-found expected zero values; got id=%q pwd=%q source=%q da=%v", id, pwd, source, da)
 	}
 	if !errors.Is(err, store.ErrUserNotFound) {
 		t.Fatalf("expected ErrUserNotFound; got %v", err)
@@ -96,7 +96,7 @@ func TestUserStore_GetByEmail_GenericError(t *testing.T) {
 		WithArgs("err@nexus.ai").
 		WillReturnError(boom)
 
-	id, pwd, _, err := s.GetByEmail(ctx, "err@nexus.ai")
+	id, pwd, _, _, err := s.GetByEmail(ctx, "err@nexus.ai")
 	if id != "" || pwd != "" {
 		t.Fatalf("on error expected zero id/pwd; got id=%q pwd=%q", id, pwd)
 	}

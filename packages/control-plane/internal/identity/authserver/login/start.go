@@ -1,13 +1,16 @@
 package login
 
 import (
+	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/crewjam/saml"
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
 )
 
 // loginPagePath is the SPA-hosted login picker. Every non-happy-path outcome of
@@ -18,6 +21,12 @@ import (
 // so a provider that was disabled or deleted between picker render and click
 // simply disappears from the list on the bounce — no error loop.
 const loginPagePath = "/login"
+
+// ssoErrorPagePath is the SPA-hosted terminal page the OIDC callback sends the
+// browser to when the IdP returns an error instead of a code. It shows the
+// (bounded) OAuth error code and a button back to sign-in; it does not
+// auto-redirect, so the operator can read the failure.
+const ssoErrorPagePath = "/auth/sso-error"
 
 // StartDeps carries the collaborators the unified SSO-start endpoint needs. It
 // is intentionally the minimal initiation surface: resolving the IdP (IdPs),
@@ -31,6 +40,12 @@ type StartDeps struct {
 	Pending  *store.PendingAuthzStore
 	Requests *store.SAMLRequestStore
 	Issuer   string
+	// Resolver fills the OIDC authorize/token/jwks endpoints from the IdP
+	// issuer's discovery document when the saved config omits them — the
+	// admin Add-IdP form collects only the issuer and relies on discovery.
+	// Shared with the OIDC callback so a document fetched here is reused on
+	// the return leg. May be nil (tests that pin explicit endpoints).
+	Resolver *oidcdisco.Resolver
 }
 
 // StartHandler returns GET /authserver/idp/:idpId/start?authctx=<authctx>. It is
@@ -92,10 +107,39 @@ func bounceToLogin(c echo.Context, authctx string) error {
 // browser to the IdP. state carries the authctx back on the callback.
 func startOIDC(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx string) error {
 	cfg := store.DecodeOIDCConfig(idp)
-	if cfg == nil || cfg.AuthorizeURL == "" || cfg.ClientID == "" {
+	if cfg == nil || cfg.ClientID == "" {
+		return bounceToLogin(c, authctx)
+	}
+	// The authorize endpoint is usually absent from the saved config (the
+	// admin form collects only the issuer). Resolve it from the issuer's
+	// discovery document; on failure bounce to the login page rather than
+	// emit a server error body, matching every other non-happy path here.
+	if cfg.AuthorizeURL == "" && d.Resolver != nil {
+		eps, err := d.Resolver.Resolve(c.Request().Context(), cfg.Issuer, oidcdisco.Endpoints{
+			AuthorizeURL: cfg.AuthorizeURL,
+			TokenURL:     cfg.TokenURL,
+			JwksURI:      cfg.JwksURI,
+		})
+		if err != nil {
+			slog.Default().Warn("authserver: OIDC discovery failed at SSO start",
+				"idp", idp.ID, "issuer", cfg.Issuer, "err", err)
+			return bounceToLogin(c, authctx)
+		}
+		cfg.AuthorizeURL = eps.AuthorizeURL
+		cfg.TokenURL = eps.TokenURL
+		cfg.JwksURI = eps.JwksURI
+	}
+	if cfg.AuthorizeURL == "" {
 		return bounceToLogin(c, authctx)
 	}
 	if !d.Pending.SetIdPID(authctx, idp.ID) {
+		return c.Redirect(http.StatusFound, loginPagePath)
+	}
+	// Single-use nonce bound to this login: sent to the IdP now and verified
+	// against the ID token's `nonce` claim on the callback (OIDC Core §3.1.2.1),
+	// defeating ID-token replay/injection.
+	nonce := store.RandomOpaqueToken(32)
+	if !d.Pending.SetIdPNonce(authctx, nonce) {
 		return c.Redirect(http.StatusFound, loginPagePath)
 	}
 	u, err := url.Parse(cfg.AuthorizeURL)
@@ -103,13 +147,33 @@ func startOIDC(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx
 		return bounceToLogin(c, authctx)
 	}
 	q := u.Query()
+	// Admin-configured extra params first (e.g. Auth0 `organization`), so the
+	// reserved OAuth params below always win and can't be clobbered by config.
+	for _, p := range cfg.AuthorizeParams {
+		if p.Key == "" || reservedAuthorizeParams[p.Key] {
+			continue
+		}
+		q.Set(p.Key, p.Value)
+	}
 	q.Set("response_type", "code")
 	q.Set("client_id", cfg.ClientID)
 	q.Set("redirect_uri", cfg.RedirectURI)
 	q.Set("scope", "openid profile email")
 	q.Set("state", authctx)
+	q.Set("nonce", nonce)
 	u.RawQuery = q.Encode()
 	return c.Redirect(http.StatusFound, u.String())
+}
+
+// reservedAuthorizeParams are the OAuth params startOIDC owns; an IdP's
+// extra-authorize-params config cannot override them.
+var reservedAuthorizeParams = map[string]bool{
+	"response_type": true,
+	"client_id":     true,
+	"redirect_uri":  true,
+	"scope":         true,
+	"state":         true,
+	"nonce":         true,
 }
 
 // startSAML builds an SP-initiated AuthnRequest, records its ID against the
@@ -122,7 +186,15 @@ func startSAML(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx
 	if err != nil {
 		return bounceToLogin(c, authctx)
 	}
-	req, err := sp.MakeAuthenticationRequest(cfg.SSOURL, saml.HTTPPostBinding, saml.HTTPPostBinding)
+	// Append the IdP's configured extra SSO params to the destination URL (e.g.
+	// Auth0 Organizations' required `organization`). crewjam posts the form to
+	// the AuthnRequest Destination, so the params ride on the URL the browser
+	// POSTs to while SAMLRequest / RelayState stay in the form body.
+	dest, err := samlSSOURLWithParams(cfg.SSOURL, cfg.SSOParams)
+	if err != nil {
+		return bounceToLogin(c, authctx)
+	}
+	req, err := sp.MakeAuthenticationRequest(dest, saml.HTTPPostBinding, saml.HTTPPostBinding)
 	if err != nil {
 		return bounceToLogin(c, authctx)
 	}
@@ -131,4 +203,76 @@ func startSAML(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx
 	}
 	d.Requests.Put(authctx, req.ID)
 	return c.HTMLBlob(http.StatusOK, req.Post(authctx))
+}
+
+// reservedSAMLSSOParams are the SAML protocol query params the SP / crewjam
+// own; an IdP's extra-SSO-params config cannot override them.
+var reservedSAMLSSOParams = map[string]bool{
+	"SAMLRequest": true,
+	"RelayState":  true,
+	"SigAlg":      true,
+	"Signature":   true,
+}
+
+// samlSSOURLWithParams appends the IdP's configured extra query parameters to
+// the SSO endpoint URL on the SP-initiated AuthnRequest — the SAML analogue of
+// startOIDC's AuthorizeParams loop. Empty-key and reserved SAML protocol params
+// are skipped. Returns the URL unchanged when no params are configured.
+func samlSSOURLWithParams(ssoURL string, params []store.SAMLSSOParam) (string, error) {
+	if len(params) == 0 {
+		return ssoURL, nil
+	}
+	u, err := url.Parse(ssoURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	for _, p := range params {
+		if p.Key == "" || reservedSAMLSSOParams[p.Key] {
+			continue
+		}
+		q.Set(p.Key, p.Value)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// LogoutHandler returns GET /authserver/idp/:idpId/logout — RP-initiated logout.
+// For an OIDC IdP whose discovery advertises an end_session_endpoint, it 302s the
+// browser there with post_logout_redirect_uri back to the SPA login page, so the
+// IdP ends its own session and then returns the user to /login. For a SAML or
+// local IdP, or an OIDC IdP without end_session, it 302s straight to /login (the
+// Nexus session is already dropped client-side). Best-effort: any resolution
+// failure bounces to /login, so logout can never strand the user.
+func LogoutHandler(d StartDeps) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		ctx := c.Request().Context()
+		idp, err := d.IdPs.GetByID(ctx, c.Param("idpId"))
+		if err != nil || idp == nil || idp.Type != "oidc" || d.Resolver == nil {
+			return c.Redirect(http.StatusFound, loginPagePath)
+		}
+		cfg := store.DecodeOIDCConfig(idp)
+		if cfg == nil {
+			return c.Redirect(http.StatusFound, loginPagePath)
+		}
+		eps, err := d.Resolver.Resolve(ctx, cfg.Issuer, oidcdisco.Endpoints{
+			AuthorizeURL: cfg.AuthorizeURL,
+			TokenURL:     cfg.TokenURL,
+			JwksURI:      cfg.JwksURI,
+		})
+		if err != nil || eps.EndSessionURL == "" {
+			return c.Redirect(http.StatusFound, loginPagePath)
+		}
+		u, err := url.Parse(eps.EndSessionURL)
+		if err != nil {
+			return c.Redirect(http.StatusFound, loginPagePath)
+		}
+		q := u.Query()
+		q.Set("post_logout_redirect_uri", strings.TrimRight(d.Issuer, "/")+loginPagePath)
+		if cfg.ClientID != "" {
+			q.Set("client_id", cfg.ClientID)
+		}
+		u.RawQuery = q.Encode()
+		return c.Redirect(http.StatusFound, u.String())
+	}
 }

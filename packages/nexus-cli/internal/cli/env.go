@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
 )
 
 func newEnvCmd(a *App) *cobra.Command {
@@ -34,6 +35,14 @@ func newEnvAddCmd(a *App) *cobra.Command {
 			}
 			if cpURL == "" {
 				return fmt.Errorf("%w: --cp-url is required", errUsage)
+			}
+			if err := local.ValidateBaseURL("--cp-url", cpURL); err != nil {
+				return fmt.Errorf("%w: %v", errUsage, err)
+			}
+			if aigwURL != "" {
+				if err := local.ValidateBaseURL("--aigw-url", aigwURL); err != nil {
+					return fmt.Errorf("%w: %v", errUsage, err)
+				}
 			}
 			if err := a.ensureConfig(); err != nil {
 				return err

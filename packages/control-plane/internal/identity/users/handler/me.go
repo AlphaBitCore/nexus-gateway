@@ -134,6 +134,13 @@ func (h *Handler) UpdateMe(c echo.Context) error {
 		if err != nil || existing == nil {
 			return c.JSON(http.StatusInternalServerError, errJSON("Failed to load user", "server_error", ""))
 		}
+		// SSO accounts have no local password to change — guide them to their IdP
+		// rather than failing the current-password check with a confusing message.
+		if existing.Source != "local" {
+			return c.JSON(http.StatusBadRequest, errJSON(
+				"Your account signs in through single sign-on (SSO); there is no local password to change. Manage your credentials with your identity provider.",
+				"sso_account", "newPassword"))
+		}
 		if existing.PasswordHash == nil || !auth.VerifyPassword(*body.CurrentPassword, *existing.PasswordHash) {
 			return c.JSON(http.StatusUnauthorized, errJSON("Current password is incorrect", "authorization_error", ""))
 		}

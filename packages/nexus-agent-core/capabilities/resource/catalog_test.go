@@ -10,7 +10,7 @@ import (
 
 // TestResourceEmbedMatchesDocsSource guards embed↔docs drift: the embedded spec
 // copy must be byte-identical to the generated source under docs/. When a doc spec
-// is regenerated, `go generate ./internal/capabilities/resource` must refresh the
+// is regenerated, `go generate ./capabilities/resource` must refresh the
 // embed. Skips on a build with no repo on disk (the distributed CLI).
 func TestResourceEmbedMatchesDocsSource(t *testing.T) {
 	const src = "../../../../../docs/users/api/openapi/control-plane"
@@ -28,10 +28,10 @@ func TestResourceEmbedMatchesDocsSource(t *testing.T) {
 		}
 		got, err := resourceSpecFS.ReadFile(resourceSpecDir + "/" + e.Name())
 		if err != nil {
-			t.Fatalf("docs spec %s is not embedded — run `go generate ./internal/capabilities/resource`", e.Name())
+			t.Fatalf("docs spec %s is not embedded — run `go generate ./capabilities/resource`", e.Name())
 		}
 		if !bytes.Equal(want, got) {
-			t.Fatalf("embedded %s differs from docs source — run `go generate ./internal/capabilities/resource`", e.Name())
+			t.Fatalf("embedded %s differs from docs source — run `go generate ./capabilities/resource`", e.Name())
 		}
 	}
 }

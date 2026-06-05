@@ -15,6 +15,7 @@ import type {
   IdentityProvider,
   IdentityProviderWriteRequest,
   IdentityProviderProbeResult,
+  SamlMetadataParseResult,
   ScimToken,
   IdpGroupMapping,
   WhoAmI,
@@ -274,10 +275,18 @@ export const iamApi = {
     api.put<IdentityProvider>(`/api/admin/identity-providers/${id}`, body),
   deleteIdentityProvider: (id: string, opts?: { force?: boolean }) =>
     api.delete(`/api/admin/identity-providers/${id}${opts?.force ? '?force=true' : ''}`),
-  testCandidateIdentityProvider: (body: IdentityProviderWriteRequest) =>
-    api.post<IdentityProviderProbeResult>('/api/admin/identity-providers/test', body),
+  // `id` is sent only when probing an already-saved IdP from the edit
+  // form: the body carries secret fields masked as "********" and the
+  // backend restores them from the stored row before probing.
+  testCandidateIdentityProvider: (body: IdentityProviderWriteRequest, id?: string) =>
+    api.post<IdentityProviderProbeResult>('/api/admin/identity-providers/test', id ? { ...body, id } : body),
   testSavedIdentityProvider: (id: string, body?: { token?: string }) =>
     api.post<IdentityProviderProbeResult>(`/api/admin/identity-providers/${id}/test`, body ?? {}),
+  // Parse an uploaded/pasted SAML IdP metadata XML to pre-fill the Add-IdP
+  // form (entityId / ssoUrl / certificatePem + detected email/groups
+  // attributes). Pure server-side parse — no metadata-URL fetch (no SSRF).
+  parseSamlMetadata: (metadataXml: string) =>
+    api.post<SamlMetadataParseResult>('/api/admin/identity-providers/parse-saml-metadata', { metadataXml }),
 
   // SCIM tokens
   listScimTokens: (idpId: string) =>

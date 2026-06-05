@@ -38,8 +38,8 @@ func seedPasswordFixture(t *testing.T) passwordFixture {
 
 	var idpID string
 	err := pool.QueryRow(ctx,
-		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"roleMapping","defaultRole","jitEnabled","updatedAt")
-		 VALUES ('local','test-local-pw-'||$1,TRUE,'{}'::jsonb,'[]'::jsonb,'developer',TRUE,NOW())
+		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"defaultRole","jitEnabled","updatedAt")
+		 VALUES ('local','test-local-pw-'||$1,TRUE,'{}'::jsonb,'developer',TRUE,NOW())
 		 RETURNING id`, suffix,
 	).Scan(&idpID)
 	if err != nil {

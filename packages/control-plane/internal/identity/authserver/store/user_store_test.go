@@ -26,15 +26,18 @@ func TestUserStore_GetByEmail(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM "NexusUser" WHERE id=$1`, id) })
 
-	got, pwd, disabledAt, err := s.GetByEmail(ctx, email)
+	got, pwd, source, disabledAt, err := s.GetByEmail(ctx, email)
 	if err != nil {
 		t.Fatalf("GetByEmail: %v", err)
 	}
 	if got != id || pwd != "argon2id$...$hash" || disabledAt != nil {
 		t.Fatalf("unexpected result: id=%q pwd=%q disabledAt=%v", got, pwd, disabledAt)
 	}
+	if source != "local" {
+		t.Fatalf("source: got %q, want local (DB default)", source)
+	}
 
-	if _, _, _, err := s.GetByEmail(ctx, "nobody-"+email); !errors.Is(err, store.ErrUserNotFound) {
+	if _, _, _, _, err := s.GetByEmail(ctx, "nobody-"+email); !errors.Is(err, store.ErrUserNotFound) {
 		t.Fatalf("expected ErrUserNotFound, got %v", err)
 	}
 }

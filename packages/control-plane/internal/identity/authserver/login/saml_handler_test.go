@@ -1,6 +1,7 @@
 package login
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -17,7 +18,19 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 )
+
+// recordingAuditProducer captures Enqueue'd audit payloads so the login
+// handlers' audit emission can be asserted (audit.Writer.Log is synchronous).
+type recordingAuditProducer struct{ enqueued [][]byte }
+
+func (p *recordingAuditProducer) Publish(context.Context, string, []byte) error { return nil }
+func (p *recordingAuditProducer) Enqueue(_ context.Context, _ string, data []byte) error {
+	p.enqueued = append(p.enqueued, append([]byte(nil), data...))
+	return nil
+}
+func (p *recordingAuditProducer) Close() error { return nil }
 
 const samlIssuer = "https://cp.nexus.test"
 const idpRowQuery = `SELECT id, type, name, enabled, config`
@@ -35,8 +48,8 @@ func samlConfigJSON(entityID, ssoURL, certPEM string) []byte {
 // samlIdPRows builds a single-row pgxmock result for a SAML IdentityProvider.
 func samlIdPRows(id, name string, enabled, jit bool, cfg []byte) *pgxmock.Rows {
 	return pgxmock.NewRows([]string{
-		"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
-	}).AddRow(id, "saml", name, enabled, cfg, []byte(`[]`), "developer", jit)
+		"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
+	}).AddRow(id, "saml", name, enabled, cfg, "developer", false, jit)
 }
 
 func mustURL(t *testing.T, s string) url.URL {
@@ -195,9 +208,11 @@ func TestSAMLACSHandler_HappyAndProvision(t *testing.T) {
 		const reqID = "id-test-req-1"
 		reqs.Put(authctx, reqID)
 
+		prod := &recordingAuditProducer{}
 		d := SAMLDeps{
 			IdPs: store.NewIdPStoreWithPool(mock), Federated: store.NewFederatedStoreWithPool(mock),
 			Pending: pending, AuthCodes: store.NewAuthCodeStore(5 * time.Minute), Requests: reqs, Issuer: samlIssuer,
+			Audit: audit.NewWriter(prod, "admin-audit", nil),
 		}
 		t.Cleanup(d.AuthCodes.Close)
 
@@ -213,6 +228,20 @@ func TestSAMLACSHandler_HappyAndProvision(t *testing.T) {
 		loc := rec.Header().Get("Location")
 		if !strings.Contains(loc, "code=") || !strings.HasPrefix(loc, "http://127.0.0.1/cb") {
 			t.Errorf("redirect missing code/redirect_uri: %q", loc)
+		}
+		// A successful SAML login must emit the admin.login.succeeded audit row.
+		if len(prod.enqueued) != 1 {
+			t.Fatalf("want 1 audit row, got %d", len(prod.enqueued))
+		}
+		var ev map[string]any
+		if err := json.Unmarshal(prod.enqueued[0], &ev); err != nil {
+			t.Fatalf("audit unmarshal: %v", err)
+		}
+		if ev["action"] != "admin.login.succeeded" {
+			t.Errorf("audit action = %v, want admin.login.succeeded", ev["action"])
+		}
+		if ev["actorLabel"] != "alice@acme.test" {
+			t.Errorf("audit actorLabel = %v, want alice@acme.test", ev["actorLabel"])
 		}
 	})
 

@@ -24,8 +24,8 @@ func TestOIDCCallbackHandler_DisabledIdP_Rejected(t *testing.T) {
 		"https://idp/jwks", "cid", "https://app/cb", "aud")
 	mock.ExpectQuery(idpQuery).WithArgs("oidc-1").
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
-		}).AddRow("oidc-1", "oidc", "Okta", false, cfg, []byte(`[]`), "developer", true))
+			"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
+		}).AddRow("oidc-1", "oidc", "Okta", false, cfg, "developer", false, true))
 
 	authctx := "ctx-disabled"
 	pending := store.NewPendingAuthzStore()

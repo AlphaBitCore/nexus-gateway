@@ -213,11 +213,18 @@ func TestResolveOperationUnknown(t *testing.T) {
 }
 
 func TestCanonicalVerbsForKind(t *testing.T) {
+	// Per-op canonical verbs survive (search scoring + DistilledOp consume
+	// them); only the kind-level aggregation moved to capabilities().
 	vk := resIdx["virtual-keys"]
-	verbs := vk.canonicalVerbs()
+	got := map[string]bool{}
+	for _, op := range vk.operations() {
+		if v := op.CanonicalVerb(); v != "" {
+			got[v] = true
+		}
+	}
 	for _, want := range []string{"list", "get", "create", "update", "delete"} {
-		if !contains(verbs, want) {
-			t.Fatalf("virtual-keys canonical verbs missing %q: %v", want, verbs)
+		if !got[want] {
+			t.Fatalf("virtual-keys canonical verbs missing %q: %v", want, got)
 		}
 	}
 	// A singleton-config kind has few/no canonical verbs but still exposes operations.
@@ -225,15 +232,6 @@ func TestCanonicalVerbsForKind(t *testing.T) {
 	if len(sc.operations()) == 0 {
 		t.Fatal("semantic-cache must expose operations")
 	}
-}
-
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 // TestOpExtraCorpus asserts the search corpus carries the op summary + query-param
