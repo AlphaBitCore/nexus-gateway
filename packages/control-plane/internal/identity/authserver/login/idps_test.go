@@ -32,8 +32,8 @@ func seedIdpsFixture(t *testing.T) idpsFixture {
 
 	var localID, oidcID string
 	err := pool.QueryRow(ctx,
-		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"roleMapping","defaultRole","jitEnabled","updatedAt")
-		 VALUES ('local','test-local-idps-'||$1,TRUE,'{}'::jsonb,'[]'::jsonb,'developer',TRUE,NOW())
+		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"defaultRole","jitEnabled","updatedAt")
+		 VALUES ('local','test-local-idps-'||$1,TRUE,'{}'::jsonb,'developer',TRUE,NOW())
 		 RETURNING id`, suffix).Scan(&localID)
 	if err != nil {
 		t.Fatalf("seed local idp: %v", err)
@@ -41,8 +41,8 @@ func seedIdpsFixture(t *testing.T) idpsFixture {
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM "IdentityProvider" WHERE id=$1`, localID) })
 
 	err = pool.QueryRow(ctx,
-		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"roleMapping","defaultRole","jitEnabled","updatedAt")
-		 VALUES ('oidc','test-oidc-idps-'||$1,TRUE,'{}'::jsonb,'[]'::jsonb,'developer',TRUE,NOW())
+		`INSERT INTO "IdentityProvider"(type,name,enabled,config,"defaultRole","jitEnabled","updatedAt")
+		 VALUES ('oidc','test-oidc-idps-'||$1,TRUE,'{}'::jsonb,'developer',TRUE,NOW())
 		 RETURNING id`, suffix).Scan(&oidcID)
 	if err != nil {
 		t.Fatalf("seed oidc idp: %v", err)

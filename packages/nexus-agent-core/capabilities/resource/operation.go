@@ -170,20 +170,6 @@ func (rk resourceKind) operations() []Operation {
 	return out
 }
 
-// canonicalVerbs lists the canonical CRUD/action verbs the kind supports, derived
-// from its operations — a quick hint for a picker. It is intentionally a subset:
-// a non-CRUD kind (reports/singleton config/RPC) returns few or none, but every
-// such operation is still reachable via operations() / resource_search.
-func (rk resourceKind) canonicalVerbs() []string {
-	var v []string
-	for _, op := range rk.operations() {
-		if cv := op.CanonicalVerb(); cv != "" {
-			v = append(v, cv)
-		}
-	}
-	return v
-}
-
 // FindOp resolves a (kind, operationId) pair to its Operation. operationId is the
 // catalog-stable identifier the model passes to resource_read / resource_invoke.
 func FindOp(kind, operationID string) (Operation, bool) {
@@ -202,9 +188,11 @@ func FindOp(kind, operationID string) (Operation, bool) {
 // opSearchEntry is one catalog operation paired with its precomputed lowercased
 // "extra" search text — the operation's summary plus its query-param names and
 // descriptions, which the structural kind/operationId/path/label scoring does not
-// otherwise see. Built once into opIndex so search is one pass over the catalog per
-// call with no per-call distill, and so a question phrased in the words of a filter
-// or of the operation's purpose still finds the op.
+// otherwise see. The full DistilledOp per op is memoized separately in
+// distilledIdx, from which SearchCards assembles an executable card (summary +
+// params + body skeleton) without re-distilling any spec on the query path.
+// Built once so search is one pass over the catalog per call, and so a question
+// phrased in the words of a filter or of the operation's purpose still finds the op.
 type opSearchEntry struct {
 	op    Operation
 	extra string
@@ -214,12 +202,19 @@ type opSearchEntry struct {
 // init (after the catalog is parsed) so the search path never re-distills the specs.
 var opIndex []opSearchEntry
 
+// distilledIdx resolves (kind, operationId) to the memoized DistilledOp for card
+// assembly. Built alongside opIndex; ~380 ops ≈ 150 KB resident.
+var distilledIdx map[[2]string]DistilledOp
+
 // buildOpIndex distills every kind once and pairs each operation with its extra
-// search text. A kind whose spec fails to distill still contributes its operations
-// with empty extra text (best-effort: the structural kind/operationId/path/label
-// scoring still applies), so search never depends on a spec parsing cleanly.
+// search text and its DistilledOp. A kind whose spec fails to distill still
+// contributes its operations with empty extra text and a zero DistilledOp
+// (best-effort: the structural kind/operationId/path/label scoring still applies,
+// and a card degrades to its structural fields), so search never depends on a
+// spec parsing cleanly.
 func buildOpIndex() []opSearchEntry {
 	out := make([]opSearchEntry, 0, 512)
+	distilledIdx = make(map[[2]string]DistilledOp, 512)
 	for _, k := range resCatalog.Kinds {
 		var byID map[string]DistilledOp
 		if raw, err := resourceSpecFS.ReadFile(resourceSpecDir + "/" + k.File); err == nil {
@@ -231,7 +226,9 @@ func buildOpIndex() []opSearchEntry {
 			}
 		}
 		for _, op := range k.operations() {
-			out = append(out, opSearchEntry{op: op, extra: opExtraCorpus(byID[op.OperationID])})
+			dop := byID[op.OperationID]
+			out = append(out, opSearchEntry{op: op, extra: opExtraCorpus(dop)})
+			distilledIdx[[2]string{op.Kind, op.OperationID}] = dop
 		}
 	}
 	return out

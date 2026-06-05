@@ -14,6 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/token"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 )
 
@@ -285,16 +286,30 @@ func mountCore(e *echo.Echo, d Deps, f StoreFactory) *Mounted {
 	// stores.
 	samlRequests := store.NewSAMLRequestStore()
 
+	// One OIDC discovery resolver shared by the SSO-start and OIDC-callback
+	// legs: external IdP configs carry only the issuer (the Add-IdP form relies
+	// on `.well-known/openid-configuration` discovery), so the login handlers
+	// resolve authorize/token/jwks endpoints at request time. Sharing the
+	// resolver means the document fetched on the start leg is a cache hit on
+	// the callback leg.
+	oidcResolver := oidcdisco.NewResolver()
+
 	// Unified SSO entry. The SPA login picker navigates the browser here for any
 	// external IdP, regardless of protocol; StartHandler owns the OIDC-vs-SAML
 	// divergence (302 to the IdP for OIDC, auto-submitting AuthnRequest POST form
 	// for SAML) so the front end stays protocol-agnostic.
-	e.GET("/authserver/idp/:idpId/start", login.StartHandler(login.StartDeps{
+	startDeps := login.StartDeps{
 		IdPs:     idps,
 		Pending:  pending,
 		Requests: samlRequests,
 		Issuer:   d.Issuer,
-	}))
+		Resolver: oidcResolver,
+	}
+	e.GET("/authserver/idp/:idpId/start", login.StartHandler(startDeps))
+	// RP-initiated logout — the browser navigates here after the SPA drops its
+	// tokens; for an OIDC IdP it 302s to the IdP's end_session_endpoint, else to
+	// /login. Reuses the start collaborators (IdPs + discovery resolver).
+	e.GET("/authserver/idp/:idpId/logout", login.LogoutHandler(startDeps))
 
 	// Return-leg handlers the external IdP redirects (OIDC) or POSTs (SAML) back
 	// to once it has authenticated the user.
@@ -303,6 +318,8 @@ func mountCore(e *echo.Echo, d Deps, f StoreFactory) *Mounted {
 		Federated: federated,
 		Pending:   pending,
 		AuthCodes: authcodes,
+		Resolver:  oidcResolver,
+		Audit:     d.Audit,
 	}
 	e.GET("/authserver/oidc/callback", login.OIDCCallbackHandler(oidcDeps))
 
@@ -313,6 +330,7 @@ func mountCore(e *echo.Echo, d Deps, f StoreFactory) *Mounted {
 		AuthCodes: authcodes,
 		Requests:  samlRequests,
 		Issuer:    d.Issuer,
+		Audit:     d.Audit,
 	}
 	e.POST("/authserver/saml/acs", login.SAMLACSHandler(samlDeps))
 	e.GET("/authserver/saml/metadata", login.SAMLMetadataHandler(samlDeps))

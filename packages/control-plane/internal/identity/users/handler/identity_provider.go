@@ -57,6 +57,11 @@ func (h *Handler) RegisterIdentityProviderRoutes(g *echo.Group, iamMW func(actio
 	g.GET("/identity-providers", h.ListIdentityProviders, iamMW(idp.Action(iam.VerbRead)))
 	g.POST("/identity-providers", h.CreateIdentityProvider, iamMW(idp.Action(iam.VerbCreate)))
 	g.POST("/identity-providers/test", h.TestCandidateIdentityProvider, iamMW(idp.Action(iam.VerbProbe)))
+	// parse-saml-metadata is an authoring helper (pre-fill the Add-IdP form
+	// from an uploaded metadata doc); same VerbProbe tier as /test, no
+	// persistence. The static segment is registered before the :idpId param
+	// route so Echo's router never treats it as an IdP id.
+	g.POST("/identity-providers/parse-saml-metadata", h.ParseSAMLMetadata, iamMW(idp.Action(iam.VerbProbe)))
 	g.GET("/identity-providers/:idpId", h.GetIdentityProvider, iamMW(idp.Action(iam.VerbRead)))
 	g.PUT("/identity-providers/:idpId", h.UpdateIdentityProvider, iamMW(idp.Action(iam.VerbUpdate)))
 	g.DELETE("/identity-providers/:idpId", h.DeleteIdentityProvider, iamMW(idp.Action(iam.VerbDelete)))
@@ -80,16 +85,16 @@ func (h *Handler) RegisterIdentityProviderRoutes(g *echo.Group, iamMW func(actio
 // is "local"; the UI filters it out of the list view but the API still
 // returns it so power users can see the fallback exists.
 type idpResponse struct {
-	ID          string         `json:"id"`
-	Type        string         `json:"type"`
-	Name        string         `json:"name"`
-	Enabled     bool           `json:"enabled"`
-	Config      map[string]any `json:"config"`
-	RoleMapping any            `json:"roleMapping"`
-	DefaultRole string         `json:"defaultRole"`
-	JITEnabled  bool           `json:"jitEnabled"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
+	ID                        string         `json:"id"`
+	Type                      string         `json:"type"`
+	Name                      string         `json:"name"`
+	Enabled                   bool           `json:"enabled"`
+	Config                    map[string]any `json:"config"`
+	DefaultRole               string         `json:"defaultRole"`
+	DefaultControlPlaneAccess bool           `json:"defaultControlPlaneAccess"`
+	JITEnabled                bool           `json:"jitEnabled"`
+	CreatedAt                 time.Time      `json:"createdAt"`
+	UpdatedAt                 time.Time      `json:"updatedAt"`
 }
 
 // toIdpResponse converts a store record to the API response shape with
@@ -107,24 +112,17 @@ func toIdpResponse(r *scimstore.IdentityProviderRecord) idpResponse {
 			cfg[k] = sensitiveMaskIdP
 		}
 	}
-	var roleMapping any
-	if len(r.RoleMapping) > 0 {
-		_ = json.Unmarshal(r.RoleMapping, &roleMapping)
-	}
-	if roleMapping == nil {
-		roleMapping = []any{}
-	}
 	return idpResponse{
-		ID:          r.ID,
-		Type:        r.Type,
-		Name:        r.Name,
-		Enabled:     r.Enabled,
-		Config:      cfg,
-		RoleMapping: roleMapping,
-		DefaultRole: r.DefaultRole,
-		JITEnabled:  r.JITEnabled,
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+		ID:                        r.ID,
+		Type:                      r.Type,
+		Name:                      r.Name,
+		Enabled:                   r.Enabled,
+		Config:                    cfg,
+		DefaultRole:               r.DefaultRole,
+		DefaultControlPlaneAccess: r.DefaultControlPlaneAccess,
+		JITEnabled:                r.JITEnabled,
+		CreatedAt:                 r.CreatedAt,
+		UpdatedAt:                 r.UpdatedAt,
 	}
 }
 
@@ -157,13 +155,13 @@ func (h *Handler) GetIdentityProvider(c echo.Context) error {
 // or "saml" — creating a "local" row through this surface is disallowed
 // (the seed row is platform-owned).
 type idpWriteRequest struct {
-	Type        string         `json:"type"`
-	Name        string         `json:"name"`
-	Enabled     *bool          `json:"enabled,omitempty"`
-	Config      map[string]any `json:"config"`
-	RoleMapping any            `json:"roleMapping,omitempty"`
-	DefaultRole string         `json:"defaultRole,omitempty"`
-	JITEnabled  *bool          `json:"jitEnabled,omitempty"`
+	Type                      string         `json:"type"`
+	Name                      string         `json:"name"`
+	Enabled                   *bool          `json:"enabled,omitempty"`
+	Config                    map[string]any `json:"config"`
+	DefaultRole               string         `json:"defaultRole,omitempty"`
+	DefaultControlPlaneAccess *bool          `json:"defaultControlPlaneAccess,omitempty"`
+	JITEnabled                *bool          `json:"jitEnabled,omitempty"`
 }
 
 // validateIdPRequest returns an error message if the body is malformed.
@@ -239,23 +237,21 @@ func (h *Handler) CreateIdentityProvider(c echo.Context) error {
 	if body.JITEnabled != nil {
 		jit = *body.JITEnabled
 	}
-
-	cfgBytes, _ := json.Marshal(body.Config)
-	roleMapBytes := []byte(`[]`)
-	if body.RoleMapping != nil {
-		if b, err := json.Marshal(body.RoleMapping); err == nil {
-			roleMapBytes = b
-		}
+	cpAccess := false
+	if body.DefaultControlPlaneAccess != nil {
+		cpAccess = *body.DefaultControlPlaneAccess
 	}
 
+	cfgBytes, _ := json.Marshal(body.Config)
+
 	r, err := h.scim.CreateIdentityProvider(c.Request().Context(), scimstore.CreateIdentityProviderParams{
-		Type:        body.Type,
-		Name:        body.Name,
-		Enabled:     enabled,
-		Config:      cfgBytes,
-		RoleMapping: roleMapBytes,
-		DefaultRole: body.DefaultRole,
-		JITEnabled:  jit,
+		Type:                      body.Type,
+		Name:                      body.Name,
+		Enabled:                   enabled,
+		Config:                    cfgBytes,
+		DefaultRole:               body.DefaultRole,
+		DefaultControlPlaneAccess: cpAccess,
+		JITEnabled:                jit,
 	})
 	if err != nil {
 		h.logger.Error("create identity provider", "error", err)
@@ -267,6 +263,7 @@ func (h *Handler) CreateIdentityProvider(c echo.Context) error {
 	ae.AfterState = map[string]any{
 		"type": r.Type, "name": r.Name, "enabled": r.Enabled,
 		"jitEnabled": r.JITEnabled, "defaultRole": r.DefaultRole,
+		"defaultControlPlaneAccess": r.DefaultControlPlaneAccess,
 	}
 	h.audit.LogObserved(c.Request().Context(), ae)
 
@@ -315,30 +312,29 @@ func (h *Handler) UpdateIdentityProvider(c echo.Context) error {
 	if defaultRole == "" {
 		defaultRole = existing.DefaultRole
 	}
+	cpAccess := existing.DefaultControlPlaneAccess
+	if body.DefaultControlPlaneAccess != nil {
+		cpAccess = *body.DefaultControlPlaneAccess
+	}
 
 	cfgBytes, _ := json.Marshal(body.Config)
-	roleMapBytes := existing.RoleMapping
-	if body.RoleMapping != nil {
-		if b, err := json.Marshal(body.RoleMapping); err == nil {
-			roleMapBytes = b
-		}
-	}
 
 	beforeSnapshot := map[string]any{
 		"type": existing.Type, "name": existing.Name, "enabled": existing.Enabled,
 		"jitEnabled": existing.JITEnabled, "defaultRole": existing.DefaultRole,
+		"defaultControlPlaneAccess": existing.DefaultControlPlaneAccess,
 	}
 
 	ctx := c.Request().Context()
 	r, err := h.scim.UpdateIdentityProvider(ctx, scimstore.UpdateIdentityProviderParams{
-		ID:          idpID,
-		Type:        body.Type,
-		Name:        body.Name,
-		Enabled:     enabled,
-		Config:      cfgBytes,
-		RoleMapping: roleMapBytes,
-		DefaultRole: defaultRole,
-		JITEnabled:  jit,
+		ID:                        idpID,
+		Type:                      body.Type,
+		Name:                      body.Name,
+		Enabled:                   enabled,
+		Config:                    cfgBytes,
+		DefaultRole:               defaultRole,
+		DefaultControlPlaneAccess: cpAccess,
+		JITEnabled:                jit,
 	})
 	if err != nil {
 		h.logger.Error("update identity provider", "error", err)
@@ -364,6 +360,7 @@ func (h *Handler) UpdateIdentityProvider(c echo.Context) error {
 	ae.AfterState = map[string]any{
 		"type": r.Type, "name": r.Name, "enabled": r.Enabled,
 		"jitEnabled": r.JITEnabled, "defaultRole": r.DefaultRole,
+		"defaultControlPlaneAccess": r.DefaultControlPlaneAccess,
 	}
 	h.audit.LogObserved(ctx, ae)
 
@@ -444,17 +441,47 @@ func (h *Handler) DeleteIdentityProvider(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// idpTestRequest is the body shape for the candidate-probe endpoint. It
+// is the write shape plus an optional `id`: when the UI tests an
+// already-saved IdP it sends the saved row's id so the handler can
+// restore masked secrets from storage before probing (the UI never
+// holds the cleartext secret — it only has the "********" sentinel).
+type idpTestRequest struct {
+	idpWriteRequest
+	ID string `json:"id,omitempty"`
+}
+
 // POST /api/admin/identity-providers/test
 //
-// Probe a candidate (unsaved) IdP config. Body is the same shape as
-// CreateIdentityProvider. Returns `idptest.Result` verbatim. Audited
-// with VerbProbe.
+// Probe a candidate IdP config. Body is the write shape plus an optional
+// `id`. When `id` is set, secret fields sent as the "********" sentinel
+// are restored from the stored row so the probe runs against real
+// credentials (SAML cert; OIDC clientSecret is not read by the probe but
+// is restored for symmetry). Validation uses isCreate=false: the probe
+// checks reachability, not create-completeness, so a missing/masked
+// secret must not block it — the OIDC probe never reads clientSecret and
+// the SAML probe reports a missing certificate itself. Returns
+// `idptest.Result` verbatim. Audited with VerbProbe.
 func (h *Handler) TestCandidateIdentityProvider(c echo.Context) error {
-	var body idpWriteRequest
+	var body idpTestRequest
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
 	}
-	if msg := validateIdPRequest(&body, true); msg != "" {
+	if body.ID != "" && body.Config != nil {
+		existing, err := h.scim.GetIdentityProvider(c.Request().Context(), body.ID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return c.JSON(http.StatusNotFound, errJSON("Identity provider not found", "not_found", ""))
+			}
+			return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+		}
+		var existingCfg map[string]any
+		if len(existing.Config) > 0 {
+			_ = json.Unmarshal(existing.Config, &existingCfg)
+		}
+		mergeMaskedSecrets(body.Config, existingCfg, strings.ToLower(strings.TrimSpace(body.Type)))
+	}
+	if msg := validateIdPRequest(&body.idpWriteRequest, false); msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
 	result, err := idptest.Probe(c.Request().Context(), body.Type, body.Config)
@@ -462,7 +489,7 @@ func (h *Handler) TestCandidateIdentityProvider(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON(err.Error(), "validation_error", ""))
 	}
 	ae := audit.EntryFor(c, iam.ResourceIdentityProvider, iam.VerbProbe)
-	ae.AfterState = map[string]any{"candidate": true, "type": body.Type, "ok": result.OK}
+	ae.AfterState = map[string]any{"candidate": body.ID == "", "type": body.Type, "ok": result.OK}
 	h.audit.LogObserved(c.Request().Context(), ae)
 	return c.JSON(http.StatusOK, result)
 }

@@ -29,7 +29,7 @@ type NexusUserSafe struct {
 	Email                 *string `json:"email"`
 	Status                string  `json:"status"`
 	CanAccessControlPlane bool    `json:"canAccessControlPlane"`
-	// Source indicates how the user was provisioned: "local" | "oidc" | "scim".
+	// Source indicates how the user was provisioned: "local" | "oidc" | "saml" | "scim".
 	Source            string     `json:"source"`
 	LastLoginAt       *time.Time `json:"lastLoginAt"`
 	PreferredTimezone *string    `json:"preferredTimezone"`
@@ -175,7 +175,7 @@ type CreateNexusUserParams struct {
 	CanAccessControlPlane *bool   // nil = use DB default (false)
 	OrganizationID        *string
 	CreatedBy             string
-	// Source is "local" | "oidc" | "scim". Defaults to "local" when empty.
+	// Source is "local" | "oidc" | "saml" | "scim". Defaults to "local" when empty.
 	Source string
 	// Status is "active" | "suspended". Defaults to "active" when nil.
 	Status *string

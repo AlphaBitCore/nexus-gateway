@@ -17,6 +17,17 @@
 /** @type {Array<{ name: string, code: string[], docs: string[], waiverHint?: string }>} */
 export default [
     {
+        name: 'resource-catalog-engine',
+        code: [
+            'packages/nexus-agent-core/capabilities/resource/**',
+            'packages/nexus-agent-core/capabilities/runtime/tools_resource.go',
+        ],
+        docs: [
+            'docs/developers/architecture/nexus-operator-toolkit-architecture.md',
+        ],
+        waiverHint: 'The resource engine (catalog/search/distill/cards) and the resource_* agent tools are documented in nexus-operator-toolkit-architecture.md — update its operation-model / tools sections in the same PR.',
+    },
+    {
         name: 'web-assistant',
         code: [
             'packages/control-plane/internal/assistant/**',

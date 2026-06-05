@@ -39,11 +39,19 @@ func TestEnsureConfig_WiresLogger(t *testing.T) {
 	if a.Log == nil {
 		t.Fatal("a.Log is nil after ensureConfig")
 	}
-	// The default client must carry the LoggingTransport over the kernel's
-	// widened transport.
-	lt, ok := a.HTTP.Transport.(*local.LoggingTransport)
+	// The default client wraps the LoggingTransport in a RetryTransport (which
+	// retries idempotent GETs on a dropped connection); the LoggingTransport in
+	// turn sits over the kernel's widened transport.
+	rt, ok := a.HTTP.Transport.(*local.RetryTransport)
 	if !ok {
-		t.Fatalf("a.HTTP.Transport = %T, want *local.LoggingTransport", a.HTTP.Transport)
+		t.Fatalf("a.HTTP.Transport = %T, want *local.RetryTransport", a.HTTP.Transport)
+	}
+	if rt.Idle == nil {
+		t.Error("RetryTransport.Idle is nil; want the kernel widened transport for CloseIdleConnections")
+	}
+	lt, ok := rt.Next.(*local.LoggingTransport)
+	if !ok {
+		t.Fatalf("RetryTransport.Next = %T, want *local.LoggingTransport", rt.Next)
 	}
 	if lt.Base == nil {
 		t.Error("LoggingTransport.Base is nil; want the kernel widened transport")

@@ -262,6 +262,52 @@ func TestFederatedStore_UpdateRawClaims_DBError(t *testing.T) {
 	}
 }
 
+// TestFederatedStore_RefreshUserProfile_Success asserts the UPDATE fires with
+// (userID, displayName, email) so a re-login can refresh the stored profile.
+func TestFederatedStore_RefreshUserProfile_Success(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+
+	mock.ExpectExec(`UPDATE "NexusUser"\s+SET "displayName" = COALESCE\(NULLIF\(\$2, ''\), "displayName"\),\s+email\s+= COALESCE\(NULLIF\(\$3, ''\), email\),\s+"updatedAt"\s+= NOW\(\)\s+WHERE id = \$1`).
+		WithArgs("user_1", "steve chen", "steve.chen@itechchoice.com").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	if err := s.RefreshUserProfile(ctx, "user_1", "steve chen", "steve.chen@itechchoice.com"); err != nil {
+		t.Fatalf("RefreshUserProfile: %v", err)
+	}
+}
+
+// TestFederatedStore_RefreshUserProfile_NoopWhenEmpty asserts that with both
+// displayName and email empty no DB call is issued — a nameless assertion must
+// never blank a stored profile.
+func TestFederatedStore_RefreshUserProfile_NoopWhenEmpty(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+	// No ExpectExec — the UPDATE must not fire.
+
+	if err := s.RefreshUserProfile(ctx, "user_1", "", ""); err != nil {
+		t.Fatalf("RefreshUserProfile: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("DB must not be called when both fields empty: %v", err)
+	}
+}
+
+// TestFederatedStore_RefreshUserProfile_DBError asserts a DB failure surfaces.
+func TestFederatedStore_RefreshUserProfile_DBError(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+	boom := errors.New("deadlock")
+
+	mock.ExpectExec(`UPDATE "NexusUser"`).
+		WithArgs("user_err", "name", "").
+		WillReturnError(boom)
+
+	if err := s.RefreshUserProfile(ctx, "user_err", "name", ""); !errors.Is(err, boom) {
+		t.Fatalf("expected DB err; got %v", err)
+	}
+}
+
 // TestFederatedStore_JITProvisionUser_HappyPath asserts the two-stage
 // tx (NexusUser INSERT then UserFederatedIdentity INSERT) commits and
 // returns the new user + federated-identity id. DisplayName falls back
@@ -272,8 +318,10 @@ func TestFederatedStore_JITProvisionUser_HappyPath(t *testing.T) {
 
 	emailStr := "jit@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(emailStr, &emailStr, "okta").
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_jit", emailStr, &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -310,8 +358,10 @@ func TestFederatedStore_JITProvisionUser_DisplayNameUsedWhenPresent(t *testing.T
 
 	emailStr := "u@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs("Alice Cooper", &emailStr, "okta").
+		WithArgs("org-1", "Alice Cooper", &emailStr, "oidc", false, "okta").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_dn", "Alice Cooper", &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -339,8 +389,10 @@ func TestFederatedStore_JITProvisionUser_EmptyEmail(t *testing.T) {
 	ctx := context.Background()
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs("Bob", (*string)(nil), "saml").
+		WithArgs("org-1", "Bob", (*string)(nil), "oidc", false, "saml").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_noemail", "Bob", (*string)(nil), "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -396,8 +448,10 @@ func TestFederatedStore_JITProvisionUser_UserInsertError(t *testing.T) {
 	boom := errors.New("unique violation")
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("org-1", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(boom)
 	mock.ExpectRollback()
 
@@ -429,8 +483,10 @@ func TestFederatedStore_JITProvisionUser_FederatedInsertError(t *testing.T) {
 
 	emailStr := "u@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(emailStr, &emailStr, "test").
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "test").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_x", emailStr, &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -462,8 +518,10 @@ func TestFederatedStore_JITProvisionUser_CommitError(t *testing.T) {
 
 	emailStr := "u@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(emailStr, &emailStr, "test").
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "test").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_c", emailStr, &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -496,8 +554,10 @@ func TestFederatedStore_JITProvisionUser_GroupsMapped(t *testing.T) {
 
 	emailStr := "jit@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(emailStr, &emailStr, "okta").
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_groups", emailStr, &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -547,8 +607,10 @@ func TestFederatedStore_JITProvisionUser_GroupsUnmappedSkipped(t *testing.T) {
 
 	emailStr := "jit@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(emailStr, &emailStr, "okta").
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_skip", emailStr, &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -587,8 +649,10 @@ func TestFederatedStore_JITProvisionUser_GroupsMappingLookupError(t *testing.T) 
 
 	emailStr := "jit@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(emailStr, &emailStr, "okta").
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_err", emailStr, &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -627,8 +691,10 @@ func TestFederatedStore_JITProvisionUser_GroupsMembershipInsertError(t *testing.
 
 	emailStr := "jit@nexus.ai"
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
 	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
-		WithArgs(emailStr, &emailStr, "okta").
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
 			AddRow("u_ins", emailStr, &emailStr, "active", "oidc"))
 	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
@@ -654,6 +720,208 @@ func TestFederatedStore_JITProvisionUser_GroupsMembershipInsertError(t *testing.
 	}
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected membership err; got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// TestFederatedStore_JITProvisionUser_DefaultRoleResolved asserts the baseline
+// role path: a non-empty DefaultRole resolving to a live IamGroup stamps a
+// membership, and CanAccessControlPlane=true is propagated to the NexusUser row.
+func TestFederatedStore_JITProvisionUser_DefaultRoleResolved(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+
+	emailStr := "jit@nexus.ai"
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
+	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
+		WithArgs("org-1", emailStr, &emailStr, "oidc", true, "okta"). // canAccessControlPlane=true honored
+		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
+			AddRow("u_dr", emailStr, &emailStr, "active", "oidc"))
+	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
+		WithArgs("u_dr", "idp_okta", "sub_dr").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("fi_dr"))
+	mock.ExpectQuery(`SELECT id FROM "IamGroup" WHERE name`).
+		WithArgs("developers").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("iam_developers"))
+	mock.ExpectExec(`INSERT INTO "IamGroupMembership"`).
+		WithArgs("iam_developers", "u_dr").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
+
+	u, fiID, err := s.JITProvisionUser(ctx, store.JITProvisionParams{
+		IdPID:                 "idp_okta",
+		ExternalSubject:       "sub_dr",
+		Email:                 emailStr,
+		DefaultRole:           "developers",
+		CanAccessControlPlane: true,
+		CreatedBy:             "okta",
+	})
+	if err != nil {
+		t.Fatalf("JITProvisionUser: %v", err)
+	}
+	if u == nil || u.ID != "u_dr" || fiID != "fi_dr" {
+		t.Fatalf("unexpected result u=%v fiID=%q", u, fiID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// TestFederatedStore_JITProvisionUser_DefaultRoleUnresolved asserts a
+// DefaultRole that matches no IamGroup is a silent skip — login still
+// completes, the user just gets no baseline membership.
+func TestFederatedStore_JITProvisionUser_DefaultRoleUnresolved(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+
+	emailStr := "jit@nexus.ai"
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
+	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
+			AddRow("u_un", emailStr, &emailStr, "active", "oidc"))
+	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
+		WithArgs("u_un", "idp_okta", "sub_un").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("fi_un"))
+	mock.ExpectQuery(`SELECT id FROM "IamGroup" WHERE name`).
+		WithArgs("ghost-role").
+		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectCommit()
+
+	u, _, err := s.JITProvisionUser(ctx, store.JITProvisionParams{
+		IdPID:           "idp_okta",
+		ExternalSubject: "sub_un",
+		Email:           emailStr,
+		DefaultRole:     "ghost-role",
+		CreatedBy:       "okta",
+	})
+	if err != nil {
+		t.Fatalf("JITProvisionUser: %v", err)
+	}
+	if u == nil || u.ID != "u_un" {
+		t.Fatalf("unexpected result u=%v", u)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// TestFederatedStore_JITProvisionUser_DefaultRoleLookupError asserts a
+// non-ErrNoRows failure resolving the baseline group rolls back the tx — we
+// must not commit a half-provisioned user when the IamGroup table is unreachable.
+func TestFederatedStore_JITProvisionUser_DefaultRoleLookupError(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+	boom := errors.New("iam group table down")
+
+	emailStr := "jit@nexus.ai"
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
+	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
+			AddRow("u_le", emailStr, &emailStr, "active", "oidc"))
+	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
+		WithArgs("u_le", "idp_okta", "sub_le").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("fi_le"))
+	mock.ExpectQuery(`SELECT id FROM "IamGroup" WHERE name`).
+		WithArgs("developers").
+		WillReturnError(boom)
+	mock.ExpectRollback()
+
+	u, _, err := s.JITProvisionUser(ctx, store.JITProvisionParams{
+		IdPID:           "idp_okta",
+		ExternalSubject: "sub_le",
+		Email:           emailStr,
+		DefaultRole:     "developers",
+		CreatedBy:       "okta",
+	})
+	if u != nil {
+		t.Fatalf("expected nil user on lookup err; got %v", u)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected lookup err; got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// TestFederatedStore_JITProvisionUser_DefaultRoleMembershipInsertError asserts a
+// failure inserting the baseline membership rolls the whole tx back.
+func TestFederatedStore_JITProvisionUser_DefaultRoleMembershipInsertError(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+	boom := errors.New("baseline membership insert failed")
+
+	emailStr := "jit@nexus.ai"
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
+	mock.ExpectQuery(`INSERT INTO "NexusUser"`).
+		WithArgs("org-1", emailStr, &emailStr, "oidc", false, "okta").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
+			AddRow("u_mi", emailStr, &emailStr, "active", "oidc"))
+	mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).
+		WithArgs("u_mi", "idp_okta", "sub_mi").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("fi_mi"))
+	mock.ExpectQuery(`SELECT id FROM "IamGroup" WHERE name`).
+		WithArgs("developers").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("iam_developers"))
+	mock.ExpectExec(`INSERT INTO "IamGroupMembership"`).
+		WithArgs("iam_developers", "u_mi").
+		WillReturnError(boom)
+	mock.ExpectRollback()
+
+	u, _, err := s.JITProvisionUser(ctx, store.JITProvisionParams{
+		IdPID:           "idp_okta",
+		ExternalSubject: "sub_mi",
+		Email:           emailStr,
+		DefaultRole:     "developers",
+		CreatedBy:       "okta",
+	})
+	if u != nil {
+		t.Fatalf("expected nil user on membership err; got %v", u)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected membership err; got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// TestFederatedStore_JITProvisionUser_OrgResolveError asserts a failure
+// resolving the default organization rolls the tx back before any user row is
+// written — NexusUser.organizationId is a FK, so a missing org must abort, not
+// fall through to the bogus 'default' column default.
+func TestFederatedStore_JITProvisionUser_OrgResolveError(t *testing.T) {
+	mock, s := newFederatedMock(t)
+	ctx := context.Background()
+	boom := errors.New("organization table down")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM "Organization"`).WillReturnError(boom)
+	mock.ExpectRollback()
+
+	u, _, err := s.JITProvisionUser(ctx, store.JITProvisionParams{
+		IdPID:           "idp_okta",
+		ExternalSubject: "sub_org",
+		Email:           "jit@nexus.ai",
+		CreatedBy:       "okta",
+	})
+	if u != nil {
+		t.Fatalf("expected nil user on org-resolve err; got %v", u)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected org-resolve err; got %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)

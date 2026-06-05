@@ -39,6 +39,10 @@ export function IamUserDetailPage() {
   if (!user) return <ErrorBanner message={t('pages:iam.userNotFound')} />;
 
   const passwordMismatch = resetPassword !== resetPasswordConfirm && resetPasswordConfirm !== '';
+  // Federated (SSO) accounts authenticate through their external IdP and have
+  // no local password — an admin cannot set one. The reset dialog shows guidance
+  // instead of the password form (the backend also rejects it with sso_account).
+  const isSsoAccount = !!user.source && user.source !== 'local';
 
   return (
     <Stack gap="lg">
@@ -148,47 +152,58 @@ export function IamUserDetailPage() {
         title={t('pages:iam.resetPassword')}
         size="sm"
       >
-        <Stack gap="md">
-          <FormField label={t('pages:iam.newPassword')}>
-            <Input
-              name="resetPassword"
-              type="password"
-              value={resetPassword}
-              onChange={(e) => setResetPassword(e.target.value)}
-              placeholder={t('pages:iam.newPasswordPlaceholder')}
-            />
-          </FormField>
-          <FormField
-            label={t('pages:iam.confirmPassword')}
-            error={passwordMismatch ? t('pages:iam.passwordMismatch') : undefined}
-          >
-            <Input
-              name="resetPasswordConfirm"
-              type="password"
-              value={resetPasswordConfirm}
-              onChange={(e) => setResetPasswordConfirm(e.target.value)}
-              placeholder={t('pages:iam.confirmPasswordPlaceholder')}
-            />
-          </FormField>
-          <Stack direction="horizontal" gap="sm" justify="end">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setIsResettingPassword(false);
-                setResetPassword('');
-                setResetPasswordConfirm('');
-              }}
-            >
-              {t('common:cancel')}
-            </Button>
-            <Button
-              onClick={handleResetPassword}
-              disabled={resetPasswordLoading || !resetPassword || passwordMismatch}
-            >
-              {resetPasswordLoading ? t('pages:iam.saving') : t('pages:iam.resetPassword')}
-            </Button>
+        {isSsoAccount ? (
+          <Stack gap="md">
+            <p>{t('pages:iam.resetPasswordSsoManaged')}</p>
+            <Stack direction="horizontal" gap="sm" justify="end">
+              <Button variant="secondary" onClick={() => setIsResettingPassword(false)}>
+                {t('common:close')}
+              </Button>
+            </Stack>
           </Stack>
-        </Stack>
+        ) : (
+          <Stack gap="md">
+            <FormField label={t('pages:iam.newPassword')}>
+              <Input
+                name="resetPassword"
+                type="password"
+                value={resetPassword}
+                onChange={(e) => setResetPassword(e.target.value)}
+                placeholder={t('pages:iam.newPasswordPlaceholder')}
+              />
+            </FormField>
+            <FormField
+              label={t('pages:iam.confirmPassword')}
+              error={passwordMismatch ? t('pages:iam.passwordMismatch') : undefined}
+            >
+              <Input
+                name="resetPasswordConfirm"
+                type="password"
+                value={resetPasswordConfirm}
+                onChange={(e) => setResetPasswordConfirm(e.target.value)}
+                placeholder={t('pages:iam.confirmPasswordPlaceholder')}
+              />
+            </FormField>
+            <Stack direction="horizontal" gap="sm" justify="end">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setIsResettingPassword(false);
+                  setResetPassword('');
+                  setResetPasswordConfirm('');
+                }}
+              >
+                {t('common:cancel')}
+              </Button>
+              <Button
+                onClick={handleResetPassword}
+                disabled={resetPasswordLoading || !resetPassword || passwordMismatch}
+              >
+                {resetPasswordLoading ? t('pages:iam.saving') : t('pages:iam.resetPassword')}
+              </Button>
+            </Stack>
+          </Stack>
+        )}
       </Dialog>
 
       <AlertDialog

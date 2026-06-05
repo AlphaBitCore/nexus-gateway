@@ -39,13 +39,29 @@ func TestResourceKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resource kinds: %v", err)
 	}
-	if !strings.Contains(out, "virtual-keys") || !strings.Contains(out, "CANONICAL VERBS") {
+	if !strings.Contains(out, "virtual-keys") || !strings.Contains(out, "CAPABILITIES") {
 		t.Fatalf("kinds table:\n%s", out)
+	}
+	// The silent-kinds bug: every row must carry a non-empty profile — a
+	// reports kind says "report", a singleton-config kind says "config".
+	for _, want := range []string{"crud", "report", "config", "action:dry-run"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("kinds table missing capability %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "update update") {
+		t.Fatalf("duplicate verbs leaked into the kinds table:\n%s", out)
 	}
 	out, _ = runCLI(t, newTestApp(rs.Server, false), "resource", "kinds", "-o", "json")
 	var kinds []map[string]any
 	if err := json.Unmarshal([]byte(out), &kinds); err != nil || len(kinds) == 0 {
 		t.Fatalf("kinds json: %v\n%s", err, out)
+	}
+	for _, k := range kinds {
+		caps, _ := k["capabilities"].([]any)
+		if len(caps) == 0 {
+			t.Fatalf("kind %v has empty capabilities in JSON output", k["kind"])
+		}
 	}
 }
 
@@ -66,6 +82,17 @@ func TestResourceDescribe(t *testing.T) {
 	out, err := runCLI(t, newTestApp(rs.Server, false), "resource", "describe", "virtual-keys")
 	if err != nil || !strings.Contains(out, "createVirtualKey") || !strings.Contains(out, "POST") {
 		t.Fatalf("describe:\n%s\n%v", out, err)
+	}
+	// The table now carries the operation's OpenAPI summary and its PATH —
+	// the spec semantics the old LABEL column hid behind a synthesized tail.
+	if !strings.Contains(out, "SUMMARY") || !strings.Contains(out, "PATH") || strings.Contains(out, "LABEL") {
+		t.Fatalf("describe must show SUMMARY+PATH and drop LABEL:\n%s", out)
+	}
+	if !strings.Contains(out, "Create a virtual key") {
+		t.Fatalf("describe must surface the real OpenAPI summary:\n%s", out)
+	}
+	if !strings.Contains(out, "name*") {
+		t.Fatalf("describe must keep required-field markers:\n%s", out)
 	}
 	// unknown kind → usage error (exit 2)
 	_, err = runCLI(t, newTestApp(rs.Server, false), "resource", "describe", "nope")

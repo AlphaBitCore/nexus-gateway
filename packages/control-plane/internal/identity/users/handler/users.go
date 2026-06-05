@@ -195,6 +195,14 @@ func (h *Handler) UpdateUser(c echo.Context) error {
 		CanAccessControlPlane: body.CanAccessControlPlane,
 	}
 	if body.Password != nil && *body.Password != "" {
+		// Externally-provisioned (SSO) accounts have no local password — they
+		// sign in through their identity provider. Refuse to set one here with
+		// an actionable message rather than silently creating a shadow password.
+		if existing, ferr := h.users.FindNexusUserByID(c.Request().Context(), id); ferr == nil && existing != nil && existing.Source != "local" {
+			return c.JSON(http.StatusBadRequest, errJSON(
+				"This account signs in through single sign-on (SSO) and cannot have a local password set. The user must sign in via their identity provider.",
+				"sso_account", "password"))
+		}
 		hashed, err := auth.HashPassword(*body.Password)
 		if err == nil {
 			params.PasswordHash = &hashed

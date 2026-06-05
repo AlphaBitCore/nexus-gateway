@@ -3,13 +3,21 @@ package iam
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -3193,7 +3201,9 @@ func TestRevokeUserAccess_FindError_Returns500(t *testing.T) {
 
 func TestUpdateMe_WrongCurrentPassword_Returns401(t *testing.T) {
 	hash, _ := authn.HashPassword("correct-password")
-	us := &stubUserStore{findResult: &userstore.NexusUser{ID: "u1", PasswordHash: &hash}}
+	// Source "local" mirrors the DB default (NexusUser.source defaults to
+	// "local"); a real password-backed account is always local-sourced.
+	us := &stubUserStore{findResult: &userstore.NexusUser{ID: "u1", Source: "local", PasswordHash: &hash}}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
 	curPw := "wrong-password"
 	newPw := "new-password"
@@ -3204,6 +3214,27 @@ func TestUpdateMe_WrongCurrentPassword_Returns401(t *testing.T) {
 	}
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("code=%d want 401 (wrong current password)", rec.Code)
+	}
+}
+
+// UpdateMe: an SSO-sourced account cannot change a local password — it has none.
+// The handler returns 400 with the actionable "sso_account" code so the profile
+// page guides the user to their identity provider instead of failing the
+// current-password check with a confusing message.
+func TestUpdateMe_SSOAccount_PasswordChangeReturns400(t *testing.T) {
+	hash, _ := authn.HashPassword("irrelevant")
+	us := &stubUserStore{findResult: &userstore.NexusUser{ID: "u1", Source: "oidc", PasswordHash: &hash}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{"currentPassword": "whatever", "newPassword": "new-password"})
+	c, rec := adminAuthCtx(http.MethodPatch, "/me", body, "u1", "admin_user")
+	if err := h.UpdateMe(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d want 400 (SSO account); body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "sso_account") {
+		t.Errorf("body=%s want sso_account code", rec.Body.String())
 	}
 }
 
@@ -4782,7 +4813,7 @@ func TestUpdateIAMPolicy_WithEngine_Returns200(t *testing.T) {
 
 // CreateIdentityProvider: additional branches
 
-func TestCreateIdentityProvider_OIDCWithJITAndRoleMapping_Returns201(t *testing.T) {
+func TestCreateIdentityProvider_OIDCWithJIT_Returns201(t *testing.T) {
 	ss := &stubScimStore{
 		createdIdp: &scimstore.IdentityProviderRecord{ID: "idp-1", Type: "oidc", Name: "Okta"},
 	}
@@ -4803,7 +4834,6 @@ func TestCreateIdentityProvider_OIDCWithJITAndRoleMapping_Returns201(t *testing.
 			"redirectUri":  "https://app.com/callback",
 			"clientSecret": "super-secret",
 		},
-		"roleMapping": []any{map[string]any{"externalRole": "admin", "iamRole": "admins"}},
 	})
 	c, rec := adminAuthCtx(http.MethodPost, "/identity-providers", body, "admin", "admin_user")
 	if err := h.CreateIdentityProvider(c); err != nil {
@@ -4835,7 +4865,7 @@ func TestCreateIdentityProvider_StoreError_Returns500(t *testing.T) {
 	}
 }
 
-// UpdateIdentityProvider: enabled transition + jit + roleMapping
+// UpdateIdentityProvider: enabled transition + jit
 
 func TestUpdateIdentityProvider_EnabledToDisabled_FansOutRevocations(t *testing.T) {
 	orig := revocationRevoke
@@ -5604,6 +5634,28 @@ func TestUpdateUser_WithPassword_Returns200(t *testing.T) {
 	}
 }
 
+// UpdateUser: an admin cannot set a local password on an externally-provisioned
+// (SSO) account — it signs in through its IdP and has no local password. The
+// handler refuses with 400 / "sso_account" rather than silently creating a
+// shadow password the user can never use.
+func TestUpdateUser_SSOAccount_PasswordSetReturns400(t *testing.T) {
+	us := &stubUserStore{findResult: &userstore.NexusUser{ID: "u1", Source: "scim"}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{"password": "admin-set-password"})
+	c, rec := adminAuthCtx(http.MethodPatch, "/users/u1", body, "admin", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("u1")
+	if err := h.UpdateUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d want 400 (SSO account); body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "sso_account") {
+		t.Errorf("body=%s want sso_account code", rec.Body.String())
+	}
+}
+
 // UpdateMe: displayName-only path (no password)
 
 func TestUpdateMe_DisplayNameOnly_Returns200(t *testing.T) {
@@ -5705,9 +5757,9 @@ func TestCreateScimToken_EmptyName_Returns400(t *testing.T) {
 	}
 }
 
-// UpdateIdentityProvider: JITEnabled and RoleMapping body overrides
+// UpdateIdentityProvider: JITEnabled body override
 
-func TestUpdateIdentityProvider_WithJITAndRoleMapping_Returns200(t *testing.T) {
+func TestUpdateIdentityProvider_WithJIT_Returns200(t *testing.T) {
 	existingCfg, _ := json.Marshal(map[string]any{
 		"issuer":       "https://okta.com",
 		"clientId":     "cid",
@@ -5730,7 +5782,6 @@ func TestUpdateIdentityProvider_WithJITAndRoleMapping_Returns200(t *testing.T) {
 			"redirectUri":  "https://app.com/cb",
 			"clientSecret": "secret",
 		},
-		"roleMapping": []any{map[string]any{"externalRole": "admin", "nexusGroup": "admins"}},
 	})
 	c, rec := adminAuthCtx(http.MethodPut, "/identity-providers/idp-1", body, "admin", "admin_user")
 	c.SetParamNames("idpId")
@@ -6105,6 +6156,162 @@ func TestCandidateIdentityProvider_ValidationError_Returns400(t *testing.T) {
 	}
 }
 
+// oidcProbeServer stands up a fake OIDC discovery + JWKS endpoint so the
+// connectivity probe returns ok=true without reaching the network.
+func oidcProbeServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"jwks_uri":"` + srv.URL + `/jwks","token_endpoint":"` + srv.URL + `/tok","authorization_endpoint":"` + srv.URL + `/auth"}`))
+	})
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"keys":[{"kty":"RSA","kid":"k1"}]}`))
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// selfSignedCertPEM returns a valid, currently-dated X.509 cert PEM the
+// SAML probe can parse — used to prove that a masked certificate is
+// restored from storage before probing.
+func selfSignedCertPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-idp"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// TestCandidateIdentityProvider: masked-secret restore on edit-mode probe.
+// Reproduces the reported bug — testing a saved OIDC IdP whose clientSecret
+// is masked as "********" used to be rejected with "OIDC config requires
+// clientSecret on create". With `id` supplied the secret is restored from
+// storage and the probe runs.
+func TestCandidateIdentityProvider_OIDCMaskedSecretWithID_Returns200(t *testing.T) {
+	srv := oidcProbeServer(t)
+	storedCfg, _ := json.Marshal(map[string]any{
+		"issuer": srv.URL, "clientId": "cid", "clientSecret": "real-secret", "redirectUri": "https://app/cb",
+	})
+	ss := &stubScimStore{idp: &scimstore.IdentityProviderRecord{ID: "oidc-1", Type: "oidc", Name: "Okta", Config: storedCfg}}
+	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubOrgStore{}, ss, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{
+		"id": "oidc-1", "type": "oidc", "name": "Okta",
+		"config": map[string]any{"issuer": srv.URL, "clientId": "cid", "clientSecret": sensitiveMaskIdP, "redirectUri": "https://app/cb"},
+	})
+	c, rec := adminAuthCtx(http.MethodPost, "/identity-providers/test", body, "admin", "admin_user")
+	if err := h.TestCandidateIdentityProvider(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200 (masked clientSecret must not be rejected on test); body=%s", rec.Code, rec.Body)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("requires clientSecret")) {
+		t.Errorf("masked clientSecret was rejected instead of restored; body=%s", rec.Body)
+	}
+	var res map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if res["ok"] != true {
+		t.Errorf("probe ok=%v want true; body=%s", res["ok"], rec.Body)
+	}
+}
+
+// A masked SAML certificate must be restored from the stored row: the SAML
+// probe parses the cert, so ok=true is only reachable if the real cert (not
+// the "********" sentinel) was substituted.
+func TestCandidateIdentityProvider_SAMLMaskedCertWithID_RestoresStoredCert(t *testing.T) {
+	cert := selfSignedCertPEM(t)
+	storedCfg, _ := json.Marshal(map[string]any{
+		"entityId": "https://idp/entity", "ssoUrl": "https://idp/sso", "certificatePem": cert,
+	})
+	ss := &stubScimStore{idp: &scimstore.IdentityProviderRecord{ID: "saml-1", Type: "saml", Name: "SAML", Config: storedCfg}}
+	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubOrgStore{}, ss, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{
+		"id": "saml-1", "type": "saml", "name": "SAML",
+		"config": map[string]any{"entityId": "https://idp/entity", "ssoUrl": "https://idp/sso", "certificatePem": sensitiveMaskIdP},
+	})
+	c, rec := adminAuthCtx(http.MethodPost, "/identity-providers/test", body, "admin", "admin_user")
+	if err := h.TestCandidateIdentityProvider(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	var res map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if res["ok"] != true {
+		t.Errorf("masked cert must be restored from store so the probe parses it; ok=%v body=%s", res["ok"], rec.Body)
+	}
+}
+
+// id supplied but the row is gone → 404.
+func TestCandidateIdentityProvider_IDNotFound_Returns404(t *testing.T) {
+	ss := &stubScimStore{idpErr: pgx.ErrNoRows}
+	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubOrgStore{}, ss, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{
+		"id": "missing", "type": "oidc", "name": "X",
+		"config": map[string]any{"issuer": "https://i", "clientId": "c", "redirectUri": "https://r", "clientSecret": sensitiveMaskIdP},
+	})
+	c, rec := adminAuthCtx(http.MethodPost, "/identity-providers/test", body, "admin", "admin_user")
+	if err := h.TestCandidateIdentityProvider(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("code=%d want 404; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// id supplied but the lookup errors → 500.
+func TestCandidateIdentityProvider_IDStoreError_Returns500(t *testing.T) {
+	ss := &stubScimStore{idpErr: errors.New("db")}
+	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubOrgStore{}, ss, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{
+		"id": "oidc-1", "type": "oidc", "name": "X",
+		"config": map[string]any{"issuer": "https://i", "clientId": "c", "redirectUri": "https://r", "clientSecret": sensitiveMaskIdP},
+	})
+	c, rec := adminAuthCtx(http.MethodPost, "/identity-providers/test", body, "admin", "admin_user")
+	if err := h.TestCandidateIdentityProvider(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("code=%d want 500; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// A brand-new (unsaved, no id) OIDC config with no clientSecret must still
+// reach the probe: the test path validates with isCreate=false because the
+// OIDC probe never reads the secret.
+func TestCandidateIdentityProvider_NoIDNoSecret_ReachesProbe(t *testing.T) {
+	srv := oidcProbeServer(t)
+	h := defaultHandler()
+	body, _ := json.Marshal(map[string]any{
+		"type": "oidc", "name": "New",
+		"config": map[string]any{"issuer": srv.URL, "clientId": "c", "redirectUri": "https://r"},
+	})
+	c, rec := adminAuthCtx(http.MethodPost, "/identity-providers/test", body, "admin", "admin_user")
+	if err := h.TestCandidateIdentityProvider(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200 (probe reachable without secret); body=%s", rec.Code, rec.Body)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("requires clientSecret")) {
+		t.Errorf("test path must not require clientSecret; body=%s", rec.Body)
+	}
+}
+
 // TestSavedIdentityProvider: not-found and internal-error paths
 
 func TestSavedIdentityProvider_NotFound_Returns404(t *testing.T) {
@@ -6163,28 +6370,6 @@ func TestCreateScimToken_TokenStoreError_Returns500(t *testing.T) {
 	}
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("code=%d want 500 (token store error); body=%s", rec.Code, rec.Body)
-	}
-}
-
-// toIdpResponse: RoleMapping branch (len(r.RoleMapping) > 0)
-
-func TestGetIdentityProvider_WithRoleMapping_Returns200(t *testing.T) {
-	roleMapping, _ := json.Marshal([]any{map[string]any{"externalRole": "admin", "nexusGroup": "admins"}})
-	ss := &stubScimStore{
-		idp: &scimstore.IdentityProviderRecord{
-			ID: "idp-1", Type: "oidc", Name: "Okta",
-			RoleMapping: roleMapping,
-		},
-	}
-	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubOrgStore{}, ss, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
-	c, rec := adminAuthCtx(http.MethodGet, "/identity-providers/idp-1", nil, "admin", "admin_user")
-	c.SetParamNames("idpId")
-	c.SetParamValues("idp-1")
-	if err := h.GetIdentityProvider(c); err != nil {
-		t.Fatal(err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Errorf("code=%d want 200; body=%s", rec.Code, rec.Body)
 	}
 }
 

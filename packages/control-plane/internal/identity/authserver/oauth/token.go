@@ -34,6 +34,9 @@ const (
 // *store.UserStore implements it; tests inject an in-memory fake.
 type userLoader interface {
 	GetByID(ctx context.Context, id string) (*store.User, error)
+	// TouchLastLogin stamps NexusUser.lastLoginAt=NOW(); called on a fresh
+	// authorization-code redemption so every login method records a last-login.
+	TouchLastLogin(ctx context.Context, id string) error
 }
 
 // refreshOps is the minimum surface the handler needs from the refresh helper.
@@ -210,6 +213,15 @@ func handleAuthCode(c echo.Context, d TokenDeps) error {
 	if err != nil {
 		d.logger().Error("token: access mint failed", slog.Any("err", err))
 		return writeTokenError(c, ErrServerError, "access issuance failed", http.StatusInternalServerError)
+	}
+
+	// Stamp last-login on a fresh authorization-code redemption. All login
+	// methods (password / SAML / OIDC) funnel through here, so this is the one
+	// uniform place a successful login is recorded. Best-effort: a failure must
+	// never block the token response.
+	if err := d.Users.TouchLastLogin(ctx, entry.UserID); err != nil {
+		d.logger().Warn("token: touch last-login failed",
+			slog.String("user_id", entry.UserID), slog.Any("err", err))
 	}
 
 	// Record a DeviceAssignment for the agent-desktop client so user attribution

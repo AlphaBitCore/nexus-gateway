@@ -19,6 +19,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
 )
 
 // Result is the structured outcome of a probe. The HTTP handler renders
@@ -52,44 +54,24 @@ func ProbeOIDC(ctx context.Context, cfg map[string]any) Result {
 
 	client := newClient(10 * time.Second)
 
-	jwksURI, _ := cfg["jwksUri"].(string)
-	tokenURL, _ := cfg["tokenUrl"].(string)
-	authorizeURL, _ := cfg["authorizeUrl"].(string)
-
-	// If discovery details are missing, fetch from .well-known.
-	if jwksURI == "" || tokenURL == "" || authorizeURL == "" {
-		discoveryURL := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
-		resp, err := client.Do(req)
-		if err != nil {
-			res.Error = fmt.Sprintf("discovery fetch failed: %v", err)
-			return res
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			res.Error = fmt.Sprintf("discovery returned HTTP %d", resp.StatusCode)
-			return res
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if err != nil {
-			res.Error = fmt.Sprintf("discovery read: %v", err)
-			return res
-		}
-		var disc map[string]any
-		if err := json.Unmarshal(body, &disc); err != nil {
-			res.Error = fmt.Sprintf("discovery parse: %v", err)
-			return res
-		}
-		if jwksURI == "" {
-			jwksURI, _ = disc["jwks_uri"].(string)
-		}
-		if tokenURL == "" {
-			tokenURL, _ = disc["token_endpoint"].(string)
-		}
-		if authorizeURL == "" {
-			authorizeURL, _ = disc["authorization_endpoint"].(string)
-		}
+	jwksCfg, _ := cfg["jwksUri"].(string)
+	tokenCfg, _ := cfg["tokenUrl"].(string)
+	authCfg, _ := cfg["authorizeUrl"].(string)
+	// Resolve any missing endpoint from the issuer's discovery document. A
+	// fresh resolver (no shared cache) keeps the probe honest: an admin who
+	// just changed the issuer must see the live document, not a cached one.
+	eps, err := oidcdisco.NewResolver().Resolve(ctx, issuer, oidcdisco.Endpoints{
+		AuthorizeURL: authCfg,
+		TokenURL:     tokenCfg,
+		JwksURI:      jwksCfg,
+	})
+	if err != nil {
+		res.Error = err.Error()
+		return res
 	}
+	jwksURI := eps.JwksURI
+	tokenURL := eps.TokenURL
+	authorizeURL := eps.AuthorizeURL
 
 	if jwksURI == "" {
 		res.Error = "jwks_uri could not be resolved from config or discovery"

@@ -45,6 +45,9 @@ type JWTClaims struct {
 	Email   string
 	Groups  []string
 	Issuer  string
+	// Nonce is the raw `nonce` claim, surfaced (not validated here) so the OIDC
+	// callback can bind it to the nonce it sent at SSO start.
+	Nonce string
 }
 
 // JWKSCache fetches and caches RSA public keys from a JWKS endpoint.
@@ -251,9 +254,12 @@ func ValidateJWT(tokenString string, config *OidcConfig, cache *JWKSCache) (*JWT
 		return nil, fmt.Errorf("JWT expired")
 	}
 
-	// Check issuer.
+	// Check issuer. Compare with a trailing slash trimmed from both sides:
+	// many IdPs (Auth0, Okta) advertise an issuer ending in "/" in the token's
+	// `iss`, while admins routinely enter it without — a same-host difference
+	// that should not fail validation.
 	iss, _ := payload["iss"].(string)
-	if iss != config.Issuer {
+	if strings.TrimRight(iss, "/") != strings.TrimRight(config.Issuer, "/") {
 		return nil, fmt.Errorf("JWT issuer mismatch: got %q, want %q", iss, config.Issuer)
 	}
 
@@ -294,17 +300,26 @@ func ValidateJWT(tokenString string, config *OidcConfig, cache *JWKSCache) (*JWT
 		}
 	}
 
+	nonce, _ := payload["nonce"].(string)
+
 	return &JWTClaims{
 		Subject: sub,
 		Email:   email,
 		Groups:  groups,
 		Issuer:  iss,
+		Nonce:   nonce,
 	}, nil
 }
 
 // audienceContains checks whether the target audience is present in the aud
 // claim, which may be a string or an array of strings per the JWT spec.
 func audienceContains(aud any, target string) bool {
+	// An empty expected audience can never be satisfied — without a known
+	// audience (client_id) there is nothing to bind the token to, so fail
+	// closed rather than accept any (or an empty) aud.
+	if target == "" {
+		return false
+	}
 	switch v := aud.(type) {
 	case string:
 		return v == target

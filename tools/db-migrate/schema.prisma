@@ -203,7 +203,7 @@ model NexusUser {
   email                 String?
   status                String    @default("active") // active | suspended | deactivated
   canAccessControlPlane Boolean   @default(false)
-  /// Provisioning source: 'local' (manual), 'oidc' (JIT via SSO), 'scim' (IdP push).
+  /// Provisioning source: 'local' (manual), 'oidc' / 'saml' (JIT via SSO), 'scim' (IdP push).
   source                String    @default("local")
   osUsername            String?
   osDomain              String?
@@ -1955,8 +1955,15 @@ model IdentityProvider {
   name        String
   enabled     Boolean  @default(true)
   config      Json     @default("{}")
-  roleMapping Json     @default("[]")
-  defaultRole String   @default("developer")
+  /// Name of the IamGroup every JIT-provisioned user from this IdP is added to
+  /// as a baseline (on top of any IdpGroupMapping matches). Resolved by name at
+  /// provisioning time; an empty/unresolvable name means no baseline group.
+  /// Default "developers" matches the seeded IamGroup of that name.
+  defaultRole String   @default("developers")
+  /// Whether JIT-provisioned users from this IdP get NexusUser.canAccessControlPlane.
+  /// Per-IdP and admin-controlled because one IdP may federate both CP admins
+  /// and agent end-users; defaults false (safe), opted in on the IdP form.
+  defaultControlPlaneAccess Boolean @default(false)
   jitEnabled  Boolean  @default(true)
   createdAt   DateTime @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @db.Timestamptz(3)

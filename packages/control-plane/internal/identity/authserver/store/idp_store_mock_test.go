@@ -24,22 +24,20 @@ func newIdPMock(t *testing.T) (pgxmock.PgxPoolIface, *store.IdPStore) {
 // idpRowCols mirrors the column list returned by every IdPStore SELECT so
 // rows added via pgxmock decode straight through scanIdP.
 var idpRowCols = []string{
-	"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
+	"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
 }
 
 // TestIdPStore_ListEnabled_HappyPath asserts the rows decoder unpacks the
-// JSONB config + roleMapping columns into native Go maps without losing
-// nested values.
+// JSONB config column into native Go maps without losing nested values.
 func TestIdPStore_ListEnabled_HappyPath(t *testing.T) {
 	mock, s := newIdPMock(t)
 	ctx := context.Background()
 
 	cfg := []byte(`{"issuer":"https://idp.example","clientId":"abc"}`)
-	rm := []byte(`[{"claim":"groups","value":"admins","role":"admin"}]`)
 	mock.ExpectQuery(`SELECT id, type, name, enabled, config`).
 		WillReturnRows(pgxmock.NewRows(idpRowCols).
-			AddRow("idp_1", "oidc", "Okta", true, cfg, rm, "developer", true).
-			AddRow("idp_2", "local", "Local", true, []byte(`{}`), []byte(`[]`), "viewer", false))
+			AddRow("idp_1", "oidc", "Okta", true, cfg, "developer", false, true).
+			AddRow("idp_2", "local", "Local", true, []byte(`{}`), "viewer", false, false))
 
 	out, err := s.ListEnabled(ctx)
 	if err != nil {
@@ -53,9 +51,6 @@ func TestIdPStore_ListEnabled_HappyPath(t *testing.T) {
 	}
 	if out[0].Config["issuer"] != "https://idp.example" {
 		t.Fatalf("config json not decoded: %v", out[0].Config)
-	}
-	if len(out[0].RoleMapping) != 1 || out[0].RoleMapping[0]["role"] != "admin" {
-		t.Fatalf("roleMapping not decoded: %v", out[0].RoleMapping)
 	}
 	if out[1].DefaultRole != "viewer" || out[1].JITEnabled {
 		t.Fatalf("row[1]: %+v", out[1])
@@ -91,7 +86,7 @@ func TestIdPStore_ListEnabled_ScanError(t *testing.T) {
 	// when the iterator hits this row.
 	mock.ExpectQuery(`SELECT id, type, name, enabled, config`).
 		WillReturnRows(pgxmock.NewRows(idpRowCols).
-			AddRow("idp_bad", "oidc", "Bad", "not-a-bool", []byte(`{}`), []byte(`[]`), "viewer", true))
+			AddRow("idp_bad", "oidc", "Bad", "not-a-bool", []byte(`{}`), "viewer", false, true))
 
 	out, err := s.ListEnabled(ctx)
 	if err == nil {
@@ -108,7 +103,7 @@ func TestIdPStore_ListEnabled_InvalidConfigJSON(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT id, type, name, enabled, config`).
 		WillReturnRows(pgxmock.NewRows(idpRowCols).
-			AddRow("idp_x", "oidc", "X", true, []byte(`{not-json`), []byte(`[]`), "viewer", true))
+			AddRow("idp_x", "oidc", "X", true, []byte(`{not-json`), "viewer", false, true))
 
 	out, err := s.ListEnabled(ctx)
 	if err == nil {
@@ -116,24 +111,8 @@ func TestIdPStore_ListEnabled_InvalidConfigJSON(t *testing.T) {
 	}
 }
 
-// TestIdPStore_ListEnabled_InvalidRoleMappingJSON asserts the same
-// loud-failure contract for the roleMapping column.
-func TestIdPStore_ListEnabled_InvalidRoleMappingJSON(t *testing.T) {
-	mock, s := newIdPMock(t)
-	ctx := context.Background()
-
-	mock.ExpectQuery(`SELECT id, type, name, enabled, config`).
-		WillReturnRows(pgxmock.NewRows(idpRowCols).
-			AddRow("idp_y", "oidc", "Y", true, []byte(`{}`), []byte(`[not-json`), "viewer", true))
-
-	out, err := s.ListEnabled(ctx)
-	if err == nil {
-		t.Fatalf("expected roleMapping json decode err; got nil and out=%v", out)
-	}
-}
-
 // TestIdPStore_GetByID_HappyPath asserts single-row lookup decodes
-// both JSONB columns into the typed struct.
+// the JSONB config column into the typed struct.
 func TestIdPStore_GetByID_HappyPath(t *testing.T) {
 	mock, s := newIdPMock(t)
 	ctx := context.Background()
@@ -141,7 +120,7 @@ func TestIdPStore_GetByID_HappyPath(t *testing.T) {
 	mock.ExpectQuery(`SELECT id, type, name, enabled, config`).
 		WithArgs("idp_1").
 		WillReturnRows(pgxmock.NewRows(idpRowCols).
-			AddRow("idp_1", "oidc", "Okta", true, []byte(`{"audience":"a1"}`), []byte(`[]`), "viewer", true))
+			AddRow("idp_1", "oidc", "Okta", true, []byte(`{"audience":"a1"}`), "viewer", false, true))
 
 	p, err := s.GetByID(ctx, "idp_1")
 	if err != nil {
@@ -201,7 +180,7 @@ func TestIdPStore_GetLocal_HappyPath(t *testing.T) {
 
 	mock.ExpectQuery(`WHERE type = 'local' AND enabled = TRUE`).
 		WillReturnRows(pgxmock.NewRows(idpRowCols).
-			AddRow("idp_local", "local", "Local", true, []byte(`{}`), []byte(`[]`), "viewer", false))
+			AddRow("idp_local", "local", "Local", true, []byte(`{}`), "viewer", false, false))
 
 	p, err := s.GetLocal(ctx)
 	if err != nil {
@@ -253,7 +232,7 @@ func TestIdPStore_EmptyJSONBPassthrough(t *testing.T) {
 	mock.ExpectQuery(`SELECT id, type, name, enabled, config`).
 		WithArgs("idp_empty").
 		WillReturnRows(pgxmock.NewRows(idpRowCols).
-			AddRow("idp_empty", "oidc", "Empty", true, []byte{}, []byte{}, "viewer", false))
+			AddRow("idp_empty", "oidc", "Empty", true, []byte{}, "viewer", false, false))
 
 	p, err := s.GetByID(ctx, "idp_empty")
 	if err != nil {
@@ -261,8 +240,5 @@ func TestIdPStore_EmptyJSONBPassthrough(t *testing.T) {
 	}
 	if p.Config != nil {
 		t.Fatalf("empty config should leave Config nil; got %v", p.Config)
-	}
-	if p.RoleMapping != nil {
-		t.Fatalf("empty roleMapping should leave RoleMapping nil; got %v", p.RoleMapping)
 	}
 }

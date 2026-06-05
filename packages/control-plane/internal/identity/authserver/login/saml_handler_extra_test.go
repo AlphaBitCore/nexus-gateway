@@ -24,7 +24,7 @@ func TestResolveOrProvision(t *testing.T) {
 		t.Cleanup(mock.Close)
 		mock.ExpectQuery(findQ).WillReturnError(context.DeadlineExceeded)
 		d := SAMLDeps{Federated: store.NewFederatedStoreWithPool(mock)}
-		_, errStr := d.resolveOrProvision(context.Background(), idp(true), "x", "x@y", nil)
+		_, errStr := d.resolveOrProvision(context.Background(), idp(true), "x", "", "x@y", nil)
 		if errStr != errInternal {
 			t.Fatalf("errStr = %q, want internal", errStr)
 		}
@@ -35,7 +35,7 @@ func TestResolveOrProvision(t *testing.T) {
 		t.Cleanup(mock.Close)
 		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt"}))
 		d := SAMLDeps{Federated: store.NewFederatedStoreWithPool(mock)}
-		_, errStr := d.resolveOrProvision(context.Background(), idp(false), "x", "x@y", nil)
+		_, errStr := d.resolveOrProvision(context.Background(), idp(false), "x", "", "x@y", nil)
 		if errStr != "user_not_provisioned" {
 			t.Fatalf("errStr = %q, want user_not_provisioned", errStr)
 		}
@@ -47,7 +47,7 @@ func TestResolveOrProvision(t *testing.T) {
 		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt"}))
 		mock.ExpectBegin().WillReturnError(context.DeadlineExceeded)
 		d := SAMLDeps{Federated: store.NewFederatedStoreWithPool(mock)}
-		_, errStr := d.resolveOrProvision(context.Background(), idp(true), "x", "x@y", nil)
+		_, errStr := d.resolveOrProvision(context.Background(), idp(true), "x", "", "x@y", nil)
 		if errStr != errInternal {
 			t.Fatalf("errStr = %q, want internal", errStr)
 		}
@@ -58,14 +58,17 @@ func TestResolveOrProvision(t *testing.T) {
 		t.Cleanup(mock.Close)
 		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt"}))
 		mock.ExpectBegin()
-		mock.ExpectQuery(`INSERT INTO "NexusUser"`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		mock.ExpectQuery(`SELECT id FROM "Organization"`).
+			WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))
+		// displayName (2nd arg) = the extracted name; source (4th arg) = "saml".
+		mock.ExpectQuery(`INSERT INTO "NexusUser"`).WithArgs(pgxmock.AnyArg(), "Bob Acme", pgxmock.AnyArg(), "saml", pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"id", "displayName", "email", "status", "source"}).
-				AddRow("user-9", "Bob", nil, "active", "oidc"))
+				AddRow("user-9", "Bob Acme", nil, "active", "saml"))
 		mock.ExpectQuery(`INSERT INTO "UserFederatedIdentity"`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("fi-9"))
 		mock.ExpectCommit()
 		d := SAMLDeps{Federated: store.NewFederatedStoreWithPool(mock)}
-		userID, errStr := d.resolveOrProvision(context.Background(), idp(true), "bob@acme.test", "bob@acme.test", nil)
+		userID, errStr := d.resolveOrProvision(context.Background(), idp(true), "bob@acme.test", "Bob Acme", "bob@acme.test", nil)
 		if errStr != "" || userID != "user-9" {
 			t.Fatalf("got (%q, %q), want (user-9, '')", userID, errStr)
 		}

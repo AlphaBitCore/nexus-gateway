@@ -65,86 +65,103 @@ paths:
                   schema:
                     type: string
                 - name: orgId
+                  description: "Filter by organization id (org_id column)."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: entityType
+                  description: "Filter by subject entity type: user (personal VK) or project (application VK). Unclassified traffic stores an empty value and cannot be selected by this filter."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: projectId
+                  description: "Filter by project id from the identity snapshot (identity->'project'->>'id')."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: virtualKeyId
+                  description: "Filter by virtual key id from the identity snapshot (identity->'vk'->>'id') - NOT the upstream provider API key."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: modelUsed
+                  description: "Filter by the client-requested model name (case-insensitive substring match). The actually-served model after routing is in routedModelName and is not matched by this filter."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: requestId
+                  description: "Filter by the gateway request id."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: hookDecision
+                  description: "Filter by the request-phase hook decision (exact match). Pipeline decisions: APPROVE, REJECT_HARD, BLOCK_SOFT, MODIFY, ABSTAIN; sentinel values also stored: BYPASSED (gateway hooks bypassed), PASSTHROUGH (kill-switch passthrough), EXEMPTED (temporary exemption)."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: responseHookDecision
+                  description: "Filter by the response-phase hook decision: APPROVE, REJECT_HARD, BLOCK_SOFT, MODIFY, or ABSTAIN (exact match; the request-phase sentinels are never stored here)."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: statusRange
+                  description: "Filter by HTTP status class: 2xx, 4xx, or 5xx."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: targetHost
+                  description: "Filter by upstream target host."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: path
+                  description: "Filter by request path."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: sourceProcess
+                  description: "Filter by the recorded source process (case-insensitive substring). Agent-observed rows carry the originating client process name; gateway and proxy rows carry the static values 'ai-gateway' / 'compliance-proxy'."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: bumpStatus
+                  description: "Filter by TLS interception (bump) status, e.g. BUMP_SUCCESS or BUMP_FAILED_PASSTHROUGH."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: apiKeyFingerprint
+                  description: "Filter by exact API-key fingerprint (api_key_fingerprint column)."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: usageExtractionStatus
+                  description: "Filter by exact usage-extraction status."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: routingRuleId
+                  description: "Filter by the routing rule matched for the request (exact id)."
                   in: query
                   required: false
                   schema:
                     type: string
                 - name: errorCode
+                  description: "Filter by the structured failure-reason code (exact match on the raw stored value), e.g. PROVIDER_ERROR."
                   in: query
                   required: false
                   schema:

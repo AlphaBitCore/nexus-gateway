@@ -33,6 +33,7 @@ import { api, ApiError, scheduleProactiveRefresh } from '../../api/client';
 import styles from './AuthContext.module.css';
 import type { WhoAmI } from '../../api/types';
 import { clearTokens, getAccessToken, setTokens, type TokenPair } from '../tokens/tokenStore';
+import { decodeAccessToken } from '../tokens/claims';
 import { startLogin } from '../pkce/pkceFlow';
 import { useIdleTimeout } from '../context/useIdleTimeout';
 import { setDisplayTZ } from '@/lib/format';
@@ -169,9 +170,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    // For a federated (SSO) session, route through the backend RP-initiated
+    // logout so the IdP ends its own session too — otherwise re-clicking the SSO
+    // button silently re-authenticates against the still-live IdP session. The
+    // backend 302s to the IdP's end_session_endpoint then back to /login; for a
+    // local / password session (or an IdP without end_session) it just lands on
+    // /login. Read the claim BEFORE clearing the token.
+    const claims = decodeAccessToken(getAccessToken());
+    const ssoIdp = claims?.amr?.includes('sso') ? claims?.idp : undefined;
     clearTokens();
     dispatch({ type: 'AUTH_GONE' });
-    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    if (typeof window === 'undefined') return;
+    if (ssoIdp) {
+      window.location.assign(`/authserver/idp/${encodeURIComponent(ssoIdp)}/logout`);
+    } else if (!window.location.pathname.startsWith('/login')) {
       window.location.assign('/login');
     }
   }, []);

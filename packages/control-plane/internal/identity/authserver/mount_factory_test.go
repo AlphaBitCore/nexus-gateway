@@ -63,14 +63,14 @@ func buildIdPMock(t *testing.T, idpID string) pgxmock.PgxPoolIface {
 	if err != nil {
 		t.Fatalf("pgxmock NewPool: %v", err)
 	}
-	// IdPStore.GetLocal SELECTs id,type,name,enabled,config,roleMapping,
-	// defaultRole,jitEnabled — eight columns. We respond with a synthetic
-	// local-IdP row; only ID is consumed by Mount (idp.NewLocal uses it).
-	mock.ExpectQuery(`SELECT id, type, name, enabled, config, "roleMapping", "defaultRole", "jitEnabled"\s+FROM "IdentityProvider"\s+WHERE type = 'local'`).
+	// IdPStore.GetLocal SELECTs id,type,name,enabled,config,
+	// defaultRole,defaultControlPlaneAccess,jitEnabled. We respond with a
+	// synthetic local-IdP row; only ID is consumed by Mount (idp.NewLocal uses it).
+	mock.ExpectQuery(`SELECT id, type, name, enabled, config, "defaultRole", "defaultControlPlaneAccess", "jitEnabled"\s+FROM "IdentityProvider"\s+WHERE type = 'local'`).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "type", "name", "enabled", "config", "roleMapping", "defaultRole", "jitEnabled",
+			"id", "type", "name", "enabled", "config", "defaultRole", "defaultControlPlaneAccess", "jitEnabled",
 		}).AddRow(
-			idpID, "local", "Local", true, []byte(`{}`), []byte(`[]`), "developer", true,
+			idpID, "local", "Local", true, []byte(`{}`), "developer", false, true,
 		))
 	return mock
 }

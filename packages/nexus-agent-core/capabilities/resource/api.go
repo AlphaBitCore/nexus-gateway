@@ -11,25 +11,29 @@ import (
 // admin API, reaching every kind and every operation — at any nesting depth —
 // through one operation-driven resolver instead of per-kind UI code.
 
-// KindInfo is one kind plus a small summary for the picker. Verbs are the canonical
-// CRUD/action verbs (a quick hint that may be empty for a reports/config kind);
-// OpCount is the total operations the kind exposes, so a non-CRUD kind never renders
-// blank.
+// KindInfo is one kind plus a small summary for the picker. Capabilities is the
+// kind's TOTAL capability profile (capability.go): deduplicated, full-CRUD
+// collapsed to "crud", and never empty — a reports kind says `report`, a
+// singleton-config kind says `config`, instead of the silent column the old
+// canonical-verbs-only hint produced.
 type KindInfo struct {
-	Kind    string   `json:"kind"`
-	Verbs   []string `json:"verbs"`
-	OpCount int      `json:"opCount"`
+	Kind         string   `json:"kind"`
+	Capabilities []string `json:"capabilities"`
+	OpCount      int      `json:"opCount"`
 }
 
 // OperationInfo is one operation exposed to the cascade: enough to render it in a
 // menu, drill into it (binding the next path param), and resolve it to an admin
-// call. It is the TUI mirror of the internal Operation.
+// call. It is the TUI mirror of the internal Operation. Summary is the operation's
+// OpenAPI summary from the init-time memo, so menus read "Set node config
+// override" instead of a synthesized path-tail label.
 type OperationInfo struct {
 	Kind        string   `json:"kind"`
 	OperationID string   `json:"operationId"`
 	Method      string   `json:"method"`
 	Path        string   `json:"path"`
 	Label       string   `json:"label"`
+	Summary     string   `json:"summary,omitempty"`
 	Verb        string   `json:"verb,omitempty"` // canonical verb (list/get/create/update/delete/action:x) or ""
 	Params      []string `json:"params,omitempty"`
 	Mutating    bool     `json:"mutating"`
@@ -42,6 +46,7 @@ func toOperationInfo(op Operation) OperationInfo {
 		Method:      op.Method,
 		Path:        op.Path,
 		Label:       op.Label(),
+		Summary:     distilledIdx[[2]string{op.Kind, op.OperationID}].Summary,
 		Verb:        op.CanonicalVerb(),
 		Params:      op.Params,
 		Mutating:    op.Mutating(),
@@ -52,7 +57,7 @@ func toOperationInfo(op Operation) OperationInfo {
 func Kinds() []KindInfo {
 	out := make([]KindInfo, 0, len(resCatalog.Kinds))
 	for _, k := range resCatalog.Kinds {
-		out = append(out, KindInfo{Kind: k.Kind, Verbs: k.canonicalVerbs(), OpCount: len(k.Operations)})
+		out = append(out, KindInfo{Kind: k.Kind, Capabilities: k.capabilities(), OpCount: len(k.Operations)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Kind < out[j].Kind })
 	return out
@@ -89,15 +94,91 @@ func ResolveOperation(kind, operationID string, params map[string]string) (metho
 	return op.Method, path, op.Mutating(), nil
 }
 
-// SearchInfos ranks operations across all kinds against a free-text query
-// (code-level match), for a global operation search in the cascade.
-func SearchInfos(query string, limit int) []OperationInfo {
-	cands := Search(query, limit)
-	out := make([]OperationInfo, 0, len(cands))
-	for _, op := range cands {
-		out = append(out, toOperationInfo(op))
+// OpCard is one search candidate carrying everything needed to execute it in
+// the same turn: the structural identity (kind/operationId/method/path), the
+// operation's summary, whether it writes, and its input surface (params with
+// descriptions + body skeleton). Cards exist because the ranking corpus reads
+// the summaries but a thin result hid them from the model — the model was
+// re-ranking blind on six structural fields (design doc §3.2).
+type OpCard struct {
+	Kind        string           `json:"kind"`
+	OperationID string           `json:"operationId"`
+	Method      string           `json:"method"`
+	Path        string           `json:"path"`
+	Summary     string           `json:"summary,omitempty"`
+	Write       bool             `json:"write"`
+	Params      []DistilledParam `json:"params,omitempty"`
+	Body        []DistilledField `json:"body,omitempty"`
+}
+
+// ThinOp is a tail candidate beyond the card window: enough to recognize a
+// missed target and follow up (describe the kind, or refine the query), at
+// 4 fields instead of a full card.
+type ThinOp struct {
+	Kind        string `json:"kind"`
+	OperationID string `json:"operationId"`
+	Method      string `json:"method"`
+	Path        string `json:"path"`
+}
+
+// SearchResult is the two-segment search answer: full executable cards for the
+// top candidates, thin entries for the rest of the window. The tail exists
+// because the scorer is substring/token-overlap and the right op can rank
+// 9-15 on a fuzzy query (baseline: top-20 recall is +6pp over top-5); if a
+// future eval shows top-K recall ≈ top-20 recall, delete the tail.
+type SearchResult struct {
+	Cards []OpCard `json:"cards"`
+	More  []ThinOp `json:"more,omitempty"`
+}
+
+// searchCardK / searchCardKMax bound the card window. K=5 comes from the
+// 2026-06-05 eval baseline: ranks 6-8 had zero additional hits, so larger
+// windows pay card bytes for no recall.
+const (
+	searchCardK    = 5
+	searchCardKMax = 8
+)
+
+// SearchCards ranks operations against a free-text query and returns the
+// two-segment result: the top cardK candidates as executable cards (cardK<=0
+// defaults to 5, capped at 8), the remainder up to limit (default 20) as thin
+// entries. Cards are assembled from the init-time DistilledOp memo — no spec
+// is re-read or re-parsed on the query path.
+func SearchCards(query string, cardK, limit int) SearchResult {
+	if cardK <= 0 {
+		cardK = searchCardK
 	}
-	return out
+	if cardK > searchCardKMax {
+		cardK = searchCardKMax
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit < cardK {
+		limit = cardK
+	}
+	cands := Search(query, limit)
+	res := SearchResult{Cards: make([]OpCard, 0, cardK)} // empty array (not null) on no match
+	for i, op := range cands {
+		if i < cardK {
+			dop := distilledIdx[[2]string{op.Kind, op.OperationID}]
+			res.Cards = append(res.Cards, OpCard{
+				Kind:        op.Kind,
+				OperationID: op.OperationID,
+				Method:      op.Method,
+				Path:        op.Path,
+				Summary:     dop.Summary,
+				Write:       op.Mutating(),
+				Params:      dop.Params,
+				Body:        dop.Body,
+			})
+			continue
+		}
+		res.More = append(res.More, ThinOp{
+			Kind: op.Kind, OperationID: op.OperationID, Method: op.Method, Path: op.Path,
+		})
+	}
+	return res
 }
 
 // FieldInfo is one input field of an operation (a query/path parameter or a body

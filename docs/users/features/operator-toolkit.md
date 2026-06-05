@@ -64,7 +64,7 @@ Every capability is also a command, so scripts and other tools can shell out to 
 - `nexus killswitch status` — show the current global kill-switch state; `nexus killswitch on|off` toggles it (prod requires `--yes`).
 - `nexus passthrough status` — show the three-tier emergency-passthrough snapshot; `nexus passthrough global on|off` toggles the global tier (on bypasses the hooks by default; `--bypass-cache`/`--bypass-normalize` add the others; prod requires `--yes`).
 - `nexus skill ls` — list the available agent skills (the built-in playbooks plus any you have installed); `nexus skill install <url>` downloads a skill, shows you its name, description, SHA-256 checksum, and body for review, and installs it only when you re-run with `--yes`. The built-in playbooks cover the common operations: incident triage, cost investigation, compliance audit, node-drift check, SLO-breach triage, provider-outage response, Virtual-Key hygiene, cache effectiveness, and the emergency passthrough / kill-switch drill — the agent loads the matching one before it acts.
-- `nexus resource …` — the CLI face of the OpenAPI-driven engine, reaching **every** admin endpoint without a dedicated command for each. Work search-first: `nexus resource search "<query>"` finds the operation (matched against kind, operationId, path, and label) and `nexus resource describe <kind>` shows its parameters and body fields; then `nexus resource read <kind> <operationId>` runs a read (`--param name=value` fills path placeholders, `--query name=value` adds filters) and `nexus resource invoke <kind> <operationId>` runs a write (`--body '<json>'` or `--body-file`, confirmed at a `y/N` prompt unless you pass `--yes`). `nexus resource kinds` lists every kind; the catalog subcommands (`kinds`, `search`, `describe`) run offline with no environment or sign-in. The same tables and detail rendering as the TUI.
+- `nexus resource …` — the CLI face of the OpenAPI-driven engine, reaching **every** admin endpoint without a dedicated command for each. Work search-first: `nexus resource search "<query>"` finds the operation (matched against kind, operationId, path, label, and each operation's summary) and shows each top candidate with its real OpenAPI summary — the same executable cards the built-in agent consumes; `nexus resource describe <kind>` shows every operation with its summary, path, parameters, and body fields; then `nexus resource read <kind> <operationId>` runs a read (`--param name=value` fills path placeholders, `--query name=value` adds filters) and `nexus resource invoke <kind> <operationId>` runs a write (`--body '<json>'` or `--body-file`, confirmed at a `y/N` prompt unless you pass `--yes`). `nexus resource kinds` lists every kind with its capability profile (`crud`, `config`, `report`, `action:<name>` — never an empty column); the catalog subcommands (`kinds`, `search`, `describe`) run offline with no environment or sign-in. The same tables and detail rendering as the TUI.
 
 Commands return distinct exit codes so scripts can branch: `0` success, `1` transport/other, `2` usage error, `3` authentication required, `4` IAM denied, `5` not found.
 
@@ -75,3 +75,12 @@ Commands return distinct exit codes so scripts can branch: `0` success, `1` tran
 ## Installation
 
 `nexus` is a single static Go binary built from `packages/nexus-cli/cmd/nexus`.
+
+## References
+
+- `packages/nexus-cli/cmd/nexus` — the `nexus` binary
+- `packages/nexus-cli/internal/cli/` — CLI command tree (`resource.go` for the catalog commands)
+- `packages/nexus-cli/internal/tui/` — terminal console (resource cascade under `resource/`)
+- `packages/nexus-cli/internal/mcp/` — the MCP server face
+- `packages/nexus-agent-core/capabilities/resource/` — the embedded OpenAPI catalog + search/distill engine
+- `docs/developers/architecture/nexus-operator-toolkit-architecture.md` — the architecture behind every face

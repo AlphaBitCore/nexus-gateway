@@ -61,8 +61,8 @@ func (r *resourceView) kindView() string {
 	for i, k := range f {
 		cursor := "  "
 		summary := fmt.Sprintf("%d ops", k.OpCount)
-		if len(k.Verbs) > 0 {
-			summary += " · " + strings.Join(k.Verbs, " ")
+		if len(k.Capabilities) > 0 {
+			summary += " · " + strings.Join(k.Capabilities, " ")
 		}
 		name := fmt.Sprintf("%-28s ", k.Kind)
 		if i == r.kindCur {
@@ -159,7 +159,16 @@ func (r *resourceView) menuLines(fr *resFrame) string {
 		if op.Mutating {
 			tag = lipgloss.NewStyle().Foreground(styles.Amber).Render(op.Method)
 		}
-		label := fmt.Sprintf("%-28s", op.Label)
+		// Prefer the operation's OpenAPI summary — "Set node config override"
+		// reads better than a synthesized path tail; fall back to the label.
+		text := op.Summary
+		if text == "" {
+			text = op.Label
+		}
+		if r := []rune(text); len(r) > 44 { // rune-safe truncation
+			text = string(r[:43]) + "…"
+		}
+		label := fmt.Sprintf("%-44s", text)
 		if i == fr.cursor {
 			cursor = lipgloss.NewStyle().Foreground(styles.Brand).Render("▸ ")
 			label = lipgloss.NewStyle().Bold(true).Render(label)

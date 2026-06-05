@@ -349,6 +349,45 @@ kinds:
           operationId: rotateAPIKey
           tier: confirm
           iamAction: iam.ResourceApiKey.Action(iam.VerbRotate)
+    - kind: assistant
+      file: assistant.yaml
+      operations:
+        - method: POST
+          path: /api/admin/assistant/confirm
+          operationId: confirm
+          tier: confirm
+        - method: GET
+          path: /api/admin/assistant/files/{id}
+          operationId: downloadFile
+          tier: auto
+        - method: GET
+          path: /api/admin/assistant/models
+          operationId: listModels
+          tier: auto
+        - method: GET
+          path: /api/admin/assistant/sessions
+          operationId: listSessions
+          tier: auto
+        - method: GET
+          path: /api/admin/assistant/sessions/{id}
+          operationId: getSession
+          tier: auto
+        - method: DELETE
+          path: /api/admin/assistant/sessions/{id}
+          operationId: deleteSession
+          tier: confirm
+        - method: POST
+          path: /api/admin/assistant/sessions/{id}/chat
+          operationId: startChat
+          tier: confirm
+        - method: POST
+          path: /api/admin/assistant/sessions/{id}/interrupt
+          operationId: interruptSession
+          tier: confirm
+        - method: GET
+          path: /api/admin/assistant/sessions/{id}/stream
+          operationId: streamSession
+          tier: auto
     - kind: auth
       file: auth.yaml
       operations:
@@ -1024,6 +1063,11 @@ kinds:
         - method: POST
           path: /api/admin/identity-providers/{idpId}/test
           operationId: testSavedIdentityProvider
+          tier: confirm
+          iamAction: idp.Action(iam.VerbProbe)
+        - method: POST
+          path: /api/admin/identity-providers/parse-saml-metadata
+          operationId: parseSAMLMetadata
           tier: confirm
           iamAction: idp.Action(iam.VerbProbe)
         - method: POST
