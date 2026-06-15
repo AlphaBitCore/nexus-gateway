@@ -24,11 +24,45 @@ func ClassifyTrafficEvent(evt Event) string {
 	}
 }
 
-// ClassifyAdminEvent returns an event-type string for an AdminAuditLog row.
-// Format: "{entityType}.{action}". Returns "" if action or entityType is empty.
+// Cataloged event-type identities for admin audit rows whose raw
+// (entityType, action) pair does not follow the canonical
+// "<resource>.<verb>" shape, so the generic rule below would otherwise yield a
+// non-cataloged eventType ("" or e.g. "thing.thing_override_set") that any SIEM
+// whitelist silently drops and that is absent from the admin filter picker.
+// The mapping gives them stable, picker-listed identities:
+//
+//   - login events carry a dotted action ("admin.login.failed/.succeeded") and
+//     an absent or inconsistent entityType → map to the canonical auth.* names
+//     the picker hand-lists and the CEF/syslog severity table recognises.
+//   - node override / break-glass writes use the legacy internal "thing" /
+//     "thing_override_set" vocabulary → map to the canonical node.write-override
+//     catalog identity (the config-sync / kill-switch override path
+//     at the SIEM layer).
+const (
+	eventTypeLoginFailure = "auth.login_failure"
+	eventTypeLoginSuccess = "auth.login_success"
+	eventTypeNodeOverride = "node.write-override"
+)
+
+// ClassifyAdminEvent returns a cataloged event-type string for an AdminAuditLog
+// row. Canonical rows derive their type as "{entityType}.{action}"; a handful of
+// legacy-shaped events (login, node override) are mapped to their cataloged
+// identities first so they are not dropped under a SIEM whitelist.
+// Returns "" only when neither a known mapping nor a canonical pair applies.
 func ClassifyAdminEvent(evt Event) string {
 	action, _ := evt["action"].(string)
 	entityType, _ := evt["entityType"].(string)
+
+	switch action {
+	case "admin.login.failed":
+		return eventTypeLoginFailure
+	case "admin.login.succeeded":
+		return eventTypeLoginSuccess
+	}
+	if entityType == "thing" && action == "thing_override_set" {
+		return eventTypeNodeOverride
+	}
+
 	if action == "" || entityType == "" {
 		return ""
 	}

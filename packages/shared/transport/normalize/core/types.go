@@ -14,6 +14,7 @@ const (
 	KindHTTPText      Kind = "http-text"
 	KindHTTPForm      Kind = "http-form"
 	KindHTTPMultipart Kind = "http-multipart"
+	KindHTTPSSE       Kind = "http-sse"
 	KindHTTPBinary    Kind = "http-binary"
 	KindUnsupported   Kind = "unsupported"
 )
@@ -30,7 +31,7 @@ func (k Kind) IsAI() bool {
 // IsHTTP reports whether k is one of the http-* kinds.
 func (k Kind) IsHTTP() bool {
 	switch k {
-	case KindHTTPJSON, KindHTTPText, KindHTTPForm, KindHTTPMultipart, KindHTTPBinary:
+	case KindHTTPJSON, KindHTTPText, KindHTTPForm, KindHTTPMultipart, KindHTTPSSE, KindHTTPBinary:
 		return true
 	}
 	return false
@@ -97,10 +98,15 @@ type NormalizedPayload struct {
 	// HTTP fields — populated when Kind.IsHTTP().
 	HTTP *HTTPPayload `json:"http,omitempty"`
 
-	// Storage-only marker. When true, the payload was dropped per policy
-	// (storageAction=drop-content) and only metadata is retained.
-	Redacted bool     `json:"redacted,omitempty"`
-	RuleIDs  []string `json:"ruleIds,omitempty"`
+	// Storage-only marker. When true, the payload content was dropped and
+	// only metadata is retained. RedactedReason distinguishes WHY: the
+	// operator chose storageAction=drop-content, or a storageAction=redact
+	// policy could not be applied precisely and degraded to the drop
+	// placeholder. RedactedDetail carries the degradation diagnosis.
+	Redacted       bool                    `json:"redacted,omitempty"`
+	RedactedReason string                  `json:"redactedReason,omitempty"`
+	RedactedDetail *RedactionDegradeDetail `json:"redactedDetail,omitempty"`
+	RuleIDs        []string                `json:"ruleIds,omitempty"`
 
 	// Confidence indicates how confident the producing normalizer is in
 	// the structural fields it filled. Range [0, 1]. 0 (the JSON zero
@@ -119,13 +125,22 @@ type NormalizedPayload struct {
 	// DetectedSpec records WHICH adapter or wire spec the producing
 	// normalizer matched. Examples: "openai-chat", "anthropic-messages",
 	// "gemini-generate" (Tier 1 adapter normalizers), "chatgpt-web",
-	// "claude-web" (consumer-surface adapters), or
+	// "claude-web" (consumer-surface adapters),
 	// "pattern:openai-chat", "pattern:anthropic-messages" (Tier 2
-	// pattern probe identifying the most likely spec). Used by the UI
-	// to show a "detected as X" badge and by analytics to break down
-	// audit volume by structural family across host names. Empty for
-	// the verbatim Tier 3 fallback (no specific spec was identified).
+	// pattern probe identifying the most likely spec), or
+	// "generic-http" (the Tier 3 structural fallback — no AI spec was
+	// identified, the payload is a typed projection of the raw bytes).
+	// Used by the UI to show a "detected as X" badge and by analytics
+	// to break down audit volume by structural family across host names.
 	DetectedSpec string `json:"detectedSpec,omitempty"`
+
+	// SelectionEvidence (only SelectionEvidenceHost) marks a payload
+	// chosen because a per-host adapter resolved the producer by host
+	// match — the Registry accepts it over the tier threshold on that
+	// evidence while Confidence keeps the honest (possibly sub-threshold)
+	// coverage, and the UI shows a host-matched label in place of the
+	// numeral. See SelectionEvidence in confidence.go. Empty elsewhere.
+	SelectionEvidence SelectionEvidence `json:"selectionEvidence,omitempty"`
 }
 
 // Message is one element in NormalizedPayload.Messages.
@@ -222,86 +237,29 @@ type HTTPPayload struct {
 }
 
 // HTTPBodyView carries the decoded body in the form most useful for the
-// kind. Exactly one of Text / JSON / Form / BinaryRef is typically set
-// per HTTPBodyView; producers may set Text alongside JSON to provide a
-// pretty-printed projection for text-only consumers.
+// kind. Exactly one of Text / JSON / Form / SSEFrames / BinaryRef is
+// typically set per HTTPBodyView; producers may set Text alongside JSON
+// to provide a pretty-printed projection for text-only consumers.
 type HTTPBodyView struct {
 	Text      string            `json:"text,omitempty"`
 	JSON      any               `json:"json,omitempty"`
 	Form      map[string]string `json:"form,omitempty"`
 	BinaryRef *BinaryRef        `json:"binaryRef,omitempty"`
+
+	// SSEFrames is the structured frame list for KindHTTPSSE payloads.
+	// SSETruncated is true when the producer hit its frame cap and
+	// dropped the remainder (the raw bytes remain available to the Raw
+	// view; only this projection is bounded).
+	SSEFrames    []SSEFrame `json:"sseFrames,omitempty"`
+	SSETruncated bool       `json:"sseTruncated,omitempty"`
 }
 
-// TransformSource identifies the subsystem that produced a TransformSpan.
-// Used for audit grouping ("show me everything cache_normaliser changed
-// this week") and policy filtering (compliance officer reviewing only
-// hook-attributable changes).
-type TransformSource string
-
-const (
-	// SourceHook — content-touching hook redact (pii-detector / keyword-
-	// filter / content-safety / rulepack-engine), attributed to a rule.
-	SourceHook TransformSource = "hook"
-	// SourceAIGuard — LLM-as-judge classifier suggested a redact span.
-	// Distinguished from SourceHook so operators can audit AI-driven
-	// modifications separately.
-	SourceAIGuard TransformSource = "aiguard"
-	// SourceCacheNormaliser — prompt-cache normaliser stripped volatile
-	// bytes from the request body before sending upstream (helps the
-	// provider's prompt-cache hit rate).
-	SourceCacheNormaliser TransformSource = "cache-normaliser"
-	// SourceCacheControlInject — cache_control marker injection
-	// (Nexus added markers to direct the provider's prompt cache).
-	SourceCacheControlInject TransformSource = "cache-control-inject"
-	// SourceCacheKeyStrip — Nexus L1 cache-key normalisation removed
-	// volatile bytes for the cache key computation only; upstream
-	// body unaffected. Recorded for audit completeness.
-	SourceCacheKeyStrip TransformSource = "cache-key-strip"
-)
-
-// TransformAction classifies what kind of edit a TransformSpan made.
-type TransformAction string
-
-const (
-	ActionRedact  TransformAction = "redact"  // sensitive content replaced
-	ActionStrip   TransformAction = "strip"   // volatile bytes removed
-	ActionInject  TransformAction = "inject"  // bytes added
-	ActionReplace TransformAction = "replace" // generic substitution
-)
-
-// TransformSpan describes one byte-level modification on a
-// NormalizedPayload. Spans canonicalize every modification a Nexus
-// subsystem made between the client and the upstream: hook redactions,
-// AI-Guard suggestions, cache-normaliser strips, cache_control inject.
-// A single span set drives both inflight rewrite (TrafficAdapter
-// applies them to the upstream-bound body) and storage rewrite (the
-// audit-log copy stored in traffic_event_normalized).
-//
-// Reconstructing the wire-level body from the audit log:
-//
-//	upstream_body = ApplySpans(request_normalized, request_transform_spans)
-//	client_body   = ApplySpans(response_normalized, response_transform_spans)
-//
-// ContentAddress encodes the addressed content block:
-//
-//   - AI kinds: "messages.<i>.content.<j>" (e.g. "messages.0.content.1")
-//   - HTTP kinds: "http.bodyView" (whole body) or "http.bodyView.form.<key>"
-//
-// Start / End are UTF-8 byte offsets into the addressed content's text.
-// For ActionInject, Start == End and Replacement holds the injected bytes.
-type TransformSpan struct {
-	Source         TransformSource `json:"source"`
-	SourceID       string          `json:"sourceId,omitempty"` // rule ID, hook ID, normaliser rule ID, or ""
-	Action         TransformAction `json:"action"`
-	ContentAddress string          `json:"contentAddress"`
-	Start          int             `json:"start"`
-	End            int             `json:"end"`
-	Replacement    string          `json:"replacement,omitempty"`
-	Reason         string          `json:"reason,omitempty"`
+// SSEFrame is one Server-Sent Events frame in a fallback projection.
+// Data carries the decoded JSON tree when the frame's data parses as
+// JSON, else DataText carries the verbatim string. At most one is set:
+// a frame whose data line was empty carries neither.
+type SSEFrame struct {
+	Event    string `json:"event,omitempty"`
+	Data     any    `json:"data,omitempty"`
+	DataText string `json:"dataText,omitempty"`
 }
-
-// RedactionSpan is retained as an alias for backward semantic clarity
-// in narrow APIs (hook results), but new code should use TransformSpan
-// directly so non-redact sources (cache normaliser, cache_control
-// inject) flow through the same audit channel.
-type RedactionSpan = TransformSpan

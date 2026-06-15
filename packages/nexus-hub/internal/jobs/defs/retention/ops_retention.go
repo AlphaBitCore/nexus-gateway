@@ -169,9 +169,13 @@ func (j *OpsRetentionJob) purgeLayer(ctx context.Context, layer string, cutoff t
 func (j *OpsRetentionJob) deleteRollup(ctx context.Context, table, class string, cutoff time.Time) (int64, error) {
 	var likeOp string
 	if class == "runtime" {
-		likeOp = "LIKE 'runtime.%%'"
+		// Single % is a SQL LIKE wildcard — matches any suffix after "runtime.".
+		// No fmt.Sprintf percent-escaping is needed here because likeOp is
+		// substituted as a %s argument value (not parsed as a format directive)
+		// so the single % passes through verbatim to PostgreSQL as intended.
+		likeOp = "LIKE 'runtime.%'"
 	} else {
-		likeOp = "NOT LIKE 'runtime.%%'"
+		likeOp = "NOT LIKE 'runtime.%'"
 	}
 	q := fmt.Sprintf(`
 		DELETE FROM %s

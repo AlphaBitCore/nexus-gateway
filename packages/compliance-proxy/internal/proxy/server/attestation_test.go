@@ -67,9 +67,9 @@ func TestVerifier_NilReceiverDisabled(t *testing.T) {
 }
 
 func TestVerifier_MissingHeader(t *testing.T) {
-	v := newVerifierWithLoader(t, func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+	v := newVerifierWithLoader(t, func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
 		t.Fatal("loader must not be called on missing header")
-		return nil, nil
+		return tlsbump.AttestationKey{}, nil
 	}, 5*time.Minute)
 	res := v.Verify(context.Background(), "")
 	if res.Outcome != AttestationOutcomeMissing {
@@ -83,11 +83,11 @@ func TestVerifier_Valid_HappyPath(t *testing.T) {
 	hdr := signWith(t, priv, agentID, time.Now().Unix(), "")
 
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, id string) (ed25519.PublicKey, error) {
+		func(_ context.Context, id string) (tlsbump.AttestationKey, error) {
 			if id != agentID {
 				t.Errorf("loader called with %q; want %q", id, agentID)
 			}
-			return pub, nil
+			return tlsbump.AttestationKey{Key: pub}, nil
 		},
 		5*time.Minute)
 	res := v.Verify(context.Background(), hdr)
@@ -99,11 +99,66 @@ func TestVerifier_Valid_HappyPath(t *testing.T) {
 	}
 }
 
+// TestVerifier_CertExpired_RejectsOtherwiseValid is the SEC-M4-01 keystone: a
+// header that is in-window, correctly signed, and from a known agent must STILL
+// be rejected (outcome=expired → MITM fallback) when the agent's attestation
+// cert NotAfter has passed. Without the fix this returned valid → full
+// compliance bypass forever.
+func TestVerifier_CertExpired_RejectsOtherwiseValid(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	const agentID = "550e8400-e29b-41d4-a716-446655440000"
+	hdr := signWith(t, priv, agentID, time.Now().Unix(), "") // in replay window
+
+	v := newVerifierWithLoader(t,
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: pub, CertExpiresAt: time.Now().Add(-1 * time.Hour)}, nil
+		},
+		5*time.Minute)
+	res := v.Verify(context.Background(), hdr)
+	if res.Outcome != AttestationOutcomeExpired {
+		t.Errorf("Outcome = %q; want expired (cert lapsed)", res.Outcome)
+	}
+	if res.AgentID != agentID {
+		t.Errorf("AgentID must still be carried on expired: %q", res.AgentID)
+	}
+}
+
+// TestVerifier_CertNotYetExpired_Valid: a key whose cert is still in date passes.
+func TestVerifier_CertNotYetExpired_Valid(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	const agentID = "550e8400-e29b-41d4-a716-446655440000"
+	hdr := signWith(t, priv, agentID, time.Now().Unix(), "")
+	v := newVerifierWithLoader(t,
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: pub, CertExpiresAt: time.Now().Add(89 * 24 * time.Hour)}, nil
+		},
+		5*time.Minute)
+	if got := v.Verify(context.Background(), hdr).Outcome; got != AttestationOutcomeValid {
+		t.Errorf("Outcome = %q; want valid (cert still in date)", got)
+	}
+}
+
+// TestVerifier_CertExpiryZero_FailOpenValid: a legacy stamp with no expiry on
+// record is treated as non-expiring (fail-open), so the key still verifies.
+func TestVerifier_CertExpiryZero_FailOpenValid(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	const agentID = "550e8400-e29b-41d4-a716-446655440000"
+	hdr := signWith(t, priv, agentID, time.Now().Unix(), "")
+	v := newVerifierWithLoader(t,
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: pub}, nil // zero CertExpiresAt
+		},
+		5*time.Minute)
+	if got := v.Verify(context.Background(), hdr).Outcome; got != AttestationOutcomeValid {
+		t.Errorf("Outcome = %q; want valid (zero expiry = fail-open)", got)
+	}
+}
+
 func TestVerifier_MalformedHeader_InvalidSig(t *testing.T) {
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
 			t.Fatal("loader must not be called on parse failure")
-			return nil, nil
+			return tlsbump.AttestationKey{}, nil
 		},
 		5*time.Minute)
 	res := v.Verify(context.Background(), "garbage")
@@ -119,7 +174,9 @@ func TestVerifier_Expired_PastWindow(t *testing.T) {
 	hdr := signWith(t, priv, agentID, time.Now().Add(-1*time.Hour).Unix(), "")
 
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) { return pub, nil },
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: pub}, nil
+		},
 		5*time.Minute)
 	res := v.Verify(context.Background(), hdr)
 	if res.Outcome != AttestationOutcomeExpired {
@@ -136,7 +193,9 @@ func TestVerifier_Expired_FutureSkew(t *testing.T) {
 	hdr := signWith(t, priv, "agent", time.Now().Add(time.Hour).Unix(), "")
 
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) { return pub, nil },
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: pub}, nil
+		},
 		5*time.Minute)
 	if got := v.Verify(context.Background(), hdr).Outcome; got != AttestationOutcomeExpired {
 		t.Errorf("Outcome = %q; want expired", got)
@@ -147,8 +206,8 @@ func TestVerifier_UnknownAgent(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	hdr := signWith(t, priv, "stranger", time.Now().Unix(), "")
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) {
-			return nil, tlsbump.ErrUnknownAgent
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{}, tlsbump.ErrUnknownAgent
 		},
 		5*time.Minute)
 	res := v.Verify(context.Background(), hdr)
@@ -164,8 +223,8 @@ func TestVerifier_LoaderError_FailsAsUnknownAgent(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	hdr := signWith(t, priv, "a", time.Now().Unix(), "")
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) {
-			return nil, errors.New("hub timeout")
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{}, errors.New("hub timeout")
 		},
 		5*time.Minute)
 	res := v.Verify(context.Background(), hdr)
@@ -183,7 +242,9 @@ func TestVerifier_WrongKey_InvalidSig(t *testing.T) {
 	pubB, _, _ := ed25519.GenerateKey(rand.Reader)
 	hdr := signWith(t, agentA, "a", time.Now().Unix(), "")
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) { return pubB, nil },
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: pubB}, nil
+		},
 		5*time.Minute)
 	if got := v.Verify(context.Background(), hdr).Outcome; got != AttestationOutcomeInvalidSig {
 		t.Errorf("Outcome = %q; want invalid_sig", got)
@@ -198,8 +259,8 @@ func TestVerifier_WrongKeySize_InvalidSig(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	hdr := signWith(t, priv, "a", time.Now().Unix(), "")
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) {
-			return ed25519.PublicKey{0x01, 0x02}, nil
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: ed25519.PublicKey{0x01, 0x02}}, nil
 		},
 		5*time.Minute)
 	if got := v.Verify(context.Background(), hdr).Outcome; got != AttestationOutcomeInvalidSig {
@@ -211,7 +272,9 @@ func TestVerifier_Replayed_SecondCallRejected(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	hdr := signWith(t, priv, "a", time.Now().Unix(), "deadbeef00000000000000000000beef")
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) { return pub, nil },
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
+			return tlsbump.AttestationKey{Key: pub}, nil
+		},
 		5*time.Minute)
 	if got := v.Verify(context.Background(), hdr).Outcome; got != AttestationOutcomeValid {
 		t.Fatalf("first Verify Outcome = %q; want valid", got)
@@ -253,9 +316,9 @@ func TestVerifier_BadSignatureBase64_ViaParser(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	_ = priv
 	v := newVerifierWithLoader(t,
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+		func(_ context.Context, _ string) (tlsbump.AttestationKey, error) {
 			t.Fatal("loader must not be called on parse failure")
-			return nil, nil
+			return tlsbump.AttestationKey{}, nil
 		},
 		5*time.Minute)
 	if got := v.Verify(context.Background(), hdr).Outcome; got != AttestationOutcomeInvalidSig {

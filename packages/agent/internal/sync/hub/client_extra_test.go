@@ -509,44 +509,6 @@ func TestCheckUpdate_DecodeError(t *testing.T) {
 	}
 }
 
-func TestRenewCert_DecodeError(t *testing.T) {
-	// 200 with invalid JSON body must surface a "decode renew cert" error.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("garbage"))
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv.URL)
-	_, err := c.RenewCert(context.Background(), "dev-1", "csr")
-	if err == nil {
-		t.Fatal("expected decode error")
-	}
-	if !strings.Contains(err.Error(), "decode renew cert") {
-		t.Errorf("error should mention 'decode renew cert': %v", err)
-	}
-}
-
-func TestRenewCert_TransportError(t *testing.T) {
-	// Transport-level failure on renew-cert must wrap with "renew cert" —
-	// covers the err-returning branch after doWithRetry.
-	c, err := NewClient(Config{
-		HubURL:     "http://" + closedTCPAddr(t),
-		Timeout:    250 * time.Millisecond,
-		MaxRetries: 0,
-		RetryDelay: 1 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	_, err = c.RenewCert(context.Background(), "dev-1", "csr")
-	if err == nil {
-		t.Fatal("expected transport error")
-	}
-	if !strings.Contains(err.Error(), "renew cert") {
-		t.Errorf("error should be wrapped with 'renew cert': %v", err)
-	}
-}
-
 // doWithRetry — NewRequestWithContext failure (invalid URL).
 
 func TestDoWithRetry_NewRequestError(t *testing.T) {
@@ -712,6 +674,102 @@ func TestNewClient_TLSRoundTripWithPinnedCA(t *testing.T) {
 
 func encodeCert(c *x509.Certificate) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})
+}
+
+// parseSingleCertPEM — unit tests for the helper that backs DeviceCAFile parsing.
+
+func TestParseSingleCertPEM_ValidCert(t *testing.T) {
+	caPEM := selfSignedCAPEM(t)
+	cert, err := parseSingleCertPEM(caPEM)
+	if err != nil {
+		t.Fatalf("parseSingleCertPEM: %v", err)
+	}
+	if cert == nil {
+		t.Fatal("expected non-nil certificate")
+	}
+	if cert.Subject.CommonName != "test-ca" {
+		t.Errorf("CommonName = %q, want test-ca", cert.Subject.CommonName)
+	}
+}
+
+func TestParseSingleCertPEM_EmptyInput(t *testing.T) {
+	_, err := parseSingleCertPEM([]byte{})
+	if err == nil {
+		t.Fatal("expected error for empty input")
+	}
+	if !strings.Contains(err.Error(), "no CERTIFICATE PEM block found") {
+		t.Errorf("error %q should mention 'no CERTIFICATE PEM block found'", err)
+	}
+}
+
+func TestParseSingleCertPEM_WrongPEMType(t *testing.T) {
+	// A PEM block with type "PRIVATE KEY" must be rejected — only CERTIFICATE
+	// blocks carry x509 DER data.
+	badPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not DER")})
+	_, err := parseSingleCertPEM(badPEM)
+	if err == nil {
+		t.Fatal("expected error for wrong PEM type")
+	}
+	if !strings.Contains(err.Error(), "no CERTIFICATE PEM block found") {
+		t.Errorf("error %q should mention 'no CERTIFICATE PEM block found'", err)
+	}
+}
+
+func TestParseSingleCertPEM_CorruptDER(t *testing.T) {
+	// A CERTIFICATE block with garbage DER bytes must return an x509 parse error.
+	badPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not der at all")})
+	_, err := parseSingleCertPEM(badPEM)
+	if err == nil {
+		t.Fatal("expected error for corrupt DER")
+	}
+}
+
+// NewClient DeviceCAFile branch — fail-open behaviours.
+
+func TestNewClient_DeviceCAFile_Missing_FailOpen(t *testing.T) {
+	// Missing DeviceCAFile must NOT return an error — it's a fail-open warning
+	// path (device CA not yet installed). The client is still usable.
+	missing := filepath.Join(t.TempDir(), "device-ca.pem")
+	c, err := NewClient(Config{HubURL: "https://hub.example.com", DeviceCAFile: missing})
+	if err != nil {
+		t.Fatalf("NewClient with missing DeviceCAFile must not error; got: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+func TestNewClient_DeviceCAFile_Invalid_FailOpen(t *testing.T) {
+	// An unreadable PEM in DeviceCAFile must also fail-open (log + unfiltered pool).
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "device-ca.pem")
+	if err := os.WriteFile(bad, []byte("this is not a certificate"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	c, err := NewClient(Config{HubURL: "https://hub.example.com", DeviceCAFile: bad})
+	if err != nil {
+		t.Fatalf("NewClient with unparseable DeviceCAFile must not error; got: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+func TestNewClient_DeviceCAFile_Valid_ReturnsClient(t *testing.T) {
+	// A valid device CA PEM leads SystemPoolExcluding to build a filtered
+	// pool. NewClient must succeed with a non-nil client.
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "device-ca.pem")
+	if err := os.WriteFile(caPath, selfSignedCAPEM(t), 0o600); err != nil {
+		t.Fatalf("write ca: %v", err)
+	}
+	c, err := NewClient(Config{HubURL: "https://hub.example.com", DeviceCAFile: caPath})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil client")
+	}
 }
 
 // Sanity: compile-time assertion that the test still references the symbols

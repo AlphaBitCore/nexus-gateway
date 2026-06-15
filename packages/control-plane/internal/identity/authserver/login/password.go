@@ -1,7 +1,6 @@
 package login
 
 import (
-	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -55,7 +54,6 @@ type errorResponse struct {
 
 const (
 	errInvalidCredentials = "invalid_credentials"
-	errUserDisabled       = "user_disabled"
 	errAuthctxExpired     = "authctx_expired"
 	errRateLimited        = "rate_limited"
 	errInternal           = "internal_error"
@@ -82,10 +80,11 @@ func PasswordHandler(d PasswordDeps) echo.HandlerFunc {
 			"password": req.Password,
 		})
 		if err != nil {
+			// Every authentication failure — wrong password, unknown email,
+			// SSO-only, or disabled account — maps to the same generic
+			// invalid_credentials code so an anonymous caller cannot enumerate
+			// account state.
 			code := errInvalidCredentials
-			if errors.Is(err, idp.ErrUserDisabled) {
-				code = errUserDisabled
-			}
 			// Emit audit row so brute-force / leaked-key detection can fire on the
 			// AdminAuditLog stream (consumed by the auth.login_failure_rate
 			// alert rule). ActorLabel is the email as typed; we deliberately do

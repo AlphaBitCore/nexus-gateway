@@ -3,12 +3,60 @@ package wiring
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/enrollment"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
 )
+
+// SSOAuthConfig groups the dependencies for InitSSOAuth.
+type SSOAuthConfig struct {
+	HubEnroller  *enrollment.HubEnrollClient
+	Manager      *enrollment.Manager
+	Bootstrap    *bootstrap.Client
+	OSVersion    string
+	AgentVersion string
+	// OnSuccess is invoked once after a successful enrollment run.
+	// Optional — leave nil in steady-state mode.
+	OnSuccess func()
+}
+
+// InitSSOAuth builds the enrollment Flow and the SSO auth state the status
+// IPC server exposes to the menu-bar UI. The Control Plane URL is resolved
+// lazily through the Hub bootstrap endpoint at flow start.
+func InitSSOAuth(cfg SSOAuthConfig) *SSOAuthState {
+	hostname, _ := os.Hostname()
+	flow := &enrollment.Flow{
+		HubEnroller: cfg.HubEnroller, Manager: cfg.Manager, Hostname: hostname,
+		OS: runtime.GOOS, OSVersion: cfg.OSVersion, AgentVersion: cfg.AgentVersion,
+		ResolveCpURL: BuildResolveCpURL(cfg.Bootstrap),
+	}
+	return &SSOAuthState{
+		Flow:      flow,
+		Mgr:       cfg.Manager,
+		Bootstrap: cfg.Bootstrap,
+		OnSuccess: cfg.OnSuccess,
+	}
+}
+
+// BuildResolveCpURL returns the lazy Control Plane URL resolver the
+// enrollment Flow calls at flow start: it reads the Hub's public bootstrap
+// endpoint and fails when no Control Plane URL is published there.
+func BuildResolveCpURL(bc *bootstrap.Client) func(ctx context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		info, err := bc.Get(ctx)
+		if err != nil {
+			return "", err
+		}
+		if info.ControlPlaneURL == "" {
+			return "", fmt.Errorf("hub bootstrap returned empty controlPlaneURL")
+		}
+		return info.ControlPlaneURL, nil
+	}
+}
 
 // SSOAuthState glues the statusapi IPC commands (AUTHENTICATE,
 // AUTHENTICATE CONFIRM, AUTHENTICATE CANCEL) to a single enrollment.Flow

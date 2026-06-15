@@ -6,6 +6,13 @@ package extract
 // most-permissive so a body with mixed signals lands on the tighter
 // spec.
 //
+// Tier 2 owns ONLY consumer-web shapes (plus the one legacy flat-prompt
+// shape below). Standard-API wires — OpenAI Chat, Anthropic Messages,
+// Gemini generateContent, OpenAI Responses — are decoded by the Tier-1
+// codecs in transport/normalize/codecs, which the Registry reaches by
+// adapter key, endpoint path, or content sniff; duplicating them here
+// as patterns would only produce a lower-fidelity second answer.
+//
 // Each spec is intentionally short — the probe in probe.go does the
 // heavy lifting. SignatureFields are existence-only checks (presence
 // of an unusual field name unique to that producer) used to break
@@ -30,60 +37,6 @@ var KnownChatSpecs = []ChatSpec{
 			"parent_message_id",
 		},
 	},
-	// Anthropic Messages API (`/v1/messages`). Top-level `model` +
-	// `max_tokens` + `messages[].content` as block array.
-	{
-		ID:          "anthropic-messages",
-		Locator:     "messages",
-		RolePath:    "role",
-		ContentPath: "content",
-		Shape:       ContentShapeBlockArray,
-		ModelPath:   "model",
-		SystemPath:  "system",
-		ToolsPath:   "tools",
-		SignatureFields: []string{
-			"max_tokens",
-			"anthropic_version",
-			"stop_sequences",
-		},
-	},
-	// Gemini generateContent. Uses `contents` (plural), `role` per
-	// content, `parts[].text` shape.
-	{
-		ID:          "gemini-generate",
-		Locator:     "contents",
-		RolePath:    "role",
-		ContentPath: "parts",
-		Shape:       ContentShapeNestedTextArray,
-		ModelPath:   "model",
-		SystemPath:  "systemInstruction.parts.0.text",
-		ToolsPath:   "tools",
-		SignatureFields: []string{
-			"generationConfig",
-			"safetySettings",
-			"systemInstruction",
-		},
-	},
-	// OpenAI Chat Completions — the canonical shape: messages[]
-	// with `role` + `content` (string). Most permissive recogniser,
-	// so it sits AFTER the more specific consumer specs.
-	{
-		ID:          "openai-chat",
-		Locator:     "messages",
-		RolePath:    "role",
-		ContentPath: "content",
-		Shape:       ContentShapeString,
-		ModelPath:   "model",
-		ToolsPath:   "tools",
-		SignatureFields: []string{
-			"temperature",
-			"max_tokens",
-			"top_p",
-			"frequency_penalty",
-			"presence_penalty",
-			"response_format",
-		},
-	},
 	// claude.ai web (consumer surface). Single-prompt request shape with
 	// server-side conversation history — the body carries ONLY the
 	// latest user message in `prompt` plus a `parent_message_uuid`
@@ -100,11 +53,10 @@ var KnownChatSpecs = []ChatSpec{
 	//   - timezone (string)            — client timezone
 	//   - locale (string)              — client locale
 	//
-	// These signatures keep it apart from the anthropic-completions-legacy
-	// API shape (which uses `max_tokens_to_sample` + `\n\nHuman:` prefix
-	// in the prompt and lacks every signature field above). Captured
-	// against the /api/organizations/.../chat_conversations/.../completion
-	// endpoint in prod (see traffic_event b35c8508-ff77-449e-8d42-cf35a5348a9b).
+	// These signatures keep it apart from the flat-prompt legacy
+	// completions shape below (which lacks every signature field above).
+	// Captured against the /api/organizations/.../chat_conversations/
+	// .../completion endpoint in prod.
 	{
 		ID:          "claude-web",
 		Locator:     "", // single-prompt sentinel
@@ -123,23 +75,13 @@ var KnownChatSpecs = []ChatSpec{
 			"locale",
 		},
 	},
-	// Anthropic legacy completion API (`/v1/complete`). No messages
-	// array — flat `prompt` field. Kept for older clients.
-	{
-		ID:          "anthropic-completions-legacy",
-		Locator:     "", // no array — sentinel signals "single-prompt"
-		RolePath:    "",
-		ContentPath: "prompt",
-		Shape:       ContentShapeString,
-		ModelPath:   "model",
-		SignatureFields: []string{
-			"max_tokens_to_sample",
-			"prompt",
-		},
-	},
-	// OpenAI legacy completions API (`/v1/completions`). Flat prompt
-	// without `\n\nHuman:` framing — distinguished from Anthropic
-	// legacy by the absence of `max_tokens_to_sample`.
+	// Flat-prompt legacy completions (`/v1/completions` shape): no
+	// messages array — a single top-level `prompt` string. This is the
+	// ONE surviving non-consumer spec: the OpenAI Chat codec rejects
+	// bodies without a messages[] array (its request decode requires
+	// them), and character.ai's roleplay surface ships exactly this
+	// flat-prompt shape — the character-web adapter routes its request
+	// direction here.
 	{
 		ID:          "openai-completions-legacy",
 		Locator:     "",
@@ -156,94 +98,26 @@ var KnownChatSpecs = []ChatSpec{
 }
 
 // KnownResponseSpecs lists every response-body chat shape the probe
-// recognises. Stream-aware: AccumulatorRule tells the probe how to
-// fold an SSE stream into a single document tree before applying
-// AssistantTextPath.
-//
-// SignatureFields on response specs probe the assembled state (or
-// non-stream body) for shape-unique field names that tip confidence
-// when locator/text paths alone are ambiguous.
+// recognises. One spec survives: the ChatGPT-web JSON-Patch SSE stream.
+// Standard-API response wires (OpenAI / Anthropic / Gemini SSE and
+// non-stream JSON) are folded by the Tier-1 codecs.
 var KnownResponseSpecs = []ChatResponseSpec{
 	// ChatGPT-web SSE: JSON-Patch-flavoured deltas folded into a
 	// message tree. Assistant text lives under message.content.parts[0].
+	// The stream's `message.end_turn` terminal marker is a boolean, not
+	// a finish-reason string, so no FinishReason is extracted. The
+	// model identifier ships as frame metadata, not as a top-level
+	// document field: message-seeding patch frames nest `model_slug`
+	// under the patch value envelope (`v.message.metadata.model_slug`),
+	// and the telemetry frames carry it at `metadata.model_slug` — the
+	// second path covers stream variants whose seed frames were lost.
 	{
 		ID:                "chatgpt-web",
-		StreamFraming:     "sse-event-data",
-		AccumulatorRule:   "json-patch",
 		AssistantTextPath: "message.content.parts.0",
-		FinishReasonPath:  "message.end_turn",
 		SignatureFields:   []string{"conversation_id", "message_id"},
-	},
-	// Anthropic Messages SSE: `event: content_block_delta` frames with
-	// `delta.text`. Concat-text accumulation.
-	{
-		ID:                "anthropic-messages-sse",
-		StreamFraming:     "sse-event-data",
-		AccumulatorRule:   "concat-text",
-		AssistantTextPath: "_accumulated", // synthetic key holding concatenated text
-		FinishReasonPath:  "stop_reason",
-		UsagePath:         "usage",
-		ModelPath:         "model",
-		StreamDeltaPath:   "delta.text",
-		SignatureFields:   []string{"content_block_delta", "message_delta"},
-	},
-	// OpenAI Chat Completions SSE: `data:` frames each carrying a
-	// chunk with `choices[0].delta.content`. Concat-text accumulation.
-	{
-		ID:                "openai-chat-sse",
-		StreamFraming:     "sse-event-data",
-		AccumulatorRule:   "concat-text",
-		AssistantTextPath: "_accumulated",
-		FinishReasonPath:  "choices.0.finish_reason",
-		UsagePath:         "usage",
-		ModelPath:         "model",
-		StreamDeltaPath:   "choices.0.delta.content",
-		SignatureFields:   []string{"choices", "object"},
-	},
-	// Gemini generateContent SSE / NDJSON: each frame carries a full
-	// candidate update with `candidates[0].content.parts[0].text`.
-	{
-		ID:                "gemini-generate-sse",
-		StreamFraming:     "sse-event-data",
-		AccumulatorRule:   "concat-text",
-		AssistantTextPath: "_accumulated",
-		FinishReasonPath:  "candidates.0.finishReason",
-		UsagePath:         "usageMetadata",
-		ModelPath:         "modelVersion",
-		StreamDeltaPath:   "candidates.0.content.parts.0.text",
-		SignatureFields:   []string{"candidates", "promptFeedback"},
-	},
-	// Non-stream OpenAI: single JSON document.
-	{
-		ID:                "openai-chat-nonstream",
-		StreamFraming:     "single-json",
-		AccumulatorRule:   "none",
-		AssistantTextPath: "choices.0.message.content",
-		FinishReasonPath:  "choices.0.finish_reason",
-		UsagePath:         "usage",
-		ModelPath:         "model",
-		SignatureFields:   []string{"id", "choices", "created"},
-	},
-	// Non-stream Anthropic: single JSON document.
-	{
-		ID:                "anthropic-messages-nonstream",
-		StreamFraming:     "single-json",
-		AccumulatorRule:   "none",
-		AssistantTextPath: "content.0.text",
-		FinishReasonPath:  "stop_reason",
-		UsagePath:         "usage",
-		ModelPath:         "model",
-		SignatureFields:   []string{"stop_reason", "content"},
-	},
-	// Non-stream Gemini.
-	{
-		ID:                "gemini-generate-nonstream",
-		StreamFraming:     "single-json",
-		AccumulatorRule:   "none",
-		AssistantTextPath: "candidates.0.content.parts.0.text",
-		FinishReasonPath:  "candidates.0.finishReason",
-		UsagePath:         "usageMetadata",
-		ModelPath:         "modelVersion",
-		SignatureFields:   []string{"candidates"},
+		ModelFramePaths: []string{
+			"v.message.metadata.model_slug",
+			"metadata.model_slug",
+		},
 	},
 }

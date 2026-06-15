@@ -59,7 +59,7 @@ func TestHandleBreakGlassReport_UpsertsTemplateAndInsertsEvent(t *testing.T) {
 			t.Fatalf("begin: %v", err)
 		}
 		if _, err := st.UpsertConfigTemplate(ctx, tx, thingType, configKey,
-			map[string]any{"enabled": false}, "admin:alice"); err != nil {
+			map[string]any{"engaged": false}, "admin:alice"); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("UpsertConfigTemplate: %v", err)
 		}
@@ -79,7 +79,7 @@ func TestHandleBreakGlassReport_UpsertsTemplateAndInsertsEvent(t *testing.T) {
 	// --- Exercise ---
 	req := manager.ShadowReportRequest{
 		ID:           thingID,
-		Reported:     map[string]any{configKey: map[string]any{"enabled": true}},
+		Reported:     map[string]any{configKey: map[string]any{"engaged": true}},
 		ReportedVer:  4,
 		KeyVersions:  map[string]int64{configKey: 4},
 		Reason:       "break_glass",
@@ -166,7 +166,7 @@ func TestHandleBreakGlassReport_SkipsWhenReportedLessThanCurrent(t *testing.T) {
 			t.Fatalf("begin: %v", err)
 		}
 		if _, err := st.UpsertConfigTemplate(ctx, tx, thingType, configKey,
-			map[string]any{"enabled": false}, "admin:alice"); err != nil {
+			map[string]any{"engaged": false}, "admin:alice"); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("UpsertConfigTemplate: %v", err)
 		}
@@ -186,7 +186,7 @@ func TestHandleBreakGlassReport_SkipsWhenReportedLessThanCurrent(t *testing.T) {
 	// Break-glass report carrying a stale version.
 	req := manager.ShadowReportRequest{
 		ID:           thingID,
-		Reported:     map[string]any{configKey: map[string]any{"enabled": true}},
+		Reported:     map[string]any{configKey: map[string]any{"engaged": true}},
 		ReportedVer:  5,
 		KeyVersions:  map[string]int64{configKey: 5},
 		Reason:       "break_glass",

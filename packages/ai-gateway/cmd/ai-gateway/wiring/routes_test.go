@@ -43,6 +43,10 @@ func buildMinimalRouteDeps(t *testing.T) RouteDeps {
 
 	return RouteDeps{
 		Config: &config.Config{
+			// Auth.InternalServiceToken gates the /internal/* operator routes;
+			// a non-empty token lets the auth route tests exercise the 401/pass
+			// paths against the shared handler.
+			Auth: config.AuthConfig{InternalServiceToken: testInternalToken},
 			Cache: config.CacheConfig{
 				Enabled: false,
 				// Broker=true exercises the streamcache.NewRegistry branch in MountCoreRoutes.
@@ -126,15 +130,58 @@ func TestMountCoreRoutes_withCORSEnabled(t *testing.T) {
 	}
 }
 
-// TestMountCoreRoutes_metricsEndpoint verifies /metrics is accessible.
-func TestMountCoreRoutes_metricsEndpoint(t *testing.T) {
+// TestMountCoreRoutes_metricsRequiresToken is the F-0079 regression guard:
+// /metrics must reject an unauthenticated request (401) and serve only when
+// the internal-service bearer token is presented.
+func TestMountCoreRoutes_metricsRequiresToken(t *testing.T) {
 	h := getSharedCoreHandler(t)
 
+	// No token → 401.
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated /metrics: expected 401, got %d", rr.Code)
+	}
+
+	// Wrong token → 401.
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("wrong-token /metrics: expected 401, got %d", rr.Code)
+	}
+
+	// Correct internal-service token → 200 and a Prometheus exposition body.
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+testInternalToken)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Errorf("expected 200 for /metrics, got %d", rr.Code)
+		t.Errorf("authenticated /metrics: expected 200, got %d", rr.Code)
+	}
+}
+
+// TestMountCoreRoutes_readEndpointsRateLimited is the F-0047 regression guard:
+// the authenticated read-only endpoints are wrapped by the per-VK limiter, so
+// the route stays registered (not 404) and the wrapper does not break the
+// unauthenticated 401 path (no VK header → inner requireVK emits 401, never a
+// false 200). nil-limiter deps in the shared handler mean the wrapper passes
+// through to the inner handler, which authenticates and rejects.
+func TestMountCoreRoutes_readEndpointsRegisteredAndAuthGated(t *testing.T) {
+	h := getSharedCoreHandler(t)
+	for _, path := range []string{"/v1/models", "/v1/usage", "/v1/usage/daily"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code == http.StatusNotFound {
+			t.Errorf("%s: expected route registered, got 404", path)
+		}
+		// Without a VK the inner handler must reject, never serve a 200.
+		if rr.Code == http.StatusOK {
+			t.Errorf("%s: unauthenticated request unexpectedly returned 200", path)
+		}
 	}
 }
 

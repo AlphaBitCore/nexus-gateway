@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	core "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
 
 // PgxPool is the minimum pgx pool surface Store needs. The concrete
@@ -42,12 +45,91 @@ var ErrDuplicatePackVersion = errors.New("rulepack: (name, version) already exis
 // pgUniqueViolation is the PostgreSQL SQLSTATE for a unique_violation.
 const pgUniqueViolation = "23505"
 
+// validSeverities is the closed authoring-severity enum. Mirrors the set
+// enforced by ValidatePack (yaml.go); kept here so the persistence layer can
+// reject a bad severity even when the caller bypassed LoadYAML/ValidatePack
+// (e.g. a direct JSON admin-form write). A severity typo silently downgrades
+// a blocking rule at runtime (severityToDecision maps any unknown value to
+// Approve), so this gate is a correctness backstop, not cosmetics.
+var validSeverities = map[string]struct{}{
+	"hard": {}, "soft": {}, "warn": {},
+}
+
+// RuleError describes one invalid rule found during persistence validation.
+// Index is the rule's position in the incoming slice; RuleID is its authored
+// id (may be empty if the rule omitted one); Reason is the human-readable
+// cause (bad regex, bad severity).
+type RuleError struct {
+	Index  int    `json:"index"`
+	RuleID string `json:"ruleId"`
+	Reason string `json:"reason"`
+}
+
+// InvalidRulesError aggregates every RuleError found in a single
+// ImportPack/UpdatePack call so the admin API can report ALL invalid rules
+// at once instead of one-at-a-time round trips. No rules are persisted when
+// this error is returned.
+type InvalidRulesError struct {
+	Errors []RuleError
+}
+
+func (e *InvalidRulesError) Error() string {
+	parts := make([]string, 0, len(e.Errors))
+	for _, re := range e.Errors {
+		parts = append(parts, fmt.Sprintf("rule[%d] %q: %s", re.Index, re.RuleID, re.Reason))
+	}
+	return "rulepack: invalid rules: " + strings.Join(parts, "; ")
+}
+
+// validateRules checks every rule's pattern (via core.CompilePattern, the same
+// cache-backed compiler the runtime evaluator uses, so a pattern that passes
+// here is guaranteed compilable at evaluation time) and severity (against the
+// closed authoring enum). Returns *InvalidRulesError listing every offending
+// rule, or nil when all rules are valid. Invalid rules MUST NOT be persisted.
+func validateRules(rules []Rule) error {
+	var bad []RuleError
+	for i, r := range rules {
+		if _, ok := validSeverities[r.Severity]; !ok {
+			bad = append(bad, RuleError{
+				Index:  i,
+				RuleID: r.RuleID,
+				Reason: fmt.Sprintf("invalid severity %q (want hard|soft|warn)", r.Severity),
+			})
+		}
+		if r.Pattern == "" {
+			bad = append(bad, RuleError{
+				Index: i, RuleID: r.RuleID, Reason: "empty pattern",
+			})
+			continue
+		}
+		if _, err := core.CompilePattern(r.Pattern, r.Flags); err != nil {
+			bad = append(bad, RuleError{
+				Index:  i,
+				RuleID: r.RuleID,
+				Reason: fmt.Sprintf("invalid pattern: %v", err),
+			})
+		}
+	}
+	if len(bad) > 0 {
+		return &InvalidRulesError{Errors: bad}
+	}
+	return nil
+}
+
 // ImportPack inserts Pack + Rules transactionally. Returns the Pack with
-// populated IDs. Caller is responsible for LoadYAML validation; this
-// method trusts the input shape.
+// populated IDs.
+//
+// Every rule's pattern and severity are validated (validateRules) before any
+// write; on a validation failure the method returns *InvalidRulesError listing
+// every bad rule and persists nothing. This closes the gap where a direct
+// JSON admin-form write bypassed LoadYAML/ValidatePack and a typo'd severity
+// or uncompilable regex landed in the DB to silently never fire at runtime.
 //
 // Returns ErrDuplicatePackVersion (wrapped) on (name, version) collision.
 func (s *Store) ImportPack(ctx context.Context, p *Pack) (*Pack, error) {
+	if err := validateRules(p.Rules); err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("rulepack.ImportPack: begin tx: %w", err)
@@ -56,10 +138,10 @@ func (s *Store) ImportPack(ctx context.Context, p *Pack) (*Pack, error) {
 
 	var newID string
 	err = tx.QueryRow(ctx,
-		`INSERT INTO "rule_pack" (id, name, version, maintainer, description, signature)
-		 VALUES (gen_random_uuid(), $1, $2, $3, NULLIF($4,''), NULLIF($5,''))
+		`INSERT INTO "rule_pack" (id, name, version, maintainer, description)
+		 VALUES (gen_random_uuid(), $1, $2, $3, NULLIF($4,''))
 		 RETURNING id`,
-		p.Name, p.Version, p.Maintainer, p.Description, p.Signature,
+		p.Name, p.Version, p.Maintainer, p.Description,
 	).Scan(&newID)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -95,7 +177,7 @@ func (s *Store) ImportPack(ctx context.Context, p *Pack) (*Pack, error) {
 func (s *Store) ListPacks(ctx context.Context) ([]Pack, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.id, p.name, p.version, p.maintainer, COALESCE(p.description, ''),
-		       COALESCE(p.signature, ''), p."createdAt"
+		       p."createdAt"
 		FROM "rule_pack" p
 		ORDER BY p.name ASC, p.version DESC`)
 	if err != nil {
@@ -106,7 +188,7 @@ func (s *Store) ListPacks(ctx context.Context) ([]Pack, error) {
 	for rows.Next() {
 		var p Pack
 		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Maintainer,
-			&p.Description, &p.Signature, &p.CreatedAt); err != nil {
+			&p.Description, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -119,9 +201,9 @@ func (s *Store) GetPack(ctx context.Context, id string) (*Pack, error) {
 	var p Pack
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, name, version, maintainer, COALESCE(description, ''),
-		       COALESCE(signature, ''), "createdAt"
+		       "createdAt"
 		FROM "rule_pack" WHERE id = $1`, id,
-	).Scan(&p.ID, &p.Name, &p.Version, &p.Maintainer, &p.Description, &p.Signature, &p.CreatedAt)
+	).Scan(&p.ID, &p.Name, &p.Version, &p.Maintainer, &p.Description, &p.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -193,11 +275,10 @@ var ErrInstallNotFound = errors.New("rulepack: install not found")
 
 // PackUpdate is the partial-update payload for UpdatePack. Nil pointer
 // fields are skipped; empty strings are treated as "clear this field"
-// for the nullable columns (description, signature).
+// for the nullable description column.
 type PackUpdate struct {
 	Maintainer  *string
 	Description *string
-	Signature   *string
 	// Rules, when non-nil, fully replaces the pack's rule list in the same
 	// transaction as the metadata update. Passing nil keeps existing rules.
 	Rules *[]Rule
@@ -210,24 +291,33 @@ type PackUpdate struct {
 // inserted. This keeps the UX simple (the UI edits the full list) and
 // avoids the complexity of per-rule diffing. The caller must preserve
 // RuleID stability if it needs override rows to keep resolving.
+//
+// When u.Rules is non-nil, every incoming rule's pattern and severity is
+// validated (validateRules) before any write; a validation failure returns
+// *InvalidRulesError and persists nothing (no partial rule replacement). This
+// matches ImportPack so neither authoring path can land an uncompilable regex
+// or a typo'd severity that silently never fires at runtime.
 func (s *Store) UpdatePack(ctx context.Context, packID string, u PackUpdate) error {
+	if u.Rules != nil {
+		if err := validateRules(*u.Rules); err != nil {
+			return err
+		}
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("rulepack.UpdatePack: begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	if u.Maintainer != nil || u.Description != nil || u.Signature != nil {
+	if u.Maintainer != nil || u.Description != nil {
 		res, err := tx.Exec(ctx, `
 			UPDATE "rule_pack" SET
 			    maintainer = COALESCE($2, maintainer),
-			    description = CASE WHEN $3::boolean THEN NULLIF($4, '') ELSE description END,
-			    signature   = CASE WHEN $5::boolean THEN NULLIF($6, '') ELSE signature END
+			    description = CASE WHEN $3::boolean THEN NULLIF($4, '') ELSE description END
 			WHERE id = $1`,
 			packID,
 			u.Maintainer,
 			u.Description != nil, stringOr(u.Description),
-			u.Signature != nil, stringOr(u.Signature),
 		)
 		if err != nil {
 			return fmt.Errorf("rulepack.UpdatePack: metadata: %w", err)

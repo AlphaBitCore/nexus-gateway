@@ -200,13 +200,6 @@
         }
       }
     },
-    "deviceGroup": {
-      "title": "Device Group",
-      "subtitle": "Which fleet group admin assigned this device to.",
-      "empty": "Not assigned to a group.",
-      "id": "ID",
-      "name": "Name"
-    },
     "diagMode": {
       "title": "Diagnostic Mode",
       "subtitle": "Verbose diagnostics window.",
@@ -585,7 +578,16 @@
     "tier": {
       "tier1": "Tier 1",
       "tier2": "Tier 2",
-      "hint": "Which normalizer claimed this row: Tier 1 = precise per-host parse; Tier 2 = multi-spec pattern probe; no badge = Tier 3 verbatim."
+      "structural": "Structural",
+      "hostMatched": "host-matched",
+      "hint": "Which decoder claimed this row: Tier 1 = exact protocol decoder (matched by key, host, or content sniff); Tier 2 = pattern probe for consumer web surfaces; Structural = typed projection of the raw HTTP body, no protocol decode; no badge = legacy raw verbatim row. \"host-matched\" replaces the confidence number when the adapter was chosen by host: its coverage is honest but not a trust score comparable to a sniffed decode."
+    },
+    "emptyBody": "Empty body.",
+    "sse": {
+      "framesTitle": "SSE frames",
+      "eventFallbackLabel": "message",
+      "showAllFrames": "Show all {{count}} frames",
+      "truncatedNote": "Frame view truncated — the full stream was captured and is available in the Raw tab."
     },
     "modelLabel": "Model",
     "finishReason": "Finish reason",
@@ -600,7 +602,8 @@
       "completion": "Completion",
       "total": "Total",
       "cacheRead": "Cache read",
-      "cacheCreate": "Cache create"
+      "cacheCreate": "Cache create",
+      "reasoning": "Reasoning"
     },
     "banner": {
       "failedTitle": "Normalize failed for this direction.",
@@ -612,7 +615,17 @@
     "dropped": {
       "title": "Content dropped per storage policy.",
       "hint": "Operator set storageAction=drop-content for the hook that matched. The audit log retains decision + metadata only.",
-      "ruleIds": "Triggered by rules"
+      "ruleIds": "Triggered by rules",
+      "degradedTitle": "Content dropped — the redaction policy could not be safely applied to the stored copy.",
+      "degradedHint": "The hook's storage policy was redact; the stored copy was dropped because the redaction could not be safely applied to it. Cause: {{cause}}.",
+      "degradedAddresses": "Unresolved content addresses",
+      "neutralHint": "Content not stored per the storage policy. This row does not record whether the drop was the configured action or a redaction fallback.",
+      "cause": {
+        "no-spans": "the policy produced no redactable positions (no-spans)",
+        "payload-unmarshal": "the stored copy could not be parsed (payload-unmarshal)",
+        "spans-unresolved": "the redaction positions could not be resolved on the stored copy (spans-unresolved)",
+        "marshal-failed": "the redacted copy could not be re-serialized (marshal-failed)"
+      }
     },
     "binary": {
       "title": "Binary content",
@@ -630,6 +643,6 @@
   "trafficDetail": {
     "tabRaw": "Raw",
     "tabNormalized": "Normalized",
-    "tabNormalizedDisabled": "No normalized payload for this event (non-AI traffic or non-bumped flow)."
+    "tabNormalizedDisabled": "No normalized projection was captured for this event (the flow was not inspected)."
   }
 }

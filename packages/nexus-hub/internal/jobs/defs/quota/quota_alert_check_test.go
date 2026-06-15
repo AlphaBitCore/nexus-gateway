@@ -143,7 +143,7 @@ func TestScopeToDimension(t *testing.T) {
 		{"user", "user", true},
 		{"vk", "virtual_key", true},
 		{"virtual_key", "virtual_key", true},
-		{"project", "organization", true},
+		{"project", "project", true},
 		{"organization", "organization", true},
 		{"unknown", "", false},
 	}
@@ -159,6 +159,7 @@ func TestDimensionToTargetType(t *testing.T) {
 	cases := map[string]string{
 		"user":         "user",
 		"virtual_key":  "vk",
+		"project":      "project",
 		"organization": "organization",
 		"unknown":      "unknown",
 	}

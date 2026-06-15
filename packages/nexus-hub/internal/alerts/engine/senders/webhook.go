@@ -20,6 +20,11 @@ func NewWebhook(c *http.Client) *Webhook {
 			Caller:         "hub-alert-webhook",
 			Timeout:        10 * time.Second,
 			PropagateReqID: true,
+			// F-0370: the URL is admin-supplied and external by nature, so this
+			// is an SSRF primitive. Block every non-public address (loopback /
+			// RFC-1918 / link-local / metadata) at dial time; the guard runs on
+			// the resolved IP so it also defeats DNS-rebinding.
+			DialControl: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly),
 		})
 	}
 	return &Webhook{c: c}
@@ -52,11 +57,8 @@ func (w *Webhook) Send(ctx context.Context, ch alerting.Channel, a alerting.Aler
 	}
 	resp, err := w.c.Do(req)
 	if err != nil {
-		return 0, err
+		return collapseSendResult(0, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("webhook: status %d", resp.StatusCode)
-	}
-	return resp.StatusCode, nil
+	return collapseSendResult(resp.StatusCode, nil)
 }

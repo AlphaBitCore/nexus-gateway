@@ -146,7 +146,7 @@ func TestApplyShadowState(t *testing.T) {
 	}{
 		{
 			name:             "happy path — admin + denylist populated",
-			raw:              `{"auto_exempt_cert_pinned":true,"admin_exemptions":["a.com","b.com"],"denylist":["bank.com"]}`,
+			raw:              `{"admin_exemptions":["a.com","b.com"],"denylist":["bank.com"]}`,
 			wantAllowExempt:  []string{"a.com", "b.com"},
 			wantDenylistHits: []string{"bank.com"},
 		},
@@ -326,5 +326,102 @@ func TestPendingAutoExemptions_ReturnsOnlyAutoSource(t *testing.T) {
 	}
 	if got[0].Host != "auto.example.com" {
 		t.Errorf("expected auto.example.com, got %q", got[0].Host)
+	}
+}
+
+// F-0303: wildcard denylist matching.
+
+// TestDenylistWildcard_BlocksIsExempt verifies that a wildcard denylist entry
+// "*.openai.com" denies an exact subdomain "api.openai.com" even though no
+// exact "api.openai.com" entry was added to the denylist.
+func TestDenylistWildcard_BlocksIsExempt(t *testing.T) {
+	s := NewStore(DefaultConfig())
+	// Admin-exempts api.openai.com first so without the wildcard fix it
+	// would be granted.
+	s.Add("api.openai.com", "admin", SourceAdmin, 0)
+	// Now the admin also denylists the whole domain via wildcard.
+	s.SetDenylist([]string{"*.openai.com"})
+
+	exempt, _ := s.IsExempt("api.openai.com")
+	if exempt {
+		t.Fatal("*.openai.com denylist must block api.openai.com via wildcard matching")
+	}
+}
+
+// TestDenylistWildcard_BlocksAutoExemptOnFailure verifies that RecordFailure
+// does not auto-exempt a host that matches a wildcard denylist entry.
+func TestDenylistWildcard_BlocksAutoExemptOnFailure(t *testing.T) {
+	s := NewStore(Config{Enabled: true, FailureThreshold: 2, WindowSeconds: 60, ExemptionDurationSec: 3600})
+	s.SetDenylist([]string{"*.openai.com"})
+
+	// Exceed the failure threshold for a subdomain that matches the wildcard.
+	for range 5 {
+		exempted, _ := s.RecordFailure("api.openai.com")
+		if exempted {
+			t.Fatal("RecordFailure must not auto-exempt a host matched by a wildcard denylist entry")
+		}
+	}
+	if exempt, _ := s.IsExempt("api.openai.com"); exempt {
+		t.Fatal("api.openai.com must not be exempt: covered by *.openai.com denylist")
+	}
+}
+
+// TestDenylistExact_StillWorks verifies that the wildcard-aware helper does
+// not break exact denylist entries.
+func TestDenylistExact_StillWorks(t *testing.T) {
+	s := NewStore(Config{Enabled: true, FailureThreshold: 2, WindowSeconds: 60, ExemptionDurationSec: 3600})
+	s.SetDenylist([]string{"bank.com"})
+
+	for range 5 {
+		s.RecordFailure("bank.com")
+	}
+	if exempt, _ := s.IsExempt("bank.com"); exempt {
+		t.Fatal("exact denylist entry must still block auto-exemption")
+	}
+}
+
+// TestDenylistWildcard_NonMatchingHostStillAutoExempts verifies that a host
+// that does NOT match the wildcard denylist can still be auto-exempted after
+// failures, preserving normal behaviour.
+func TestDenylistWildcard_NonMatchingHostStillAutoExempts(t *testing.T) {
+	s := NewStore(Config{Enabled: true, FailureThreshold: 2, WindowSeconds: 60, ExemptionDurationSec: 3600})
+	s.SetDenylist([]string{"*.openai.com"})
+
+	var lastExempted bool
+	for i := range 2 {
+		exempted, _ := s.RecordFailure("unrelated.example.com")
+		if i == 1 {
+			lastExempted = exempted
+		}
+	}
+	if !lastExempted {
+		t.Fatal("host not covered by denylist should still be auto-exempted after threshold failures")
+	}
+	if exempt, _ := s.IsExempt("unrelated.example.com"); !exempt {
+		t.Fatal("unrelated.example.com should be exempt; it is not on the denylist")
+	}
+}
+
+// TestDenylistWildcard_DeepSubdomainBlocked verifies that a wildcard denylist
+// entry blocks deep subdomains, not just immediate children.  *.bank.com must
+// block foo.api.bank.com, consistent with the exempt-side HasSuffix semantics.
+func TestDenylistWildcard_DeepSubdomainBlocked(t *testing.T) {
+	s := NewStore(Config{Enabled: true, FailureThreshold: 2, WindowSeconds: 60, ExemptionDurationSec: 3600})
+	s.SetDenylist([]string{"*.bank.com"})
+
+	// Deep subdomain must not auto-exempt even after repeated failures.
+	for range 5 {
+		s.RecordFailure("foo.api.bank.com")
+	}
+	if exempt, _ := s.IsExempt("foo.api.bank.com"); exempt {
+		t.Fatal("foo.api.bank.com matched by *.bank.com denylist should never be exempt")
+	}
+
+	// Bare second-level domain must NOT be blocked by the wildcard (no label before suffix).
+	for range 5 {
+		s.RecordFailure("bank.com")
+	}
+	if exempt, _ := s.IsExempt("bank.com"); !exempt {
+		t.Fatal("bare bank.com is not covered by *.bank.com and should be auto-exempted")
 	}
 }

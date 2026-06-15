@@ -39,7 +39,7 @@ func NewChatCompletionsStreamEncoder(model string) StreamTranscoder {
 
 // NewResponsesStreamEncoder returns an encoder that converts canonical
 // provider.Chunk values into OpenAI /v1/responses SSE event grammar.
-// Exported for the B2 cross-ingress cache-HIT path: when a stream-HIT
+// Exported for the cross-ingress cache-HIT path: when a stream-HIT
 // entry's origin shape differs from the current ingress (e.g. cached
 // chat.completion SSE replayed for a /v1/responses caller), the
 // standard [Bridge.NewStreamTranscoder] passthrough rule short-circuits

@@ -471,3 +471,78 @@ func testSemanticCacheConfigRow(enabled bool) configstore.SemanticCacheConfigRow
 		Enabled:        enabled,
 	}
 }
+
+// TestPrewarm_AttachesBearer verifies the prewarm forwarder carries
+// Authorization: Bearer <token> on the CP→ai-gateway /internal/semantic-prewarm
+// call (F-0001).
+func TestPrewarm_AttachesBearer(t *testing.T) {
+	const tok = "cp-internal-token"
+	var gotAuth string
+	gw := mockAIGW(t, func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"written":1,"skipped":0,"errors":0,"dryRun":false,"entries":[{"index":0,"written":true}]}`))
+	})
+
+	h := cache.NewSemanticCacheHandler(cache.SemanticCacheHandlerDeps{
+		AIGatewayURL:           gw.URL,
+		AIGatewayInternalToken: tok,
+		Logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	e := echo.New()
+	e.POST("/api/admin/semantic-cache/prewarm", h.PrewarmCache)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/semantic-cache/prewarm",
+		strings.NewReader(singlePrewarmEntry()))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if want := "Bearer " + tok; gotAuth != want {
+		t.Errorf("Authorization = %q; want %q", gotAuth, want)
+	}
+}
+
+// TestPrewarm_ForcesCorpusScope_IgnoresCallerVKScope is the SEC-C4-01 regression:
+// a caller that supplies a victim VK's vkScope must NOT have it forwarded — the
+// handler forces every entry to the reserved "corpus" scope so planted content
+// can never be served under a real VK's cache lane.
+func TestPrewarm_ForcesCorpusScope_IgnoresCallerVKScope(t *testing.T) {
+	var fwd struct {
+		Entries []struct {
+			VKScope string `json:"vkScope"`
+			Prompt  string `json:"prompt"`
+		} `json:"entries"`
+	}
+	gw := mockAIGW(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&fwd)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"written":1,"skipped":0,"errors":0,"entries":[{"index":0,"written":true}]}`))
+	})
+
+	e := echo.New()
+	h := buildPrewarmHandler(t, gw.URL, nil)
+	e.POST("/api/admin/semantic-cache/prewarm", h.PrewarmCache)
+
+	// Attacker attempts to plant a poisoned response under a victim VK's scope.
+	body := `{"entries":[{"prompt":"q","response":"poison","model":"gpt-4o","ttlSeconds":3600,"vkScope":"v1:vk:victim"}],"dryRun":false}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/semantic-cache/prewarm", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(fwd.Entries) != 1 {
+		t.Fatalf("expected 1 forwarded entry, got %d", len(fwd.Entries))
+	}
+	if fwd.Entries[0].VKScope != "corpus" {
+		t.Errorf("SEC-C4-01: forwarded vkScope = %q; want forced 'corpus' — caller's victim scope must be dropped", fwd.Entries[0].VKScope)
+	}
+}

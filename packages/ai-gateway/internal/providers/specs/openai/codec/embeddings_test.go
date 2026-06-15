@@ -189,7 +189,7 @@ func TestIdentityCodec_DecodeResponse_embeddings_isIdentity(t *testing.T) {
 		"model":"text-embedding-3-small",
 		"usage":{"prompt_tokens":5,"total_tokens":5}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestIdentityCodec_DecodeResponse_embeddings_usageExtracted(t *testing.T) {
 		"model":"text-embedding-3-small",
 		"usage":{"prompt_tokens":10,"total_tokens":10}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}

@@ -4,39 +4,35 @@ package auth
 
 import (
 	"crypto/subtle"
-	"log/slog"
 	"net/http"
-	"os"
 	"strings"
+
+	cphttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
-// TokenAuth provides bearer token authentication middleware.
-// The token is loaded from COMPLIANCE_PROXY_API_TOKEN at construction time
-// and gates every authenticated endpoint, including the break-glass
-// PUT /runtime/config/{key} surface. If the env var is empty, auth is
-// disabled (dev mode) and a warning is logged.
+// TokenAuth provides bearer token authentication middleware. The token is
+// supplied at construction time (sourced from COMPLIANCE_PROXY_API_TOKEN via
+// config) and gates every authenticated endpoint, including the break-glass
+// PUT /runtime/config/{key} surface.
+//
+// The middleware is FAIL-CLOSED: an empty token does NOT
+// disable auth. config.validate() makes COMPLIANCE_PROXY_API_TOKEN boot-
+// required so the proxy refuses to start without it; should an empty token
+// ever reach this layer, Require returns 503 rather than passing the request
+// through. This matches every other token gate in the platform (ai-gateway
+// internalAuth / rstokenauth / runtimeintrospect all fail closed on an empty
+// secret) and closes the prior fail-OPEN hole where an unset token left the
+// mutating break-glass verb reachable with no credential.
 type TokenAuth struct {
 	apiToken []byte
-	disabled bool
-	logger   *slog.Logger
 }
 
-// NewTokenAuth creates auth middleware from environment.
-// If COMPLIANCE_PROXY_API_TOKEN is empty, auth is disabled (dev mode).
-func NewTokenAuth(logger *slog.Logger) *TokenAuth {
-	tok := os.Getenv("COMPLIANCE_PROXY_API_TOKEN")
-
-	a := &TokenAuth{
-		apiToken: []byte(tok),
-		logger:   logger,
-	}
-
-	if tok == "" {
-		a.disabled = true
-		logger.Warn("runtime API auth disabled: COMPLIANCE_PROXY_API_TOKEN not set (dev mode)")
-	}
-
-	return a
+// NewTokenAuth creates auth middleware from the configured token. The token is
+// boot-required (config.validate enforces non-empty), so a non-empty value is
+// the only valid production state; an empty value is rejected at request time
+// (503) rather than silently opening the surface.
+func NewTokenAuth(token string) *TokenAuth {
+	return &TokenAuth{apiToken: []byte(token)}
 }
 
 // extractBearer extracts the bearer token from the Authorization header.
@@ -53,26 +49,31 @@ func extractBearer(r *http.Request) string {
 	return auth[len(prefix):]
 }
 
-// Require returns middleware that requires a valid bearer token.
-// Returns 401 for missing or invalid tokens. Gates both read-only GETs
-// and the break-glass PUT — the elevated tier was retired; operators use
-// the same COMPLIANCE_PROXY_API_TOKEN for break-glass.
+// Require returns middleware that requires a valid bearer token. Gates both
+// read-only GETs and the break-glass PUT — the elevated tier was retired;
+// operators use the same COMPLIANCE_PROXY_API_TOKEN for break-glass.
+//
+//   - Unconfigured token (empty)          -> 503 Service Unavailable (fail closed)
+//   - Missing / malformed Authorization   -> 401 Unauthorized
+//   - Wrong token                         -> 401 Unauthorized
 func (a *TokenAuth) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.disabled {
-			next.ServeHTTP(w, r)
+		if len(a.apiToken) == 0 {
+			// Fail closed: an unset runtime API token must never leave the
+			// mutating break-glass surface open. Boot validation should have
+			// prevented this state; this is defence-in-depth.
+			cphttperr.WriteError(w, http.StatusServiceUnavailable, "runtime API authentication is not configured", "service_unavailable", "AUTH_NOT_CONFIGURED")
 			return
 		}
 
 		token := extractBearer(r)
 		if token == "" {
-			http.Error(w, `{"error":"missing or malformed Authorization header"}`, http.StatusUnauthorized)
+			cphttperr.WriteError(w, http.StatusUnauthorized, "missing or malformed Authorization header", "auth_error", "MISSING_TOKEN")
 			return
 		}
 
-		tokenBytes := []byte(token)
-		if len(a.apiToken) == 0 || subtle.ConstantTimeCompare(tokenBytes, a.apiToken) != 1 {
-			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+		if subtle.ConstantTimeCompare([]byte(token), a.apiToken) != 1 {
+			cphttperr.WriteError(w, http.StatusUnauthorized, "invalid token", "auth_error", "INVALID_TOKEN")
 			return
 		}
 

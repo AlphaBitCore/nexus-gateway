@@ -159,7 +159,14 @@ func (c *Client) DropIndex(ctx context.Context, indexName string) error {
 
 // StoreEntry writes a single L2 semantic cache entry to Valkey via HSET.
 //
-// Key format: <indexName>:<sha256(EmbeddingInput)[:16]>
+// Key format: <indexName>:<sha256(EmbeddingInput | VKScope | ResponseKind
+// [| UpstreamProvider | UpstreamModel])[:16]>. The scope/kind (and, when
+// AllowCrossModel is false, provider+model) are folded into the key so that
+// the same embedding text written under different tenants, models, or
+// response kinds occupies distinct HASH keys instead of mutually evicting
+// via HSET overwrite. Reads do not reconstruct the key — FT.SEARCH locates
+// the entry by vector + tag filter and returns the stored key — so the key
+// composition is purely a write-side uniqueness concern.
 //
 // The Embedding is encoded as FLOAT32 little-endian bytes (matching
 // valkey-search's binary vector blob expectation).
@@ -191,7 +198,7 @@ func (c *Client) StoreEntry(ctx context.Context, indexName string, in StoreInput
 	}
 
 	// Build the hash key.
-	entryKey := entryKey(indexName, in.EmbeddingInput)
+	entryKey := entryKey(indexName, in)
 
 	// HSET with all fields.
 	fields := map[string]interface{}{
@@ -233,9 +240,30 @@ func (c *Client) StoreEntry(ctx context.Context, indexName string, in StoreInput
 
 // Key helpers
 
-// entryKey returns "<indexName>:<sha256(embeddingInput)[:keyHashLen]>".
-func entryKey(indexName, embeddingInput string) string {
-	h := sha256.Sum256([]byte(embeddingInput))
+// entryKey returns the Redis HASH key for an L2 entry. The hash folds the
+// embedding input together with the entry's scope (vk_scope), response kind,
+// and — unless AllowCrossModel is set — its upstream provider + model, so
+// that logically-distinct entries that happen to share embedding text do not
+// collide on a single key and evict each other via HSET overwrite.
+//
+// A NUL separator delimits the components so concatenation is unambiguous
+// (no value can contain a NUL byte). When AllowCrossModel is true the model
+// is interchangeable for retrieval, so provider+model are omitted and the
+// newest response for a given (input, scope, kind) supersedes the prior one.
+func entryKey(indexName string, in StoreInput) string {
+	var sb strings.Builder
+	sb.WriteString(in.EmbeddingInput)
+	sb.WriteByte(0)
+	sb.WriteString(in.VKScope)
+	sb.WriteByte(0)
+	sb.WriteString(in.ResponseKind)
+	if !in.AllowCrossModel {
+		sb.WriteByte(0)
+		sb.WriteString(in.UpstreamProvider)
+		sb.WriteByte(0)
+		sb.WriteString(in.UpstreamModel)
+	}
+	h := sha256.Sum256([]byte(sb.String()))
 	hex := fmt.Sprintf("%x", h)
 	return indexName + ":" + hex[:keyHashLen]
 }

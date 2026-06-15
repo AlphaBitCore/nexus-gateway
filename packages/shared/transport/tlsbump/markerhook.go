@@ -58,8 +58,8 @@ func stampMarkers(ctx context.Context, h http.Header, identity string) {
 		if m.RequestID != "" {
 			h.Set(requestIDHeader, m.RequestID)
 		}
-		// mode = "inspect" 表示 hook pipeline 跑过 (CPMarker 存在);
-		// reject 路径走 stampRejectMarkers stamp "deny"。
+		// mode = "inspect" means the hook pipeline ran (a CPMarker exists);
+		// the reject path goes through stampRejectMarkers, which stamps "deny".
 		traffic.PrependChain(h, modeHeader, "inspect")
 	}
 	// When m == nil (compliance disabled path) only the via header is emitted;
@@ -107,8 +107,8 @@ func stampRejectMarkers(h http.Header, identity, requestID, domainRuleID string,
 	if requestID != "" {
 		h.Set(requestIDHeader, requestID)
 	}
-	// 拒绝(deny)路径: stamp mode=deny 区别于 inspect 路径,让客户端能区分
-	// "通过 inspect 后被 hook block" 和 "fast-path 直通"。
+	// Reject path: stamp mode=deny, distinct from "inspect", so a client can
+	// tell "inspected then blocked by a hook" apart from fast-path passthrough.
 	h.Set(modeHeader, "deny")
 	traffic.SetExposeHeaders(h)
 }

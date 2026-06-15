@@ -176,14 +176,37 @@ func TestNexusUserCRUD(t *testing.T) {
 	if _, err := s.UpdateNexusUser(context.Background(), "u1", UpdateNexusUserParams{Status: sp("active")}); err == nil {
 		t.Fatal("update error should surface")
 	}
-	m.ExpectExec(`DELETE FROM "NexusUser" WHERE id = \$1`).WithArgs("u1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	// DeleteNexusUser now runs the FK-correct cascade (F-0350) in one tx: the
+	// owned keys, SSO/credential rows, the RESTRICT-blocking ScimToken, the IAM
+	// grants, then the NexusUser row last — finally COMMIT.
+	expectDeleteCascade(m, "u1", 1)
+	m.ExpectCommit()
 	if err := s.DeleteNexusUser(context.Background(), "u1"); err != nil {
 		t.Fatalf("DeleteNexusUser: %v", err)
 	}
-	m.ExpectExec(`DELETE FROM "NexusUser"`).WithArgs("gone").WillReturnResult(pgxmock.NewResult("DELETE", 0))
+	// Missing user: every dependent delete + the NexusUser delete affect 0 rows,
+	// the tx rolls back, and the caller sees ErrNoRows.
+	expectDeleteCascade(m, "gone", 0)
+	m.ExpectRollback()
 	if err := s.DeleteNexusUser(context.Background(), "gone"); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing → ErrNoRows, got %v", err)
 	}
+}
+
+// expectDeleteCascade queues the full FK-correct delete transaction the cascade
+// issues for userID, with the terminal NexusUser delete affecting accountRows.
+// The order asserts the ScimToken RESTRICT row is cleared BEFORE the NexusUser
+// delete (the F-0350 fix) and that no AdminAuditLog delete is ever issued.
+func expectDeleteCascade(m pgxmock.PgxPoolIface, userID string, accountRows int64) {
+	m.ExpectBegin()
+	m.ExpectExec(`DELETE FROM "VirtualKey" WHERE "ownerId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "AdminApiKey" WHERE "ownerUserId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "UserFederatedIdentity" WHERE "userId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "RefreshToken" WHERE "userId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "ScimToken" WHERE "createdBy" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "IamGroupMembership" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "IamPolicyAttachment" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	m.ExpectExec(`DELETE FROM "NexusUser" WHERE id = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", accountRows))
 }
 
 var keyCols = []string{"id", "name", "keyPrefix", "enabled", "status", "lastUsedAt", "expiresAt", "rotatedAt", "rotatedFromId", "createdBy", "createdAt", "ownerUserId"}
@@ -228,11 +251,13 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 		t.Fatalf("missing → (nil,nil), got %+v %v", k, err)
 	}
 	// Create / Update / Regenerate / Delete
-	m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(6)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("k1")...))
-	if _, err := s.CreateAdminAPIKey(context.Background(), CreateAdminAPIKeyParams{Name: "key", KeyHash: "h", KeyPrefix: "nxs_abc", CreatedBy: "admin"}); err != nil {
+	// SEC-W2-01 Layer A: CreateAdminAPIKey INSERT now carries the key_version
+	// column, so 7 positional args (was 6).
+	m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(7)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("k1")...))
+	if _, err := s.CreateAdminAPIKey(context.Background(), CreateAdminAPIKeyParams{Name: "key", KeyHash: "h", KeyVersion: "v1", KeyPrefix: "nxs_abc", CreatedBy: "admin"}); err != nil {
 		t.Fatalf("CreateAdminAPIKey: %v", err)
 	}
-	m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(6)...).WillReturnError(errors.New("dup"))
+	m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(7)...).WillReturnError(errors.New("dup"))
 	if _, err := s.CreateAdminAPIKey(context.Background(), CreateAdminAPIKeyParams{}); err == nil {
 		t.Fatal("create error should surface")
 	}
@@ -240,8 +265,10 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	if _, err := s.UpdateAdminAPIKey(context.Background(), "k1", UpdateAdminAPIKeyParams{Name: sp("renamed")}); err != nil {
 		t.Fatalf("UpdateAdminAPIKey: %v", err)
 	}
-	m.ExpectExec(`UPDATE "AdminApiKey" SET "keyHash"`).WithArgs("k1", "h2", "nxs_xyz").WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	if err := s.RegenerateAdminAPIKey(context.Background(), "k1", "h2", "nxs_xyz"); err != nil {
+	// SEC-W2-01 Layer A: RegenerateAdminAPIKey UPDATE stamps key_version too, so 4
+	// positional args (id, keyHash, keyVersion, keyPrefix).
+	m.ExpectExec(`UPDATE "AdminApiKey" SET "keyHash"`).WithArgs("k1", "h2", "v1", "nxs_xyz").WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	if err := s.RegenerateAdminAPIKey(context.Background(), "k1", "h2", "v1", "nxs_xyz"); err != nil {
 		t.Fatalf("RegenerateAdminAPIKey: %v", err)
 	}
 	m.ExpectExec(`DELETE FROM "AdminApiKey" WHERE id = \$1`).WithArgs("k1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
@@ -276,10 +303,24 @@ func TestUserstoreBranchesAndErrors(t *testing.T) {
 	if _, err := s.UpdateNexusUser(context.Background(), "u1", UpdateNexusUserParams{Enabled: &en}); err != nil {
 		t.Fatalf("UpdateNexusUser enable: %v", err)
 	}
-	// DeleteNexusUser exec error
-	m.ExpectExec(`DELETE FROM "NexusUser"`).WithArgs("u1").WillReturnError(errors.New("fk"))
+	// DeleteNexusUser: begin error surfaces.
+	m.ExpectBegin().WillReturnError(errors.New("nobegin"))
 	if err := s.DeleteNexusUser(context.Background(), "u1"); err == nil {
-		t.Fatal("DeleteNexusUser exec error should surface")
+		t.Fatal("DeleteNexusUser begin error should surface")
+	}
+	// DeleteNexusUser: a dependent delete failing (here the first stage) rolls
+	// back and surfaces — the whole cascade is atomic.
+	m.ExpectBegin()
+	m.ExpectExec(`DELETE FROM "VirtualKey"`).WithArgs("u1").WillReturnError(errors.New("fk"))
+	m.ExpectRollback()
+	if err := s.DeleteNexusUser(context.Background(), "u1"); err == nil {
+		t.Fatal("DeleteNexusUser cascade error should surface")
+	}
+	// DeleteNexusUser: commit failure after a successful cascade surfaces.
+	expectDeleteCascade(m, "u1", 1)
+	m.ExpectCommit().WillReturnError(errors.New("nocommit"))
+	if err := s.DeleteNexusUser(context.Background(), "u1"); err == nil {
+		t.Fatal("DeleteNexusUser commit error should surface")
 	}
 	// GetAdminAPIKey non-ErrNoRows error
 	m.ExpectQuery(`FROM "AdminApiKey" WHERE id`).WithArgs("e").WillReturnError(errors.New("db"))
@@ -292,8 +333,8 @@ func TestUserstoreBranchesAndErrors(t *testing.T) {
 		t.Fatal("UpdateAdminAPIKey error should surface")
 	}
 	// RegenerateAdminAPIKey exec error
-	m.ExpectExec(`UPDATE "AdminApiKey" SET "keyHash"`).WithArgs("k1", "h", "p").WillReturnError(errors.New("boom"))
-	if err := s.RegenerateAdminAPIKey(context.Background(), "k1", "h", "p"); err == nil {
+	m.ExpectExec(`UPDATE "AdminApiKey" SET "keyHash"`).WithArgs("k1", "h", "v1", "p").WillReturnError(errors.New("boom"))
+	if err := s.RegenerateAdminAPIKey(context.Background(), "k1", "h", "v1", "p"); err == nil {
 		t.Fatal("RegenerateAdminAPIKey error should surface")
 	}
 	// DeleteAdminAPIKey exec error
@@ -318,7 +359,7 @@ func TestRotateAdminAPIKey(t *testing.T) {
 		m.ExpectBegin()
 		m.ExpectQuery(`FOR UPDATE`).WithArgs("pred1").
 			WillReturnRows(pgxmock.NewRows(lockCols).AddRow("key", true, "active", sp("u1"), &tNow))
-		m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(7)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("succ")...))
+		m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(8)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("succ")...))
 		m.ExpectQuery(`UPDATE "AdminApiKey"\s+SET status = 'rotating'`).WithArgs("pred1").WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("pred1")...))
 		m.ExpectCommit()
 		res, err := s.RotateAdminAPIKey(context.Background(), RotateAdminAPIKeyParams{PredecessorID: "pred1", NewKeyHash: "h", NewKeyPrefix: "nxs_new", NewCreatedBy: "admin"})
@@ -358,20 +399,20 @@ func TestRotateAdminAPIKey(t *testing.T) {
 			{"insert successor", func(m pgxmock.PgxPoolIface) {
 				m.ExpectBegin()
 				m.ExpectQuery(`FOR UPDATE`).WithArgs("pred1").WillReturnRows(pgxmock.NewRows(lockCols).AddRow("key", true, "active", sp("u1"), (*time.Time)(nil)))
-				m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(7)...).WillReturnError(errors.New("x"))
+				m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(8)...).WillReturnError(errors.New("x"))
 				m.ExpectRollback()
 			}},
 			{"update predecessor", func(m pgxmock.PgxPoolIface) {
 				m.ExpectBegin()
 				m.ExpectQuery(`FOR UPDATE`).WithArgs("pred1").WillReturnRows(pgxmock.NewRows(lockCols).AddRow("key", true, "active", sp("u1"), (*time.Time)(nil)))
-				m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(7)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("succ")...))
+				m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(8)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("succ")...))
 				m.ExpectQuery(`SET status = 'rotating'`).WithArgs("pred1").WillReturnError(errors.New("x"))
 				m.ExpectRollback()
 			}},
 			{"commit", func(m pgxmock.PgxPoolIface) {
 				m.ExpectBegin()
 				m.ExpectQuery(`FOR UPDATE`).WithArgs("pred1").WillReturnRows(pgxmock.NewRows(lockCols).AddRow("key", true, "active", sp("u1"), (*time.Time)(nil)))
-				m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(7)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("succ")...))
+				m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(8)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("succ")...))
 				m.ExpectQuery(`SET status = 'rotating'`).WithArgs("pred1").WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("pred1")...))
 				m.ExpectCommit().WillReturnError(errors.New("x"))
 			}},
@@ -426,5 +467,24 @@ func TestRetireAdminAPIKey(t *testing.T) {
 	m5.ExpectQuery(`SET status = \$2`).WithArgs("k1", "expired").WillReturnError(errors.New("db"))
 	if _, err := s5.RetireAdminAPIKey(context.Background(), "k1", "expired"); err == nil {
 		t.Fatal("update db error should surface")
+	}
+}
+
+// TestListNexusUsers_OwnedByIdP covers the SEC-M6-04 SCIM enumeration scope: when
+// OwnedByIdP is set, the query adds a UserFederatedIdentity EXISTS filter bound to
+// that IdP, so a per-IdP SCIM token cannot list users owned by another IdP.
+func TestListNexusUsers_OwnedByIdP(t *testing.T) {
+	s, m := newMock(t)
+	idp := "idp-A"
+	p := NexusUserListParams{OwnedByIdP: &idp, Limit: 10}
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM "NexusUser" u.*EXISTS.*"UserFederatedIdentity" f WHERE f\."userId" = u\.id AND f\."idpId" = \$1`).
+		WithArgs("idp-A").
+		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	m.ExpectQuery(`FROM "NexusUser" u.*EXISTS.*"UserFederatedIdentity"`).
+		WithArgs("idp-A", 10, 0).
+		WillReturnRows(pgxmock.NewRows(safeListCols).AddRow(safeListRow("u1")...))
+	us, total, err := s.ListNexusUsers(context.Background(), p)
+	if err != nil || total != 1 || len(us) != 1 {
+		t.Fatalf("ListNexusUsers(OwnedByIdP): us=%+v total=%d err=%v", us, total, err)
 	}
 }

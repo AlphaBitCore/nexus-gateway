@@ -20,12 +20,6 @@ import (
 // response does not enable user enumeration.
 var ErrInvalidCredentials = errors.New("idp: invalid credentials")
 
-// ErrUserDisabled is returned when the user exists and presented correct
-// credentials but the account is administratively disabled. Login handlers
-// surface this as a distinct UI message so admins can tell disabled users
-// apart from failed logins in support logs.
-var ErrUserDisabled = errors.New("idp: user disabled")
-
 // AuthResult is the normalized authentication outcome produced by every IdP
 // adapter. Fields are the minimum the downstream authorization-code + token
 // flow needs to build an ID token (Task 1.11); additional claims are

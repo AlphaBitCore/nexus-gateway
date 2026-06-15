@@ -78,10 +78,9 @@ func TestBreakGlassShadow_RecoveryAfterOutage(t *testing.T) {
 	const reportedVer = int64(1)
 	payload, err := json.Marshal(map[string]any{
 		"id":           thingID,
-		"reported":     map[string]any{configKey: map[string]any{"enabled": true}},
+		"reported":     map[string]any{configKey: map[string]any{"engaged": true}},
 		"reportedVer":  reportedVer,
 		"keyVersions":  map[string]int64{configKey: reportedVer},
-		"reason":       "break_glass",
 		"sourceIp":     "10.0.0.42",
 		"actorTokenId": tokenID,
 	})
@@ -89,7 +88,7 @@ func TestBreakGlassShadow_RecoveryAfterOutage(t *testing.T) {
 		t.Fatalf("marshal payload: %v", err)
 	}
 
-	postURL := ts.URL + "/api/internal/things/shadow"
+	postURL := ts.URL + "/api/internal/things/shadow/break-glass"
 	token := hub.ServiceToken()
 
 	// --- Outage: first delivery attempt fails with 503. ---

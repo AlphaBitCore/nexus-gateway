@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
@@ -51,6 +52,18 @@ type Manager struct {
 	pool   PgxPool
 	logger *slog.Logger
 	hubID  string
+
+	// signalSecret is the Hub-to-Hub HMAC key for nexus.hub.signal frames.
+	// nil = unsigned (tests); production wiring installs it via
+	// SetSignalSecret so a data-plane producer cannot forge a fleet-wide config
+	// injection over the message bus.
+	signalSecret []byte
+
+	// fanoutFailed counts post-commit config fan-out failures, labelled by
+	// path (ws|nats). nil until SetFanoutMetrics wires a registry, so the
+	// increment helper is a no-op in tests / scheduler-disabled mode. See
+	// incFanoutFailed.
+	fanoutFailed *opsmetrics.Counter
 }
 
 // New creates a new Thing Manager.
@@ -96,6 +109,27 @@ func NewWithPool(
 		hubID:  hubID,
 		logger: logger.With("component", "fleet.manager"),
 	}
+}
+
+// SetFanoutMetrics wires the ops-metrics registry used for the
+// config_fanout_failed_total{path} counter. Called once from the fleet
+// wiring after construction (mirrors wsServer.SetOpsMetricsHandler) so the
+// Manager constructor signature — and every test call site — stays untouched.
+// reg nil is tolerated: the counter stays nil and incFanoutFailed no-ops.
+func (m *Manager) SetFanoutMetrics(reg *opsmetrics.Registry) {
+	if reg == nil {
+		return
+	}
+	m.fanoutFailed = reg.NewCounter("config.fanout_failed_total", []string{"path"})
+}
+
+// incFanoutFailed records one post-commit fan-out failure on the given path
+// ("ws" or "nats"). nil-safe so unit tests and registry-less modes skip it.
+func (m *Manager) incFanoutFailed(path string) {
+	if m.fanoutFailed == nil {
+		return
+	}
+	m.fanoutFailed.With(path).Inc()
 }
 
 // Store returns the underlying store (for handler access).

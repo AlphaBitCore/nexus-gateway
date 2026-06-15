@@ -2,46 +2,62 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Unique identifier matching the bundle ID. -->
+    <!-- SMAppService daemon plist. Ships INSIDE the app bundle at
+         Contents/Library/LaunchDaemons/com.nexus-gateway.agent.plist and is
+         registered into the system domain by the menu app via
+         SMAppService.daemon(plistName:). It is NOT installed to
+         /Library/LaunchDaemons — the registration is bundle-tied, so deleting
+         the app deregisters the daemon (no orphaned plist, no launchctl
+         bootstrap, no disabled-override EIO). See LaunchServiceManager.swift. -->
+
+    <!-- Label must match the plist file name's reverse-DNS stem. -->
     <key>Label</key>
     <string>com.nexus-gateway.agent</string>
 
-    <!-- Run the Go binary inside the .app bundle with the production config file.
-         Paths follow Apple's File System Programming Guide:
-           config → /Library/Application Support/<bundle-id>/agent.yaml
-           state  → /Library/Application Support/<bundle-id>/        (cert, key, audit DB)
-           logs   → /Library/Logs/<bundle-id>/                       (stdout, stderr) -->
+    <!-- BundleProgram: the daemon executable relative to the app bundle root.
+         Replaces the absolute /Applications/... path the classic plist used —
+         SMAppService resolves it relative to whichever bundle registered it, so
+         the daemon follows the app even if installed to a non-standard path. -->
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/nexus-agent</string>
+
+    <!-- argv for the daemon. argv[0] is conventional; the run subcommand + the
+         config path (still installed to /Library/Application Support by the
+         pkg postinstall) are the load-bearing arguments. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/NexusAgent.app/Contents/MacOS/nexus-agent</string>
+        <string>nexus-agent</string>
         <string>run</string>
         <string>-config</string>
         <string>/Library/Application Support/com.nexus-gateway.agent/agent.yaml</string>
     </array>
 
-    <!-- Start at boot. -->
+    <!-- Boot daemon: start at load so enforcement is active before any GUI
+         login. SMAppService.daemon registers a system-domain LaunchDaemon
+         (root), so this preserves pre-login enforcement — we do NOT downgrade
+         to a per-user login agent. -->
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart if the process exits unexpectedly. The menu's Quit
-         action does NOT rely on KeepAlive=false to stop the daemon —
-         instead it writes a user-writable quit-flag file
-         (/Library/Application Support/com.nexus-gateway.agent/flags/user-quit)
-         that the daemon's main() reads on every launchd respawn and
-         exits if present. This way:
-           - no sudo prompt is needed to "really quit" the daemon
-           - re-opening NexusAgent.app removes the flag and the next
-             launchd respawn brings the daemon back up (~10s, bounded
-             by ThrottleInterval below)
-         See [[agent-quit-flag-design]]. -->
-    <key>KeepAlive</key>
-    <true/>
-
-    <!-- Run as root so the agent can manage network filtering. -->
+    <!-- Run as root. SMAppService.daemon registers a system-domain daemon that
+         runs as root by default, but the daemon hard-requires it (the NE status
+         socket path and all /Library state are root-owned, and the peer-cred
+         check expects root), so we state it explicitly rather than rely on the
+         default. -->
     <key>UserName</key>
     <string>root</string>
 
-    <!-- Capture stdout/stderr to log files for debugging. -->
+    <!-- KeepAlive is load-bearing for the user-quit-flag coupling: the menu's
+         Quit writes a flag file the daemon reads on every respawn and exits
+         while present; KeepAlive respawns it (throttled) and re-opening the app
+         clears the flag. Each respawn also re-reads the quitAllowed policy.
+         Must survive the SMAppService plist key subset (validate on-device). -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Capture stdout/stderr for debugging. SMAppService may constrain where a
+         daemon can write; if these /Library/Logs paths are rejected, re-home
+         the logs (validate on-device — see the P2 design plist-subset task). -->
     <key>StandardOutPath</key>
     <string>/Library/Logs/com.nexus-gateway.agent/launchd.out.log</string>
     <key>StandardErrorPath</key>
@@ -54,7 +70,8 @@
         <integer>4096</integer>
     </dict>
 
-    <!-- Throttle restart loop to prevent thrashing. -->
+    <!-- Throttle the respawn loop (also bounds the quit-flag respawn-and-die
+         cadence). Load-bearing for P1 — must survive the key subset. -->
     <key>ThrottleInterval</key>
     <integer>10</integer>
 </dict>

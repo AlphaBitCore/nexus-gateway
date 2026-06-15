@@ -1,0 +1,33 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "openai-chat",
+  "model": "gpt-4o-mini-2024-07-18",
+  "stream": true,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "toolUse": {
+            "callId": "call_N0btkRj1vx1nTfnr9O88DTlZ",
+            "name": "get_weather",
+            "input": {
+              "location": "Paris"
+            }
+          }
+        }
+      ],
+      "finishReason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "promptTokens": 59,
+    "completionTokens": 14,
+    "totalTokens": 73
+  },
+  "finishReason": "tool_calls",
+  "confidence": 1,
+  "detectedSpec": "openai-chat"
+}

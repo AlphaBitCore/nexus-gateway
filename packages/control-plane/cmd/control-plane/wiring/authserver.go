@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/fleet/store/agentstore"
@@ -32,6 +33,7 @@ type AuthServerDeps struct {
 	RevocationService *revocation.Service
 	AuditWriter       *audit.Writer
 	JWTVerifier       *jwtverifier.Verifier
+	RedisClient       redis.UniversalClient
 	Logger            *slog.Logger
 }
 
@@ -78,6 +80,7 @@ func InitAuthServer(ctx context.Context, e *echo.Echo, d AuthServerDeps) (closer
 		Audit:       d.AuditWriter,
 		AuthCodes:   authCodeStore,
 		JWTVerifier: d.JWTVerifier,
+		RedisClient: d.RedisClient,
 	})
 
 	agentGroup := e.Group("/api/agent")

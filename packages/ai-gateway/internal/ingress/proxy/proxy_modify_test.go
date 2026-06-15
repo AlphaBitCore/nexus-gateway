@@ -110,6 +110,13 @@ func TestRunRequestHooks_Modify_RewritesBody(t *testing.T) {
 	if auditRec.HookDecision != string(goHooks.Modify) {
 		t.Errorf("audit.RequestHookDecision = %q, want %q", auditRec.HookDecision, string(goHooks.Modify))
 	}
+	// The redacted wire copy must reach the audit record: it is the only
+	// bytes the raw storage policy may persist under storageAction=redact.
+	// Without the stamp the writer fail-safes the raw request copy to
+	// NULL on every inflight-redact event.
+	if string(auditRec.RequestBodyRedacted) != string(rewritten) {
+		t.Errorf("audit.RequestBodyRedacted = %q, want the rewritten body", auditRec.RequestBodyRedacted)
+	}
 }
 
 func TestRunRequestHooks_NoHooks_ReturnsOriginalBody(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputstaging"
 )
 
@@ -60,6 +61,14 @@ type TrafficEvent struct {
 	BackendMode     string
 	InternalPurpose string // always "ai-guard"
 	ErrorDetail     string // non-empty on failure
+
+	// TraceID carries the triggering user request's correlation id
+	// (the inbound X-Nexus-Request-Id propagated on ctx). It is stamped
+	// onto the ai-guard row's trace_id so the classifier's own cost row
+	// (internal_purpose='ai-guard', fresh row id) can be joined back to the
+	// user-traffic row that invoked the hook. Empty for ad-hoc callers
+	// (tests, tooling) that never set a request id on the context.
+	TraceID string
 
 	// Stamped from Response.Metadata after a successful classifier call;
 	// left zero on CacheHit, failures, or when AdapterBackend has no
@@ -190,6 +199,13 @@ func classifyImpl(
 	cache *Cache,
 	sink TrafficSink,
 ) (*Response, error) {
+	// Correlation: the triggering user request's id rides on ctx (set by
+	// the RequestID middleware from the inbound X-Nexus-Request-Id, and
+	// inherited by in-process hook callers whose ctx descends from the
+	// request ctx). Stamp it onto every emitted ai-guard event so the
+	// classifier's own cost row is joinable to the user-traffic row.
+	traceID := nexushttp.RequestIDFromContext(ctx)
+
 	// Step 0: if req.Messages is provided, apply inputstaging.Plan to
 	// select the subset that fits the judge model's context window and
 	// join into req.Content. Fail-open: overflow is logged + counted but
@@ -218,6 +234,7 @@ func classifyImpl(
 			CacheHit:        true,
 			BackendMode:     cfg.BackendMode,
 			InternalPurpose: internalPurposeAIGuard,
+			TraceID:         traceID,
 		})
 		DecisionsTotal.WithLabelValues(req.DetectorType, cached.Decision).Inc()
 		return cached, nil
@@ -239,6 +256,7 @@ func classifyImpl(
 			BackendMode:     cfg.BackendMode,
 			InternalPurpose: internalPurposeAIGuard,
 			ErrorDetail:     fmt.Sprintf("prompt_render_failed: %v", err),
+			TraceID:         traceID,
 		})
 		return nil, &BackendUnavailable{Detail: "prompt_render_failed"}
 	}
@@ -272,6 +290,7 @@ func classifyImpl(
 			BackendMode:     cfg.BackendMode,
 			InternalPurpose: internalPurposeAIGuard,
 			ErrorDetail:     callErr.Error(),
+			TraceID:         traceID,
 		})
 		return nil, &BackendUnavailable{Detail: callErr.Error()}
 	}
@@ -302,6 +321,7 @@ func classifyImpl(
 		PromptTokens:     resp.Metadata.PromptTokens,
 		CompletionTokens: resp.Metadata.CompletionTokens,
 		CostUsd:          resp.Metadata.CostUsd,
+		TraceID:          traceID,
 	})
 	DecisionsTotal.WithLabelValues(req.DetectorType, resp.Decision).Inc()
 	return resp, nil

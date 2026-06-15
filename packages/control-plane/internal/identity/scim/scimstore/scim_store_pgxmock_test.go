@@ -328,3 +328,31 @@ func TestLinkUserToIdP(t *testing.T) {
 		t.Fatal("exec error should surface")
 	}
 }
+
+// TestUserOwnedByIdP covers the SEC-M6-04 ownership reader: it reports whether a
+// UserFederatedIdentity row links the user to the given IdP.
+func TestUserOwnedByIdP(t *testing.T) {
+	s, m := newMock(t)
+	m.ExpectQuery(`SELECT EXISTS.*"UserFederatedIdentity".*"userId" = \$1 AND "idpId" = \$2`).
+		WithArgs("u1", "idp-A").
+		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
+	owned, err := s.UserOwnedByIdP(context.Background(), "u1", "idp-A")
+	if err != nil || !owned {
+		t.Fatalf("owned=%v err=%v; want true,nil", owned, err)
+	}
+
+	s2, m2 := newMock(t)
+	m2.ExpectQuery(`SELECT EXISTS.*"UserFederatedIdentity"`).
+		WithArgs("u1", "idp-B").
+		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(false))
+	owned2, err := s2.UserOwnedByIdP(context.Background(), "u1", "idp-B")
+	if err != nil || owned2 {
+		t.Fatalf("owned=%v err=%v; want false,nil (different IdP)", owned2, err)
+	}
+
+	s3, m3 := newMock(t)
+	m3.ExpectQuery(`SELECT EXISTS`).WithArgs("u1", "idp-A").WillReturnError(errors.New("db down"))
+	if _, err := s3.UserOwnedByIdP(context.Background(), "u1", "idp-A"); err == nil {
+		t.Fatal("expected error to surface (fail-closed at the caller)")
+	}
+}

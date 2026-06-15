@@ -3,6 +3,8 @@ package wiring
 import (
 	"context"
 	"log/slog"
+	"net/url"
+	"runtime"
 	"time"
 
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
@@ -10,9 +12,14 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/enrollment"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/protectionpause"
+	lifecycle "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/state"
+	auditevent "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/event"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/policies"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/hub"
 	config "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/schema"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/status"
+	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
+	sharedintro "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )
 
@@ -122,6 +129,110 @@ func WireRecentEvents(collector *status.Collector, q *auditqueue.Queue) {
 		}
 		return out
 	})
+}
+
+// StatusServerDeps groups the dependencies for the steady-state status IPC
+// server (the enrolled daemon's full command surface).
+type StatusServerDeps struct {
+	SocketPath string
+	Collector  *status.Collector
+	HubClient  *hub.Client
+	Ctx        context.Context
+	Cancel     context.CancelFunc
+	Version    string
+	Emitter    *lifecycle.Emitter
+	AuditQueue *auditqueue.Queue
+	ConfigMgr  *config.Manager
+	Auth       *SSOAuthState
+	// SpillReader hydrates locally-spilled oversize bodies for the detail
+	// drawer; nil leaves spilled bodies ref-only.
+	SpillReader LocalSpillReader
+}
+
+// InitStatusServer builds the status IPC server with the core command set:
+// update check, shutdown (lifecycle-emitting), event queries (plain,
+// filtered, by-id with local spill hydration), quit-allowed gate, and the
+// SSO authenticate/confirm/cancel triple.
+func InitStatusServer(d StatusServerDeps) *status.Server {
+	statusServer := status.NewServer(
+		d.SocketPath,
+		d.Collector,
+		func() (bool, string, error) {
+			info, err := d.HubClient.CheckUpdate(d.Ctx, d.Version, runtime.GOOS)
+			if err != nil {
+				return false, "", err
+			}
+			return info.Available, info.Version, nil
+		},
+		ConfigPullNoOpFn(),
+		func() {
+			EmitShutdownGracefully(d.Emitter, "ipc_shutdown")
+			go func() { time.Sleep(250 * time.Millisecond); d.Cancel() }()
+		},
+		d.AuditQueue.QueryEvents,
+		func() bool { q := d.ConfigMgr.Get().QuitAllowed; return q == nil || *q },
+		d.Auth.Authenticate,
+	)
+	statusServer.SetConfirmAuthFn(status.ConfirmAuthFn(d.Auth.Confirm))
+	statusServer.SetCancelAuthFn(status.CancelAuthFn(d.Auth.Cancel))
+	// AI-only + Since filter path; the UI Traffic page sends
+	// `ai_only=1&since=<unix-ms>` URL params to QUERY_EVENTS.
+	statusServer.SetQueryEventsFiltered(func(search, action string, aiOnly bool, sinceMs int64, offset, limit int) ([]auditevent.Event, int, error) {
+		var since time.Time
+		if sinceMs > 0 {
+			since = time.UnixMilli(sinceMs)
+		}
+		return d.AuditQueue.QueryEventsFiltered(auditqueue.QueryEventsFilter{
+			Search: search,
+			Action: action,
+			AIOnly: aiOnly,
+			Since:  since,
+			Offset: offset,
+			Limit:  limit,
+		})
+	})
+	// Detail-by-id: the drawer fetches body + normalized + spill on demand.
+	// Oversize bodies that spilled locally are read back off disk here
+	// (SpillReader); bodies already uploaded to S3 stay ref-only (no agent
+	// S3 GET credential) and the UI shows a "view in Control Plane" affordance.
+	statusServer.SetEventByID(func(id string) (*auditevent.Event, error) {
+		ev, err := d.AuditQueue.EventByID(id)
+		if err != nil || ev == nil {
+			return ev, err
+		}
+		HydrateLocalSpill(ev, d.SpillReader)
+		return ev, nil
+	})
+	return statusServer
+}
+
+// StartStatusAPI wires the open-browser helper (allowed hosts resolved from
+// the bootstrap Control Plane URL), launches the status server accept loop,
+// and installs the runtime-introspection snapshot command.
+func StartStatusAPI(
+	statusServer *status.Server,
+	bootstrapClient *bootstrap.Client,
+	introspectReg *sharedintro.Registry,
+	recoveryCfg shareddiag.RecoveryConfig,
+) {
+	browserOpener := InitOpenBrowser()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if info, err := bootstrapClient.Get(ctx); err == nil && info.ControlPlaneURL != "" {
+			if u, perr := url.Parse(info.ControlPlaneURL); perr == nil && u.Hostname() != "" {
+				browserOpener.SetAllowedHosts(u.Hostname())
+			}
+		}
+	}()
+	statusServer.SetOpenBrowserFn(browserOpener.Open)
+	go func() {
+		rcfg := recoveryCfg
+		rcfg.Source = "status-api"
+		defer shareddiag.Recover(rcfg, nil)
+		_ = statusServer.Start()
+	}()
+	statusServer.SetRuntimeFn(func(ctx context.Context) any { return introspectReg.Snapshot(ctx) })
 }
 
 // PendingStatusCollectorConfig is the minimal config for the pre-enrollment

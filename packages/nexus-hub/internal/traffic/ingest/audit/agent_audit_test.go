@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // mockProducer records Enqueue payloads and can fail after N successful calls.
@@ -204,8 +206,10 @@ func TestUploadAgentAudit_NormalizeStamping(t *testing.T) {
 	}
 	var env map[string]any
 	_ = json.Unmarshal(mp.enqueued[0], &env)
-	if env["requestNormalized"] == nil || env["responseNormalized"] == nil || env["normalizeVersion"] != "1" {
-		t.Fatalf("normalize fields not stamped: %v", env)
+	// F-0182: normalizeVersion must equal the shared schema constant, not a
+	// hardcoded literal, so a future schema bump propagates automatically.
+	if env["requestNormalized"] == nil || env["responseNormalized"] == nil || env["normalizeVersion"] != normcore.SchemaVersion {
+		t.Fatalf("normalize fields not stamped with normcore.SchemaVersion (%q): %v", normcore.SchemaVersion, env)
 	}
 }
 
@@ -315,4 +319,137 @@ func TestBuildAgentBody(t *testing.T) {
 	if b := buildAgentBody([]byte("hello"), nil, "text/plain", true); b.Kind != sharedaudit.BodyInline {
 		t.Fatalf("inline bytes should produce inline body, got kind %q", b.Kind)
 	}
+}
+
+// TestUploadAgentAudit_RejectsForgedAttribution is the SEC-C5-01 regression: an
+// enrolled agent that self-asserts a victim's entityId/orgId/identity/
+// apiKeyFingerprint must NOT have those values propagated. The Hub stamps them
+// empty (server-controlled) and keeps only the authenticated thing_id, so a
+// rogue node cannot attribute its traffic to — or frame for SIEM — another
+// VK/org. The forged keys are sent as raw agent wire (the decode struct no
+// longer carries them; Go ignores the extra JSON keys).
+func TestUploadAgentAudit_RejectsForgedAttribution(t *testing.T) {
+	mp := &mockProducer{}
+	h := &AgentAuditAPI{MQProducer: mp}
+	body := `[{"id":"e1","entityType":"user","entityId":"victim-user","entityName":"Victim",` +
+		`"orgId":"victim-org","orgName":"VictimCo","identity":{"sub":"victim"},` +
+		`"apiKeyFingerprint":"victim-vk-fp","providerName":"openai","modelName":"gpt-4"}]`
+	rec := post(t, h, body, true, "") // authenticated as thing-1
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if len(mp.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued envelope, got %d", len(mp.enqueued))
+	}
+	var env map[string]any
+	if err := json.Unmarshal(mp.enqueued[0], &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env["thingId"] != "thing-1" {
+		t.Errorf("thingId = %v; want thing-1 (authenticated identity preserved)", env["thingId"])
+	}
+	for _, k := range []string{"entityType", "entityId", "entityName", "orgId", "orgName", "identity", "apiKeyFingerprint"} {
+		if v, ok := env[k]; ok && v != "" && v != nil {
+			t.Errorf("SEC-C5-01: forged %q leaked into the MQ envelope: %v", k, v)
+		}
+	}
+}
+
+// assertJSONEqual compares an envelope value against expected JSON
+// semantically (the envelope round-trips through map[string]any, which
+// reorders object keys).
+func assertJSONEqual(t *testing.T, field string, got any, want string) {
+	t.Helper()
+	gotJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("%s: marshal got: %v", field, err)
+	}
+	var gotV, wantV any
+	if err := json.Unmarshal(gotJSON, &gotV); err != nil {
+		t.Fatalf("%s: unmarshal got: %v", field, err)
+	}
+	if err := json.Unmarshal([]byte(want), &wantV); err != nil {
+		t.Fatalf("%s: unmarshal want: %v", field, err)
+	}
+	if !reflect.DeepEqual(gotV, wantV) {
+		t.Errorf("%s = %s, want %s", field, gotJSON, want)
+	}
+}
+
+// TestUploadAgentAudit_GovernedNormalizedPreferred — when the agent
+// uploads its storage-governed normalized copies (span-redacted or
+// drop-content placeholder) plus redaction spans, the Hub must forward
+// them verbatim and must NOT re-normalize the raw bytes for those
+// directions: re-deriving would discard the storage governance, and
+// under a redact policy the raw copy may be absent entirely.
+func TestUploadAgentAudit_GovernedNormalizedPreferred(t *testing.T) {
+	mp := &mockProducer{}
+	h := &AgentAuditAPI{
+		MQProducer: mp,
+		Normalize: func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
+			t.Errorf("normalize must not run for direction %q — governed copies uploaded", direction)
+			return nil, "", ""
+		},
+	}
+	governedReq := `{"kind":"ai-chat","messages":[{"role":"user","content":[{"type":"text","text":"[EMAIL-REDACTED]"}]}]}`
+	governedResp := `{"kind":"ai-chat","redacted":true,"ruleIds":["pii-email"]}`
+	reqSpans := `[{"start":0,"end":16,"replacement":"[EMAIL-REDACTED]","contentAddress":"messages.0.content.0"}]`
+	evs := []AgentAuditEvent{{
+		ID:                    "e1",
+		ProviderName:          "openai",
+		PayloadRequest:        []byte(`{"q":"leak@example.com"}`),
+		PayloadResponse:       []byte(`{"a":1}`),
+		NormalizedRequest:     json.RawMessage(governedReq),
+		NormalizedResponse:    json.RawMessage(governedResp),
+		RequestRedactionSpans: json.RawMessage(reqSpans),
+	}}
+	rec := post(t, h, mustEvents(t, evs), true, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var env map[string]any
+	_ = json.Unmarshal(mp.enqueued[0], &env)
+	assertJSONEqual(t, "requestNormalized", env["requestNormalized"], governedReq)
+	assertJSONEqual(t, "responseNormalized", env["responseNormalized"], governedResp)
+	assertJSONEqual(t, "requestRedactionSpans", env["requestRedactionSpans"], reqSpans)
+	if _, ok := env["responseRedactionSpans"]; ok {
+		t.Error("responseRedactionSpans must be absent when the agent stamped none")
+	}
+	if env["requestNormalizeStatus"] != "ok" || env["responseNormalizeStatus"] != "ok" {
+		t.Errorf("normalize status = (%v,%v), want ok/ok", env["requestNormalizeStatus"], env["responseNormalizeStatus"])
+	}
+	if env["normalizeVersion"] != normcore.SchemaVersion {
+		t.Errorf("normalizeVersion = %v, want %q", env["normalizeVersion"], normcore.SchemaVersion)
+	}
+}
+
+// TestUploadAgentAudit_GovernedCopyPerDirectionFallback — a direction
+// with an uploaded governed copy keeps it; the other direction falls
+// back to Hub-side normalization of its raw bytes.
+func TestUploadAgentAudit_GovernedCopyPerDirectionFallback(t *testing.T) {
+	var gotDirections []string
+	mp := &mockProducer{}
+	h := &AgentAuditAPI{
+		MQProducer: mp,
+		Normalize: func(direction, _, _, _, _ string, _ bool, _ []byte) (json.RawMessage, string, string) {
+			gotDirections = append(gotDirections, direction)
+			return json.RawMessage(`{"derived":true}`), "ok", ""
+		},
+	}
+	governedReq := `{"kind":"ai-chat","redacted":true}`
+	evs := []AgentAuditEvent{{
+		ID:                "e1",
+		ProviderName:      "openai",
+		PayloadRequest:    []byte(`{"q":1}`),
+		PayloadResponse:   []byte(`{"a":1}`),
+		NormalizedRequest: json.RawMessage(governedReq),
+	}}
+	post(t, h, mustEvents(t, evs), true, "")
+	if len(gotDirections) != 1 || gotDirections[0] != "response" {
+		t.Fatalf("only the response direction lacks a governed copy; normalize ran for %v", gotDirections)
+	}
+	var env map[string]any
+	_ = json.Unmarshal(mp.enqueued[0], &env)
+	assertJSONEqual(t, "requestNormalized", env["requestNormalized"], governedReq)
+	assertJSONEqual(t, "responseNormalized", env["responseNormalized"], `{"derived":true}`)
 }

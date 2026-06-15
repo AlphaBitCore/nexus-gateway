@@ -7,20 +7,42 @@
 // This goroutine is the out-of-band repair path for already-divergent state:
 // system_metadata and thing.desired can drift when a Hub.NotifyConfigChange
 // call fails silently (e.g. fire-and-forget discard, or a Hub restart that
-// lost the connection mid-broadcast). The handler-level fix in admin_cache.go
-// returns 502 on Hub failure for in-flight saves, but cannot heal divergence
-// that pre-dates the current process boot.
+// lost the connection mid-broadcast). The handler-level fix returns 502 on Hub
+// failure for in-flight saves, but cannot heal divergence that pre-dates the
+// current process boot.
 //
-// Watch set:
-//   - cache                (ai-gateway): the full 3-tier prompt cache blob.
-//   - kill_switch          (compliance-proxy): emergency disable flag.
-//   - agent_settings       (agent): defaults set by admin in the UI.
-//   - ai_guard             (ai-gateway): hot-swap snapshot.
-//   - virtual_keys         (ai-gateway): VK invalidation queue.
+// Two complementary arms (the actual watch set is assembled by the caller in
+// cmd/control-plane/wiring/reconcile.go — keep this list in step with it):
 //
-// The package is intentionally small and free of side-channel concerns: it
-// owns no DB connections, no Hub clients — both are injected so unit tests
-// can drive both.
+// 1. Content-diff Watches (Category A — full state lives in thing.desired):
+//
+//   - cache                                  (ai-gateway): 3-tier prompt cache blob.
+//
+//   - semantic_cache.config                  (ai-gateway): L2 embedding config row.
+//
+//   - response_cache.extract_config          (ai-gateway): L1 extract cache toggle/TTL.
+//
+//   - response_cache.time_sensitive_patterns (ai-gateway): freshness rule list.
+//
+//   - agent_settings                         (agent): defaults set by admin in the UI.
+//
+//   - killswitch          (compliance-proxy + agent): emergency disable flag.
+//
+//   - gateway_passthrough (ai-gateway): emergency passthrough toggle.
+//     Each loads CP source-of-truth, diffs it against thing.desired.<key>, and
+//     re-pushes the full state on mismatch. Every key pushed via hub.PushTypeA
+//     has a matching watch here, so the unified propagation-failure response
+//     (hub.PropagationErrorJSON) can truthfully promise auto-recovery.
+//
+//     2. The Pending arm (Category B — bare version bump, no state in thing.desired,
+//     so content-diff cannot apply): credentials / virtual_keys / routing_rules /
+//     quota_* / providers / models. A durable ledger records the intended vs
+//     acknowledged version per key; ReconcilePending re-pushes any key whose last
+//     push CP never confirmed.
+//
+// The package is intentionally small and free of side-channel concerns: it owns
+// no DB connections, no Hub clients — both arms are injected so unit tests can
+// drive them.
 package configreconcile
 
 import (
@@ -57,7 +79,22 @@ type Reconciler struct {
 	Period  time.Duration
 	Watches []Watch
 
+	// Pending is the Category-B version-reconcile arm. The content-diff
+	// Watches above cannot heal Category-B keys (credentials / virtual_keys /
+	// routing_rules / quota_* / providers / models): those push a bare version
+	// bump and carry no state into thing.desired, so there is nothing to diff.
+	// Pending instead re-pushes any key whose last push CP never confirmed.
+	// Nil when no durable backstop is wired (dev/no-DB). Driven once per tick.
+	Pending PendingReconciler
+
 	driftCounter *prometheus.CounterVec
+}
+
+// PendingReconciler re-drives Category-B config pushes whose acknowledgement CP
+// never received. *hub.Client satisfies it via ReconcilePending.
+type PendingReconciler interface {
+	// ReconcilePending re-pushes unconfirmed keys and returns the count healed.
+	ReconcilePending(ctx context.Context) (int, error)
 }
 
 // Querier is the narrow DB interface the reconcile job needs.
@@ -134,6 +171,23 @@ func (r *Reconciler) tick(ctx context.Context) {
 	for _, w := range r.Watches {
 		r.checkWatch(ctx, w)
 	}
+	r.reconcilePending(ctx)
+}
+
+// reconcilePending drives the Category-B version-reconcile arm once. Failures
+// are logged but never abort the tick (the content Watches must still run).
+func (r *Reconciler) reconcilePending(ctx context.Context) {
+	if r.Pending == nil {
+		return
+	}
+	healed, err := r.Pending.ReconcilePending(ctx)
+	if err != nil {
+		r.Logger.Warn("config reconcile: pending Category-B reconcile failed", "error", err)
+		return
+	}
+	if healed > 0 {
+		r.Logger.Info("config reconcile: re-pushed unconfirmed Category-B keys", "healed", healed)
+	}
 }
 
 func (r *Reconciler) checkWatch(ctx context.Context, w Watch) {
@@ -181,6 +235,11 @@ func (r *Reconciler) checkWatch(ctx context.Context, w Watch) {
 					State:     state,
 					ActorID:   "configreconcile",
 					ActorName: "configreconcile",
+					// No SourceIP: this is the background drift healer, not an
+					// HTTP request — there is no human source address to stamp.
+					// Left empty explicitly so the absence is intentional, not
+					// an omission.
+					SourceIP: "",
 				}); err != nil {
 					r.Logger.Warn("config reconcile: re-emit failed",
 						"config_key", w.ConfigKey,

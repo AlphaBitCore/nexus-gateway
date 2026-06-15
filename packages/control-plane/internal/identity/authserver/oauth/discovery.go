@@ -48,15 +48,19 @@ func DiscoveryHandler(issuer string) echo.HandlerFunc {
 	// to share across goroutines.
 	iss := strings.TrimRight(issuer, "/")
 	doc := openIDConfig{
-		Issuer:                            iss,
-		AuthorizationEndpoint:             iss + "/oauth/authorize",
-		TokenEndpoint:                     iss + "/oauth/token",
-		IntrospectionEndpoint:             iss + "/oauth/introspect",
-		RevocationEndpoint:                iss + "/oauth/revoke",
-		JWKSURI:                           iss + "/.well-known/jwks.json",
-		ResponseTypesSupported:            []string{"code"},
-		GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
-		TokenEndpointAuthMethodsSupported: []string{"none", "client_secret_basic"},
+		Issuer:                 iss,
+		AuthorizationEndpoint:  iss + "/oauth/authorize",
+		TokenEndpoint:          iss + "/oauth/token",
+		IntrospectionEndpoint:  iss + "/oauth/introspect",
+		RevocationEndpoint:     iss + "/oauth/revoke",
+		JWKSURI:                iss + "/.well-known/jwks.json",
+		ResponseTypesSupported: []string{"code"},
+		GrantTypesSupported:    []string{"authorization_code", "refresh_token"},
+		// client_secret_post is advertised because extractClientSecret
+		// (client_auth.go) accepts the secret from the request body as well as
+		// the Basic header; the metadata must reflect every method the token
+		// endpoint actually honors (RFC 8414 §2).
+		TokenEndpointAuthMethodsSupported: []string{"none", "client_secret_basic", "client_secret_post"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		IDTokenSigningAlgValuesSupported:  []string{"RS256"},
 	}

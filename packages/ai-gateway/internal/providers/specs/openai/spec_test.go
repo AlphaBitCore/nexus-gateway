@@ -111,7 +111,7 @@ func TestOpenAI_Codec_RoundTrip(t *testing.T) {
 	if string(out) != string(body) {
 		t.Errorf("encode must be identity; got %q", out)
 	}
-	decRes, err := codec.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+	decRes, err := codec.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 	canon := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {
@@ -140,7 +140,7 @@ func TestIdentityCodec_DecodeCachedAndReasoningTokens(t *testing.T) {
 	codec := openai.IdentityCodec()
 	t.Run("openai_canonical", func(t *testing.T) {
 		body := []byte(`{"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70,"prompt_tokens_details":{"cached_tokens":40},"completion_tokens_details":{"reasoning_tokens":15}}}`)
-		decRes, err := codec.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+		decRes, err := codec.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 		usage := decRes.Usage
 		if err != nil {
 			t.Fatal(err)
@@ -154,7 +154,7 @@ func TestIdentityCodec_DecodeCachedAndReasoningTokens(t *testing.T) {
 	})
 	t.Run("deepseek_prompt_cache_hit_tokens_fallback", func(t *testing.T) {
 		body := []byte(`{"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}`)
-		decRes, err := codec.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+		decRes, err := codec.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 		usage := decRes.Usage
 		if err != nil {
 			t.Fatal(err)

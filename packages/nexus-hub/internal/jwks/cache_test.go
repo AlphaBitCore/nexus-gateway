@@ -120,6 +120,104 @@ func TestCacheEmptyKidReturnsSomeKey(t *testing.T) {
 	}
 }
 
+// rsaJWKEntry builds a single JWK map for a private key under a kid.
+func rsaJWKEntry(kid string, key *rsa.PrivateKey) map[string]any {
+	return map[string]any{
+		"kty": "RSA",
+		"kid": kid,
+		"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+	}
+}
+
+func jwksServerWith(t *testing.T, entries ...map[string]any) *httptest.Server {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"keys": entries})
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+}
+
+// TestCache_EmptyKidMultipleKeysRejected covers F-0254: when the cache holds
+// more than one key and the caller passes an empty kid, Get must return an
+// error rather than a nondeterministic map-iteration key. The single-key
+// convenience is covered by TestCacheEmptyKidReturnsSomeKey.
+func TestCache_EmptyKidMultipleKeysRejected(t *testing.T) {
+	k1, k2 := generateTestKey(t), generateTestKey(t)
+	srv := jwksServerWith(t, rsaJWKEntry("a", k1), rsaJWKEntry("b", k2))
+	defer srv.Close()
+
+	c := jwks.New(srv.URL, slog.Default())
+	defer c.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	// Both kids individually resolve.
+	if _, err := c.Get("a"); err != nil {
+		t.Fatalf("Get(a): %v", err)
+	}
+	if _, err := c.Get("b"); err != nil {
+		t.Fatalf("Get(b): %v", err)
+	}
+	// Empty kid against a multi-key set must be rejected deterministically.
+	if _, err := c.Get(""); err == nil {
+		t.Fatal("empty kid with multiple keys must error (F-0254), got nil")
+	}
+}
+
+// TestCache_WeakModulusRejected covers F-0253: a sub-2048-bit RSA modulus must
+// be rejected at parse time so it never enters the cache, even on a 200 with
+// otherwise well-formed base64url fields.
+func TestCache_WeakModulusRejected(t *testing.T) {
+	weak, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("generate 1024-bit key: %v", err)
+	}
+	good := generateTestKey(t)
+	srv := jwksServerWith(t, rsaJWKEntry("weak", weak), rsaJWKEntry("good", good))
+	defer srv.Close()
+
+	c := jwks.New(srv.URL, slog.Default())
+	defer c.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	if _, err := c.Get("weak"); err == nil {
+		t.Error("1024-bit modulus must be rejected (F-0253), but Get(weak) succeeded")
+	}
+	if _, err := c.Get("good"); err != nil {
+		t.Errorf("2048-bit sibling should still be installed: %v", err)
+	}
+}
+
+// TestCache_OversizedExponentRejected covers F-0253: an exponent larger than
+// 8 bytes would be silently truncated by e.Int64()→int, producing a wrong key
+// that mis-verifies signatures. Such a key must be rejected, not installed. The
+// modulus is a real 2048-bit value so the rejection is attributable to the
+// exponent guard alone.
+func TestCache_OversizedExponentRejected(t *testing.T) {
+	good := generateTestKey(t)
+	// 9-byte exponent (> math.MaxInt64 fits-in-int64 boundary): does not fit
+	// in an int64, so IsInt64() is false → rejected.
+	bigE := make([]byte, 9)
+	bigE[0] = 0x01
+	oversized := map[string]any{
+		"kty": "RSA",
+		"kid": "bige",
+		"n":   base64.RawURLEncoding.EncodeToString(good.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(bigE),
+	}
+	srv := jwksServerWith(t, oversized)
+	defer srv.Close()
+
+	c := jwks.New(srv.URL, slog.Default())
+	defer c.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	if _, err := c.Get("bige"); err == nil {
+		t.Error("oversized exponent must be rejected (F-0253), but Get(bige) succeeded")
+	}
+}
+
 // TestCache_NonRSAKeyTypeSkipped covers the
 // `if k.KTY != "RSA" { continue }` filter — an EC or OKP key listed
 // alongside RSA keys must be ignored, not cause a parse failure.

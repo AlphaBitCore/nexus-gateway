@@ -53,8 +53,8 @@ type analyticsGroupSpec struct {
 }
 
 var analyticsGroupSQL = map[string]analyticsGroupSpec{
-	"provider":       {selectExpr: `provider_name`, nullFilter: ``},
-	"modelUsed":      {selectExpr: `model_name`, nullFilter: ` AND model_name IS NOT NULL`},
+	"provider":       {selectExpr: `COALESCE(routed_provider_name, provider_name)`, nullFilter: ``},
+	"modelUsed":      {selectExpr: `COALESCE(routed_model_name, model_name)`, nullFilter: ` AND COALESCE(routed_model_name, model_name) IS NOT NULL`},
 	"entityId":       {selectExpr: `entity_id`, nullFilter: ` AND entity_id IS NOT NULL`, allSources: true},
 	"orgId":          {selectExpr: `org_id`, nullFilter: ` AND org_id IS NOT NULL`},
 	"entityType":     {selectExpr: `entity_type`, nullFilter: ` AND entity_type IS NOT NULL`, allSources: true},

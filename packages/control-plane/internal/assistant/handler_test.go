@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // mockUpstream returns a server that answers the AI Gateway chat SSE with a
@@ -126,5 +127,16 @@ func TestBearerTokenSourceForwardsVerbatim(t *testing.T) {
 	}
 	if _, _, err := newBearerTokenSource("").Credential(context.TODO()); err == nil {
 		t.Fatal("an absent caller bearer must be an error, not a silent un-authed call")
+	}
+}
+
+// TestNew_TurnDeadlineOverride: a configured TurnDeadline replaces the default
+// wall-clock backstop; zero keeps the default.
+func TestNew_TurnDeadlineOverride(t *testing.T) {
+	if h := New(Config{TurnDeadline: 7 * time.Second}); h.turnDeadline != 7*time.Second {
+		t.Fatalf("override not applied: %v", h.turnDeadline)
+	}
+	if h := New(Config{}); h.turnDeadline != turnDeadline {
+		t.Fatalf("zero config must keep the default: %v", h.turnDeadline)
 	}
 }

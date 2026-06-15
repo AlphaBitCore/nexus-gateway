@@ -253,7 +253,7 @@ func (s *stubCredSource) ListCredentialsForProvider(_ context.Context, _ string)
 // TestCredentialStoreAdapter_ResolveForProvider_error verifies error propagation.
 func TestCredentialStoreAdapter_ResolveForProvider_error(t *testing.T) {
 	src := &stubCredSource{err: errors.New("db unavailable")}
-	mgr := credmanager.NewManager(src, nil, discardLogger())
+	mgr := credmanager.NewManager(src, nil)
 	adapter := &credentialStoreAdapter{mgr: mgr}
 
 	_, _, _, err := adapter.ResolveForProvider(context.Background(), "prov-1", "")
@@ -265,7 +265,7 @@ func TestCredentialStoreAdapter_ResolveForProvider_error(t *testing.T) {
 // TestCredentialStoreAdapter_ListForProvider_error verifies error propagation.
 func TestCredentialStoreAdapter_ListForProvider_error(t *testing.T) {
 	src := &stubCredSource{err: errors.New("list error")}
-	mgr := credmanager.NewManager(src, nil, discardLogger())
+	mgr := credmanager.NewManager(src, nil)
 	adapter := &credentialStoreAdapter{mgr: mgr}
 
 	_, err := adapter.ListForProvider(context.Background(), "prov-1")
@@ -278,7 +278,7 @@ func TestCredentialStoreAdapter_ListForProvider_error(t *testing.T) {
 // when source returns no credentials.
 func TestCredentialStoreAdapter_ListForProvider_empty(t *testing.T) {
 	src := &stubCredSource{cred: nil, err: nil}
-	mgr := credmanager.NewManager(src, nil, discardLogger())
+	mgr := credmanager.NewManager(src, nil)
 	adapter := &credentialStoreAdapter{mgr: mgr}
 
 	creds, err := adapter.ListForProvider(context.Background(), "prov-1")

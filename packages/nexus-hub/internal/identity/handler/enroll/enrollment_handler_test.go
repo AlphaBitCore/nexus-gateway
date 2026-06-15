@@ -13,7 +13,7 @@ package enroll
 //   - register_thing_error         → 500 INTERNAL_ERROR
 //   - store_device_token_error     → 500 INTERNAL_ERROR
 //   - happy_token_enrollment       → 200 with certPem, deviceToken, id, trustLevel
-//   - happy_token_idempotent_thingid → 200 reuses supplied thingId
+//   - client_supplied_thingid      → ignored; server mints its own id (F-0200)
 //   - happy_jwt_enrollment         → 200 with trustLevel via SSO path
 //   - jwt_replayed                 → 401 JWT_REPLAYED
 //   - jwt_wrong_purpose            → 401 JWT_INVALID
@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,13 +46,15 @@ import (
 // Stub implementations
 
 // stubCA implements CertAuthority. signErr, when non-nil, is returned from
-// SignCSR. Otherwise a synthetic CertResult is returned so that downstream
-// code (device-token generation, store writes) can run.
+// SignAttestationCSR. Otherwise a synthetic CertResult is returned so the
+// attestation enrollment branch can run.
 type stubCA struct {
 	signErr error
 }
 
-func (s *stubCA) SignCSR(csrPEM, subjectCN string) (*agentca.CertResult, error) {
+// SignAttestationCSR is the attestation-key signing path. Returns a synthetic
+// CertResult unless signErr is set (drives the non-fatal attestation-error arm).
+func (s *stubCA) SignAttestationCSR(csrPEM, subjectCN string) (*agentca.CertResult, error) {
 	if s.signErr != nil {
 		return nil, s.signErr
 	}
@@ -62,12 +65,6 @@ func (s *stubCA) SignCSR(csrPEM, subjectCN string) (*agentca.CertResult, error) 
 		Serial:    "AABBCCDDEEFF0011",
 		ExpiresAt: exp,
 	}, nil
-}
-
-// SignAttestationCSR mirrors SignCSR for the attestation-key path.
-// Tests that don't exercise attestation get the same stub cert result.
-func (s *stubCA) SignAttestationCSR(csrPEM, subjectCN string) (*agentca.CertResult, error) {
-	return s.SignCSR(csrPEM, subjectCN)
 }
 
 // stubFleetManager implements FleetManager. registerErr, when non-nil, is
@@ -97,17 +94,48 @@ func (m *stubFleetManager) Store() *store.Store {
 }
 
 // stubEnrollSvc implements EnrollmentSvc.
+//
+// valid==true models a successful atomic consume (ConsumeToken returns the
+// token); valid==false models the lost-race / expired / unknown case
+// (ConsumeToken returns enrollment.ErrAlreadyUsed). markErr is surfaced from
+// LinkThing (the post-consume best-effort binding) so the existing
+// "mark-used error is non-fatal" assertions still exercise that path.
+// consumeCalls / linkCalls let race-arbiter tests count invocations.
 type stubEnrollSvc struct {
-	token   *enrollment.Token
-	valid   bool
-	markErr error
+	token       *enrollment.Token
+	valid       bool
+	markErr     error
+	consumeErr  error // when set, ConsumeToken returns this verbatim (overrides valid)
+	consumeOnce bool  // when true, only the first ConsumeToken wins; the rest get ErrAlreadyUsed
+	mu          sync.Mutex
+	consumeWon  int
+	linkCalls   int
 }
 
-func (s *stubEnrollSvc) ValidateToken(_ context.Context, _ string) (*enrollment.Token, bool) {
-	return s.token, s.valid
+func (s *stubEnrollSvc) ConsumeToken(_ context.Context, _ string) (*enrollment.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.consumeErr != nil {
+		return nil, s.consumeErr
+	}
+	if s.consumeOnce {
+		if s.consumeWon > 0 {
+			return nil, enrollment.ErrAlreadyUsed
+		}
+		s.consumeWon++
+		return s.token, nil
+	}
+	if !s.valid {
+		return nil, enrollment.ErrAlreadyUsed
+	}
+	s.consumeWon++
+	return s.token, nil
 }
 
-func (s *stubEnrollSvc) MarkUsed(_ context.Context, _, _ string) error {
+func (s *stubEnrollSvc) LinkThing(_ context.Context, _, _ string) error {
+	s.mu.Lock()
+	s.linkCalls++
+	s.mu.Unlock()
 	return s.markErr
 }
 
@@ -161,6 +189,28 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 	}
 }
 
+// ErrorResponse is a test-only helper for asserting the canonical nested error
+// envelope {error:{message,type,code}} (F-0319). It unmarshals the inner object.
+type ErrorResponse struct {
+	Code    string `json:"-"`
+	Message string `json:"-"`
+}
+
+func (e *ErrorResponse) UnmarshalJSON(data []byte) error {
+	var wrapper struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return err
+	}
+	e.Code = wrapper.Error.Code
+	e.Message = wrapper.Error.Message
+	return nil
+}
+
 // newPgxmockStore creates a pgxmock pool and wraps it in a store for use in
 // tests that exercise DB-bound store methods.
 func newPgxmockStore(t *testing.T) (*store.Store, pgxmock.PgxPoolIface) {
@@ -177,19 +227,6 @@ func newPgxmockStore(t *testing.T) (*store.Store, pgxmock.PgxPoolIface) {
 const validCSR = "-----BEGIN CERTIFICATE REQUEST-----\nSTUB\n-----END CERTIFICATE REQUEST-----\n"
 
 // Tests: request validation (no auth)
-
-func TestEnroll_MissingCSR(t *testing.T) {
-	api := buildAPI(&stubCA{}, nil, nil)
-	rec := post(t, api, map[string]any{"thingType": "agent"}, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d", rec.Code)
-	}
-	var body ErrorResponse
-	decodeBody(t, rec, &body)
-	if body.Code != "INVALID_REQUEST" {
-		t.Errorf("want INVALID_REQUEST, got %q", body.Code)
-	}
-}
 
 func TestEnroll_NoAuthHeader(t *testing.T) {
 	api := buildAPI(&stubCA{}, nil, nil)
@@ -239,38 +276,95 @@ func TestEnroll_TokenInvalid(t *testing.T) {
 	}
 }
 
-func TestEnroll_CASignError(t *testing.T) {
-	// CA.SignCSR returns an error → 400 BAD_REQUEST; internal error text must
-	// NOT be leaked verbatim in the "error" field (the handler wraps it with
-	// "CSR signing failed: ..." which does expose the CA error message — this
-	// is intentional per the spec: the CA error describes why the CSR was bad,
-	// not an internal secret). We assert status code and code field.
+// F-0204: a request that LOSES the consume race (ConsumeToken →
+// ErrAlreadyUsed) must be rejected with 401 BEFORE any enrollment side effect.
+// We wire a fleet manager whose store has ZERO mock expectations: if the
+// handler reached doEnroll (signed the CSR, registered the thing, stored the
+// token) it would hit an unexpected DB call and the test would fail. A clean
+// 401 with no DB interaction proves consume-FIRST ordering.
+func TestEnroll_TokenConsumeLostRace_NoEnrollmentSideEffect(t *testing.T) {
+	st, mock := newPgxmockStore(t)
+	defer mock.Close()
+	mgr := &stubFleetManager{st: st}
+	// valid:false → ConsumeToken returns enrollment.ErrAlreadyUsed.
+	svc := &stubEnrollSvc{token: nil, valid: false}
+	api := buildAPI(&stubCA{}, mgr, svc)
+
+	rec := post(t, api, map[string]any{"csrPem": validCSR, "thingType": "agent"},
+		map[string]string{"X-Enrollment-Token": "tok"})
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("lost-race consume must 401, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if svc.linkCalls != 0 {
+		t.Errorf("loser must not call LinkThing; got %d calls", svc.linkCalls)
+	}
+	// No DB expectations were registered; ExpectationsWereMet confirms the
+	// handler made zero store calls (doEnroll never ran).
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("loser performed unexpected DB work (doEnroll ran): %v", err)
+	}
+}
+
+// F-0204: under N concurrent enrollments with the SAME token, exactly one wins.
+// The stub's consumeOnce models the DB's atomic UPDATE...WHERE pending RETURNING
+// (the real arbiter, verified at the store layer); here we assert the handler
+// honours it — one consume win, the rest ErrAlreadyUsed → 401 — with no data
+// race in the consume bookkeeping (run under -race).
+func TestEnroll_ConcurrentSameToken_ExactlyOneWins(t *testing.T) {
 	tok := &enrollment.Token{
-		ID:        "tok-1",
+		ID:        "tok-race",
 		ThingType: "agent",
 		ExpiresAt: time.Now().Add(time.Hour),
 		Status:    "pending",
 	}
-	svc := &stubEnrollSvc{token: tok, valid: true}
-	ca := &stubCA{signErr: errors.New("invalid CSR PEM")}
-	api := buildAPI(ca, nil, svc)
-	rec := post(t, api, map[string]any{"csrPem": validCSR, "thingType": "agent"},
-		map[string]string{"X-Enrollment-Token": "tok"})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d", rec.Code)
+	svc := &stubEnrollSvc{token: tok, consumeOnce: true}
+
+	const n = 16
+	type result struct{ code int }
+	results := make(chan result, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Each goroutine gets its own store+manager so the only shared
+			// arbiter is the consumeOnce stub (mirrors per-request DB conns).
+			st, mock := newPgxmockStore(t)
+			defer mock.Close()
+			// The single winner will run doEnroll; allow its store calls.
+			mock.ExpectExec(`UPDATE thing`).
+				WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+				WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+			mock.ExpectExec(`INSERT INTO thing_agent`).
+				WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+				WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+			mgr := &stubFleetManager{st: st}
+			api := buildAPI(&stubCA{}, mgr, svc)
+			rec := post(t, api, map[string]any{"csrPem": validCSR, "thingType": "agent"},
+				map[string]string{"X-Enrollment-Token": "tok"})
+			results <- result{code: rec.Code}
+		}()
 	}
-	var body ErrorResponse
-	decodeBody(t, rec, &body)
-	if body.Code != "BAD_REQUEST" {
-		t.Errorf("want BAD_REQUEST, got %q", body.Code)
+	wg.Wait()
+	close(results)
+
+	wins, losses := 0, 0
+	for r := range results {
+		switch r.code {
+		case http.StatusOK:
+			wins++
+		case http.StatusUnauthorized:
+			losses++
+		default:
+			t.Errorf("unexpected status %d", r.code)
+		}
 	}
-	// The signer's internal error message should not appear raw in the body's
-	// "error" field as a naked internal string (i.e., the handler wraps it).
-	if body.Error == "invalid CSR PEM" {
-		t.Error("raw CA error leaked verbatim; handler must wrap it")
+	if wins != 1 {
+		t.Fatalf("exactly one enrollment must win the consume race; got %d wins, %d losses", wins, losses)
 	}
-	if !strings.Contains(body.Error, "CSR signing failed") {
-		t.Errorf("want 'CSR signing failed' prefix, got %q", body.Error)
+	if losses != n-1 {
+		t.Errorf("want %d losers, got %d", n-1, losses)
 	}
 }
 
@@ -317,7 +411,7 @@ func TestEnroll_StoreDeviceTokenError(t *testing.T) {
 
 	// StoreDeviceTokenHash: UPDATE thing SET metadata = jsonb_set(...)
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("db write failed"))
 
 	rec := post(t, api, map[string]any{"csrPem": validCSR, "thingType": "agent"},
@@ -350,7 +444,7 @@ func TestEnroll_HappyTokenEnrollment(t *testing.T) {
 	// StoreDeviceTokenHash: UPDATE thing SET metadata = jsonb_set(...) WHERE id = $1
 	// Args: (thingID string, tokenHash string)
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	// UpdateThingAgent with hostname/os/osVersion present:
@@ -378,11 +472,32 @@ func TestEnroll_HappyTokenEnrollment(t *testing.T) {
 	var body map[string]any
 	decodeBody(t, rec, &body)
 
-	// Verify response shape: required fields present.
-	for _, field := range []string{"id", "deviceToken", "certPem", "caCertPem", "certSerial", "trustLevel"} {
+	// Verify response shape: required fields present. Enrollment returns the
+	// device token + thing id (no mTLS cert fields — F-0203 removed that surface).
+	for _, field := range []string{"id", "deviceToken", "deviceTokenExpiresAt", "trustLevel"} {
 		if _, ok := body[field]; !ok {
 			t.Errorf("response missing field %q", field)
 		}
+	}
+	// The removed mTLS cert fields must NOT appear.
+	for _, field := range []string{"certPem", "caCertPem", "certSerial", "certExpiresAt"} {
+		if _, ok := body[field]; ok {
+			t.Errorf("response must not include removed cert field %q", field)
+		}
+	}
+
+	// The device token must carry a parseable, future expiry (F-0202): a token
+	// is no longer issued without a bounded lifetime.
+	expStr, _ := body["deviceTokenExpiresAt"].(string)
+	exp, perr := time.Parse(time.RFC3339, expStr)
+	if perr != nil {
+		t.Fatalf("deviceTokenExpiresAt not RFC3339: %q (%v)", expStr, perr)
+	}
+	if !exp.After(time.Now()) {
+		t.Errorf("deviceTokenExpiresAt must be in the future, got %v", exp)
+	}
+	if d := time.Until(exp); d > agentca.DeviceTokenTTL+time.Minute || d < agentca.DeviceTokenTTL-24*time.Hour {
+		t.Errorf("expiry %v not within one TTL (%v) of now", exp, agentca.DeviceTokenTTL)
 	}
 
 	// id must be non-empty.
@@ -400,15 +515,17 @@ func TestEnroll_HappyTokenEnrollment(t *testing.T) {
 		t.Errorf("trustLevel %v out of range [0,3]", tl)
 	}
 
-	// certPem must not be empty.
-	certPem, _ := body["certPem"].(string)
-	if certPem == "" {
-		t.Error("certPem must be non-empty")
+	// deviceToken must not be empty (it is the identity credential).
+	deviceToken, _ := body["deviceToken"].(string)
+	if deviceToken == "" {
+		t.Error("deviceToken must be non-empty")
 	}
 }
 
-func TestEnroll_HappyTokenEnrollment_ExplicitThingID(t *testing.T) {
-	// When the client supplies thingId, the response id must match.
+func TestEnroll_ClientSuppliedThingID_IsIgnored(t *testing.T) {
+	// F-0200 regression: a client that puts a thingId in the body (attempting to
+	// name/overwrite an existing Thing or a service identity) must NOT get that
+	// id — the Hub always mints a fresh server-assigned id.
 	tok := &enrollment.Token{
 		ID:        "tok-explicit",
 		ThingType: "agent",
@@ -421,20 +538,18 @@ func TestEnroll_HappyTokenEnrollment_ExplicitThingID(t *testing.T) {
 	mgr := &stubFleetManager{st: st}
 	api := buildAPI(&stubCA{}, mgr, svc)
 
-	// StoreDeviceTokenHash (no hostname/os in this request, so UpdateThingAgent
-	// skips the UPDATE thing SET hostname step and goes directly to INSERT).
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	mock.ExpectExec(`INSERT INTO thing_agent`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
 
-	const wantID = "agent-fixed-id-123"
+	const attackerID = "ai-gateway" // a well-known service identity to hijack
 	rec := post(t, api, map[string]any{
 		"csrPem":    validCSR,
 		"thingType": "agent",
-		"thingId":   wantID,
+		"thingId":   attackerID,
 	}, map[string]string{"X-Enrollment-Token": "tok"})
 
 	if rec.Code != http.StatusOK {
@@ -444,14 +559,58 @@ func TestEnroll_HappyTokenEnrollment_ExplicitThingID(t *testing.T) {
 	var body map[string]any
 	decodeBody(t, rec, &body)
 	gotID, _ := body["id"].(string)
-	if gotID != wantID {
-		t.Errorf("response id = %q, want %q", gotID, wantID)
+	if gotID == attackerID {
+		t.Fatalf("client-supplied thingId was honored — takeover possible (F-0200): %q", gotID)
+	}
+	if !strings.HasPrefix(gotID, "agent-") {
+		t.Errorf("expected a server-minted agent-* id, got %q", gotID)
 	}
 }
 
-func TestEnroll_MarkUsedError_IsNonFatal(t *testing.T) {
-	// MarkUsed failing must not cause a 5xx — it is best-effort and logged
-	// at Warn only. The response is still 200 OK.
+func TestEnroll_TokenThingTypeIsAuthoritative(t *testing.T) {
+	// F-0200 regression (type half): a token issued for `agent` must enroll as
+	// `agent` even if the request body claims `ai-gateway` — the caller cannot
+	// upgrade the type to a service identity.
+	tok := &enrollment.Token{
+		ID:        "tok-type",
+		ThingType: "agent",
+		ExpiresAt: time.Now().Add(time.Hour),
+		Status:    "pending",
+	}
+	svc := &stubEnrollSvc{token: tok, valid: true}
+	st, mock := newPgxmockStore(t)
+	defer mock.Close()
+	mgr := &stubFleetManager{st: st}
+	api := buildAPI(&stubCA{}, mgr, svc)
+
+	mock.ExpectExec(`UPDATE thing`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	mock.ExpectExec(`INSERT INTO thing_agent`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+
+	rec := post(t, api, map[string]any{
+		"csrPem":    validCSR,
+		"thingType": "ai-gateway", // attacker tries to enroll as a service
+	}, map[string]string{"X-Enrollment-Token": "tok"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	decodeBody(t, rec, &body)
+	gotID, _ := body["id"].(string)
+	if !strings.HasPrefix(gotID, "agent-") {
+		t.Errorf("token ThingType must win: expected an agent-* id, got %q (req claimed ai-gateway)", gotID)
+	}
+}
+
+func TestEnroll_LinkThingError_IsNonFatal(t *testing.T) {
+	// The post-consume LinkThing call (recording the minted thing id on the
+	// already-spent token) failing must not cause a 5xx — the token is
+	// single-use-consumed regardless, so this is best-effort and logged at
+	// Warn only. The response is still 200 OK.
 	tok := &enrollment.Token{
 		ID:        "tok-markused",
 		ThingType: "agent",
@@ -466,7 +625,7 @@ func TestEnroll_MarkUsedError_IsNonFatal(t *testing.T) {
 
 	// No hostname/os → UpdateThingAgent skips UPDATE thing SET hostname.
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	mock.ExpectExec(`INSERT INTO thing_agent`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -500,7 +659,7 @@ func TestEnroll_UpdateThingAgentError_IsNonFatal(t *testing.T) {
 
 	// StoreDeviceTokenHash succeeds.
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	// UpdateThingAgent fails on the INSERT step — should be swallowed.
 	mock.ExpectExec(`INSERT INTO thing_agent`).
@@ -519,8 +678,8 @@ func TestEnroll_UpdateThingAgentError_IsNonFatal(t *testing.T) {
 
 	var body map[string]any
 	decodeBody(t, rec, &body)
-	if _, ok := body["certPem"]; !ok {
-		t.Error("response must still include certPem")
+	if _, ok := body["deviceToken"]; !ok {
+		t.Error("response must still include deviceToken")
 	}
 }
 
@@ -532,27 +691,27 @@ func TestVerifyEnrollmentJWT_ReplayGuard(t *testing.T) {
 	// test the jtiCache contract directly — the same contract the handler
 	// relies on. This verifies the named failure mode "JWT_REPLAYED" at the
 	// component level.
-	c := newJTICache()
+	c := newJTICache(nil, nil)
 	defer c.Stop()
 
 	exp := time.Now().Add(5 * time.Minute)
 	const jti = "unique-jti-42"
 
 	// First call: new JTI → allowed.
-	if !c.MarkSeen(jti, exp) {
+	if !c.MarkSeen(context.Background(), jti, exp) {
 		t.Fatal("first MarkSeen should return true (new JTI)")
 	}
 	// Second call: same JTI → replay detected.
-	if c.MarkSeen(jti, exp) {
+	if c.MarkSeen(context.Background(), jti, exp) {
 		t.Fatal("second MarkSeen should return false (replay)")
 	}
 }
 
 func TestVerifyEnrollmentJWT_EmptyJTIRejected(t *testing.T) {
 	// MarkSeen with an empty jti must always return false (no-op guard).
-	c := newJTICache()
+	c := newJTICache(nil, nil)
 	defer c.Stop()
-	if c.MarkSeen("", time.Now().Add(time.Minute)) {
+	if c.MarkSeen(context.Background(), "", time.Now().Add(time.Minute)) {
 		t.Error("empty JTI must be rejected")
 	}
 }
@@ -586,28 +745,18 @@ func TestEnrollWithJWT_JWKSCacheNil_Returns503(t *testing.T) {
 
 // Tests: resolveThingID
 
-func TestResolveThingID_ExplicitID(t *testing.T) {
-	api := &EnrollmentAPI{}
-	id, err := api.resolveThingID("agent", "my-specific-id")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if id != "my-specific-id" {
-		t.Errorf("want 'my-specific-id', got %q", id)
-	}
-}
-
 func TestResolveThingID_Generated(t *testing.T) {
 	api := &EnrollmentAPI{}
-	id, err := api.resolveThingID("agent", "")
+	id, err := api.resolveThingID("agent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.HasPrefix(id, "agent-") {
 		t.Errorf("generated id must start with 'agent-', got %q", id)
 	}
-	// Uniqueness: two calls must produce different IDs.
-	id2, err := api.resolveThingID("agent", "")
+	// Uniqueness: two calls must produce different IDs — the server mints a
+	// fresh, unguessable ID every time; the caller can never pin one (F-0200).
+	id2, err := api.resolveThingID("agent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

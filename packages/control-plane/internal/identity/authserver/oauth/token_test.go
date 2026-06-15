@@ -100,15 +100,15 @@ func (f fakeUsers) GetByID(_ context.Context, id string) (*store.User, error) {
 // replace the fixture's clients field before building the handler.
 func defaultTokenTestClients() fakeClients {
 	return fakeClients{
-		"test-client":     {ID: "test-client", Type: "public", RequirePKCE: true},
-		"web-console":     {ID: "web-console", Type: "public", RequirePKCE: true},
-		"attacker-client": {ID: "attacker-client", Type: "public", RequirePKCE: true},
-		"agent-desktop":   {ID: "agent-desktop", Type: "public", RequirePKCE: true},
-		"other-client":    {ID: "other-client", Type: "public", RequirePKCE: true},
-		"cp-ui":           {ID: "cp-ui", Type: "public", RequirePKCE: true},
-		"any":             {ID: "any", Type: "public", RequirePKCE: true},
-		"refresh-test":    {ID: "refresh-test", Type: "public", RequirePKCE: true},
-		"confidential-c":  {ID: "confidential-c", Type: "confidential", RequirePKCE: true},
+		"test-client":     {ID: "test-client", Type: "public"},
+		"web-console":     {ID: "web-console", Type: "public"},
+		"attacker-client": {ID: "attacker-client", Type: "public"},
+		"agent-desktop":   {ID: "agent-desktop", Type: "public"},
+		"other-client":    {ID: "other-client", Type: "public"},
+		"cp-ui":           {ID: "cp-ui", Type: "public"},
+		"any":             {ID: "any", Type: "public"},
+		"refresh-test":    {ID: "refresh-test", Type: "public"},
+		"confidential-c":  {ID: "confidential-c", Type: "confidential"},
 	}
 }
 

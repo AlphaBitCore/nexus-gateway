@@ -26,7 +26,7 @@ func sp(s string) *string { return &s }
 var domCols = []string{
 	"id", "name", "description", "host_pattern", "host_match_type", "adapter_id", "adapter_config",
 	"enabled", "priority", "default_path_action", "on_adapter_error", "network_zone", "source",
-	"applicable_endpoints", "created_at", "updated_at", "created_by",
+	"created_at", "updated_at", "created_by",
 }
 var pathCols = []string{"id", "domain_id", "path_pattern", "match_type", "action", "priority", "description", "enabled", "created_at", "updated_at"}
 
@@ -34,7 +34,7 @@ func domRow(id, name string) []any {
 	return []any{
 		id, name, sp("d"), "*.openai.com", "SUFFIX", "openai", json.RawMessage(`{}`),
 		true, 10, "PROCESS", "FAIL_OPEN", "PUBLIC", "admin",
-		[]string{}, tNow, tNow, sp("admin"),
+		tNow, tNow, sp("admin"),
 	}
 }
 func pathRow(id, domainID string) []any {

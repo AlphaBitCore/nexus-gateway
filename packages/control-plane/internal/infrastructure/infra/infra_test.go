@@ -1538,17 +1538,17 @@ func TestSetupClient_DefaultAndOverride(t *testing.T) {
 	}
 }
 
-// Helper: the signature returns (url string, callerErr error) where callerErr
-// is the c.JSON return value (typically nil on a successful write). The
-// load-bearing signal that "resolve failed" is the recorded HTTP status code
-// AND a returned empty url. Tests therefore check rec.Code + the empty url.
+// Helper: the signature returns (url string, handled bool) where handled=true
+// means resolveManagementURL already wrote the error response and the caller
+// must return without proceeding (F-0104). Tests check rec.Code + handled +
+// the empty url on the unhappy paths.
 func TestResolveManagementURL_NotFound(t *testing.T) {
 	hub := &fakeHub{serviceMetaErr: errors.New("not found")}
 	h := newHandler(t, nil, hub, nil)
 	c, rec := echoCtx(http.MethodGet, "/", "", true)
-	url, _ := h.resolveManagementURL(c, "t1")
-	if url != "" {
-		t.Errorf("expected empty url; got %q", url)
+	url, handled := h.resolveManagementURL(c, "t1")
+	if url != "" || !handled {
+		t.Errorf("expected empty url + handled=true; got url=%q handled=%v", url, handled)
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d; want 404", rec.Code)
@@ -1559,9 +1559,9 @@ func TestResolveManagementURL_HubError(t *testing.T) {
 	hub := &fakeHub{serviceMetaErr: errors.New("connection refused")}
 	h := newHandler(t, nil, hub, nil)
 	c, rec := echoCtx(http.MethodGet, "/", "", true)
-	url, _ := h.resolveManagementURL(c, "t1")
-	if url != "" {
-		t.Errorf("expected empty url; got %q", url)
+	url, handled := h.resolveManagementURL(c, "t1")
+	if url != "" || !handled {
+		t.Errorf("expected empty url + handled=true; got url=%q handled=%v", url, handled)
 	}
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("code = %d; want 502", rec.Code)
@@ -1572,9 +1572,9 @@ func TestResolveManagementURL_NoManagementURL(t *testing.T) {
 	hub := &fakeHub{serviceMeta: &hub.ThingServiceMeta{ThingID: "t1", ManagementURL: ""}}
 	h := newHandler(t, nil, hub, nil)
 	c, rec := echoCtx(http.MethodGet, "/", "", true)
-	url, _ := h.resolveManagementURL(c, "t1")
-	if url != "" {
-		t.Errorf("expected empty url; got %q", url)
+	url, handled := h.resolveManagementURL(c, "t1")
+	if url != "" || !handled {
+		t.Errorf("expected empty url + handled=true; got url=%q handled=%v", url, handled)
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d; want 404", rec.Code)
@@ -1585,9 +1585,9 @@ func TestResolveManagementURL_Happy(t *testing.T) {
 	hub := &fakeHub{serviceMeta: &hub.ThingServiceMeta{ThingID: "t1", ManagementURL: "http://mgmt"}}
 	h := newHandler(t, nil, hub, nil)
 	c, _ := echoCtx(http.MethodGet, "/", "", true)
-	url, callerErr := h.resolveManagementURL(c, "t1")
-	if url != "http://mgmt" || callerErr != nil {
-		t.Errorf("got url=%q err=%v", url, callerErr)
+	url, handled := h.resolveManagementURL(c, "t1")
+	if url != "http://mgmt" || handled {
+		t.Errorf("got url=%q handled=%v", url, handled)
 	}
 }
 
@@ -1800,13 +1800,13 @@ func TestSetupGetPACFile_HappyWithDomainsAndFailOpen(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "name", "description", "host_pattern", "host_match_type",
 			"adapter_id", "adapter_config", "enabled", "priority", "default_path_action",
-			"on_adapter_error", "network_zone", "source", "applicableEndpoints",
+			"on_adapter_error", "network_zone", "source",
 			"created_at", "updated_at", "created_by",
 		}).
 			AddRow("d-1", "anthropic", (*string)(nil), "api.anthropic.com", "exact", "anthropic",
-				[]byte(`{}`), true, 100, "block", "passthrough", "internet", "builtin", []string{}, now, now, (*string)(nil)).
+				[]byte(`{}`), true, 100, "block", "passthrough", "internet", "builtin", now, now, (*string)(nil)).
 			AddRow("d-2", "anthropic-sub", (*string)(nil), "*.anthropic.com", "wildcard", "anthropic",
-				[]byte(`{}`), true, 90, "block", "passthrough", "internet", "builtin", []string{}, now, now, (*string)(nil)))
+				[]byte(`{}`), true, 90, "block", "passthrough", "internet", "builtin", now, now, (*string)(nil)))
 	// attachPaths sub-query takes 1 arg (ids slice).
 	mock.ExpectQuery(`FROM interception_path`).WithArgs(anyArgs(1)...).
 		WillReturnRows(pgxmock.NewRows([]string{
@@ -1841,8 +1841,13 @@ func TestSetupPatchOnboarding_BindError(t *testing.T) {
 }
 
 func TestSetupPatchOnboarding_HubError(t *testing.T) {
-	hub := &fakeHub{notifyErr: errors.New("boom")}
-	h := newHandler(t, nil, hub, nil)
+	// serviceMeta must resolve so we reach the config push; the notify error
+	// then surfaces as 502 (F-0104 added the up-front thing existence check).
+	fh := &fakeHub{
+		serviceMeta: &hub.ThingServiceMeta{ThingID: "t1", ManagementURL: "http://proxy"},
+		notifyErr:   errors.New("boom"),
+	}
+	h := newHandler(t, nil, fh, nil)
 	c, rec := echoCtxParam(http.MethodPatch, "/", `{"enabled":true}`, true, []string{"thingId"}, []string{"t1"})
 	if err := h.SetupPatchOnboarding(c); err != nil {
 		t.Fatalf("err: %v", err)
@@ -1853,8 +1858,10 @@ func TestSetupPatchOnboarding_HubError(t *testing.T) {
 }
 
 func TestSetupPatchOnboarding_Happy(t *testing.T) {
-	hub := &fakeHub{}
-	h := newHandler(t, nil, hub, nil)
+	fh := &fakeHub{
+		serviceMeta: &hub.ThingServiceMeta{ThingID: "t1", ManagementURL: "http://proxy"},
+	}
+	h := newHandler(t, nil, fh, nil)
 	c, rec := echoCtxParam(http.MethodPatch, "/", `{"enabled":true}`, true, []string{"thingId"}, []string{"t1"})
 	if err := h.SetupPatchOnboarding(c); err != nil {
 		t.Fatalf("err: %v", err)
@@ -1862,8 +1869,8 @@ func TestSetupPatchOnboarding_Happy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("code = %d; want 200", rec.Code)
 	}
-	if hub.notifyHits != 1 || hub.notifyReq.ThingType != "compliance-proxy" || hub.notifyReq.ConfigKey != "onboarding" {
-		t.Errorf("unexpected NotifyConfigChange call: %+v", hub.notifyReq)
+	if fh.notifyHits != 1 || fh.notifyReq.ThingType != "compliance-proxy" || fh.notifyReq.ConfigKey != "onboarding" {
+		t.Errorf("unexpected NotifyConfigChange call: %+v", fh.notifyReq)
 	}
 }
 

@@ -257,7 +257,7 @@ func TestNormalize_RequestChatShape(t *testing.T) {
 }
 
 // TestNormalize_ResponseNonStream pins response-side scoring against
-// the openai-chat-nonstream spec.
+// the shared OpenAI Chat codec the adapter delegates to.
 func TestNormalize_ResponseNonStream(t *testing.T) {
 	body := []byte(`{
 		"id":"chatcmpl-m365",

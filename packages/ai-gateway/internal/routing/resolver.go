@@ -1,10 +1,13 @@
 package routing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
@@ -37,10 +40,47 @@ type Resolver struct {
 	narrowingEngine *matcher.NarrowingEngine
 	healthRanker    *core.HealthRanker
 	// capCache is the atomically swappable capability snapshot used by the
-	// embeddings pre-filter (§T5). Nil disables the pre-filter so callers
+	// embeddings pre-filter. Nil disables the pre-filter so callers
 	// that do not wire a capability cache (tests, degraded paths) are not
 	// affected.
 	capCache *capability.Cache
+	// condCache memoizes parsed rule MatchConditions, content-addressed by a
+	// hash of the raw JSON. ruleMatches runs per-rule on every request (across
+	// stage-0 narrowing and the stage-1 loop), so without this each request
+	// re-unmarshals every rule's conditions. Self-invalidating: a changed rule
+	// has new bytes → a new key. Lock-free; see parseMatchConditions.
+	condCache sync.Map // map[uint64]*condCacheEntry
+}
+
+// condCacheEntry is a parsed-conditions cache value. raw is retained so a hash
+// hit can be byte-verified, ruling out the rare FNV-64 collision. conds is nil
+// when the raw JSON is malformed (cached so a bad rule is not re-parsed).
+type condCacheEntry struct {
+	raw   []byte
+	conds *core.MatchConditions
+}
+
+// parseMatchConditions returns the parsed MatchConditions for raw, unmarshaling
+// once and serving the cached result thereafter. Returns nil for malformed
+// JSON (callers treat that as "no match", preserving the prior behavior). The
+// distinct-conditions set equals the number of routing rules — tiny — so the
+// map needs no eviction.
+func (r *Resolver) parseMatchConditions(raw json.RawMessage) *core.MatchConditions {
+	h := fnv.New64a()
+	_, _ = h.Write(raw)
+	key := h.Sum64()
+	if v, ok := r.condCache.Load(key); ok {
+		if e := v.(*condCacheEntry); bytes.Equal(e.raw, raw) {
+			return e.conds
+		}
+	}
+	var conds core.MatchConditions
+	var parsed *core.MatchConditions
+	if err := json.Unmarshal(raw, &conds); err == nil {
+		parsed = &conds
+	}
+	r.condCache.Store(key, &condCacheEntry{raw: append([]byte(nil), raw...), conds: parsed})
+	return parsed
 }
 
 // NewResolver creates a Resolver with the given catalog source and
@@ -144,13 +184,24 @@ func (r *Resolver) Resolve(ctx context.Context, rctx *core.RoutingContext) (*cor
 			// best-effort: a malformed fallback chain just yields no recovery
 			// targets; the primary plan still routes normally.
 			_ = json.Unmarshal(primaryRule.FallbackChain, &chain)
+			var fbTargets []core.RoutingTarget
 			for _, entry := range chain {
 				target, err := r.lookupTarget(ctx, entry.ProviderID, entry.ModelID)
 				if err == nil {
-					target.Source = "fallback"
-					plan.RecoveryTargets = append(plan.RecoveryTargets, *target)
+					fbTargets = append(fbTargets, *target)
 				}
 			}
+			// Inline fallback-chain recovery targets MUST satisfy the
+			// VK's allowedModels allowlist, exactly like the primary (above) and
+			// fallbackRules (below) paths. Without this Filter a FallbackChain
+			// entry pointing at a provider/model outside the VK's allowlist would
+			// be dispatched — and its upstream credential consumed — on primary
+			// failure, silently escaping the per-VK model-scope boundary.
+			filtered := r.narrowingEngine.Filter(fbTargets, narrowing, rctx)
+			for i := range filtered {
+				filtered[i].Source = "fallback"
+			}
+			plan.RecoveryTargets = append(plan.RecoveryTargets, filtered...)
 		}
 	}
 
@@ -183,8 +234,14 @@ func (r *Resolver) Resolve(ctx context.Context, rctx *core.RoutingContext) (*cor
 	// rejected, Resolve returns *core.NoCompatibleProviderError with
 	// available_capabilities so the handler can surface a rich 400 body.
 	//
+	// Both PRIMARY (plan.Targets) and recovery/fallback (plan.RecoveryTargets)
+	// targets are filtered: ResolveTargets flattens both into allTargets and
+	// gates the rich-400 on the combined count, so a recovery target that
+	// bypassed the capability check would let an incompatible request dispatch
+	// instead of returning the 400.
 	if rctx.EndpointType == typology.EndpointKindEmbeddings && r.capCache != nil && rctx.EmbeddingRequest != nil {
 		plan.Targets = r.applyCapabilityFilter(plan.Targets, rctx)
+		plan.RecoveryTargets = r.applyCapabilityFilter(plan.RecoveryTargets, rctx)
 	}
 
 	// Check if model was substituted.
@@ -235,57 +292,19 @@ func (r *Resolver) applyCapabilityFilter(targets []core.RoutingTarget, rctx *cor
 	return kept
 }
 
-// hydrateRequestedModel resolves the request `model` string against the
-// catalog (Model.code exact + Model.aliases membership) and stores every
-// matching Model.id on rctx.RequestedModel.CandidateIDs. Provider/Type/
-// ProviderModelID are filled from the first candidate when empty so
-// matchConditions.providers / modelTypes have something to match on
-// (single-provider catalog, today's common case). The "auto" sentinel
-// is intentionally left without candidates so matchConditions.models
-// cannot accidentally route auto requests through a UUID rule — those
-// must be authored with matchConditions.requestedModelLiterals.
-func (r *Resolver) hydrateRequestedModel(ctx context.Context, rctx *core.RoutingContext) {
-	if rctx == nil {
-		return
-	}
-	if rctx.RequestedModel.ID == "" || rctx.RequestedModel.ID == "auto" {
-		return
-	}
-	candidates, err := r.db.ResolveModelCandidates(ctx, rctx.RequestedModel.ID)
-	if err != nil {
-		r.logger.Debug("router: resolve model candidates", "model", rctx.RequestedModel.ID, "error", err)
-		return
-	}
-	if len(candidates) == 0 {
-		return
-	}
-	rctx.RequestedModel.CandidateIDs = make([]string, 0, len(candidates))
-	for _, m := range candidates {
-		rctx.RequestedModel.CandidateIDs = append(rctx.RequestedModel.CandidateIDs, m.ID)
-	}
-	first := candidates[0]
-	if rctx.RequestedModel.ProviderID == "" {
-		rctx.RequestedModel.ProviderID = first.ProviderID
-	}
-	if rctx.RequestedModel.Type == "" {
-		rctx.RequestedModel.Type = first.Type
-	}
-	if rctx.RequestedModel.ProviderModelID == "" {
-		rctx.RequestedModel.ProviderModelID = first.ProviderModelID
-	}
-}
-
 // ruleMatches checks if a routing rule applies to the current context. A rule
 // with empty matchConditions matches every request — that is the semantic
 // contract for a catch-all rule. Per-rule model filtering lives exclusively
 // in matchConditions.models.
 func (r *Resolver) ruleMatches(rule store.RoutingRule, modelID string, rctx *core.RoutingContext) bool {
 	if len(rule.MatchConditions) > 0 {
-		var conds core.MatchConditions
-		if err := json.Unmarshal(rule.MatchConditions, &conds); err != nil {
+		conds := r.parseMatchConditions(rule.MatchConditions)
+		if conds == nil {
+			// Malformed conditions never match — same as the prior
+			// unmarshal-error path.
 			return false
 		}
-		return matcher.RuleMatchesContext(&conds, modelID, rctx)
+		return matcher.RuleMatchesContext(conds, modelID, rctx)
 	}
 	return true
 }
@@ -391,15 +410,20 @@ func (r *Resolver) ResolveTargets(ctx context.Context, rctx *core.RoutingContext
 		allTargets = r.healthRanker.Reorder(allTargets)
 	}
 
+	reqModelID, reqProviderID, reqProviderName := requestedIdentity(rctx.RequestedModel)
+
 	return &core.RouteResult{
-		Targets:             allTargets,
-		Trace:               plan.Trace,
-		PipelineTrace:       plan.PipelineTrace,
-		RuleID:              plan.RuleID,
-		RuleName:            plan.RuleName,
-		Substituted:         plan.Substituted,
-		OriginalModelID:     plan.OriginalModelID,
-		RuleRetryPolicyJSON: plan.RuleRetryPolicyJSON,
+		Targets:               allTargets,
+		Trace:                 plan.Trace,
+		PipelineTrace:         plan.PipelineTrace,
+		RuleID:                plan.RuleID,
+		RuleName:              plan.RuleName,
+		Substituted:           plan.Substituted,
+		OriginalModelID:       plan.OriginalModelID,
+		RequestedModelID:      reqModelID,
+		RequestedProviderID:   reqProviderID,
+		RequestedProviderName: reqProviderName,
+		RuleRetryPolicyJSON:   plan.RuleRetryPolicyJSON,
 	}, nil
 }
 

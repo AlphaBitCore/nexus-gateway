@@ -26,11 +26,14 @@ clean:
 	rm -rf bin/
 
 # Generate a local ECDSA CA for compliance-proxy.dev.yaml (gitignored under dev-certs/).
+# pathlen:0 — the proxy CA only ever signs leaf certs; the constraint stops a
+# stolen CA key from minting an intermediate CA that devices would trust.
 dev-certs:
 	mkdir -p dev-certs
 	openssl ecparam -name prime256v1 -genkey -noout -out dev-certs/ca.key
 	openssl req -new -x509 -key dev-certs/ca.key -out dev-certs/ca.crt -days 365 \
-		-subj "/O=Nexus Dev/CN=Nexus Compliance Proxy Dev CA"
+		-subj "/O=Nexus Dev/CN=Nexus Compliance Proxy Dev CA" \
+		-addext "basicConstraints=critical,CA:TRUE,pathlen:0"
 	@echo "CA written to dev-certs/ca.crt and dev-certs/ca.key"
 
 # Build and run with local dev config (from this directory).

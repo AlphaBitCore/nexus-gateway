@@ -36,6 +36,11 @@ type WriteRequest struct {
 	// not the DB UUID.
 	EmbeddingWireModel string
 
+	// AllowCrossModel mirrors the fleet semantic policy. Folded into the
+	// entry key (see Client.StoreEntry / entryKey) so model-strict writes
+	// keep one entry per (provider, model) instead of mutually evicting.
+	AllowCrossModel bool
+
 	// Cost accounting: cost per input token in USD, pre-computed by the caller.
 	// Writer multiplies by PromptTokens from the embed response.
 	CostPerInputTokenUSD float64
@@ -187,6 +192,7 @@ func (w *Writer) Write(ctx context.Context, req WriteRequest) (WriteResult, erro
 		Usage:            req.Usage,
 		TTL:              req.TTL,
 		OriginWireShape:  req.OriginWireShape,
+		AllowCrossModel:  req.AllowCrossModel,
 	}
 
 	if err := w.client.StoreEntry(ctx, snap.RedisIndexName, storeIn, w.maxEntryBytes); err != nil {

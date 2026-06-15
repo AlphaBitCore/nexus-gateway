@@ -25,11 +25,14 @@ func TestExternalBackend_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// SEC-M2-01: the external backend has no APIKey field; auth is supplied
+	// ONLY through CustomHeaders. Set Authorization there and assert it
+	// arrives — proving the operator's own auth channel works and that there
+	// is no separate provider-credential bearer path.
 	b := &ExternalBackend{
 		URL:           srv.URL,
-		APIKey:        "sk-test",
 		Model:         "gpt-4o-mini",
-		CustomHeaders: map[string]string{"X-Tenant": "nexus"},
+		CustomHeaders: map[string]string{"X-Tenant": "nexus", "Authorization": "Bearer judge-token"},
 		HTTPClient:    &http.Client{Timeout: 2 * time.Second},
 	}
 	resp, err := b.Call(context.Background(), "the user said hi")
@@ -39,8 +42,8 @@ func TestExternalBackend_HappyPath(t *testing.T) {
 	if resp.Decision != "approve" || resp.Confidence != 0.9 {
 		t.Errorf("resp: %+v", resp)
 	}
-	if gotAuth != "Bearer sk-test" {
-		t.Errorf("auth: %q", gotAuth)
+	if gotAuth != "Bearer judge-token" {
+		t.Errorf("auth (must come from CustomHeaders only): %q", gotAuth)
 	}
 	if gotCustomHeader != "nexus" {
 		t.Errorf("custom header: %q", gotCustomHeader)
@@ -87,7 +90,6 @@ func TestExternalBackend_NoCostStamping_EvenWithUsageInResponse(t *testing.T) {
 
 	b := &ExternalBackend{
 		URL:        srv.URL,
-		APIKey:     "sk-x",
 		Model:      "any-model",
 		HTTPClient: &http.Client{Timeout: 2 * time.Second},
 	}
@@ -106,7 +108,7 @@ func TestExternalBackend_Non2xx(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"internal"}`))
 	}))
 	defer srv.Close()
-	b := &ExternalBackend{URL: srv.URL, APIKey: "k", Model: "m", HTTPClient: &http.Client{Timeout: time.Second}}
+	b := &ExternalBackend{URL: srv.URL, Model: "m", HTTPClient: &http.Client{Timeout: time.Second}}
 	_, err := b.Call(context.Background(), "hi")
 	if err == nil || !strings.Contains(err.Error(), "status=500") {
 		t.Fatalf("expected status=500 error, got %v", err)
@@ -118,10 +120,36 @@ func TestExternalBackend_MalformedContent(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"not json"}}]}`))
 	}))
 	defer srv.Close()
-	b := &ExternalBackend{URL: srv.URL, APIKey: "k", Model: "m", HTTPClient: &http.Client{Timeout: time.Second}}
+	b := &ExternalBackend{URL: srv.URL, Model: "m", HTTPClient: &http.Client{Timeout: time.Second}}
 	_, err := b.Call(context.Background(), "hi")
 	if err == nil || !strings.Contains(err.Error(), "no JSON object") {
 		t.Fatalf("expected parse error, got %v", err)
+	}
+}
+
+// TestExternalBackend_OversizeBodyCapped verifies F-0240: a success-path
+// response body larger than the 1 MiB LimitReader ceiling is truncated rather
+// than buffered whole. The truncated stream is no longer valid JSON, so Call
+// returns a parse error instead of consuming unbounded memory.
+func TestExternalBackend_OversizeBodyCapped(t *testing.T) {
+	// 2 MiB of padding inside a JSON string value that is never closed within
+	// the first 1 MiB, guaranteeing the truncated read is invalid JSON.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"`))
+		pad := strings.Repeat("A", 2<<20)
+		_, _ = w.Write([]byte(pad))
+		_, _ = w.Write([]byte(`"}}]}`))
+	}))
+	defer srv.Close()
+
+	b := &ExternalBackend{URL: srv.URL, Model: "m", HTTPClient: &http.Client{Timeout: 5 * time.Second}}
+	_, err := b.Call(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("expected parse error from truncated oversize body, got nil")
+	}
+	if !strings.Contains(err.Error(), "parse chat response") {
+		t.Fatalf("expected parse error (truncated JSON), got %v", err)
 	}
 }
 
@@ -130,7 +158,7 @@ func TestExternalBackend_Timeout(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}))
 	defer srv.Close()
-	b := &ExternalBackend{URL: srv.URL, APIKey: "k", Model: "m", HTTPClient: &http.Client{Timeout: 10 * time.Millisecond}}
+	b := &ExternalBackend{URL: srv.URL, Model: "m", HTTPClient: &http.Client{Timeout: 10 * time.Millisecond}}
 	_, err := b.Call(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected timeout")

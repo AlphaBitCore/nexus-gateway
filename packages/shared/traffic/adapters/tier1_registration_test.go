@@ -10,10 +10,9 @@ import (
 
 // TestRegisterTier1AdapterNormalizers_RegistersAll verifies that the
 // type-assert loop in RegisterTier1AdapterNormalizers picks up every
-// adapter that implements normalize.Normalizer. The expected count is
-// "every built-in adapter except those covered by RegisterDefaultAIBuiltins
-// (anthropic/gemini) and except cursor (gRPC-protobuf, intentionally
-// skipped)". This test pins that contract so adding a Normalize method
+// adapter that implements normalize.Normalizer (the consumer-web / IDE
+// per-host adapters; standard-API vendor adapters carry no Normalize
+// method). This test pins that contract so adding a Normalize method
 // to a new adapter is automatically picked up without a separate
 // registration step.
 func TestRegisterTier1AdapterNormalizers_RegistersAll(t *testing.T) {
@@ -26,22 +25,19 @@ func TestRegisterTier1AdapterNormalizers_RegistersAll(t *testing.T) {
 	}
 
 	// Spot-check a few adapter IDs we know register via the type-assert
-	// loop. Skipped (alreadyCoveredByAIBuiltins) adapters — anthropic,
-	// gemini, bedrock, vertex, deepseek, groq, …  — are explicitly NOT
-	// registered as per-host Tier 1 entries because the AI-builtin
-	// normalizers (which run in the same Registry under those keys)
-	// parse those formats more precisely.
+	// loop. Standard-API vendor adapters — anthropic, gemini, bedrock,
+	// vertex, deepseek, groq, … — carry no Normalize method and are NOT
+	// registered as per-host Tier 1 entries: the shared codecs own
+	// those wire-format keys via RegisterDefaultAIBuiltins.
 	mustHave := []string{
 		"chatgpt-web",           // consumer-surface adapter
 		"claude-web",            // consumer-surface
 		"chatgpt-web",           // dedupe ok
 		"anthropic-console-web", // Anthropic web console, distinct from "anthropic"
 		"gemini-web",            // distinct from AI builtin "gemini"
-		// "openai-compat" was removed (#72): the AI-builtin
-		// OpenAIChatNormalizer is now registered under that key too
-		// (alias), so RegisterTier1AdapterNormalizers skips it via
-		// alreadyCoveredByAIBuiltins — same contract as anthropic /
-		// gemini above.
+		// "openai-compat" is absent: the shared OpenAIChatNormalizer
+		// owns that key (alias) via RegisterDefaultAIBuiltins — same
+		// contract as anthropic / gemini above.
 	}
 	for _, id := range mustHave {
 		found := false
@@ -59,7 +55,7 @@ func TestRegisterTier1AdapterNormalizers_RegistersAll(t *testing.T) {
 	// Spot-check we did NOT register over AI-builtin keys.
 	for _, k := range gotKeys {
 		if k == "anthropic" || k == "gemini" {
-			t.Errorf("adapter %q overrode an AI-builtin normalizer — should be skipped per alreadyCoveredByAIBuiltins", k)
+			t.Errorf("adapter %q overrode an AI-builtin normalizer — standard-API vendor adapters must not implement Normalize", k)
 		}
 	}
 }
@@ -80,10 +76,9 @@ func TestTier1AdapterNormalizes_OpenAIChatBody(t *testing.T) {
 		"temperature": 0.7
 	}`)
 	// Use "kimi-web" — Moonshot's consumer web variant. The API-level
-	// "moonshot" adapter ID collides with the OpenAI-compatible AI
-	// builtin (see alreadyCoveredByAIBuiltins) and is intentionally
-	// skipped by Tier-1 per-host registration; the -web variant has a
-	// unique ID and IS registered.
+	// "moonshot" wire-format key belongs to the shared OpenAI-compatible
+	// codec; the -web variant has a unique per-host ID and IS registered
+	// here.
 	payload, err := reg.Normalize(context.Background(), body, normalize.Meta{
 		AdapterType: "kimi-web",
 		Direction:   normalize.DirectionRequest,
@@ -108,9 +103,9 @@ func TestTier1AdapterNormalizes_OpenAIChatBody(t *testing.T) {
 
 // TestTier1AdapterNormalizes_AnthropicBody verifies an Anthropic-shape
 // body routes through the anthropic-console-web adapter Normalizer
-// (bedrock / anthropic adapter IDs collide with the AI-builtin
-// AnthropicMessagesNormalizer and are intentionally skipped — see
-// alreadyCoveredByAIBuiltins).
+// (the bedrock / anthropic wire-format keys belong to the shared
+// AnthropicMessagesNormalizer codec; only the -web per-host adapter
+// registers here).
 func TestTier1AdapterNormalizes_AnthropicBody(t *testing.T) {
 	reg := normalize.NewRegistry()
 	RegisterTier1AdapterNormalizers(reg)

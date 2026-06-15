@@ -72,6 +72,25 @@ func decodeResp(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	return m
 }
 
+// errCode extracts the machine-readable code from the canonical nested error
+// envelope {error:{message,type,code}} (F-0319).
+func errCode(m map[string]any) any {
+	if inner, ok := m["error"].(map[string]any); ok {
+		return inner["code"]
+	}
+	return nil
+}
+
+// errMsg extracts the human-readable message from the canonical nested error
+// envelope (F-0319).
+func errMsg(m map[string]any) string {
+	if inner, ok := m["error"].(map[string]any); ok {
+		s, _ := inner["message"].(string)
+		return s
+	}
+	return ""
+}
+
 func silentLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -389,8 +408,8 @@ func TestHandleErr_Dispatch(t *testing.T) {
 			t.Errorf("status=%d want 404", rec.Code)
 		}
 		m := decodeResp(t, rec)
-		if m["code"] != "NOT_FOUND" {
-			t.Errorf("code=%v want NOT_FOUND", m["code"])
+		if errCode(m) != "NOT_FOUND" {
+			t.Errorf("code=%v want NOT_FOUND", errCode(m))
 		}
 	})
 	t.Run("generic error maps to 500 INTERNAL_ERROR", func(t *testing.T) {
@@ -402,8 +421,8 @@ func TestHandleErr_Dispatch(t *testing.T) {
 			t.Errorf("status=%d want 500", rec.Code)
 		}
 		m := decodeResp(t, rec)
-		if m["code"] != "INTERNAL_ERROR" {
-			t.Errorf("code=%v want INTERNAL_ERROR", m["code"])
+		if errCode(m) != "INTERNAL_ERROR" {
+			t.Errorf("code=%v want INTERNAL_ERROR", errCode(m))
 		}
 	})
 }
@@ -422,7 +441,7 @@ func TestHubAPI_ConfigUpdate_MissingThingType(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status=%d want 400", rec.Code)
 	}
-	if decodeResp(t, rec)["code"] != "INVALID_REQUEST" {
+	if errCode(decodeResp(t, rec)) != "INVALID_REQUEST" {
 		t.Error("code should be INVALID_REQUEST")
 	}
 }
@@ -558,9 +577,8 @@ func TestHubAPI_ListGlobalOverrides_InvalidHasTtl_Returns400(t *testing.T) {
 		t.Errorf("status=%d want 400 for hasTtl=yes", rec.Code)
 	}
 	m := decodeResp(t, rec)
-	errMsg, _ := m["error"].(string)
-	if !strings.Contains(errMsg, "hasTtl") {
-		t.Errorf("error msg should mention hasTtl, got %q", errMsg)
+	if !strings.Contains(errMsg(m), "hasTtl") {
+		t.Errorf("error msg should mention hasTtl, got %q", errMsg(m))
 	}
 }
 
@@ -573,9 +591,8 @@ func TestHubAPI_ListGlobalOverrides_InvalidStale_Returns400(t *testing.T) {
 		t.Errorf("status=%d want 400 for stale=nope", rec.Code)
 	}
 	m := decodeResp(t, rec)
-	errMsg, _ := m["error"].(string)
-	if !strings.Contains(errMsg, "stale") {
-		t.Errorf("error msg should mention stale, got %q", errMsg)
+	if !strings.Contains(errMsg(m), "stale") {
+		t.Errorf("error msg should mention stale, got %q", errMsg(m))
 	}
 }
 
@@ -791,7 +808,7 @@ func TestHubAPI_GenerateEnrollmentToken_MissingLabel_Returns400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status=%d want 400", rec.Code)
 	}
-	if decodeResp(t, rec)["code"] != "INVALID_REQUEST" {
+	if errCode(decodeResp(t, rec)) != "INVALID_REQUEST" {
 		t.Error("code should be INVALID_REQUEST")
 	}
 }
@@ -854,8 +871,10 @@ func TestInternalThingsAPI_ShadowReport_ValidationBranches(t *testing.T) {
 		{"missing id", map[string]any{"reported": map[string]any{}}, "id is required"},
 		{"missing reported", map[string]any{"id": "t-1"}, "reported is required"},
 		{"negative reportedVer", map[string]any{"id": "t-1", "reported": map[string]any{}, "reportedVer": -1}, "non-negative"},
-		{"invalid reason value", map[string]any{"id": "t-1", "reported": map[string]any{}, "reason": "hacky"}, "invalid reason"},
-		{"break_glass without actorTokenId", map[string]any{"id": "t-1", "reported": map[string]any{}, "reason": "break_glass"}, "actorTokenId"},
+		// Break-glass now has a dedicated route; the normal shadow path rejects
+		// ANY reason (closes the hand-crafted /shadow break-glass bypass).
+		{"reason rejected (hacky)", map[string]any{"id": "t-1", "reported": map[string]any{}, "reason": "hacky"}, "must not carry a reason"},
+		{"reason rejected (break_glass)", map[string]any{"id": "t-1", "reported": map[string]any{}, "reason": "break_glass"}, "must not carry a reason"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -863,6 +882,63 @@ func TestInternalThingsAPI_ShadowReport_ValidationBranches(t *testing.T) {
 			_ = h.ShadowReport(c)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status=%d want 400", rec.Code)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tt.wantContain) {
+				t.Errorf("response %q does not contain %q", body, tt.wantContain)
+			}
+		})
+	}
+}
+
+// TestInternalThingsAPI_BreakGlassReport_ValidationBranches exercises the named
+// 400 gates on the dedicated break-glass route. Each case is rejected before
+// the (nil) Manager is touched: id/reported/reportedVer shape, missing
+// actorTokenId, the F-0139 allowlist (non-writable key), and the F-0139 schema
+// gate (malformed state for a writable key).
+func TestInternalThingsAPI_BreakGlassReport_ValidationBranches(t *testing.T) {
+	e := newTestEcho()
+	h := &InternalThingsAPI{}
+	tests := []struct {
+		name        string
+		body        map[string]any
+		wantContain string
+	}{
+		{"missing id", map[string]any{"reported": map[string]any{}}, "id is required"},
+		{"missing reported", map[string]any{"id": "t-1"}, "reported is required"},
+		{"negative reportedVer", map[string]any{"id": "t-1", "reported": map[string]any{}, "reportedVer": -1}, "non-negative"},
+		{"missing actorTokenId", map[string]any{"id": "t-1", "reported": map[string]any{}}, "actorTokenId"},
+		{
+			"non-allowlisted key rejected",
+			map[string]any{
+				"id": "t-1", "reported": map[string]any{"credentials": map[string]any{"x": 1}},
+				"keyVersions": map[string]any{"credentials": 4}, "actorTokenId": "a1b2c3d4",
+			},
+			"allowlist",
+		},
+		{
+			"malformed killswitch state rejected",
+			map[string]any{
+				"id": "t-1", "reported": map[string]any{"killswitch": "engaged"},
+				"keyVersions": map[string]any{"killswitch": 4}, "actorTokenId": "a1b2c3d4",
+			},
+			"schema validation",
+		},
+		{
+			"unknown field in killswitch state rejected",
+			map[string]any{
+				"id": "t-1", "reported": map[string]any{"killswitch": map[string]any{"enabled": true}},
+				"keyVersions": map[string]any{"killswitch": 4}, "actorTokenId": "a1b2c3d4",
+			},
+			"schema validation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, rec := echoCtxJSON(e, http.MethodPost, tt.body, nil)
+			_ = h.BreakGlassReport(c)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status=%d want 400; body=%s", rec.Code, rec.Body.String())
 			}
 			body := rec.Body.String()
 			if !strings.Contains(body, tt.wantContain) {
@@ -944,6 +1020,7 @@ func TestInternalThingsAPI_AuditUpload_NilMQProducer_Returns503(t *testing.T) {
 	e := newTestEcho()
 	h := &InternalThingsAPI{MQProducer: nil}
 	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"thingId": "t-1", "events": []any{map[string]any{"id": "e1"}}}, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.AuditUpload(c)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status=%d want 503", rec.Code)
@@ -962,6 +1039,7 @@ func TestInternalThingsAPI_AuditUpload_SourceStamp_And_EmptyStatusStrip(t *testi
 		"events":  []any{map[string]any{"id": "e1", "usageExtractionStatus": ""}},
 	}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.AuditUpload(c)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status=%d want 200", rec.Code)
@@ -991,6 +1069,7 @@ func TestInternalThingsAPI_AuditUpload_PreexistingSource_Preserved(t *testing.T)
 		"events":  []any{map[string]any{"id": "e1", "source": "gateway"}},
 	}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.AuditUpload(c)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status=%d want 200", rec.Code)
@@ -1054,6 +1133,7 @@ func TestInternalThingsAPI_ExemptionUpload_NilMQ_Returns503(t *testing.T) {
 	e := newTestEcho()
 	h := &InternalThingsAPI{MQProducer: nil}
 	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"thingId": "t-1", "host": "example.com", "expiresAt": time.Now().Add(time.Hour)}, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.ExemptionUpload(c)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status=%d want 503", rec.Code)
@@ -1070,54 +1150,6 @@ func TestInternalThingsAPI_UpdateCheck_MissingCurrentVersion_Returns400(t *testi
 	_ = h.UpdateCheck(e.NewContext(req, rec))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status=%d want 400", rec.Code)
-	}
-}
-
-// InternalThingsAPI.RenewCert — validation + security branches
-
-func TestInternalThingsAPI_RenewCert_MissingThingID_Returns400(t *testing.T) {
-	e := newTestEcho()
-	h := &InternalThingsAPI{}
-	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"csr": "pem"}, nil)
-	_ = h.RenewCert(c)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status=%d want 400", rec.Code)
-	}
-}
-
-func TestInternalThingsAPI_RenewCert_MissingCSR_Returns400(t *testing.T) {
-	e := newTestEcho()
-	h := &InternalThingsAPI{}
-	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"thingId": "t-1"}, nil)
-	_ = h.RenewCert(c)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status=%d want 400", rec.Code)
-	}
-}
-
-func TestInternalThingsAPI_RenewCert_NilCA_Returns503(t *testing.T) {
-	e := newTestEcho()
-	h := &InternalThingsAPI{CA: nil}
-	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"thingId": "t-1", "csr": "-----BEGIN CERTIFICATE REQUEST-----"}, nil)
-	_ = h.RenewCert(c)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("status=%d want 503", rec.Code)
-	}
-}
-
-func TestInternalThingsAPI_RenewCert_ThingIDMismatch_Returns403(t *testing.T) {
-	e := newTestEcho()
-	h := &InternalThingsAPI{}
-	body := map[string]any{"thingId": "t-other", "csr": "pem"}
-	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(b))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.Set(thingContextKey, &store.Thing{ID: "t-1"})
-	_ = h.RenewCert(c)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status=%d want 403", rec.Code)
 	}
 }
 
@@ -1185,4 +1217,123 @@ func buildScheduler(jobs []testJob) *scheduler.Scheduler {
 		}
 	}
 	return s
+}
+
+// --- F-0060: cross-Thing identity binding on the internal Things API ---
+
+// TestRequireThingMatch unit-tests the shared authorization predicate: a
+// service-token caller (no context Thing) is always allowed; a device-token
+// caller is allowed only for its own id and blocked (403) for any other id.
+func TestRequireThingMatch(t *testing.T) {
+	e := newTestEcho()
+	mk := func() (echo.Context, *httptest.ResponseRecorder) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		return e.NewContext(req, rec), rec
+	}
+
+	if c, _ := mk(); requireThingMatch(c, "anything") {
+		t.Error("service-token caller (nil Thing) must not be blocked")
+	}
+	cMatch, _ := mk()
+	cMatch.Set(thingContextKey, &store.Thing{ID: "t-1"})
+	if requireThingMatch(cMatch, "t-1") {
+		t.Error("device caller operating on its own id must not be blocked")
+	}
+	cMis, rec := mk()
+	cMis.Set(thingContextKey, &store.Thing{ID: "t-1"})
+	if !requireThingMatch(cMis, "t-2") {
+		t.Fatal("device caller operating on another id must be blocked")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status=%d want 403", rec.Code)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if errCode(body) != "FORBIDDEN" {
+		t.Errorf("code=%v want FORBIDDEN", errCode(body))
+	}
+}
+
+// TestInternalThingsAPI_CrossThingBinding_DeviceMismatch_Returns403 is the
+// F-0060 regression guard: every handler that operates on a body/query thing id
+// rejects a device token whose authenticated id differs from the operated id. A
+// bare handler suffices — the guard short-circuits before any manager use.
+func TestInternalThingsAPI_CrossThingBinding_DeviceMismatch_Returns403(t *testing.T) {
+	e := newTestEcho()
+	const self, victim = "t-self", "t-victim"
+
+	cases := []struct {
+		name   string
+		ctx    func() (echo.Context, *httptest.ResponseRecorder)
+		invoke func(h *InternalThingsAPI, c echo.Context) error
+	}{
+		{
+			name: "Register",
+			ctx: func() (echo.Context, *httptest.ResponseRecorder) {
+				return echoCtxJSON(e, http.MethodPost, map[string]any{"id": victim, "type": "agent"}, nil)
+			},
+			invoke: func(h *InternalThingsAPI, c echo.Context) error { return h.Register(c) },
+		},
+		{
+			name: "Heartbeat",
+			ctx: func() (echo.Context, *httptest.ResponseRecorder) {
+				return echoCtxJSON(e, http.MethodPost, map[string]any{"id": victim, "status": "online"}, nil)
+			},
+			invoke: func(h *InternalThingsAPI, c echo.Context) error { return h.Heartbeat(c) },
+		},
+		{
+			name: "ShadowReport",
+			ctx: func() (echo.Context, *httptest.ResponseRecorder) {
+				return echoCtxJSON(e, http.MethodPost, map[string]any{"id": victim, "reported": map[string]any{}, "reportedVer": 0}, nil)
+			},
+			invoke: func(h *InternalThingsAPI, c echo.Context) error { return h.ShadowReport(c) },
+		},
+		{
+			name: "BreakGlassReport",
+			ctx: func() (echo.Context, *httptest.ResponseRecorder) {
+				// Valid break-glass body (killswitch + keyVersions) so the F-0139
+				// validation passes and the request reaches the object-authority
+				// gate, which then blocks the cross-Thing access.
+				return echoCtxJSON(e, http.MethodPost, map[string]any{"id": victim, "reported": map[string]any{"killswitch": map[string]any{"engaged": true}}, "reportedVer": 4, "keyVersions": map[string]any{"killswitch": 4}, "actorTokenId": "a1b2c3d4"}, nil)
+			},
+			invoke: func(h *InternalThingsAPI, c echo.Context) error { return h.BreakGlassReport(c) },
+		},
+		{
+			name: "Deregister",
+			ctx: func() (echo.Context, *httptest.ResponseRecorder) {
+				return echoCtxJSON(e, http.MethodPost, map[string]any{"id": victim}, nil)
+			},
+			invoke: func(h *InternalThingsAPI, c echo.Context) error { return h.Deregister(c) },
+		},
+		{
+			name:   "BulkConfigPull",
+			ctx:    func() (echo.Context, *httptest.ResponseRecorder) { return echoCtxQuery(e, "type=agent&id="+victim) },
+			invoke: func(h *InternalThingsAPI, c echo.Context) error { return h.BulkConfigPull(c) },
+		},
+		{
+			name: "GetAttestationPubKey",
+			ctx: func() (echo.Context, *httptest.ResponseRecorder) {
+				return echoCtxJSON(e, http.MethodGet, nil, map[string]string{"id": victim})
+			},
+			invoke: func(h *InternalThingsAPI, c echo.Context) error { return h.GetAttestationPubKey(c) },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &InternalThingsAPI{}
+			c, rec := tc.ctx()
+			c.Set(thingContextKey, &store.Thing{ID: self})
+			_ = tc.invoke(h, c)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status=%d want 403 (cross-Thing access must be blocked); body=%s", rec.Code, rec.Body.String())
+			}
+			var body map[string]any
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if errCode(body) != "FORBIDDEN" {
+				t.Errorf("code=%v want FORBIDDEN", errCode(body))
+			}
+		})
+	}
 }

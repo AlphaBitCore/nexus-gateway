@@ -3,6 +3,7 @@ package iam
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -95,6 +96,20 @@ func (h *Handler) ListPolicyAttachments(c echo.Context) error {
 	})
 }
 
+// validatePolicyDocumentJSON decodes a raw IAM policy document and runs the
+// structural validator (effect enum, non-empty action/resource, no consecutive
+// wildcards, statement cap, known condition operators). It returns the list of
+// human-readable validation errors; an empty slice means the document is valid.
+// Malformed JSON is itself reported as a validation error so the CRUD handlers
+// reject it with 400 rather than persisting an undecodable blob.
+func validatePolicyDocumentJSON(raw []byte) []string {
+	var doc iamengine.PolicyDocument
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return []string{"document is not valid JSON: " + err.Error()}
+	}
+	return iamengine.ValidatePolicyDocument(&doc)
+}
+
 func (h *Handler) CreateIAMPolicy(c echo.Context) error {
 	var body struct {
 		Name        string          `json:"name"`
@@ -103,6 +118,17 @@ func (h *Handler) CreateIAMPolicy(c echo.Context) error {
 	}
 	if err := c.Bind(&body); err != nil || body.Name == "" || body.Document == nil {
 		return c.JSON(http.StatusBadRequest, errJSON("name and document are required", "validation_error", ""))
+	}
+
+	if verrs := validatePolicyDocumentJSON(body.Document); len(verrs) > 0 {
+		return c.JSON(http.StatusBadRequest, errJSON("Invalid policy document: "+strings.Join(verrs, "; "), "validation_error", "document"))
+	}
+
+	// Grant ceiling — a principal may not author a policy that grants
+	// permissions it does not itself hold (prevents staging an admin:* policy for
+	// later self-attachment).
+	if blocked, resp := h.ceilingBlocksRaw(c, body.Document); blocked {
+		return resp
 	}
 
 	aa := middleware.AdminAuthFromContext(c)
@@ -119,7 +145,9 @@ func (h *Handler) CreateIAMPolicy(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamPolicy, iam.VerbCreate)
 	ae.EntityID = p.ID
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 
 	return c.JSON(http.StatusCreated, p)
 }
@@ -143,6 +171,15 @@ func (h *Handler) UpdateIAMPolicy(c echo.Context) error {
 	}
 	if body.Document != nil {
 		raw, _ := json.Marshal(body.Document)
+		if verrs := validatePolicyDocumentJSON(raw); len(verrs) > 0 {
+			return c.JSON(http.StatusBadRequest, errJSON("Invalid policy document: "+strings.Join(verrs, "; "), "validation_error", "document"))
+		}
+		// Grant ceiling — broadening an (attached) policy beyond the
+		// caller's own permissions is a live escalation, so the new document must
+		// be within the caller's authority.
+		if blocked, resp := h.ceilingBlocksRaw(c, raw); blocked {
+			return resp
+		}
 		params.Document = raw
 	}
 
@@ -173,7 +210,9 @@ func (h *Handler) UpdateIAMPolicy(c echo.Context) error {
 	ae := audit.EntryFor(c, iam.ResourceIamPolicy, iam.VerbUpdate)
 	ae.EntityID = id
 	ae.AfterState = p
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 
 	return c.JSON(http.StatusOK, p)
 }
@@ -189,7 +228,9 @@ func (h *Handler) DeleteIAMPolicy(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamPolicy, iam.VerbDelete)
 	ae.EntityID = id
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 
 	return c.NoContent(http.StatusNoContent)
 }

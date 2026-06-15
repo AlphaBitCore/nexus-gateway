@@ -35,7 +35,6 @@ type OAuthClient struct {
 	Type                string // "public" | "confidential"
 	RedirectURIs        []string
 	AllowedScopes       []string
-	RequirePKCE         bool
 	AccessTTLSeconds    int
 	RefreshTTLSeconds   int
 	ClientSecretHash    *string
@@ -65,14 +64,14 @@ var ErrClientIDExists = errors.New("oauth_client: id already exists")
 // the OAuthClient struct expects when scanning. Centralising it prevents
 // drift between GetByID / List / Create / Update / RotateSecret.
 const clientColumns = `id, name, type, "redirectUris", "allowedScopes",
-		"requirePkce", "accessTtlSeconds", "refreshTtlSeconds",
+		"accessTtlSeconds", "refreshTtlSeconds",
 		"clientSecretHash", "lastSecretRotatedAt", "createdAt", "updatedAt"`
 
 // scanClient reads one row in the clientColumns order.
 func scanClient(row pgx.Row, c *OAuthClient) error {
 	return row.Scan(
 		&c.ID, &c.Name, &c.Type,
-		&c.RedirectURIs, &c.AllowedScopes, &c.RequirePKCE,
+		&c.RedirectURIs, &c.AllowedScopes,
 		&c.AccessTTLSeconds, &c.RefreshTTLSeconds,
 		&c.ClientSecretHash, &c.LastSecretRotatedAt,
 		&c.CreatedAt, &c.UpdatedAt,
@@ -127,7 +126,6 @@ type CreateInput struct {
 	Type              string
 	RedirectURIs      []string
 	AllowedScopes     []string
-	RequirePKCE       bool
 	AccessTTLSeconds  int
 	RefreshTTLSeconds int
 	SecretHash        *string
@@ -138,13 +136,13 @@ type CreateInput struct {
 func (s *ClientStore) Create(ctx context.Context, in CreateInput) (*OAuthClient, error) {
 	row := s.db.QueryRow(ctx,
 		`INSERT INTO "OAuthClient"
-		    (id, name, type, "redirectUris", "allowedScopes", "requirePkce",
+		    (id, name, type, "redirectUris", "allowedScopes",
 		     "accessTtlSeconds", "refreshTtlSeconds", "clientSecretHash",
 		     "createdAt", "updatedAt")
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		 RETURNING `+clientColumns,
 		in.ID, in.Name, in.Type, in.RedirectURIs, in.AllowedScopes,
-		in.RequirePKCE, in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash)
+		in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash)
 	var c OAuthClient
 	if err := scanClient(row, &c); err != nil {
 		var pgErr *pgconn.PgError
@@ -163,7 +161,6 @@ type UpdateInput struct {
 	Name              *string
 	RedirectURIs      *[]string
 	AllowedScopes     *[]string
-	RequirePKCE       *bool
 	AccessTTLSeconds  *int
 	RefreshTTLSeconds *int
 }
@@ -176,13 +173,12 @@ func (s *ClientStore) Update(ctx context.Context, id string, in UpdateInput) (*O
 		    SET name              = COALESCE($2, name),
 		        "redirectUris"    = COALESCE($3, "redirectUris"),
 		        "allowedScopes"   = COALESCE($4, "allowedScopes"),
-		        "requirePkce"     = COALESCE($5, "requirePkce"),
-		        "accessTtlSeconds" = COALESCE($6, "accessTtlSeconds"),
-		        "refreshTtlSeconds" = COALESCE($7, "refreshTtlSeconds"),
+		        "accessTtlSeconds" = COALESCE($5, "accessTtlSeconds"),
+		        "refreshTtlSeconds" = COALESCE($6, "refreshTtlSeconds"),
 		        "updatedAt"       = NOW()
 		  WHERE id = $1
 		  RETURNING `+clientColumns,
-		id, in.Name, in.RedirectURIs, in.AllowedScopes, in.RequirePKCE,
+		id, in.Name, in.RedirectURIs, in.AllowedScopes,
 		in.AccessTTLSeconds, in.RefreshTTLSeconds)
 	var c OAuthClient
 	if err := scanClient(row, &c); err != nil {

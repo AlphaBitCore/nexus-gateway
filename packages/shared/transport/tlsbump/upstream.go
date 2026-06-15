@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
@@ -93,6 +94,15 @@ type UpstreamOptions struct {
 	// the request unmodified. Returning the error to the caller
 	// would turn every signing problem into a customer-visible failure.
 	RequestInjector func(req *http.Request) error
+	// UpstreamProxy, when non-nil, routes the MITM upstream's uTLS dial
+	// through an egress proxy (socks5:// or http://) at the TCP-dial level —
+	// distinct from Proxy above, which is the stdlib HTTP-CONNECT path used by
+	// the attestation chain. The proxy only sees the CONNECT target host:port;
+	// the inner uTLS handshake rides on top, so MITM inspection is preserved.
+	// Used by the agent to forward intercepted AI traffic through a local
+	// SOCKS/HTTP proxy in environments where direct egress to the provider is
+	// blocked. The SO_MARK dial control still applies to the proxy hop.
+	UpstreamProxy *url.URL
 }
 
 // NewUpstreamTransport creates a transport with uTLS fingerprint passthrough
@@ -106,9 +116,13 @@ type UpstreamOptions struct {
 // TLS to the upstream is handled via uTLS (DialTLSContext). The client's raw
 // ClientHello bytes — captured by BumpConnection and threaded through the
 // request context under clientHelloKey — are replayed verbatim so the
-// upstream sees the client's real JA3 fingerprint. HTTP/2 is disabled on the
-// upstream side because Go's transport cannot upgrade a *utls.UConn to H2;
-// the proxy still speaks H2 to the client (bump.go / serveHTTP2).
+// upstream sees the client's real JA3 fingerprint. ALPN is offered faithfully
+// as [h2, http/1.1]: a protocolDispatchRoundTripper (upstream_h2.go) routes
+// h2-negotiating upstreams through golang.org/x/net/http2 — which owns the h2
+// framing + PING the stdlib cannot apply to a *utls.UConn — and http/1.1
+// upstreams through this stdlib transport unchanged. The proxy speaks H2 to the
+// client (bump.go / serveHTTP2) so end-to-end H2 is preserved for clients that
+// require it (connect-RPC bidi/streaming agents).
 //
 // The returned RoundTripper is wrapped via nexushttp.WrapTransport so every
 // upstream MITM call emits the platform-wide outbound HTTP debug log
@@ -119,6 +133,20 @@ func NewUpstreamTransport(maxConnsPerHost int, idleConnTimeout, dialTimeout time
 	return NewUpstreamTransportWith(maxConnsPerHost, idleConnTimeout, dialTimeout, UpstreamOptions{})
 }
 
+// upstreamDialControl applies the process-wide outbound dial control to the
+// MITM upstream socket. The Linux agent installs an SO_MARK setter (via
+// nexushttp.SetGlobalDialControl) so its own egress escapes the NEXUS_AGENT
+// iptables REDIRECT; without it the upstream forward self-loops back into the
+// agent's listener. Looked up at dial time so it is robust to construction
+// order, and a no-op (nil hook) in the compliance-proxy, ai-gateway, and on
+// macOS/Windows, which never install the hook.
+func upstreamDialControl(network, address string, c syscall.RawConn) error {
+	if ctl := nexushttp.GlobalDialControl(); ctl != nil {
+		return ctl(network, address, c)
+	}
+	return nil
+}
+
 // NewUpstreamTransportWith is the option-aware constructor. Production
 // callers that need the legacy behaviour use NewUpstreamTransport (no
 // options); the agent's attestation wire-up calls this directly with
@@ -127,26 +155,38 @@ func NewUpstreamTransportWith(maxConnsPerHost int, idleConnTimeout, dialTimeout 
 	dialer := &net.Dialer{
 		Timeout:   dialTimeout,
 		KeepAlive: 30 * time.Second,
+		// SO_MARK the MITM upstream connection so the Linux agent's own
+		// iptables REDIRECT (the NEXUS_AGENT chain) RETURNs it instead of
+		// looping it back into the proxy listener. Without this the agent's
+		// upstream forward is re-intercepted by its own rule — a self-loop
+		// that cascades into hundreds of flows and a ~20s timeout / 502.
+		// Resolved at dial time via the process-wide hook the agent installs
+		// at startup; nil / no-op in the compliance-proxy, the ai-gateway,
+		// and on macOS/Windows (which never install it).
+		Control: upstreamDialControl,
 	}
 
+	fd := &fingerprintDialer{dialer: dialer, upstreamProxy: opts.UpstreamProxy}
+
 	base := &http.Transport{
-		MaxConnsPerHost:       maxConnsPerHost,
-		MaxIdleConnsPerHost:   maxConnsPerHost,
-		IdleConnTimeout:       idleConnTimeout,
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     false,
-		ResponseHeaderTimeout: 60 * time.Second,
-		// DialTLSContext takes full ownership of the TLS handshake via uTLS.
-		// Go's transport will not wrap the returned conn with crypto/tls.
-		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			rawHello, _ := ctx.Value(clientHelloKey{}).([]byte)
-			return dialWithFingerprint(ctx, network, addr, rawHello, dialer)
-		},
+		MaxConnsPerHost:     maxConnsPerHost,
+		MaxIdleConnsPerHost: maxConnsPerHost,
+		IdleConnTimeout:     idleConnTimeout,
+		DialContext:         dialer.DialContext,
+		// Irrelevant here: this stdlib transport only serves the http/1.1
+		// authorities the dispatcher routes to it (Go cannot upgrade a
+		// custom-dialed *utls.UConn to h2). h2 authorities use the http2.Transport.
+		ForceAttemptHTTP2: false,
+		// Bounds the wait for response headers, not the body. Long streaming
+		// agent runs can take minutes before the first byte; 300s leaves the
+		// overall limit to the request ctx while still catching a wedged upstream.
+		ResponseHeaderTimeout: 300 * time.Second,
+		// fd.dial takes full ownership of the TLS handshake via uTLS; Go's
+		// transport will not wrap the returned conn with crypto/tls.
+		DialTLSContext: fd.dial,
 	}
-	// When a proxy is configured, route outbound HTTPS via that proxy.
-	// Go's stdlib emits CONNECT then TLS; GetProxyConnectHeader lets
-	// the agent's signer inject the `X-Nexus-Attestation` header on
-	// every CONNECT emission.
+	// With a proxy configured, Go's stdlib emits CONNECT then TLS;
+	// GetProxyConnectHeader lets the agent's signer add X-Nexus-Attestation.
 	if opts.Proxy != nil {
 		base.Proxy = http.ProxyURL(opts.Proxy)
 		if opts.GetProxyConnectHeader != nil {
@@ -154,12 +194,16 @@ func NewUpstreamTransportWith(maxConnsPerHost int, idleConnTimeout, dialTimeout 
 		}
 	}
 
+	// Dispatch h2/h1 per upstream ALPN; tracing + debug-log wraps sit OUTSIDE so
+	// both protocol paths are instrumented. See buildUpstreamRoundTripper.
+	upstream := buildUpstreamRoundTripper(base, fd, opts.Proxy != nil)
+
 	return &UpstreamTransport{
 		// Wrap the WrapTransport result with the shared tracing transport
 		// so any forward request whose context carries a PhaseSink captures
 		// upstream TTFB + upstream-total. Calls without a sink pass through
 		// unchanged.
-		transport: traffic.NewTracingTransport(nexushttp.WrapTransport(base, nexushttp.WrapOpts{
+		transport: traffic.NewTracingTransport(nexushttp.WrapTransport(upstream, nexushttp.WrapOpts{
 			Caller:         "cp-upstream",
 			PropagateReqID: false,
 		})),

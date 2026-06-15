@@ -175,6 +175,22 @@ func TestAgentBootstrapHandler_DBError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d; want 500 on DB error", rec.Code)
 	}
+	// F-0319/F-0320: canonical {error:{message,type,code}} nested envelope.
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("error body not JSON: %s", rec.Body.String())
+	}
+	inner, ok := resp["error"].(map[string]any)
+	if !ok || inner == nil {
+		t.Errorf("error field missing or not an object: %v", resp)
+	} else {
+		if msg, _ := inner["message"].(string); msg == "" {
+			t.Errorf("error.message missing/empty: %v", resp)
+		}
+		if c, _ := inner["code"].(string); c != "INTERNAL_ERROR" {
+			t.Errorf("code=%q, want INTERNAL_ERROR; body=%s", inner["code"], rec.Body.String())
+		}
+	}
 }
 
 // TestAgentBootstrapHandler_CacheHit verifies the 60-second in-memory cache:

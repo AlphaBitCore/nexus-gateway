@@ -16,7 +16,7 @@ import (
 )
 
 // recordConfirm increments the dangerous-write gate decision counter
-// (spec §7 / NFR-13). decision ∈ {allow, deny, timeout, cancelled}. Nil-safe
+// decision ∈ {allow, deny, timeout, cancelled}. Nil-safe
 // until cpmetrics.Register runs at startup.
 func recordConfirm(decision string) {
 	if cpmetrics.AssistantConfirmsTotal != nil {
@@ -37,7 +37,7 @@ func confirmDecisionLabel(allowed bool) string {
 // enough never to wedge a turn forever.
 const confirmTimeout = 2 * time.Minute
 
-// impactTimeout bounds the FR-22 impact-preview read so a slow/hung state read never
+// impactTimeout bounds the impact-preview read so a slow/hung state read never
 // delays the confirm card for long. On timeout (or any read error) the preview fails
 // OPEN to an "unavailable" note — an emergency mitigation is never blocked by a
 // degraded read.
@@ -48,10 +48,10 @@ const impactTimeout = 3 * time.Second
 // channel; a separate POST /confirm delivers the decision by key
 // (userID:sessionID:callID — the userID binding stops one principal from resolving
 // another's parked write). In-memory per-process — multi-replica needs the session
-// pinned to one pod (P2b affinity). If the stream disconnects while a confirm is
+// pinned to one pod (stream affinity). If the stream disconnects while a confirm is
 // parked, the turn's disconnect-grace cancels its ctx → makeConfirm fail-safe denies.
 //
-// Production writes require a backend-enforced SECOND confirmation (E90 FR-9): an
+// Production writes require a backend-enforced SECOND confirmation: an
 // entry registered with requiresSecond=true (prod) is not unblocked by a single
 // Allow. The first Allow makes the registry mint a one-time challenge token bound to
 // the entry and keeps the turn parked; only a second Allow that echoes that exact
@@ -175,16 +175,16 @@ func newToken() string {
 // payload cannot forge the human-facing prompt — then parks until POST /confirm
 // resolves it, the turn ctx cancels, or the timeout fires (all → fail-safe deny).
 func (h *Handler) makeConfirm(userID, sessionID string, send func(event string, payload any)) agent.ConfirmFunc {
-	// NFR-10: mirror each parked confirm to a durable row so a POST /confirm after a
+	// Mirror each parked confirm to a durable row so a POST /confirm after a
 	// restart reads as "re-issue" rather than "expired". nil when persistence is absent.
 	pstore := newPendingConfirmStore(h.cfg.Pool, userID)
 	return func(ctx context.Context, tool agent.Tool, input json.RawMessage, reason string) (bool, error) {
 		callID := newCallID()
 		// Key is bound to the authenticated userId so a POST /confirm from a different
-		// principal can never resolve this user's parked write (I3).
+		// principal can never resolve this user's parked write.
 		key := userID + ":" + sessionID + ":" + callID
 		// In production every confirm-tier tool requires a backend-enforced second
-		// confirmation (FR-9): the entry is registered as requiresSecond so a single
+		// confirmation: the entry is registered as requiresSecond so a single
 		// Allow only mints a challenge token; the write executes on the second Allow.
 		ch := h.confirms.register(key, h.cfg.IsProd)
 		// Persist the parked confirm + remove it on ANY resolution (resolve / deny /
@@ -204,7 +204,7 @@ func (h *Handler) makeConfirm(userID, sessionID string, send func(event string, 
 			"reason":    reason,
 			"prod":      h.cfg.IsProd,
 		}
-		// FR-22/AC-6: for high-blast-radius tools, surface a structured impact preview
+		// For high-blast-radius tools, surface a structured impact preview
 		// (current → effect) in the card BEFORE the operator can Allow. Computed
 		// server-side from the tool's read-only ImpactDetailer; absent for ordinary
 		// confirm tools, and fail-open to an "unavailable" note if the read errors.
@@ -236,7 +236,7 @@ func (h *Handler) makeConfirm(userID, sessionID string, send func(event string, 
 	}
 }
 
-// impactPreview computes the FR-22 impact preview for a confirm-tier tool, or nil
+// impactPreview computes the impact preview for a confirm-tier tool, or nil
 // when the tool has none. The read is bounded by impactTimeout and read-only; on any
 // error or timeout it fails OPEN — returning an "unavailable" marker rather than nil,
 // so a high-blast-radius tool still shows a card (and the operator a caution) instead
@@ -262,7 +262,7 @@ func (h *Handler) impactPreview(ctx context.Context, tool agent.Tool, input json
 // the registry); a stale/duplicate/unknown call gets 409 so a write never
 // double-executes. The caller is already authenticated by the admin group.
 //
-// Production second confirm (FR-9): on a prod instance an Allow with no
+// Production second confirm: on a prod instance an Allow with no
 // challengeToken does NOT execute — the backend mints a one-time token, returns it as
 // {secondConfirmRequired:true, challengeToken}, and keeps the write parked. The
 // client must POST a second Allow echoing that token; only then does the write run.
@@ -276,7 +276,7 @@ func (h *Handler) Confirm(c echo.Context) error {
 		ChallengeToken string `json:"challengeToken"`
 	}
 	if err := c.Bind(&body); err != nil || body.SessionID == "" || body.CallID == "" {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "sessionId and callId are required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "sessionId and callId are required")
 	}
 	userID := ""
 	if aa := middleware.AdminAuthFromContext(c); aa != nil {
@@ -297,7 +297,7 @@ func (h *Handler) Confirm(c echo.Context) error {
 			if cpmetrics.AssistantConfirmMisrouteTotal != nil {
 				cpmetrics.AssistantConfirmMisrouteTotal.With().Inc()
 			}
-			return errJSON(c, http.StatusMisdirectedRequest, "wrong_owner",
+			return writeErrJSON(c, http.StatusMisdirectedRequest, "wrong_owner",
 				"this session is being handled by another instance; retry the request")
 		}
 	}
@@ -311,10 +311,10 @@ func (h *Handler) Confirm(c echo.Context) error {
 			"challengeToken":        token,
 		})
 	case confirmBadChallenge:
-		return errJSON(c, http.StatusConflict, "invalid_challenge",
+		return writeErrJSON(c, http.StatusConflict, "invalid_challenge",
 			"the production second-confirm token is missing or no longer valid; re-issue the action")
 	default: // confirmNotFound
-		// NFR-10: an in-memory miss with a still-fresh durable row means the pod that
+		// An in-memory miss with a still-fresh durable row means the pod that
 		// parked this confirm restarted (the in-memory channel + turn goroutine are
 		// gone) — tell the user to re-issue rather than the confusing "expired".
 		// NOTE: this is reached only after the owner-registry 421 check above. After a
@@ -323,10 +323,10 @@ func (h *Handler) Confirm(c echo.Context) error {
 		// through to this re-issue verdict. Both tell the user the action did not run;
 		// the 421 is correct while Redis still believes a live owner holds the session.
 		if ps := newPendingConfirmStore(h.cfg.Pool, userID); ps.fresh(c.Request().Context(), key) {
-			return errJSON(c, http.StatusConflict, "restart_reissue",
+			return writeErrJSON(c, http.StatusConflict, "restart_reissue",
 				"the assistant restarted before this action completed; please re-issue it")
 		}
-		return errJSON(c, http.StatusConflict, "expired",
+		return writeErrJSON(c, http.StatusConflict, "expired",
 			"no pending confirmation for that call (it may have timed out or already been answered)")
 	}
 }

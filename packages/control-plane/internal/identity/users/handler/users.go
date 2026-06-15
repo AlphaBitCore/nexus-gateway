@@ -338,6 +338,19 @@ func (h *Handler) RevokeUserAccess(c echo.Context) error {
 		h.logger.Error("revoke user access: disable keys", "userId", id, "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to disable virtual keys", "server_error", ""))
 	}
+	// The DB disable above is invisible to the AI Gateway until its
+	// per-VK cache entry expires (VKTTL ≤30s), so without this push every one of
+	// the revoked user's keys keeps authenticating for up to 30s after the admin
+	// sees success. Push the same ledger-backed invalidate the per-VK revoke path
+	// uses (RevokeVirtualKey) so the gateway drops the cached rows immediately; a
+	// failed push surfaces as 502 and is re-driven by ReconcilePending rather than
+	// silently leaving a revoked principal authenticated.
+	if keysDisabled > 0 && h.hub != nil {
+		if invErr := h.hub.InvalidateConfigE(ctx, "ai-gateway", "virtual_keys"); invErr != nil {
+			h.logger.Error("revoke user access: virtual_keys invalidate failed", "userId", id, "error", invErr)
+			return c.JSON(http.StatusBadGateway, errJSON("Keys disabled but gateway cache invalidation failed; retry", "hub_unavailable", "INVALIDATE_FAILED"))
+		}
+	}
 
 	// 2. Revoke all devices assigned to this user.
 	devicesRevoked, err := h.governance.RevokeDevicesByUser(ctx, id)

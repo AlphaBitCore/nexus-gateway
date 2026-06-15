@@ -325,19 +325,20 @@ func (h *Handler) Create(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "malformed_json", "detail": err.Error()})
 	}
-	if body.Name == "" || body.Version == "" || body.Maintainer == "" {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "name, version, maintainer required"})
-	}
+	// Route through the SAME validator as YAML Import — compile every pattern,
+	// check severity ∈ {hard,soft,warn}, require a category, enforce name/
+	// version/maintainer shape. Previously Create checked only non-empty
+	// ruleId/pattern/severity and called ImportPack directly, so a typo'd
+	// regex authored via the JSON form returned 201 and that rule never fired
+	// (the evaluator silently skips uncompilable patterns).
 	if len(body.Rules) == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "at least one rule required"})
 	}
-	for i := range body.Rules {
-		if body.Rules[i].RuleID == "" || body.Rules[i].Pattern == "" || body.Rules[i].Severity == "" {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":  "rule missing required fields",
-				"detail": "each rule needs ruleId, pattern, severity",
-			})
-		}
+	if _, err := rulepack.ValidatePack(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":  "validation_failed",
+			"detail": err.Error(),
+		})
 	}
 	saved, err := h.store.ImportPack(c.Request().Context(), &body)
 	if err != nil {
@@ -373,20 +374,18 @@ func (h *Handler) Update(c echo.Context) error {
 	var body struct {
 		Maintainer  *string          `json:"maintainer,omitempty"`
 		Description *string          `json:"description,omitempty"`
-		Signature   *string          `json:"signature,omitempty"`
 		Rules       *[]rulepack.Rule `json:"rules,omitempty"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "malformed_json", "detail": err.Error()})
 	}
-	if body.Maintainer == nil && body.Description == nil && body.Signature == nil && body.Rules == nil {
+	if body.Maintainer == nil && body.Description == nil && body.Rules == nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "no fields to update"})
 	}
 	before, _ := h.store.GetPack(c.Request().Context(), id)
 	err := h.store.UpdatePack(c.Request().Context(), id, rulepack.PackUpdate{
 		Maintainer:  body.Maintainer,
 		Description: body.Description,
-		Signature:   body.Signature,
 		Rules:       body.Rules,
 	})
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"time"
 
@@ -32,9 +33,16 @@ type rulePackInstall struct {
 // rulePackRule mirrors rulepack.Rule but is local to avoid an import cycle
 // (rulepack depends on hooks for ContentBlock).
 type rulePackRule struct {
-	RuleID   string   `json:"ruleId"`
-	Category string   `json:"category"`
-	Severity string   `json:"severity"` // "hard" | "soft" | "info"
+	RuleID   string `json:"ruleId"`
+	Category string `json:"category"`
+	// Severity is the rule-pack authoring severity. The canonical authoring
+	// enum validated by rulepack.ValidatePack (yaml.go) is "hard" | "soft" |
+	// "warn". The runtime severityToDecision map blocks on "hard" (RejectHard)
+	// and "soft" (BlockSoft); every other value — including "warn", "info",
+	// and "" — maps to Approve (tag-only, never blocks). A typo therefore
+	// degrades to non-blocking, surfaced to the operator via Tags rather than
+	// silently rejecting every request.
+	Severity string   `json:"severity"`
 	Pattern  string   `json:"pattern"`
 	Flags    string   `json:"flags,omitempty"`
 	Labels   []string `json:"labels,omitempty"`
@@ -87,9 +95,17 @@ type RulePackEngine struct {
 //	  ]
 //	}
 //
-// Installs with enabled=false are dropped at construction time. A single
-// invalid regex makes the whole pack fail — a hook silently skipping rules
-// is harder to diagnose than a construction-time error.
+// Installs with enabled=false are dropped at construction time.
+//
+// Fail-posture (availability-first): a single rule whose pattern fails to
+// compile is SKIPPED+LOGGED, not fatal — one bad rule degrades to "that rule
+// off", never "the whole pack (or the whole pipeline) off". This mirrors the
+// per-hook graceful degradation in pipeline.resolve() and the fail-open
+// default in pipeline.executeOneHook. Authoring-time validation
+// (rulepack.ValidatePack) is the canonical gate that rejects a bad pattern
+// with a 400 before it ever reaches the runtime; this skip is the
+// defence-in-depth backstop for a rule that slipped through (e.g. a pattern
+// that compiles under one regexp build but not another).
 func NewRulePackEngine(cfg *core.HookConfig) (core.Hook, error) {
 	installs, err := parseRulePackInstalls(cfg.Config)
 	if err != nil {
@@ -114,8 +130,14 @@ func NewRulePackEngine(cfg *core.HookConfig) (core.Hook, error) {
 		for _, r := range inst.Rules {
 			re, err := core.CompilePattern(r.Pattern, r.Flags)
 			if err != nil {
-				return nil, fmt.Errorf("rulepack-engine: install %s rule %s: %w",
-					inst.InstallID, r.RuleID, err)
+				// Skip+log this rule; keep building the rest of the pack.
+				slog.Warn("rulepack-engine: skipping rule with uncompilable pattern (degrading to this rule off)",
+					"installId", inst.InstallID,
+					"packName", inst.PackName,
+					"ruleId", r.RuleID,
+					"error", err,
+				)
+				continue
 			}
 			compiled = append(compiled, compiledRule{
 				installID:   inst.InstallID,

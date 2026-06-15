@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
 )
 
 func ctx() context.Context { return context.Background() }
@@ -41,6 +43,14 @@ func TestProbeOIDC_Validation(t *testing.T) {
 }
 
 func TestProbeOIDC_Success_ViaDiscovery(t *testing.T) {
+	// The discovery server runs on 127.0.0.1; install a resolver that skips the
+	// SSRF host guard for this loopback test, restoring the guarded default after.
+	prev := NewProbeResolver
+	NewProbeResolver = func() *oidcdisco.Resolver {
+		return oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck())
+	}
+	t.Cleanup(func() { NewProbeResolver = prev })
+
 	var srv *httptest.Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {

@@ -234,7 +234,7 @@ func TestDecodeResponse_embeddings_singleEmbedContent(t *testing.T) {
 	// :embedContent response shape: {"embedding":{"values":[…]}}
 	var c gemcodec.Codec
 	body := []byte(`{"embedding":{"values":[0.1,0.2,0.3,0.4]}}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -254,6 +254,25 @@ func TestDecodeResponse_embeddings_singleEmbedContent(t *testing.T) {
 	}
 }
 
+func TestDecodeResponse_embeddings_modelNotHardcodedEmpty(t *testing.T) {
+	// F-0217: the decoder must NOT stamp an empty model string. The Gemini
+	// embed wire response carries no model and the stateless decode interface
+	// has no CallTarget, so model is left absent here and back-filled with the
+	// requested ProviderModelID by the dispatcher (spec_adapter.go).
+	var c gemcodec.Codec
+	body := []byte(`{"embedding":{"values":[0.1,0.2]}}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "application/json", provcore.DecodeContext{})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if m := gjson.GetBytes(decRes.CanonicalBody, "model"); m.Exists() && m.Str != "" {
+		t.Errorf("decoder should not stamp a model; got %q", m.Str)
+	}
+	if m := gjson.GetBytes(decRes.CanonicalBody, "model"); m.Exists() && m.Str == "" {
+		t.Errorf("decoder must not emit an empty-string model (the old F-0217 bug); body=%s", decRes.CanonicalBody)
+	}
+}
+
 func TestDecodeResponse_embeddings_batchEmbedContents(t *testing.T) {
 	// :batchEmbedContents response shape: {"embeddings":[{"values":[…]},…]}
 	var c gemcodec.Codec
@@ -264,7 +283,7 @@ func TestDecodeResponse_embeddings_batchEmbedContents(t *testing.T) {
 			{"values":[0.5,0.6]}
 		]
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -285,7 +304,7 @@ func TestDecodeResponse_embeddings_batchOrder_preserved(t *testing.T) {
 	// Index field reflects canonical position.
 	var c gemcodec.Codec
 	body := []byte(`{"embeddings":[{"values":[1.0]},{"values":[2.0]},{"values":[3.0]}]}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -304,7 +323,7 @@ func TestDecodeResponse_embeddings_usageMetadata(t *testing.T) {
 		"embedding":{"values":[0.1,0.2]},
 		"usageMetadata":{"totalTokenCount":15}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -322,7 +341,7 @@ func TestDecodeResponse_embeddings_noUsageMetadata_zeroUsage(t *testing.T) {
 	// Gemini may not return usageMetadata for embedding responses.
 	var c gemcodec.Codec
 	body := []byte(`{"embedding":{"values":[0.1,0.2]}}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -333,9 +352,144 @@ func TestDecodeResponse_embeddings_noUsageMetadata_zeroUsage(t *testing.T) {
 	}
 }
 
+// TestDecodeResponse_embeddings_countMismatch_rejected pins F-0220: a
+// batch response with fewer vectors than the request `requests[]` must fail
+// the decode (→ 502) instead of returning misaligned vectors.
+func TestDecodeResponse_embeddings_countMismatch_rejected(t *testing.T) {
+	var c gemcodec.Codec
+	reqBody := []byte(`{"requests":[
+		{"content":{"parts":[{"text":"a"}]}},
+		{"content":{"parts":[{"text":"b"}]}},
+		{"content":{"parts":[{"text":"c"}]}}
+	]}`)
+	native := []byte(`{"embeddings":[{"values":[0.1]},{"values":[0.2]}]}`)
+	_, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, native, "",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err == nil || !strings.Contains(err.Error(), "embedding count mismatch") {
+		t.Fatalf("expected count-mismatch error, got %v", err)
+	}
+}
+
+// TestDecodeResponse_embeddings_countMatch_passes is the F-0220 positive
+// arm: matching batch counts decode cleanly.
+func TestDecodeResponse_embeddings_countMatch_passes(t *testing.T) {
+	var c gemcodec.Codec
+	reqBody := []byte(`{"requests":[
+		{"content":{"parts":[{"text":"a"}]}},
+		{"content":{"parts":[{"text":"b"}]}}
+	]}`)
+	native := []byte(`{"embeddings":[{"values":[0.1]},{"values":[0.2]}]}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, native, "",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if got := gjson.GetBytes(decRes.CanonicalBody, "data.#").Int(); got != 2 {
+		t.Errorf("data count=%d want 2", got)
+	}
+}
+
+// TestDecodeResponse_embeddings_estimatesPromptTokensFromRequest pins
+// F-0053: the Gemini embedding wire returns no usage, so the codec
+// estimates prompt tokens (chars/4) from the request text in the
+// DecodeContext. This is the former Gemini-format branch that lived in the
+// generic dispatcher, now owned by the codec that holds the request.
+func TestDecodeResponse_embeddings_estimatesPromptTokensFromRequest(t *testing.T) {
+	var c gemcodec.Codec
+	reqBody := []byte(`{"content":{"parts":[{"text":"hello world from the user!!"}]}}`)
+	native := []byte(`{"embedding":{"values":[0.1,0.2]}}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, native, "",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	pt := gjson.GetBytes(decRes.CanonicalBody, "usage.prompt_tokens").Int()
+	if pt < 1 {
+		t.Fatalf("expected estimated prompt_tokens >= 1, got %d", pt)
+	}
+	if decRes.Usage.PromptTokens == nil || *decRes.Usage.PromptTokens != int(pt) {
+		t.Errorf("Usage.PromptTokens=%v must mirror canonical body %d", decRes.Usage.PromptTokens, pt)
+	}
+}
+
+// TestDecodeResponse_embeddings_estimatesFromBatchRequest covers the batch
+// (`requests[]`) text-sum branch of the F-0053 estimate.
+func TestDecodeResponse_embeddings_estimatesFromBatchRequest(t *testing.T) {
+	var c gemcodec.Codec
+	reqBody := []byte(`{"requests":[
+		{"content":{"parts":[{"text":"first batch text"}]}},
+		{"content":{"parts":[{"text":"second batch text"}]}}
+	]}`)
+	native := []byte(`{"embeddings":[{"values":[0.1]},{"values":[0.2]}]}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, native, "",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if pt := gjson.GetBytes(decRes.CanonicalBody, "usage.prompt_tokens").Int(); pt < 1 {
+		t.Errorf("expected estimated prompt_tokens >= 1 from batch, got %d", pt)
+	}
+}
+
+// TestDecodeResponse_embeddings_gemini001_singleEmbed_promptTokensPopulated is
+// the Bug-F-0053 traffic_event guard for gemini-embedding-001 specifically.
+// Ground truth (verified against live prod + Google's API behaviour + litellm
+// #24339): the gemini-embedding-001 :embedContent response carries ONLY the
+// vector — no usageMetadata / token count. The decoder must therefore recover a
+// nonzero prompt-token figure from the request text (chars/4), so the
+// traffic_event row has prompt_tokens>0 (smoke Arm D asserts >0) and
+// completion_tokens=0 (embeddings have no completion). reqBody here is the
+// exact :embedContent wire body the executor hands to DecodeResponse.
+func TestDecodeResponse_embeddings_gemini001_singleEmbed_promptTokensPopulated(t *testing.T) {
+	var c gemcodec.Codec
+	// 24-char text → chars/4 = 6 estimated prompt tokens.
+	reqBody := []byte(`{"content":{"parts":[{"text":"hello world token check!"}]}}`)
+	// Realistic gemini-embedding-001 :embedContent response: vector only, no usage.
+	native := []byte(`{"embedding":{"values":[-0.042,0.033,0.0003,-0.070]}}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, native, "application/json",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	pt := gjson.GetBytes(decRes.CanonicalBody, "usage.prompt_tokens").Int()
+	if pt != 6 {
+		t.Fatalf("prompt_tokens = %d, want 6 (chars/4 of a 24-char request)", pt)
+	}
+	if decRes.Usage.PromptTokens == nil || *decRes.Usage.PromptTokens != 6 {
+		t.Errorf("Usage.PromptTokens = %v, want 6", decRes.Usage.PromptTokens)
+	}
+	// completion_tokens must be absent/zero — embeddings never produce completion.
+	if ct := gjson.GetBytes(decRes.CanonicalBody, "usage.completion_tokens"); ct.Exists() && ct.Int() != 0 {
+		t.Errorf("completion_tokens must be 0/absent for embeddings, got %d", ct.Int())
+	}
+	if decRes.Usage.CompletionTokens != nil && *decRes.Usage.CompletionTokens != 0 {
+		t.Errorf("Usage.CompletionTokens must be nil/0 for embeddings, got %v", decRes.Usage.CompletionTokens)
+	}
+}
+
+// TestDecodeResponse_embeddings_gemini001_prefersUpstreamUsageWhenPresent is the
+// forward-compat arm: if a future gemini-embedding-001 surface DOES emit
+// usageMetadata.promptTokenCount, the decoder must use the real upstream count
+// instead of the chars/4 estimate. Pins that the real-usage path wins.
+func TestDecodeResponse_embeddings_gemini001_prefersUpstreamUsageWhenPresent(t *testing.T) {
+	var c gemcodec.Codec
+	// Request text whose chars/4 estimate (≈6) deliberately differs from the
+	// upstream-reported 11 tokens, so the assertion proves which source wins.
+	reqBody := []byte(`{"content":{"parts":[{"text":"hello world token check!"}]}}`)
+	native := []byte(`{"embedding":{"values":[0.1,0.2]},"usageMetadata":{"promptTokenCount":11}}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, native, "application/json",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if pt := gjson.GetBytes(decRes.CanonicalBody, "usage.prompt_tokens").Int(); pt != 11 {
+		t.Fatalf("prompt_tokens = %d, want 11 (real upstream usageMetadata, not the chars/4 estimate)", pt)
+	}
+}
+
 func TestDecodeResponse_embeddings_emptyBody_passthrough(t *testing.T) {
 	var c gemcodec.Codec
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, []byte{}, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, []byte{}, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -408,7 +562,7 @@ func TestEncodeRequest_embeddings_nonStringNonArrayInput_returns400(t *testing.T
 
 func TestDecodeResponse_embeddings_invalidJSON_returnsError(t *testing.T) {
 	var c gemcodec.Codec
-	_, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, []byte(`{not json`), "")
+	_, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, []byte(`{not json`), "", provcore.DecodeContext{})
 	if err == nil {
 		t.Fatal("expected error for invalid JSON response")
 	}
@@ -492,7 +646,7 @@ func TestDecodeResponse_embeddings_batchSumsTokensFromStatistics(t *testing.T) {
 			{"values":[0.3,0.4], "statistics":{"token_count":20}}
 		]
 	}`)
-	resp, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "")
+	resp, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -510,7 +664,7 @@ func TestDecodeResponse_embeddings_batchSumsCharsAsTokens(t *testing.T) {
 			{"values":[0.2], "metadata":{"billable_character_count":80}}
 		]
 	}`)
-	resp, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "")
+	resp, err := c.DecodeResponse(typology.WireShapeGeminiEmbedContent, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}

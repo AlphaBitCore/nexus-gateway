@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 	"testing"
@@ -44,7 +45,7 @@ func TestOpenAIChatCompletionToGenerateContentResponse_Basic(t *testing.T) {
 		t.Fatalf("expected candidates: %s", string(native))
 	}
 	codec := NewCodec()
-	decRes, err := codec.DecodeResponse(typology.WireShapeGeminiGenerateContent, native, "")
+	decRes, err := codec.DecodeResponse(typology.WireShapeGeminiGenerateContent, native, "", provcore.DecodeContext{})
 	back := decRes.CanonicalBody
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)

@@ -3,6 +3,7 @@ package credpool
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -77,6 +78,44 @@ func TestSelect_StickyKeyDeterministic(t *testing.T) {
 		got := Select(pool, "vk-stable")
 		if got == nil || got.ID != first.ID {
 			t.Fatalf("iter %d: sticky drift %+v != %+v", i, got, first)
+		}
+	}
+}
+
+func TestSelect_StickyKeyDeterministic_WithShuffledInput(t *testing.T) {
+	// Callers build the candidate slice from a map range, so the same logical
+	// pool can arrive in any order. Sticky selection MUST resolve to the same
+	// credential ID regardless of input ordering — otherwise a single VK
+	// bounces between credentials across requests and destroys provider-side
+	// prompt-cache reuse. We compute the reference choice from a canonical
+	// ordering, then assert every shuffled permutation reproduces it.
+	base := []Entry{
+		{ID: "cred-a", Weight: 5, Circuit: ""},
+		{ID: "cred-b", Weight: 5, Circuit: ""},
+		{ID: "cred-c", Weight: 5, Circuit: ""},
+		{ID: "cred-d", Weight: 5, Circuit: ""},
+		{ID: "cred-e", Weight: 5, Circuit: ""},
+	}
+	const stickyKey = "vk-shuffle-stable"
+
+	ref := Select(append([]Entry(nil), base...), stickyKey)
+	if ref == nil {
+		t.Fatal("reference select returned nil")
+	}
+
+	rng := rand.New(rand.NewSource(42))
+	for trial := range 200 {
+		shuffled := append([]Entry(nil), base...)
+		rng.Shuffle(len(shuffled), func(i, j int) {
+			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+		})
+		got := Select(shuffled, stickyKey)
+		if got == nil {
+			t.Fatalf("trial %d: nil despite eligible entries", trial)
+		}
+		if got.ID != ref.ID {
+			t.Fatalf("trial %d: non-deterministic sticky selection: got %q want %q (input order=%+v)",
+				trial, got.ID, ref.ID, shuffled)
 		}
 	}
 }

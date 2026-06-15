@@ -1,7 +1,8 @@
 // Package handler — proxy_responses.go hosts the subscription-driven
 // downstream pipelines shared by the MISS broker leader, the HIT_LIVE
 // broker joiner, the cache-HIT replay, and the direct-no-broker path:
-// handleStreamWithSubscription (SSE) and handleNonStreamWithSubscription
+// handleStreamWithSubscription (SSE; the driver over the streaming
+// stage chain in stream_*.go) and handleNonStreamWithSubscription
 // (single terminal chunk). It also carries the SSE reader that adapts a
 // [streamcache.ChunkSubscription] into the LivePipeline's io.Reader
 // contract, plus the chunkUsageHolder that captures the final reported
@@ -26,15 +27,14 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/middleware"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/streaming"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -47,6 +47,16 @@ import (
 // X-Nexus-Cache, X-Nexus-Attempts, x-nexus-aigw-stream,
 // X-Nexus-Hook, X-Nexus-Coerced) MUST be set by the caller
 // before this function flushes the response.
+//
+// The handler drives the stream through an explicit stage chain — one
+// type per stage, each in its stream_<name>.go file: preamble (SSE
+// headers, write deadline, 200 flush) → response hooks (per-checkpoint
+// pipeline runner, hold-back decision) → wire shape ([DONE] sentinel,
+// admin streaming mode, transcoder selection) → relay (SSE reader,
+// capture tee, mode dispatch) → accounting (usage, cost, terminal-error
+// classification, metrics, quota reconcile). Shared per-stream state
+// travels in [streamState]; the subscription close runs as the
+// function-scoped defer so every exit path releases it.
 func (h *Handler) handleStreamWithSubscription(
 	r *http.Request,
 	w http.ResponseWriter,
@@ -65,356 +75,19 @@ func (h *Handler) handleStreamWithSubscription(
 			logger.Debug("subscription close error", "error", err)
 		}
 	}()
-
-	// Match the upstream Anthropic / OpenAI Content-Type byte-for-byte
-	// — both append `; charset=utf-8`.
-	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	if len(coerced) > 0 {
-		w.Header().Set("X-Nexus-Coerced", joinCSV(coerced))
-	}
-
-	// Extend server write deadline for streaming. Pinned to the live
-	// upstream budget + 30s slack so a slow provider that hits its own
-	// timeout still has time to surface the error before the server-side
-	// write deadline kills the connection.
-	if rc := http.NewResponseController(w); rc != nil {
-		_ = rc.SetWriteDeadline(time.Now().Add(specutil.ActiveConfig().Timeout + 30*time.Second))
-	}
-	w.WriteHeader(http.StatusOK)
-
-	// Derive endpoint type for hook filtering. The ingress descriptor is
-	// stored on the request context by ServeProxy before any cache path
-	// is entered; fall back to an empty type when not present.
-	var streamEpType hookcore.EndpointType
-	if streamIngress, ok := IngressFromContext(r.Context()); ok {
-		streamEpType = typology.KindFromWireShape(streamIngress.WireShape)
-	}
-	streamModalities := []hookcore.Modality{hookcore.ModalityText}
-
-	hookRunner := func(ctx context.Context, input *hookcore.HookInput) *hookcore.CompliancePipelineResult {
-		input.EndpointType = streamEpType
-		input.OutputModality = streamModalities
-		pipeline, err := h.deps.HookConfigCache.Resolver(ctx).BuildPipeline(
-			"response", "AI_GATEWAY",
-			streamEpType,
-			streamModalities,
-			5*time.Second, 15*time.Second, false, logger,
-		)
-		if err != nil {
-			logger.Error("failed to build response hook pipeline for stream", "error", err)
-			return &hookcore.CompliancePipelineResult{Decision: hookcore.Approve}
+	s := h.newStreamState(r, w, rec, sub, target, coerced,
+		quotaInPrice, quotaOutPrice, quotaDecision,
+		endpointType, requestID, start, logger)
+	for _, stage := range []proxyStage{
+		streamPreambleStage{s},
+		streamHooksStage{s},
+		streamShapeStage{s},
+		streamRelayStage{s},
+		streamAccountingStage{s},
+	} {
+		if !stage.run() {
+			return
 		}
-		if pipeline == nil {
-			return &hookcore.CompliancePipelineResult{Decision: hookcore.Approve}
-		}
-		pipeline.SetAllowModify(true)
-		pipeline.SetClearSoftOnApprove(true)
-		return pipeline.Execute(ctx, input)
-	}
-
-	// HoldBack accumulates assistant deltas server-side until the first
-	// compliance checkpoint approves. With FirstInspectChars=400 a
-	// short response (e.g. Claude Code's "say hi" → ~5 tokens) never
-	// hits the checkpoint mid-stream, so every chunk waits for the
-	// final flush at end-of-stream — and the client sees a buffered
-	// (Content-Length-bounded) body instead of a real SSE stream,
-	// breaking Anthropic SDK / Claude Code's streaming UI rendering.
-	//
-	// Trade-off: HoldBack is ONLY useful when a response-stage hook
-	// pipeline can actually reject content. If the response stage has
-	// no rules wired (BuildPipeline returns nil), there is nothing to
-	// gate on — we should pass chunks through live. Probe the resolver
-	// once at stream entry; if the pipeline is nil we drop HoldBack so
-	// the client sees real-time deltas. If a rule pack is configured
-	// later, the next request rebuilds and re-enters HoldBack.
-	holdBack := true
-	if h.deps != nil && h.deps.HookConfigCache != nil {
-		probe, probeErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
-			"response", "AI_GATEWAY",
-			streamEpType,
-			streamModalities,
-			5*time.Second, 15*time.Second, false, logger,
-		)
-		if probeErr == nil && probe == nil {
-			holdBack = false
-		}
-	}
-
-	// The OpenAI `[DONE]` terminator is conditional on the ingress
-	// format: OpenAI-shape clients expect it as the stream sentinel,
-	// Anthropic / Gemini clients do NOT (their typed terminal event
-	// closes the stream and a stray `data: [DONE]` line confuses
-	// strict SDK parsers — Claude Code's symptom of "blank assistant
-	// message even though all deltas arrived" was this exact bug).
-	emitDone := false
-	if ingress, ok := IngressFromContext(r.Context()); ok {
-		emitDone = ingress.BodyFormat.IsOpenAIFamily()
-	}
-	// #115 — resolve admin streaming mode + buffer cap from the Store.
-	// ai-gateway honors buffer_full_block (architect parity fix;
-	// replaces the prior "chunked_async only" hardcode). Three-service
-	// alignment: agent / compliance-proxy / ai-gateway all dispatch on
-	// the same streampolicy.Store snapshot. Nil Store falls through to
-	// chunked_async — the default for traffic that has already opted
-	// into the gateway (unlike tlsbump's transparent-forwarder posture
-	// where nil Store means "no opt-in, transparent passthrough").
-	//
-	// #115/O6 follow-up: read MaxBufferBytes from the same snapshot so
-	// admin-configured caps (64MB default, larger for high-volume
-	// deployments) propagate into both buffer and live pipelines. Zero
-	// means "use the pipeline's built-in default" (8MB) — same shape as
-	// the underlying BufferConfig / LiveConfig.
-	streamMode := streampolicy.ModeChunkedAsync
-	streamMaxBufferBytes := 0
-	if h.deps.StreamingPolicy != nil {
-		snapshot := h.deps.StreamingPolicy.Get()
-		streamMode = snapshot.Mode
-		streamMaxBufferBytes = snapshot.MaxBufferBytes
-	}
-
-	// Build a cross-format stream transcoder when the ingress and target wire
-	// shapes differ. The transcoder converts canonical provider.Chunk fields
-	// into ingress-native SSE frames so the client always receives the format
-	// it expects. Returns nil for same-format pairs (passthrough).
-	//
-	// B2 cross-ingress override: when the cache HIT entry was written
-	// under a different ingress wire shape (StreamHitOriginFromContext
-	// returns ok=true with a non-matching BodyFormat), pick the
-	// transcoder as if the "target" were the entry's origin wire shape.
-	// That forces the chunkSSEReader to re-encode the cached canonical
-	// chunks into the current ingress's SSE frames instead of forwarding
-	// the cached RawBytes (which carry the writer's wire shape) verbatim.
-	var transcoder canonicalbridge.StreamTranscoder
-	var ingressFormat provcore.Format
-	if ingress, ok := IngressFromContext(r.Context()); ok {
-		ingressFormat = ingress.BodyFormat
-		if h.deps.CanonicalBridge != nil {
-			targetFormat := provcore.Format(target.AdapterType)
-			origin, originOK := StreamHitOriginFromContext(r.Context())
-			var originBodyFormat provcore.Format
-			if originOK {
-				var mapped bool
-				originBodyFormat, mapped = WireShapeToBodyFormat(origin.WireShape)
-				if !mapped {
-					// Origin wire shape has no Format mapping (e.g. a future
-					// Gemini/Vertex cache lane); skip the cross-ingress
-					// transcoder override and let NewStreamTranscoder pick
-					// the default for the current ingress + target pair.
-					originOK = false
-				} else {
-					targetFormat = originBodyFormat
-				}
-			}
-			transcoder = h.deps.CanonicalBridge.NewStreamTranscoder(ingress.BodyFormat, targetFormat, target.ModelCode)
-			// Override edge case: the standard NewStreamTranscoder returns
-			// nil for "ingress=FormatOpenAIResponses && target natively
-			// serves Responses" (passthrough). On a cross-ingress cache
-			// HIT where the cached chunks were written by a chat-completions
-			// ingress, that passthrough would forward chat.completion SSE
-			// frames to a /v1/responses client. Force the explicit ingress
-			// encoder so the cached canonical chunks are re-encoded into
-			// the request's wire SSE grammar.
-			if originOK && transcoder == nil && originBodyFormat != ingress.BodyFormat {
-				switch ingress.BodyFormat {
-				case provcore.FormatOpenAIResponses:
-					transcoder = canonicalbridge.NewResponsesStreamEncoder(target.ModelCode)
-				default:
-					if ingress.BodyFormat.IsOpenAIFamily() {
-						transcoder = canonicalbridge.NewChatCompletionsStreamEncoder(target.ModelCode)
-					}
-				}
-			}
-		}
-	}
-	// Auto-upgrade: the client sent /v1/chat/completions but the upstream
-	// actually got /v1/responses (its SSE is Responses-grammar chunks).
-	// The (ingress=OpenAI, target=OpenAI) pair above resolved to nil
-	// (same-format passthrough) — but we need to RE-ENCODE the chunks
-	// back to chat-completions SSE so the chat-completions SDK can parse
-	// them. Override with the chat-completions encoder.
-	if ResponsesUpgradeFromContext(r.Context()) {
-		transcoder = canonicalbridge.NewChatCompletionsStreamEncoder(target.ModelCode)
-	}
-
-	// Drain the subscription (replay or live broker pump) into an
-	// io.Reader of SSE-formatted lines so LivePipeline.Process can
-	// consume it unchanged.
-	sseReader := newChunkSSEReaderFromSubscription(r.Context(), sub, transcoder, ingressFormat)
-
-	// usageHolder captures the final reported usage observed in the
-	// chunk timeline. The reader updates it from chunk.Usage; we read
-	// it after Process returns to stamp rec/metrics.
-	usageHolder := &chunkUsageHolder{}
-	sseReader.usageSink = usageHolder
-
-	hookCtx := &streaming.StreamHookContext{
-		RequestID:      requestID,
-		IngressType:    "AI_GATEWAY",
-		Path:           r.URL.Path,
-		Method:         r.Method,
-		Model:          target.ModelCode,
-		SourceIP:       middleware.ClientIP(r),
-		ProviderRegion: target.Region,
-		OnCheckpoint: func(res *hookcore.CompliancePipelineResult) {
-			if res == nil {
-				return
-			}
-			rec.ResponseHookDecision = string(res.Decision)
-			rec.ResponseHookReason = res.Reason
-			rec.ResponseHookReasonCode = res.ReasonCode
-			rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, res.Tags)
-			if br := mapBlockingRule(res.BlockingRule); br != nil {
-				rec.BlockingRule = br
-			}
-		},
-		OnStreamRewrite: func(n int) {
-			rec.ResponseHookRewritten = true
-			rec.ResponseHookRewriteCount += n
-		},
-	}
-
-	pcStream := h.payloadCaptureConfig()
-	hardCap := h.streamCaptureHardCap()
-	tee := newStreamCaptureTee(w, hardCap)
-
-	// #115/R1 dispatch — three streaming modes, one helper per mode.
-	// Three-service alignment: tlsbump (agent + cp) honors all three
-	// modes in shared/transport/tlsbump/sse.go's resolveStreamingMode
-	// switch; ai-gateway now does the same. Collapsing passthrough
-	// into live (the original #115 oversight) silently kept hooks
-	// running on traffic the admin had explicitly opted out of —
-	// fixed here so admin policy is honored consistently across all
-	// three services.
-	streamDeps := runStreamDeps{
-		Deps:           h.deps,
-		AdapterType:    target.AdapterType,
-		Path:           r.URL.Path,
-		AcceptHeader:   r.Header.Get("Accept"),
-		HookRunner:     hookRunner,
-		HookCtx:        hookCtx,
-		SSEReader:      sseReader,
-		Tee:            tee,
-		Logger:         logger,
-		HoldBack:       holdBack,
-		EmitDone:       emitDone,
-		MaxBufferBytes: streamMaxBufferBytes,
-	}
-	dispatchStreamMode(r.Context(), streamMode, streamDeps)
-	logger.Debug("stream response capture",
-		"hardCap", hardCap,
-		"capturedBytes", len(tee.captured()),
-		"truncated", tee.truncatedBeyondCap(),
-		"storeFlag", pcStream.StoreResponseBody,
-	)
-	if pcStream.StoreResponseBody {
-		rec.ResponseBody = tee.captured()
-		rec.ResponseTruncated = tee.truncatedBeyondCap()
-		rec.ResponseContentType = "text/event-stream"
-	}
-	rec.StatusCode = http.StatusOK
-
-	// Extract usage accumulated during streaming. Prefer rec values
-	// already set by handleStreamHit (they came from the cache entry);
-	// otherwise read what the SSE reader observed live.
-	usage := metrics.Usage{
-		PromptTokens:     rec.PromptTokens,
-		CompletionTokens: rec.CompletionTokens,
-		TotalTokens:      rec.TotalTokens,
-	}
-	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
-		live := usageHolder.snapshot()
-		promptTok := usageInt(live.PromptTokens)
-		complTok := usageInt(live.CompletionTokens)
-		totalTok := usageInt(live.TotalTokens)
-		if promptTok > 0 || complTok > 0 || totalTok > 0 {
-			usage = metrics.Usage{
-				PromptTokens:     int64(promptTok),
-				CompletionTokens: int64(complTok),
-				TotalTokens:      int64(totalTok),
-			}
-			rec.PromptTokens = usage.PromptTokens
-			rec.CompletionTokens = usage.CompletionTokens
-			rec.TotalTokens = usage.TotalTokens
-			// Use per-endpoint formula so embeddings are priced correctly.
-			streamCostUnits := estimator.BillableUnits{
-				PromptTokens:     int(rec.PromptTokens),
-				CompletionTokens: int(rec.CompletionTokens),
-			}
-			fullCost := estimator.Lookup(rec.EndpointType)(streamCostUnits, metrics.ModelPrices{
-				InputUsdPerM:  &quotaInPrice,
-				OutputUsdPerM: &quotaOutPrice,
-			}).Total
-			rec.EstimatedCostUsd = fullCost
-			// Stamp ProviderCacheStatus from upstream usage cache fields.
-			// Skip if already set (the broker joiner path stamps NA earlier).
-			if rec.ProviderCacheStatus == "" {
-				rec.ProviderCacheStatus = audit.ClassifyProviderCache(live.CacheReadTokens, live.CacheCreationTokens)
-			}
-			if live.CacheReadTokens != nil {
-				rec.CacheReadTokens = int64(*live.CacheReadTokens)
-			}
-			if live.CacheCreationTokens != nil {
-				rec.CacheCreationTokens = int64(*live.CacheCreationTokens)
-			}
-			// reasoning_tokens from the broker-leader live stream.
-			if live.ReasoningTokens != nil {
-				rec.ReasoningTokens = int64(*live.ReasoningTokens)
-			}
-			h.computeCacheCosts(rec, target)
-			// HIT_LIVE: this joiner did not call the provider; actual cost is 0.
-			// The leader (MISS) already accounts for the upstream spend and any
-			// Provider prompt-cache savings, so clear those here to avoid double-counting.
-			if rec.GatewayCacheStatus == audit.GatewayCacheHitInflight {
-				rec.GatewayCacheSavingsUsd = fullCost
-				rec.EstimatedCostUsd = 0
-				rec.CacheCreationTokens = 0
-				rec.CacheReadTokens = 0
-				rec.CacheWriteCostUsd = 0
-				rec.CacheReadSavingsUsd = 0
-				rec.CacheNetSavingsUsd = 0
-			}
-			rec.UsageExtractionStatus = "streaming_reported"
-		} else {
-			// Stream completed but provider emitted no usage frame.
-			// Tier-2 tokenizer estimation is not enabled for AI Gateway
-			// (the upstream providers we support emit usage at near-100%).
-			rec.UsageExtractionStatus = "streaming_unavailable"
-		}
-	}
-
-	if h.deps.Metrics != nil {
-		h.deps.Metrics.RecordRequest(target.ProviderName, target.ModelID, endpointType, rec.StatusCode, time.Since(start), usage)
-	}
-
-	// Quota reconcile. Streaming branch matches the non-streaming path's
-	// status_code < 400 filter so streams that errored mid-flight do not
-	// increment the runtime quota counter.
-	//
-	// Also skip Reconcile when the gateway cache served the response —
-	// HIT (replay from L1) and HIT_INFLIGHT (joiner waiting on a leader)
-	// both mean this caller did not pay for an upstream call. The leader
-	// reconciles its own cost; charging joiners or HIT replays a second
-	// time inflates the quota counter against $0 of actual spend.
-	gatewayServed := rec.GatewayCacheStatus == audit.GatewayCacheHit || rec.GatewayCacheStatus == audit.GatewayCacheHitInflight
-	if h.deps.QuotaEngine != nil && quotaDecision != nil && quotaDecision.Allowed && rec.StatusCode < 400 && !gatewayServed {
-		go func() {
-			defer func() {
-				if rcv := recover(); rcv != nil {
-					h.deps.Logger.Error("quota engine reconcile panic", "panic", rcv)
-				}
-			}()
-			rcCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			h.deps.QuotaEngine.Reconcile(rcCtx, quotaDecision, quota.ActualUsage{
-				PromptTokens:     usage.PromptTokens,
-				CompletionTokens: usage.CompletionTokens,
-				TotalTokens:      usage.TotalTokens,
-				InputPricePM:     quotaInPrice,
-				OutputPricePM:    quotaOutPrice,
-			})
-		}()
 	}
 }
 
@@ -436,7 +109,6 @@ func (h *Handler) handleNonStreamWithSubscription(
 	endpointType, requestID string,
 	start time.Time,
 	logger *slog.Logger,
-	routeResult *routingcore.RouteResult,
 	canonicalMsgs []normcore.Message,
 ) {
 	defer func() {
@@ -450,6 +122,7 @@ func (h *Handler) handleNonStreamWithSubscription(
 	var (
 		canonicalBody []byte
 		usage         provcore.Usage
+		truncated     bool
 	)
 	for {
 		chunk, err := sub.Next(ctx)
@@ -471,6 +144,12 @@ func (h *Handler) handleNonStreamWithSubscription(
 		if chunk.Usage != nil {
 			usage = *chunk.Usage
 		}
+		// The leader synthesises this terminal chunk from a buffered
+		// ExecutionResult; a clamped read cap on the leader is fanned out to
+		// every joiner here so the usage status reflects the truncation.
+		if chunk.Truncated {
+			truncated = true
+		}
 		if chunk.Done {
 			break
 		}
@@ -490,12 +169,11 @@ func (h *Handler) handleNonStreamWithSubscription(
 	// path fires scheduleL2Write inside proxy.go::ServeProxy.
 	if rec.GatewayCacheStatus == audit.GatewayCacheMiss && len(canonicalBody) > 0 {
 		h.scheduleL2Write(
-			routeResult,
+			rec,
 			target,
 			canonicalMsgs,
 			canonicalBody,
 			provcoreUsageToMap(&usage),
-			resolveL2VKScope(rec, ""),
 			false,
 			ingress,
 			logger,
@@ -527,11 +205,14 @@ func (h *Handler) handleNonStreamWithSubscription(
 	// that report no token usage (e.g. Gemini embedContent) get prompt_tokens
 	// back-filled from the request-side local estimate so the cost formula
 	// yields a non-zero embedding cost.
+	embeddingEstimated := false
 	if pt := embeddingTokenFallback(rec.EndpointType, rec.PromptTokens, rec.Metadata); pt != rec.PromptTokens {
 		rec.PromptTokens = pt
 		rec.TotalTokens = pt
 		usageMet.PromptTokens = pt
 		usageMet.TotalTokens = pt
+		// Estimated, not provider-reported.
+		embeddingEstimated = true
 	}
 	// Use per-endpoint formula so embeddings are priced correctly.
 	brokerCostUnits := estimator.BillableUnits{
@@ -558,6 +239,9 @@ func (h *Handler) handleNonStreamWithSubscription(
 	if usage.ReasoningTokens != nil {
 		rec.ReasoningTokens = int64(*usage.ReasoningTokens)
 	}
+	// reasoning_cost_usd breakdown — consistent with the direct path and
+	// cache-HIT paths.
+	stampReasoningCost(rec, quotaOutPrice)
 	h.computeCacheCosts(rec, target)
 	// HIT_LIVE: this joiner did not call the provider; actual cost is 0.
 	// The leader (MISS) already accounts for the upstream spend and any
@@ -565,15 +249,27 @@ func (h *Handler) handleNonStreamWithSubscription(
 	if rec.GatewayCacheStatus == audit.GatewayCacheHitInflight {
 		rec.GatewayCacheSavingsUsd = fullCost
 		rec.EstimatedCostUsd = 0
+		rec.ReasoningCostUsd = 0
 		rec.CacheCreationTokens = 0
 		rec.CacheReadTokens = 0
 		rec.CacheWriteCostUsd = 0
 		rec.CacheReadSavingsUsd = 0
 		rec.CacheNetSavingsUsd = 0
 	}
-	if usageMet.PromptTokens > 0 || usageMet.CompletionTokens > 0 || usageMet.TotalTokens > 0 {
+	switch {
+	case embeddingEstimated:
+		// Estimated embedding token count, not provider-reported
+		// (request-side estimate, honest even if the body was truncated).
+		rec.UsageExtractionStatus = "estimated"
+	case truncated:
+		// The leader's buffered response body was clamped at the read
+		// cap before usage extraction; the token counts replayed here are
+		// incomplete, so flag them instead of claiming "ok".
+		rec.ResponseTruncated = true
+		rec.UsageExtractionStatus = "truncated"
+	case usageMet.PromptTokens > 0 || usageMet.CompletionTokens > 0 || usageMet.TotalTokens > 0:
 		rec.UsageExtractionStatus = "ok"
-	} else {
+	default:
 		rec.UsageExtractionStatus = "parse_failed"
 	}
 	// Update embedding dimension from the canonical response body.
@@ -605,7 +301,7 @@ func (h *Handler) handleNonStreamWithSubscription(
 			"response", "AI_GATEWAY",
 			brokerEpType,
 			respInput.OutputModality,
-			5*time.Second, 15*time.Second, false, logger,
+			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
 		)
 		if pErr != nil {
 			logger.Error("failed to build response hook pipeline (broker non-stream)", "error", pErr)
@@ -624,6 +320,12 @@ func (h *Handler) handleNonStreamWithSubscription(
 			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
 				rec.BlockingRule = br
 			}
+			// Propagate spans + storage policy so the audit writer redacts
+			// (or drops) the persisted response copies per storageAction.
+			rec.ResponseTransformSpans = hookResult.TransformSpans
+			rec.ResponseStorageAction = string(hookResult.StorageAction)
+			rec.ResponseRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
+			rec.ResponseRedetect = hookResult.Redetect
 			if h.deps.Metrics != nil {
 				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
 			}
@@ -674,6 +376,10 @@ func (h *Handler) handleNonStreamWithSubscription(
 	// Skip reconcile if the gateway cache served the response (HIT or
 	// HIT_INFLIGHT) — see the streaming branch above for rationale.
 	gatewayServed := rec.GatewayCacheStatus == audit.GatewayCacheHit || rec.GatewayCacheStatus == audit.GatewayCacheHitInflight
+	// Charge the single canonical cache-aware cost (rec.EstimatedCostUsd) so the
+	// live counter matches the rollup billed_cost_usd and the Backfill seed.
+	// Captured before the goroutine to avoid racing rec.
+	reconcileCost := rec.EstimatedCostUsd
 	if h.deps.QuotaEngine != nil && quotaDecision != nil && quotaDecision.Allowed && rec.StatusCode < 400 && !gatewayServed {
 		go func() {
 			defer func() {
@@ -683,13 +389,7 @@ func (h *Handler) handleNonStreamWithSubscription(
 			}()
 			rcCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			h.deps.QuotaEngine.Reconcile(rcCtx, quotaDecision, quota.ActualUsage{
-				PromptTokens:     usageMet.PromptTokens,
-				CompletionTokens: usageMet.CompletionTokens,
-				TotalTokens:      usageMet.TotalTokens,
-				InputPricePM:     quotaInPrice,
-				OutputPricePM:    quotaOutPrice,
-			})
+			h.deps.QuotaEngine.Reconcile(rcCtx, quotaDecision, quota.ActualUsage{CostUSD: reconcileCost})
 		}()
 	}
 
@@ -697,6 +397,13 @@ func (h *Handler) handleNonStreamWithSubscription(
 		w.Header().Set("X-Nexus-Coerced", joinCSV(coerced))
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// Extend the write deadline to the upstream request budget so a long
+	// non-streaming inference (a reasoning model that returns a big body
+	// after minutes of work) is governed by upstream.timeoutSec, not the
+	// shorter flat server.writeTimeout that bounds ordinary responses.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Now().Add(specutil.ActiveConfig().Timeout))
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(respBody)
 }
@@ -830,6 +537,36 @@ type chunkSSEReader struct {
 	err           error
 	transcoder    canonicalbridge.StreamTranscoder // non-nil for cross-format; nil for passthrough
 	ingressFormat provcore.Format                  // ingress wire shape; drives SSE error-frame envelope (G4)
+	// termErr publishes the reader's terminal failure (if any) for the
+	// post-pump audit stamp. nil = the stream reached a clean EOF. It is
+	// written once from the reader goroutine on the terminal Read and read
+	// once by the accounting stage after the pump finishes; the atomic.Pointer
+	// supplies the cross-goroutine happens-before (the pipeline drives Read
+	// in a separate goroutine — see chunkUsageHolder).
+	termErr atomic.Pointer[streamTerminalError]
+}
+
+// streamTerminalError records why an SSE stream ended abnormally so the
+// audit row can carry a queryable error_code despite the HTTP-200 status
+// (the response headers were already flushed before the failure).
+type streamTerminalError struct {
+	// code is the audit ErrorCode: streamErrCodeUpstream when the upstream
+	// stream faulted, streamErrCodeClientAbort on ctx cancel (client
+	// disconnect / deadline).
+	code string
+	err  error
+}
+
+const (
+	streamErrCodeUpstream    = "UPSTREAM_STREAM_ERROR"
+	streamErrCodeClientAbort = "CLIENT_ABORT"
+)
+
+// terminalError returns the reader's terminal failure, or nil if the
+// stream completed cleanly. Safe to call after the streaming pump has
+// returned.
+func (r *chunkSSEReader) terminalError() *streamTerminalError {
+	return r.termErr.Load()
 }
 
 func newChunkSSEReaderFromSubscription(ctx context.Context, sub streamcache.ChunkSubscription, transcoder canonicalbridge.StreamTranscoder, ingressFormat provcore.Format) *chunkSSEReader {
@@ -864,6 +601,7 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 		// Context cancellation (client disconnect / timeout) — let the
 		// caller's read loop exit cleanly; no error event to the client.
 		if r.ctx.Err() != nil {
+			r.termErr.Store(&streamTerminalError{code: streamErrCodeClientAbort, err: err})
 			return 0, err
 		}
 		// Provider error (e.g. empty upstream SSE body): synthesise a
@@ -872,6 +610,7 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 		// connection close. G4: the envelope must follow the ingress
 		// SDK contract (OpenAI vs Anthropic vs Gemini) — see
 		// provider-adapter-architecture.md §9.5.
+		r.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
 		var pe *provcore.ProviderError
 		if !errors.As(err, &pe) {
 			pe = &provcore.ProviderError{
@@ -913,6 +652,7 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 		if err != nil {
 			r.closed = true
 			r.err = err
+			r.termErr.Store(&streamTerminalError{code: streamErrCodeUpstream, err: err})
 			return 0, err
 		}
 		if len(b) == 0 {
@@ -947,3 +687,32 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 	r.buf = r.buf[n:]
 	return n, nil
 }
+
+// streamIdleWriter extends the connection write deadline on every chunk write
+// so a streaming response is governed by an idle (silence) budget rather than
+// a flat total cap: an actively-producing stream of any length is never cut,
+// while a stalled upstream trips the deadline after `idle` of quiet. The
+// caller sets the INITIAL deadline (to cover think-time before the first
+// token); each Write then resets it to now+idle. Flush and Unwrap are
+// forwarded so the stream-capture tee's flusher and http.NewResponseController
+// still reach the underlying writer.
+type streamIdleWriter struct {
+	http.ResponseWriter
+	rc   *http.ResponseController
+	idle time.Duration
+}
+
+func (w *streamIdleWriter) Write(p []byte) (int, error) {
+	if w.idle > 0 {
+		_ = w.rc.SetWriteDeadline(time.Now().Add(w.idle))
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *streamIdleWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *streamIdleWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

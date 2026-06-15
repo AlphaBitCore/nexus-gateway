@@ -12,8 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/cmd/agent/wiring"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/enrollment"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/catrust"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
 	config "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/schema"
 )
@@ -97,7 +100,7 @@ func cmdEnroll(args []string) {
 		os.Exit(1)
 	}
 
-	mgr := enrollment.NewManager(enrollCertDir(*configPath), enrollment.WithHubEnroller(hubEnroller))
+	mgr := enrollment.NewManager(enrollCertDir(*configPath), enrollment.WithHubEnroller(hubEnroller), enrollment.WithKeyStore(keystore.NewPlatformStore()))
 
 	if err := mgr.Enroll(context.Background(), *token, hostname, runtime.GOOS, osVersion(), version); err != nil {
 		slog.Error("enrollment failed", "error", err)
@@ -135,7 +138,7 @@ func cmdEnrollSSO(args []string) {
 		slog.Error("failed to init hub enroll client", "error", err)
 		os.Exit(1)
 	}
-	mgr := enrollment.NewManager(enrollCertDir(*configPath), enrollment.WithHubEnroller(hubEnroller))
+	mgr := enrollment.NewManager(enrollCertDir(*configPath), enrollment.WithHubEnroller(hubEnroller), enrollment.WithKeyStore(keystore.NewPlatformStore()))
 
 	// Public bootstrap endpoint — system-root TLS, not pinned.
 	bootstrapClient := bootstrap.New(*hubURL, bootstrap.DefaultHTTPClient(), *cpOverride)
@@ -149,7 +152,7 @@ func cmdEnrollSSO(args []string) {
 		OSVersion:    osVersion(),
 		AgentVersion: version,
 		Timeout:      *timeout,
-		ResolveCpURL: buildResolveCpURL(bootstrapClient),
+		ResolveCpURL: wiring.BuildResolveCpURL(bootstrapClient),
 	}
 	result, err := flow.Run(context.Background())
 	if err != nil {
@@ -176,11 +179,25 @@ func cmdUnenroll(args []string) {
 		os.Exit(1)
 	}
 
-	mgr := enrollment.NewManager(certDir(cfg), enrollment.WithHubEnroller(hubEnroller))
+	mgr := enrollment.NewManager(certDir(cfg), enrollment.WithHubEnroller(hubEnroller), enrollment.WithKeyStore(keystore.NewPlatformStore()))
 
 	if err := mgr.Unenroll(context.Background()); err != nil {
 		slog.Error("unenrollment failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Remove the Nexus device CA from the OS trust store. A file-delete-only
+	// uninstall leaves the device MITM CA trusted indefinitely — agents on that
+	// host could still intercept HTTPS even after the product is removed. This
+	// is best-effort: failure is logged but does not block unenroll completion,
+	// since the agent identity artifacts are already gone and the operator
+	// controls whether the CA was ever installed.
+	if err := catrust.RemoveCACert("nexus-agent-device-ca"); err != nil {
+		slog.Warn("unenroll: device CA removal failed; manual cleanup may be required",
+			"error", err, "label", "nexus-agent-device-ca")
+	} else {
+		slog.Info("unenroll: device CA removed from OS trust store")
+	}
+
 	fmt.Println("Unenrolled successfully.")
 }

@@ -20,6 +20,12 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
+// The real frontend/dist bundle is produced by Vite during the agent
+// build (Skill('build-agent')). A committed placeholder (.gitkeep +
+// index.html) lives under frontend/dist/ so this embed resolves on a
+// clean clone before the frontend has ever been built — `go build` /
+// `go vet` of this module no longer require running Vite first.
+//
 //go:embed all:frontend/dist
 var assets embed.FS
 
@@ -36,7 +42,6 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 245, G: 246, B: 248, A: 1},
-		OnStartup:        bridge.onStartup,
 		OnShutdown:       bridge.onShutdown,
 		Bind: []interface{}{
 			bridge,

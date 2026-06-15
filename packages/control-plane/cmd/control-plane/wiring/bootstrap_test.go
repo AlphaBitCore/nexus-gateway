@@ -3,6 +3,7 @@ package wiring
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,19 +19,16 @@ func TestInitBootstrap_NonexistentConfigPath_UsesDefaults(t *testing.T) {
 	// it Load trips on PublicURL/Database/Redis/MQ/Token before defaults
 	// have a chance to settle.
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("CONTROL_PLANE_PUBLIC_URL", "http://localhost:3001")
 	t.Setenv("REDIS_ADDRS", "localhost:6379")
 	t.Setenv("MQ_DRIVER", "nats")
 	t.Setenv("NATS_URL", "nats://localhost:4222")
-	// Ensure we're not in production so HMAC check passes without env var.
-	prevEnv := os.Getenv("NODE_ENV")
-	os.Unsetenv("NODE_ENV")
-	defer func() {
-		if prevEnv != "" {
-			os.Setenv("NODE_ENV", prevEnv)
-		}
-	}()
+	// ADMIN_KEY_HMAC_SECRET is mandatory in every environment (SEC-M9-01/02: no
+	// dev fallback), so the bootstrap HMAC guard needs it set even for this
+	// defaults-loading test.
+	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
 
 	b, err := InitBootstrap("/nonexistent/config/path.yaml")
 	if err != nil {
@@ -56,12 +54,24 @@ func TestInitBootstrap_MissingIssuer_ReturnsError(t *testing.T) {
 			os.Setenv("AUTH_SERVER_ISSUER", prevIssuer)
 		}
 	}()
-	// Not production, so HMAC check passes.
+	// Satisfy the config baseline + the mandatory HMAC guard (SEC-M9-01/02) so
+	// the failure isolates to the issuer check rather than tripping earlier.
+	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("CONTROL_PLANE_PUBLIC_URL", "http://localhost:3001")
+	t.Setenv("REDIS_ADDRS", "localhost:6379")
+	t.Setenv("MQ_DRIVER", "nats")
+	t.Setenv("NATS_URL", "nats://localhost:4222")
 	os.Unsetenv("NODE_ENV")
 
 	_, err := InitBootstrap("/nonexistent/path.yaml")
 	if err == nil {
 		t.Fatal("expected error when issuer is empty, got nil")
+	}
+	if !strings.Contains(err.Error(), "authServer.issuer is required") {
+		t.Errorf("error=%v; want the issuer guard (HMAC/config baseline must pass first)", err)
 	}
 }
 
@@ -78,8 +88,12 @@ func TestInitBootstrap_InvalidYAML_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestInitBootstrap_HMACSecretFromYAML_EnvSet(t *testing.T) {
-	// Write a valid YAML with auth.hmacSecret so it bridges into env.
+// TestInitBootstrap_HMACSecretIsEnvOnly is the F-0075 regression: the
+// HMAC secret is env-only (config.Auth.HMACSecret is `yaml:"-"`). A YAML
+// `auth.hmacSecret` value must be IGNORED — there is no YAML→env bridge.
+// The secret comes solely from ADMIN_KEY_HMAC_SECRET.
+func TestInitBootstrap_HMACSecretIsEnvOnly(t *testing.T) {
+	// No env secret set; a YAML auth.hmacSecret must NOT satisfy the field.
 	prevEnv := os.Getenv("ADMIN_KEY_HMAC_SECRET")
 	os.Unsetenv("ADMIN_KEY_HMAC_SECRET")
 	defer func() {
@@ -96,48 +110,78 @@ func TestInitBootstrap_HMACSecretFromYAML_EnvSet(t *testing.T) {
 	defer os.Unsetenv("AUTH_SERVER_ISSUER")
 	// Stamp the env-side baseline that config.validate() requires.
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("CONTROL_PLANE_PUBLIC_URL", "http://localhost:3001")
 	t.Setenv("REDIS_ADDRS", "localhost:6379")
 	t.Setenv("MQ_DRIVER", "nats")
 	t.Setenv("NATS_URL", "nats://localhost:4222")
-	os.Unsetenv("NODE_ENV")
+	os.Unsetenv("NODE_ENV") // proves the env-only HMAC guard does not depend on NODE_ENV
 
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "cfg.yaml")
-	yaml := "auth:\n  hmacSecret: \"test-secret\"\n"
+	yaml := "auth:\n  hmacSecret: \"yaml-secret-should-be-ignored\"\n"
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0644); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
 
-	b, err := InitBootstrap(cfgPath)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// SEC-M9-01/02 + SEC-W2-03 Layer C: ADMIN_KEY_HMAC_SECRET is env-only AND
+	// mandatory (no dev fallback). With the secret present only in YAML (and
+	// absent from env), InitBootstrap must fail the HMAC guard — proving the YAML
+	// value neither satisfies the requirement nor is bridged into the env. The
+	// guard now lives in config.validate() (against the custody-resolved field),
+	// so the error surfaces from config.Load.
+	_, err := InitBootstrap(cfgPath)
+	if err == nil {
+		t.Fatal("expected error — a YAML auth.hmacSecret must not satisfy the env-only HMAC requirement")
 	}
-	if b.Config == nil {
-		t.Error("expected non-nil Config")
+	if !strings.Contains(err.Error(), "an HMAC secret is required") {
+		t.Errorf("error=%v; want the HMAC-required guard (proving YAML is ignored)", err)
+	}
+	// The YAML value must not have been written into the env by a bridge.
+	if v := os.Getenv("ADMIN_KEY_HMAC_SECRET"); v != "" {
+		t.Errorf("ADMIN_KEY_HMAC_SECRET=%q want empty — bootstrap must not bridge YAML into env", v)
 	}
 }
 
-func TestInitBootstrap_ProdMissingHMAC_ReturnsError(t *testing.T) {
-	prevNodeEnv := os.Getenv("NODE_ENV")
+func TestInitBootstrap_MissingHMAC_ReturnsError(t *testing.T) {
+	// SEC-W2-03 Layer C: a missing HMAC secret must abort the boot UNCONDITIONALLY
+	// (dev and prod alike — the guard no longer depends on any production flag).
+	// With every other required input present, the failure isolates to the
+	// HMAC-secret guard, which now lives in config.validate() against the
+	// custody-resolved field.
 	prevHMAC := os.Getenv("ADMIN_KEY_HMAC_SECRET")
-	os.Setenv("NODE_ENV", "production")
 	os.Unsetenv("ADMIN_KEY_HMAC_SECRET")
 	defer func() {
-		if prevNodeEnv != "" {
-			os.Setenv("NODE_ENV", prevNodeEnv)
-		} else {
-			os.Unsetenv("NODE_ENV")
-		}
 		if prevHMAC != "" {
-			os.Setenv("ADMIN_KEY_HMAC_SECRET", prevHMAC)
+			os.Setenv("ADMIN_KEY_HMAC_SECRET", prevHMAC) //nolint:errcheck
 		}
 	}()
+	os.Unsetenv("NODE_ENV")
+	// Baseline so config otherwise loads cleanly, isolating the failure to the
+	// HMAC guard.
+	t.Setenv("AUTH_SERVER_ISSUER", "http://localhost:3001")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("CONTROL_PLANE_PUBLIC_URL", "http://localhost:3001")
+	t.Setenv("REDIS_ADDRS", "localhost:6379")
+	t.Setenv("MQ_DRIVER", "nats")
+	t.Setenv("NATS_URL", "nats://localhost:4222")
 
-	_, err := InitBootstrap("/nonexistent/config.yaml")
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "cfg.yaml")
+	// A config that loads cleanly but carries no auth.hmacSecret.
+	if err := os.WriteFile(cfgPath, []byte("auth: {}\n"), 0644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	_, err := InitBootstrap(cfgPath)
 	if err == nil {
-		t.Fatal("expected error in production mode without HMAC secret, got nil")
+		t.Fatal("expected error without an HMAC secret, got nil")
+	}
+	if !strings.Contains(err.Error(), "an HMAC secret is required") {
+		t.Errorf("expected the HMAC-secret guard to fire, got a different error: %v", err)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -12,8 +11,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/agentca"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/thingtype"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
@@ -21,12 +20,91 @@ import (
 type InternalThingsAPI struct {
 	Mgr        *manager.Manager
 	MQProducer mq.Producer
-	CA         *agentca.CA
 	// CatB aggregates authoritative Cat B payloads from CP-owned
 	// business tables. Nil is supported: SingleConfigPull falls
 	// through to the legacy thing_config_template.state path, so the
 	// absence of a registry is byte-identical to pre-P0-C behaviour.
 	CatB *store.CatBRegistry
+}
+
+// requireThingMatch enforces cross-Thing object-level authorization on the
+// internal Things API. DeviceOrServiceAuth attaches the authenticated
+// *store.Thing to the context for device-token callers (agents) and nothing for
+// service-token callers (CP / Hub-internal). When a device token is present, the
+// thing id the request operates on — taken from the body or query, NOT from the
+// authenticated identity — MUST equal the caller's own id; otherwise an enrolled
+// agent could act on another Thing's row (read its config, overwrite its shadow,
+// deregister it) by substituting that id. The WebSocket path already binds the
+// authenticated identity this way; these HTTP fallbacks must match it. Service-
+// token callers (thing == nil) are trusted and bypass the check.
+//
+// Reports whether the request is BLOCKED: it writes the 403 response and
+// returns true when a device-token caller's id does not match, in which case the
+// handler must stop (`return nil`). Returns false when authorized (matching id,
+// or a service-token caller). Callers that also need the resolved Thing (e.g.
+// its Name) read ThingFromContext directly after this returns false.
+func requireThingMatch(c echo.Context, operatedID string) bool {
+	if thing := ThingFromContext(c); thing != nil && thing.ID != operatedID {
+		_ = forbidden(c, "thingId does not match authenticated device")
+		return true
+	}
+	return false
+}
+
+// requireMutationAuthority gates a device-MUTATION handler on the internal Things
+// API (register / heartbeat / shadow / break-glass / deregister / exemption).
+// It composes two object-level checks:
+//
+//  1. Device-token callers (an enrolled agent) — bound to their OWN id, exactly
+//     as requireThingMatch: the operated id MUST equal the authenticated Thing's
+//     id, else 403.
+//  2. Service-token callers (thing == nil; CP / ai-gateway / compliance-proxy via
+//     the thingclient HTTP fallback, or Hub-internal) — must NOT impersonate an
+//     AGENT. A flat INTERNAL_SERVICE_TOKEN is shared fleet-wide, so without this
+//     an attacker holding any one service's token could forge an arbitrary
+//     agent's shadow, flip its kill-switch via break-glass, or deregister it.
+//     An honest backend service only ever self-operates on its own
+//     service-type Thing (the thingclient always sends its own ThingID), so the
+//     request is allowed ONLY when the operated Thing is a backend-service type
+//     (thingtype.IsBackendService) — an agent or unknown type is refused.
+//
+// operatedTypeHint short-circuits the type lookup when the caller already knows
+// the type without a DB read (the register body carries `type`); pass "" to look
+// it up by operatedID. For a service-token caller whose target id cannot be
+// resolved, the request fails closed (403).
+//
+// Residual: a service token can still
+// act as a DIFFERENT backend-service Thing, because the flat token does not
+// identify which edge is calling. Containing that requires per-edge credentials.
+//
+// Reports whether the request is BLOCKED (writes the 403 and returns true).
+func (h *InternalThingsAPI) requireMutationAuthority(c echo.Context, operatedID, operatedTypeHint string) bool {
+	if thing := ThingFromContext(c); thing != nil {
+		// Device-token caller: bind to its own id.
+		if thing.ID != operatedID {
+			_ = forbidden(c, "thingId does not match authenticated device")
+			return true
+		}
+		return false
+	}
+
+	// Service-token caller: must not act as a non-service (agent) Thing.
+	typ := operatedTypeHint
+	if typ == "" {
+		thing, err := h.Mgr.Store().RegistryStore().GetThing(c.Request().Context(), operatedID)
+		if err != nil {
+			// Unknown / unreadable target — a service token cannot prove it is
+			// operating on a service Thing, so refuse (fail closed).
+			_ = forbidden(c, "service token may not operate on an unknown thing")
+			return true
+		}
+		typ = thing.Type
+	}
+	if !thingtype.IsBackendService(typ) {
+		_ = forbidden(c, "service token may not act as an agent thing")
+		return true
+	}
+	return false
 }
 
 // GetAttestationPubKey handles GET /api/internal/things/:id/attestation-pubkey.
@@ -49,7 +127,10 @@ func (h *InternalThingsAPI) GetAttestationPubKey(c echo.Context) error {
 	if thingID == "" {
 		return badRequest(c, "thing id is required")
 	}
-	pub, err := h.Mgr.Store().RegistryStore().GetAttestationPubKey(c.Request().Context(), thingID)
+	if requireThingMatch(c, thingID) {
+		return nil
+	}
+	pub, certExpiresAt, err := h.Mgr.Store().RegistryStore().GetAttestationPubKeyWithExpiry(c.Request().Context(), thingID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return c.JSON(http.StatusNotFound, map[string]any{
@@ -59,10 +140,17 @@ func (h *InternalThingsAPI) GetAttestationPubKey(c echo.Context) error {
 		}
 		return handleErr(c, err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"agentId":   thingID,
 		"publicKey": base64.StdEncoding.EncodeToString(pub),
-	})
+	}
+	// Surface the cert NotAfter so CP can reject an expired key.
+	// Omitted only for a legacy stamp that never recorded it (CP then treats the
+	// key as non-expiring, fail-open).
+	if !certExpiresAt.IsZero() {
+		resp["certExpiresAt"] = certExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // Register handles POST /api/internal/things/register.
@@ -73,6 +161,12 @@ func (h *InternalThingsAPI) Register(c echo.Context) error {
 	}
 	if req.ID == "" || req.Type == "" {
 		return badRequest(c, "id and type are required")
+	}
+	// The register body carries the type, so no lookup is needed. A service token
+	// registering an agent-type Thing is an impersonation attempt (agents
+	// self-register with their device token) and is refused.
+	if h.requireMutationAuthority(c, req.ID, req.Type) {
+		return nil
 	}
 
 	resp, err := h.Mgr.RegisterThing(c.Request().Context(), req)
@@ -94,6 +188,9 @@ func (h *InternalThingsAPI) Heartbeat(c echo.Context) error {
 	}
 	if req.ID == "" || req.Status == "" {
 		return badRequest(c, "id and status are required")
+	}
+	if h.requireMutationAuthority(c, req.ID, "") {
+		return nil
 	}
 	// Ambient-audit metadata: take the egress IP from Echo's RealIP
 	// resolution. The agent doesn't know its own NAT public IP, so the
@@ -123,11 +220,65 @@ func (h *InternalThingsAPI) ShadowReport(c echo.Context) error {
 	if req.ReportedVer < 0 {
 		return badRequest(c, "reportedVer must be non-negative")
 	}
-	if req.Reason != "" && req.Reason != "break_glass" {
-		return badRequest(c, "invalid reason; must be empty or 'break_glass'")
+	// Break-glass has its own dedicated route (POST /shadow/break-glass); the
+	// normal shadow path carries no reason. Rejecting any reason here closes
+	// the hand-crafted "POST /shadow with reason=break_glass" bypass that
+	// otherwise reaches the over-privileged reconciliation path.
+	if req.Reason != "" {
+		return badRequest(c, "shadow report must not carry a reason; use /shadow/break-glass for break-glass")
 	}
-	if req.Reason == "break_glass" && req.ActorTokenID == "" {
-		return badRequest(c, "break_glass report requires actorTokenId")
+	// Object-level authority, immediately before the mutation: a device caller is
+	// bound to its own id; a service token may not overwrite an AGENT's shadow.
+	// Placed after the cheap shape checks so a malformed body is
+	// rejected without a Thing-type lookup.
+	if h.requireMutationAuthority(c, req.ID, "") {
+		return nil
+	}
+
+	if err := h.Mgr.HandleShadowReport(c.Request().Context(), req); err != nil {
+		return handleErr(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"ack": true})
+}
+
+// BreakGlassReport handles POST /api/internal/things/shadow/break-glass — the
+// HTTP fallback for the thingclient break-glass wire (the WebSocket path is the
+// shadow_report_break_glass frame). The route IS the break-glass signal: the
+// handler stamps Reason="break_glass" itself rather than trusting a body field,
+// then enforces the server-side allowlist + schema gate so a
+// disallowed key or malformed state returns 400 instead of a swallowed 200.
+func (h *InternalThingsAPI) BreakGlassReport(c echo.Context) error {
+	var req manager.ShadowReportRequest
+	if err := c.Bind(&req); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	if req.ID == "" {
+		return badRequest(c, "id is required")
+	}
+	if req.Reported == nil {
+		return badRequest(c, "reported is required (use {} for empty)")
+	}
+	if req.ReportedVer < 0 {
+		return badRequest(c, "reportedVer must be non-negative")
+	}
+	if req.ActorTokenID == "" {
+		return badRequest(c, "break-glass report requires actorTokenId")
+	}
+	// The route is the break-glass signal — stamp the reconciliation sentinel
+	// regardless of any body-supplied reason.
+	req.Reason = "break_glass"
+	// Server-side authority gate: reject a disallowed key / malformed
+	// state with 400 before dispatch (the WS path enforces the same gate inside
+	// handleBreakGlassReport, where there is no response channel).
+	if err := manager.ValidateBreakGlassReport(req); err != nil {
+		return badRequest(c, err.Error())
+	}
+	// Object-level authority, immediately before the mutation: a device caller is
+	// bound to its own id; a service token may not flip an AGENT's kill-switch via
+	// break-glass. After the shape + allowlist/schema checks so a malformed
+	// report is rejected without a Thing-type lookup.
+	if h.requireMutationAuthority(c, req.ID, "") {
+		return nil
 	}
 
 	if err := h.Mgr.HandleShadowReport(c.Request().Context(), req); err != nil {
@@ -151,12 +302,21 @@ func (h *InternalThingsAPI) BulkConfigPull(c echo.Context) error {
 		return badRequest(c, "type query parameter is required")
 	}
 
+	thingID := strings.TrimSpace(c.QueryParam("id"))
+	// A device-token caller may pull a specific Thing's desired config only for
+	// its own id; service-token callers (thing == nil) are trusted. No-op for the
+	// legacy type-only pull (id empty), which returns type-level templates.
+	if thingID != "" {
+		if requireThingMatch(c, thingID) {
+			return nil
+		}
+	}
+
 	templates, err := h.Mgr.Store().ConfigStore().GetConfigTemplates(c.Request().Context(), thingType)
 	if err != nil {
 		return handleErr(c, err)
 	}
 
-	thingID := strings.TrimSpace(c.QueryParam("id"))
 	if thingID != "" {
 		thing, err := h.Mgr.Store().RegistryStore().GetThing(c.Request().Context(), thingID)
 		if err != nil {
@@ -273,20 +433,26 @@ func (h *InternalThingsAPI) AuditUpload(c echo.Context) error {
 		return badRequest(c, "thingId and events are required")
 	}
 
-	// DeviceOrServiceAuth attaches a *store.Thing for device-token callers
-	// (the canonical agent path). Service-token callers (Hub-internal) have
-	// no Thing attached and are trusted to self-report thingId in the body.
-	//
-	// For device-token callers we use the resolved Thing as the source of
-	// truth: the body's thingId must match (otherwise the agent is lying
-	// about its identity) and thing.Name is taken Hub-side — no DB lookup
-	// per batch, and no chance for the agent to forge thing_name.
-	thing := ThingFromContext(c)
+	// Object-level authority (SEC-W2-02 / F-0374): identical gate to the other
+	// six device-mutation handlers (register / heartbeat / shadow / break-glass /
+	// deregister / exemption), so stamping audit rows for a thing_id is held to
+	// the same bar as mutating that thing.
+	//   - Device-token callers (the canonical agent path) are bound to their OWN
+	//     id: the body's thingId must match the authenticated Thing, otherwise the
+	//     agent is lying about its identity and is refused.
+	//   - Service-token callers (Hub-internal) hold a fleet-shared
+	//     INTERNAL_SERVICE_TOKEN; without this gate any one service's token could
+	//     forge traffic_event audit rows attributed to an arbitrary AGENT node id.
+	//     They may therefore only self-report for a backend-service Thing; an agent
+	//     or unknown id is refused (type looked up by id — the audit body carries
+	//     no type hint).
+	// For an authorized device caller thing.Name is then taken Hub-side (below) —
+	// no per-batch DB lookup, and no chance for the agent to forge thing_name.
+	if h.requireMutationAuthority(c, req.ThingID, "") {
+		return nil
+	}
 	var thingName string
-	if thing != nil {
-		if thing.ID != req.ThingID {
-			return forbidden(c, "thingId does not match authenticated device")
-		}
+	if thing := ThingFromContext(c); thing != nil {
 		thingName = thing.Name
 	}
 
@@ -361,6 +527,9 @@ func (h *InternalThingsAPI) Deregister(c echo.Context) error {
 	if req.ID == "" {
 		return badRequest(c, "id is required")
 	}
+	if h.requireMutationAuthority(c, req.ID, "") {
+		return nil
+	}
 
 	if err := h.Mgr.Deregister(c.Request().Context(), req.ID); err != nil {
 		return handleErr(c, err)
@@ -393,12 +562,12 @@ func (h *InternalThingsAPI) ExemptionUpload(c echo.Context) error {
 		return badRequest(c, "expiresAt is required")
 	}
 
-	// When the caller authenticated with a device token, their Thing is
-	// attached to the context. Refuse requests where the body thingId does
-	// not match the authenticated device. Service-token callers have no
-	// Thing attached (ThingFromContext returns nil) and are trusted.
-	if thing := ThingFromContext(c); thing != nil && thing.ID != req.ThingID {
-		return forbidden(c, "thingId does not match authenticated device")
+	// Exemption upload is an agent-only operation (only agents emit
+	// TLS-bump auto-exemptions). A service-token caller therefore always targets
+	// an agent Thing and is refused; the agent itself uploads with its device
+	// token and is bound to its own id.
+	if h.requireMutationAuthority(c, req.ThingID, "") {
+		return nil
 	}
 
 	if h.MQProducer == nil {
@@ -478,49 +647,5 @@ func (h *InternalThingsAPI) UpdateCheck(c echo.Context) error {
 		"sha256":       target.SHA256,
 		"releaseNotes": target.ReleaseNotes,
 		"forceUpdate":  target.ForceUpdate,
-	})
-}
-
-// RenewCert handles POST /api/internal/things/renew-cert.
-// The agent sends a fresh CSR signed with a newly generated keypair; the
-// Hub's agent CA signs it and returns the new certificate + CA chain.
-func (h *InternalThingsAPI) RenewCert(c echo.Context) error {
-	var req struct {
-		ThingID string `json:"thingId"`
-		CsrPEM  string `json:"csr"`
-	}
-	if err := c.Bind(&req); err != nil {
-		return badRequest(c, "invalid request body")
-	}
-	if req.ThingID == "" {
-		return badRequest(c, "thingId is required")
-	}
-	if req.CsrPEM == "" {
-		return badRequest(c, "csr is required")
-	}
-
-	// Device-token callers may only renew their own cert. Service-token
-	// callers (ThingFromContext == nil) bypass this check.
-	if thing := ThingFromContext(c); thing != nil && thing.ID != req.ThingID {
-		return forbidden(c, "thingId does not match authenticated device")
-	}
-
-	if h.CA == nil {
-		return serviceUnavailable(c, "agent CA not configured, retry later")
-	}
-
-	// Cert CN keeps the `device-` prefix — it's a PKI subject identifier
-	// snapshot, not a wire field; renaming it would change the issued cert
-	// CN namespace and invalidate the existing CA-signed identities.
-	result, err := h.CA.SignCSR(req.CsrPEM, fmt.Sprintf("device-%s", req.ThingID))
-	if err != nil {
-		return badRequest(c, fmt.Sprintf("CSR signing failed: %v", err))
-	}
-
-	return c.JSON(http.StatusOK, map[string]any{
-		"certificate": result.CertPEM,
-		"gatewayCA":   result.CaCertPEM,
-		"expiresAt":   result.ExpiresAt.Format(time.RFC3339),
-		"serial":      result.Serial,
 	})
 }

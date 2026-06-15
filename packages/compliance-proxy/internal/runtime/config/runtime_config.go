@@ -6,6 +6,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/identity"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/interception"
+	cphttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // ExemptionSnapshotter exposes a read-only view of the exemptions
@@ -58,7 +59,7 @@ var KnownRuntimeConfigKeys = []string{
 func HandleRuntimeConfig(deps RuntimeDeps) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
 
@@ -88,7 +89,7 @@ func HandleRuntimeConfig(deps RuntimeDeps) http.Handler {
 func HandleRuntimeConfigKey(deps RuntimeDeps, key string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
 
@@ -102,7 +103,7 @@ func HandleRuntimeConfigKey(deps RuntimeDeps, key string) http.Handler {
 				return
 			}
 		}
-		http.Error(w, `{"error":"unknown config key"}`, http.StatusNotFound)
+		cphttperr.WriteError(w, http.StatusNotFound, "unknown config key", "not_found", "NOT_FOUND")
 	})
 }
 
@@ -112,7 +113,7 @@ func HandleRuntimeConfigKey(deps RuntimeDeps, key string) http.Handler {
 func HandleRuntimeSyncStatus(deps RuntimeDeps) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
 		WriteJSON(w, http.StatusOK, map[string]any{
@@ -131,7 +132,7 @@ func HandleRuntimeSyncStatus(deps RuntimeDeps) http.Handler {
 func HandleRuntimeHealth(deps RuntimeDeps, checks HealthChecks) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
 		statuses := map[string]string{}

@@ -426,7 +426,7 @@ func TestEntityHeuristicCP(t *testing.T) {
 // Helper — detectPrompt
 
 // testRules is a small fixture used by detectPrompt unit tests below. The
-// canonical default list lives in tools/db-migrate/seed/data/time-sensitive-rules.json;
+// canonical default list lives in tools/db-migrate/seed/fixtures/semantic_cache_config.json (time_sensitive_overrides);
 // these test rules only need to exercise the matcher itself.
 func testRules() []TimeSensitivePattern {
 	return []TimeSensitivePattern{
@@ -925,7 +925,7 @@ func TestPutTimeSensitivePattern_saveOverridesError(t *testing.T) {
 	}
 }
 
-// TestPutTimeSensitivePattern_hubError returns 500 when hub push fails.
+// TestPutTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails (F-0102).
 func TestPutTimeSensitivePattern_hubError(t *testing.T) {
 	ts := seededTSStore()
 	fh := &fakeHub{err: errors.New("hub: unavailable")}
@@ -941,8 +941,11 @@ func TestPutTimeSensitivePattern_hubError(t *testing.T) {
 	c.SetParamValues("weather")
 
 	_ = h.PutTimeSensitivePattern(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 (F-0102 unified propagation policy), got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "propagation_error") {
+		t.Errorf("missing propagation_error envelope; body=%s", rec.Body.String())
 	}
 }
 
@@ -982,7 +985,7 @@ func TestPostTimeSensitivePattern_saveOverridesError(t *testing.T) {
 	}
 }
 
-// TestPostTimeSensitivePattern_hubError returns 500 when hub push fails.
+// TestPostTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails (F-0102).
 func TestPostTimeSensitivePattern_hubError(t *testing.T) {
 	ts := &stubTSStore{}
 	fh := &fakeHub{err: errors.New("hub: unavailable")}
@@ -996,8 +999,11 @@ func TestPostTimeSensitivePattern_hubError(t *testing.T) {
 	c := echoContext(req, rec, "admin", "u-1")
 
 	_ = h.PostTimeSensitivePattern(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 (F-0102 unified propagation policy), got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "propagation_error") {
+		t.Errorf("missing propagation_error envelope; body=%s", rec.Body.String())
 	}
 }
 
@@ -1027,7 +1033,7 @@ func TestDeleteTimeSensitivePattern_saveOverridesError(t *testing.T) {
 	}
 }
 
-// TestDeleteTimeSensitivePattern_hubError returns 500 when hub push fails.
+// TestDeleteTimeSensitivePattern_hubError returns 502 (propagation_error) when the hub push fails (F-0102).
 func TestDeleteTimeSensitivePattern_hubError(t *testing.T) {
 	ts := &stubTSStore{
 		blob: configstore.TimeSensitiveOverridesBlob{
@@ -1047,8 +1053,11 @@ func TestDeleteTimeSensitivePattern_hubError(t *testing.T) {
 	c.SetParamValues("admin-rule")
 
 	_ = h.DeleteTimeSensitivePattern(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 (F-0102 unified propagation policy), got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "propagation_error") {
+		t.Errorf("missing propagation_error envelope; body=%s", rec.Body.String())
 	}
 }
 

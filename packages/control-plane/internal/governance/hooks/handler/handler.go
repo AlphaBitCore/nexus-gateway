@@ -7,6 +7,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -78,15 +79,8 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 
 // errJSON builds a canonical JSON error envelope used across admin
 // handlers. Local copy of the helper in handler/helpers.go.
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 // pagination holds parsed limit/offset query params.
 type pagination struct {

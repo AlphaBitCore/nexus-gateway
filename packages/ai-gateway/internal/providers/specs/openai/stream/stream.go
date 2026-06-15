@@ -62,28 +62,36 @@ func (s *openaiStreamSession) Next(ctx context.Context) (provcore.Chunk, error) 
 	if s.done {
 		return provcore.Chunk{}, io.EOF
 	}
-	if err := ctx.Err(); err != nil {
-		return provcore.Chunk{}, err
-	}
 
-	ev, err := s.scanner.Next()
-	if err != nil {
-		return provcore.Chunk{}, err
-	}
-
-	if bytes.Equal(bytes.TrimSpace(ev.Data), []byte("[DONE]")) {
-		s.done = true
-		// Re-emit the canonical "data: [DONE]\n\n" SSE frame so the
-		// handler can forward it verbatim to OpenAI-compat clients.
-		return provcore.Chunk{
-			Done:        true,
-			RawBytes:    []byte("data: [DONE]\n\n"),
-			NativeEvent: ev.Event,
-		}, nil
-	}
-
-	if len(ev.Data) == 0 {
-		return s.Next(ctx)
+	// Loop until a frame with a non-empty `data:` payload arrives. Empty
+	// frames (SSE keep-alives / comments) are skipped via `continue`
+	// rather than a tail-recursive `return s.Next(ctx)`: Go has no tail-call
+	// optimisation, so a hostile or broken upstream flooding empty `data:`
+	// frames would otherwise grow the goroutine stack without bound.
+	var ev specutil.SSEEvent
+	for {
+		if err := ctx.Err(); err != nil {
+			return provcore.Chunk{}, err
+		}
+		var err error
+		ev, err = s.scanner.Next()
+		if err != nil {
+			return provcore.Chunk{}, err
+		}
+		if bytes.Equal(bytes.TrimSpace(ev.Data), []byte("[DONE]")) {
+			s.done = true
+			// Re-emit the canonical "data: [DONE]\n\n" SSE frame so the
+			// handler can forward it verbatim to OpenAI-compat clients.
+			return provcore.Chunk{
+				Done:        true,
+				RawBytes:    []byte("data: [DONE]\n\n"),
+				NativeEvent: ev.Event,
+			}, nil
+		}
+		if len(ev.Data) == 0 {
+			continue
+		}
+		break
 	}
 
 	chunk := provcore.Chunk{

@@ -41,8 +41,11 @@ func TestCostEstimate_EstimatedCost(t *testing.T) {
 }
 
 func TestActualUsage_ActualCost(t *testing.T) {
-	u := ActualUsage{PromptTokens: 250_000, CompletionTokens: 500_000, InputPricePM: 2, OutputPricePM: 6}
-	// 250k*2 + 500k*6 = 500k + 3M = 3.5M / 1M = 3.5
+	// ActualUsage now carries the single canonical cache-aware cost the gateway
+	// already computed (rec.EstimatedCostUsd) rather than re-deriving it from
+	// tokens × price — so the reconcile, the rollup, and the Backfill seed all
+	// charge the identical number (F-0163).
+	u := ActualUsage{CostUSD: 3.5}
 	if got := u.ActualCost(); abs(got-3.5) > 1e-9 {
 		t.Errorf("got %v want 3.5", got)
 	}
@@ -187,9 +190,9 @@ func equalChain(a, b []CheckLevel) bool {
 func TestSelectCheapestIndex_PicksCheapestWithinBudget(t *testing.T) {
 	estimate := CostEstimate{EstimatedInputTokens: 1_000_000, MaxOutputTokens: 1_000_000}
 	targets := []TargetPricing{
-		{Index: 0, ModelID: "premium", InputPricePM: 10, OutputPricePM: 30}, // cost = 40
-		{Index: 1, ModelID: "mid", InputPricePM: 3, OutputPricePM: 9},       // cost = 12
-		{Index: 2, ModelID: "cheap", InputPricePM: 1, OutputPricePM: 2},     // cost = 3
+		{Index: 0, ModelID: "premium", InputPricePM: 10, OutputPricePM: 30, Priced: true}, // cost = 40
+		{Index: 1, ModelID: "mid", InputPricePM: 3, OutputPricePM: 9, Priced: true},       // cost = 12
+		{Index: 2, ModelID: "cheap", InputPricePM: 1, OutputPricePM: 2, Priced: true},     // cost = 3
 	}
 	// Budget 20: only mid (12) and cheap (3) fit; cheapest is 2.
 	if got := SelectCheapestIndex(targets, estimate, 20); got != 2 {
@@ -207,7 +210,7 @@ func TestSelectCheapestIndex_PicksCheapestWithinBudget(t *testing.T) {
 
 func TestSelectCheapestIndex_NoneFitsReturnsMinusOne(t *testing.T) {
 	estimate := CostEstimate{EstimatedInputTokens: 1_000_000, MaxOutputTokens: 1_000_000}
-	targets := []TargetPricing{{Index: 0, InputPricePM: 10, OutputPricePM: 30}} // cost 40
+	targets := []TargetPricing{{Index: 0, InputPricePM: 10, OutputPricePM: 30, Priced: true}} // cost 40
 	if got := SelectCheapestIndex(targets, estimate, 5); got != -1 {
 		t.Errorf("got %d, want -1", got)
 	}
@@ -223,13 +226,50 @@ func TestSelectCheapestIndex_EmptyTargetsReturnsMinusOne(t *testing.T) {
 }
 
 func TestSelectCheapestIndex_ZeroCostIsValid(t *testing.T) {
-	// A free model (price 0) must be selectable even with zero budget —
-	// otherwise self-hosted/free providers can't be downgrade targets.
+	// A free model (a price row with rates 0, i.e. Priced=true) must be
+	// selectable even with zero budget — otherwise self-hosted/free providers
+	// can't be downgrade targets. This is distinct from an UNPRICED model (no
+	// price row, Priced=false), which is skipped — see
+	// TestSelectCheapestIndex_SkipsUnpricedCandidate.
 	targets := []TargetPricing{
-		{Index: 5, InputPricePM: 0, OutputPricePM: 0},
+		{Index: 5, InputPricePM: 0, OutputPricePM: 0, Priced: true},
 	}
 	if got := SelectCheapestIndex(targets, CostEstimate{EstimatedInputTokens: 1_000_000}, 0); got != 5 {
 		t.Errorf("free model: got %d, want 5", got)
+	}
+}
+
+// TestSelectCheapestIndex_SkipsUnpricedCandidate is the F-0348 regression: an
+// unpriced downgrade candidate prices to $0 and would otherwise win the
+// cheapest-fits comparison, then re-price to 0 and bypass the cost cap that
+// triggered the downgrade. The selector must skip it and pick the priced
+// model, exactly like the primary-model F-0154 guard fails closed.
+func TestSelectCheapestIndex_SkipsUnpricedCandidate(t *testing.T) {
+	estimate := CostEstimate{EstimatedInputTokens: 1_000_000, MaxOutputTokens: 1_000_000}
+	targets := []TargetPricing{
+		// Unpriced (no price row): InputPricePM/OutputPricePM collapse to 0 but
+		// Priced=false — it must NOT be chosen even though it "costs" $0.
+		{Index: 0, ModelID: "unpriced", InputPricePM: 0, OutputPricePM: 0, Priced: false},
+		// Priced model that fits the budget — the correct selection.
+		{Index: 1, ModelID: "priced-cheap", InputPricePM: 1, OutputPricePM: 2, Priced: true}, // cost = 3
+	}
+	if got := SelectCheapestIndex(targets, estimate, 20); got != 1 {
+		t.Errorf("unpriced candidate must be skipped under a cost cap: got index %d, want 1 (priced)", got)
+	}
+}
+
+// TestSelectCheapestIndex_AllUnpricedRejects: when every downgrade candidate is
+// unpriced, no model can be cost-enforced, so the selector returns -1 and the
+// caller rejects with QUOTA_EXCEEDED rather than serving unaccounted spend.
+func TestSelectCheapestIndex_AllUnpricedRejects(t *testing.T) {
+	estimate := CostEstimate{EstimatedInputTokens: 1_000_000, MaxOutputTokens: 1_000_000}
+	targets := []TargetPricing{
+		{Index: 0, ModelID: "unpriced-a", Priced: false},
+		{Index: 1, ModelID: "unpriced-b", Priced: false},
+	}
+	// Even with effectively-infinite budget, an unpriced model is never valid.
+	if got := SelectCheapestIndex(targets, estimate, 1_000_000); got != -1 {
+		t.Errorf("all-unpriced must reject: got index %d, want -1", got)
 	}
 }
 
@@ -290,7 +330,7 @@ func TestEngine_VKLimit_OverrideThenPolicyFallback(t *testing.T) {
 	}
 	usageCache := NewUsageCache(nil, testLogger())
 	usageCache.memUsage[usageKey("virtual_key", "vk-1", CurrentPeriodKey("monthly"))] = 80
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	// Override hit — limit from override, period from policy fallback.
 	limit, current, period, has := engine.VKLimit(context.Background(),
@@ -308,7 +348,7 @@ func TestEngine_VKLimit_OverrideThenPolicyFallback(t *testing.T) {
 
 	// No-policy hit — no override, no policy match → has=false.
 	emptyCache := NewPolicyCache(nil, testLogger())
-	emptyEngine := NewEngine(emptyCache, usageCache, testLogger())
+	emptyEngine := NewEngine(emptyCache, usageCache, testLogger(), nil)
 	_, _, _, has3 := emptyEngine.VKLimit(context.Background(),
 		&vkauth.VKMeta{ID: "vk-3", OrganizationID: "org"})
 	if has3 {
@@ -325,7 +365,7 @@ func TestEngine_VKLimit_OverrideThenPolicyFallback(t *testing.T) {
 func TestEngine_Check_NoPolicy_Allows(t *testing.T) {
 	policyCache := NewPolicyCache(nil, testLogger())
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	chain := []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-1"}}
 	meta := &vkauth.VKMeta{ID: "vk-1", OrganizationID: "org"}
@@ -341,7 +381,7 @@ func TestEngine_Check_PolicyRejects(t *testing.T) {
 		{ID: "p-1", Scope: "virtual_key", PeriodType: "monthly", CostLimitCents: 100, EnforcementMode: "reject", Priority: 100},
 	}
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	// Inject usage > limit into the in-memory map.
 	key := usageKey("virtual_key", "vk-1", CurrentPeriodKey("monthly"))
@@ -368,7 +408,7 @@ func TestEngine_Check_TrackOnly_DoesNotReject(t *testing.T) {
 		{ID: "p-1", Scope: "virtual_key", PeriodType: "monthly", CostLimitCents: 100, EnforcementMode: "track-only", Priority: 100},
 	}
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	key := usageKey("virtual_key", "vk-1", CurrentPeriodKey("monthly"))
 	usageCache.memUsage[key] = 1_000_000 // wildly over
@@ -391,7 +431,7 @@ func TestEngine_Check_OverrideTakesPrecedenceOverPolicy(t *testing.T) {
 		CostLimitCents: 50, EnforcementMode: "reject", PeriodType: "monthly",
 	}
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	usageCache.memUsage[usageKey("virtual_key", "vk-tight", CurrentPeriodKey("monthly"))] = 60 // > override 50, < policy 1M
 
@@ -418,7 +458,7 @@ func TestEngine_Check_OverrideInheritsEnforcementFromPolicy(t *testing.T) {
 		ID: "o-1", TargetType: "virtual_key", TargetID: "vk-i", CostLimitCents: 50, // enforcement/period empty
 	}
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 	usageCache.memUsage[usageKey("virtual_key", "vk-i", CurrentPeriodKey("daily"))] = 100
 
 	d := engine.Check(context.Background(),
@@ -440,7 +480,7 @@ func TestEngine_Check_HigherSeverityWinsAcrossLevels(t *testing.T) {
 		{ID: "o", Scope: "organization", PeriodType: "monthly", CostLimitCents: 10, EnforcementMode: "downgrade", Priority: 100},
 	}
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	usageCache.memUsage[usageKey("user", "u1", CurrentPeriodKey("monthly"))] = 1000
 	usageCache.memUsage[usageKey("organization", "org-1", CurrentPeriodKey("monthly"))] = 1000
@@ -460,13 +500,13 @@ func TestEngine_Check_HigherSeverityWinsAcrossLevels(t *testing.T) {
 func TestEngine_Reconcile_IncrementsLevels(t *testing.T) {
 	policyCache := NewPolicyCache(nil, testLogger())
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	dec := &Decision{
 		Levels:    []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-r"}, {TargetType: "organization", TargetID: "org-r"}},
 		PeriodKey: "2026-05",
 	}
-	actual := ActualUsage{PromptTokens: 1_000_000, InputPricePM: 1, OutputPricePM: 1} // cost 1 USD
+	actual := ActualUsage{CostUSD: 1} // cost 1 USD
 	engine.Reconcile(context.Background(), dec, actual)
 
 	if got := usageCache.memUsage[usageKey("virtual_key", "vk-r", "2026-05")]; got != 100 {
@@ -484,7 +524,7 @@ func TestEngine_Reconcile_ZeroCost_NoOp(t *testing.T) {
 	// no-op) doesn't accidentally trigger a TTL refresh storm.
 	policyCache := NewPolicyCache(nil, testLogger())
 	usageCache := NewUsageCache(nil, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	dec := &Decision{
 		Levels:    []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-r"}},
@@ -494,6 +534,192 @@ func TestEngine_Reconcile_ZeroCost_NoOp(t *testing.T) {
 
 	if got := usageCache.memUsage[usageKey("virtual_key", "vk-r", "2026-05")]; got != 0 {
 		t.Errorf("zero-cost reconcile mutated counter: %d", got)
+	}
+}
+
+// TestEngine_Reconcile_MixedPeriodChain_EachLevelOwnPeriod pins F-0144: a
+// chain whose levels enforce different periods (VK monthly + org daily) must
+// advance EACH level's counter under its OWN stamped period key. Before the
+// fix Reconcile wrote every level under the first enforcing level's period
+// (monthly), so the org daily counter never moved and org enforcement was
+// silently bypassed.
+func TestEngine_Reconcile_MixedPeriodChain_EachLevelOwnPeriod(t *testing.T) {
+	policyCache := NewPolicyCache(nil, testLogger())
+	policyCache.policiesByScope["virtual_key"] = []CachedPolicy{
+		{ID: "pv", Scope: "virtual_key", PeriodType: "monthly", CostLimitCents: 100_000, EnforcementMode: "reject", Priority: 100},
+	}
+	policyCache.policiesByScope["organization"] = []CachedPolicy{
+		{ID: "po", Scope: "organization", PeriodType: "daily", CostLimitCents: 100_000, EnforcementMode: "reject", Priority: 100},
+	}
+	usageCache := NewUsageCache(nil, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
+
+	meta := &vkauth.VKMeta{ID: "vk-mp", VKType: "personal", OwnerID: "u", OrganizationID: "org-mp"}
+	chain := []CheckLevel{
+		{TargetType: "virtual_key", TargetID: "vk-mp"},
+		{TargetType: "organization", TargetID: "org-mp"},
+	}
+	dec := engine.Check(context.Background(), chain, CostEstimate{}, meta)
+
+	// Daily and monthly keys differ in format and can never coincide.
+	monthlyKey := CurrentPeriodKey("monthly")
+	dailyKey := CurrentPeriodKey("daily")
+
+	actual := ActualUsage{CostUSD: 1} // 1 USD = 100 cents
+	engine.Reconcile(context.Background(), dec, actual)
+
+	if got := usageCache.memUsage[usageKey("virtual_key", "vk-mp", monthlyKey)]; got != 100 {
+		t.Errorf("VK monthly counter: %d, want 100", got)
+	}
+	// Regression assertion: the org DAILY counter must have advanced.
+	if got := usageCache.memUsage[usageKey("organization", "org-mp", dailyKey)]; got != 100 {
+		t.Errorf("org daily counter: %d, want 100 (F-0144: org daily never advanced)", got)
+	}
+	// And the org counter must NOT have been mis-keyed to the VK's monthly period.
+	if got := usageCache.memUsage[usageKey("organization", "org-mp", monthlyKey)]; got != 0 {
+		t.Errorf("org counter mis-keyed under monthly: %d, want 0", got)
+	}
+}
+
+// TestEngine_Reconcile_SubCentAccumulates pins F-0145: a $0.009 (0.9 cent)
+// call truncated to 0 cents every reconcile, so the live counter never moved
+// for sub-cent-per-call models. The remainder carry must accumulate sub-cent
+// costs into whole cents across calls — a positive sub-cent cost is never
+// dropped.
+func TestEngine_Reconcile_SubCentAccumulates(t *testing.T) {
+	engine := NewEngine(NewPolicyCache(nil, testLogger()), NewUsageCache(nil, testLogger()), testLogger(), nil)
+	usageCache := engine.usageCache
+
+	dec := &Decision{
+		Levels:    []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-sub", PeriodKey: "2026-06"}},
+		PeriodKey: "2026-06",
+	}
+	// 9_000 prompt tokens * $1/M = $0.009 = 0.9 cents = 900 milli-cents.
+	subCent := ActualUsage{CostUSD: 0.009} // 0.9c
+	key := usageKey("virtual_key", "vk-sub", "2026-06")
+
+	// First sub-cent call: 0.9c carried, 0 whole cents committed yet — but the
+	// cost is NOT lost (it lives in the carry, proven by the next call).
+	engine.Reconcile(context.Background(), dec, subCent)
+	if got := usageCache.memUsage[key]; got != 0 {
+		t.Errorf("after 1 sub-cent call: counter=%d, want 0 (0.9c carried)", got)
+	}
+	// Second call: 1.8c total → 1 whole cent committed.
+	engine.Reconcile(context.Background(), dec, subCent)
+	if got := usageCache.memUsage[key]; got != 1 {
+		t.Errorf("after 2 sub-cent calls: counter=%d, want 1 (1.8c → 1)", got)
+	}
+	// Ten calls total = 9.0 cents → counter must read 9, not 0.
+	for range 8 {
+		engine.Reconcile(context.Background(), dec, subCent)
+	}
+	if got := usageCache.memUsage[key]; got != 9 {
+		t.Errorf("after 10 sub-cent calls: counter=%d, want 9 (9.0c accumulated)", got)
+	}
+}
+
+// TestEngine_SubCentAccumulation_TripsSmallLimit is the end-to-end F-0145
+// guard: repeated sub-cent reconciles must eventually push the counter over a
+// small cost cap so Check rejects. Before the fix the counter stayed at 0 and
+// the cap was never tripped — unbounded intra-period under-enforcement.
+func TestEngine_SubCentAccumulation_TripsSmallLimit(t *testing.T) {
+	policyCache := NewPolicyCache(nil, testLogger())
+	policyCache.policiesByScope["virtual_key"] = []CachedPolicy{
+		{ID: "p", Scope: "virtual_key", PeriodType: "monthly", CostLimitCents: 5, EnforcementMode: "reject", Priority: 100},
+	}
+	engine := NewEngine(policyCache, NewUsageCache(nil, testLogger()), testLogger(), nil)
+	meta := &vkauth.VKMeta{ID: "vk-s", VKType: "personal", OwnerID: "u"}
+	chain := []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-s"}}
+	subCent := ActualUsage{CostUSD: 0.009} // 0.9c
+
+	rejected := false
+	for range 20 {
+		dec := engine.Check(context.Background(), chain, CostEstimate{}, meta)
+		if !dec.Allowed {
+			rejected = true
+			break
+		}
+		engine.Reconcile(context.Background(), dec, subCent)
+	}
+	if !rejected {
+		t.Errorf("sub-cent reconciles never tripped the 5-cent cap (F-0145: counter stuck at 0)")
+	}
+}
+
+// TestEngine_Reconcile_PeriodRolloverResetsCarry covers the carry reset arm:
+// when a subject's period changes, its stale sub-cent remainder is dropped
+// (bounded <1 cent loss) rather than leaking across periods.
+func TestEngine_Reconcile_PeriodRolloverResetsCarry(t *testing.T) {
+	engine := NewEngine(NewPolicyCache(nil, testLogger()), NewUsageCache(nil, testLogger()), testLogger(), nil)
+	usageCache := engine.usageCache
+	subCent := ActualUsage{CostUSD: 0.009} // 0.9c
+
+	// Period A: one sub-cent call leaves 0.9c in the carry, 0 committed.
+	decA := &Decision{Levels: []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-roll", PeriodKey: "2026-06"}}, PeriodKey: "2026-06"}
+	engine.Reconcile(context.Background(), decA, subCent)
+	if got := usageCache.memUsage[usageKey("virtual_key", "vk-roll", "2026-06")]; got != 0 {
+		t.Fatalf("period A counter: %d, want 0", got)
+	}
+
+	// Period B: the carry resets, so a single sub-cent call again commits 0
+	// (the 0.9c residual from period A did not roll forward).
+	decB := &Decision{Levels: []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-roll", PeriodKey: "2026-07"}}, PeriodKey: "2026-07"}
+	engine.Reconcile(context.Background(), decB, subCent)
+	if got := usageCache.memUsage[usageKey("virtual_key", "vk-roll", "2026-07")]; got != 0 {
+		t.Errorf("period B counter: %d, want 0 (carry must reset on rollover)", got)
+	}
+}
+
+// TestEngine_Check_BlankCostOverride_InheritsPolicyCap pins F-0146: an
+// override whose cost limit is blank (zero) must inherit the matching policy's
+// cost cap rather than shadowing it. Before the fix limitCents=0 → skip → the
+// policy cost cap was silently disabled at this level (contradicting doc §7).
+func TestEngine_Check_BlankCostOverride_InheritsPolicyCap(t *testing.T) {
+	policyCache := NewPolicyCache(nil, testLogger())
+	policyCache.policiesByScope["virtual_key"] = []CachedPolicy{
+		{ID: "p", Scope: "virtual_key", PeriodType: "monthly", CostLimitCents: 100, EnforcementMode: "reject", Priority: 100},
+	}
+	// Override with everything blank → fully inherit cost + mode + period.
+	policyCache.overridesByKey["virtual_key:vk-blank"] = &CachedOverride{
+		ID: "o", TargetType: "virtual_key", TargetID: "vk-blank",
+	}
+	usageCache := NewUsageCache(nil, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
+	usageCache.memUsage[usageKey("virtual_key", "vk-blank", CurrentPeriodKey("monthly"))] = 150 // over the policy 100
+
+	d := engine.Check(context.Background(),
+		[]CheckLevel{{TargetType: "virtual_key", TargetID: "vk-blank"}},
+		CostEstimate{}, &vkauth.VKMeta{ID: "vk-blank", OrganizationID: "org"})
+	if d.Allowed {
+		t.Errorf("blank-cost override must inherit policy cap and reject: %+v", d)
+	}
+	if d.QuotaID != "override:o" {
+		t.Errorf("quotaID: %q want override:o", d.QuotaID)
+	}
+}
+
+// TestEngine_VKLimit_BlankCostOverride_InheritsPolicyCap pins the VKLimit half
+// of F-0146 so /v1/usage + the request-time headers report the inherited cap
+// instead of hasLimit=false (doc §10 consistency with Check).
+func TestEngine_VKLimit_BlankCostOverride_InheritsPolicyCap(t *testing.T) {
+	policyCache := NewPolicyCache(nil, testLogger())
+	policyCache.policiesByScope["virtual_key"] = []CachedPolicy{
+		{ID: "p", Scope: "virtual_key", PeriodType: "monthly", CostLimitCents: 100, EnforcementMode: "reject", Priority: 100},
+	}
+	policyCache.overridesByKey["virtual_key:vk-b"] = &CachedOverride{
+		ID: "o", TargetType: "virtual_key", TargetID: "vk-b", // blank cost/mode/period
+	}
+	engine := NewEngine(policyCache, NewUsageCache(nil, testLogger()), testLogger(), nil)
+
+	limit, _, period, has := engine.VKLimit(context.Background(), &vkauth.VKMeta{ID: "vk-b", OrganizationID: "org"})
+	if !has {
+		t.Fatalf("blank-cost override must inherit policy cap (got has=false)")
+	}
+	if limit != 100 {
+		t.Errorf("limit: %d want 100 (inherited from policy)", limit)
+	}
+	if period != CurrentPeriodKey("monthly") {
+		t.Errorf("period: %q want monthly (inherited)", period)
 	}
 }
 
@@ -591,10 +817,11 @@ func TestUsageCache_InMemory_GetEmpty(t *testing.T) {
 func TestUsageCache_InMemory_IncrAndGet(t *testing.T) {
 	c := NewUsageCache(nil, testLogger())
 	ctx := context.Background()
-	if err := c.IncrUsage(ctx, "virtual_key", "vk-1", "p", 100); err != nil {
+	level := []UsageLevel{{TargetType: "virtual_key", TargetID: "vk-1"}}
+	if err := c.IncrMulti(ctx, level, "p", 100); err != nil {
 		t.Fatalf("incr: %v", err)
 	}
-	if err := c.IncrUsage(ctx, "virtual_key", "vk-1", "p", 50); err != nil {
+	if err := c.IncrMulti(ctx, level, "p", 50); err != nil {
 		t.Fatalf("incr2: %v", err)
 	}
 	got, _ := c.GetUsage(ctx, "virtual_key", "vk-1", "p")
@@ -637,7 +864,7 @@ func TestUsageCache_Redis_GetReturnsZeroOnMissingKey(t *testing.T) {
 	}
 }
 
-func TestUsageCache_Redis_IncrUsageSetsTTL(t *testing.T) {
+func TestUsageCache_Redis_IncrMultiSetsTTL(t *testing.T) {
 	mr, _ := miniredis.Run()
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -645,7 +872,8 @@ func TestUsageCache_Redis_IncrUsageSetsTTL(t *testing.T) {
 	c := NewUsageCache(rdb, testLogger())
 	ctx := context.Background()
 
-	if err := c.IncrUsage(ctx, "virtual_key", "vk-1", "2026-05", 250); err != nil {
+	if err := c.IncrMulti(ctx,
+		[]UsageLevel{{TargetType: "virtual_key", TargetID: "vk-1"}}, "2026-05", 250); err != nil {
 		t.Fatalf("incr: %v", err)
 	}
 	key := usageKey("virtual_key", "vk-1", "2026-05")
@@ -655,7 +883,7 @@ func TestUsageCache_Redis_IncrUsageSetsTTL(t *testing.T) {
 	}
 	ttl := mr.TTL(key)
 	if ttl <= 0 {
-		t.Errorf("TTL should be set on first increment, got %v", ttl)
+		t.Errorf("TTL should be set on increment, got %v", ttl)
 	}
 }
 

@@ -85,14 +85,13 @@ func TestClientStore_Create_HappyPath(t *testing.T) {
 		ID: "new-c", Name: "New", Type: "confidential",
 		RedirectURIs:      []string{"https://x/cb"},
 		AllowedScopes:     []string{"openid"},
-		RequirePKCE:       true,
 		AccessTTLSeconds:  3600,
 		RefreshTTLSeconds: 86400,
 		SecretHash:        &hash,
 	}
 	mock.ExpectQuery(`INSERT INTO "OAuthClient"`).
 		WithArgs(in.ID, in.Name, in.Type, in.RedirectURIs, in.AllowedScopes,
-			in.RequirePKCE, in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash).
+			in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash).
 		WillReturnRows(addClientRow(
 			pgxmock.NewRows(clientRowCols),
 			"new-c", "New", "confidential", &hash, nil,
@@ -117,7 +116,7 @@ func TestClientStore_Create_DuplicateIDMapsToSentinel(t *testing.T) {
 	in := store.CreateInput{ID: "dup"}
 	mock.ExpectQuery(`INSERT INTO "OAuthClient"`).
 		WithArgs(in.ID, in.Name, in.Type, in.RedirectURIs, in.AllowedScopes,
-			in.RequirePKCE, in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash).
+			in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash).
 		WillReturnError(&pgconn.PgError{Code: "23505"})
 	_, err := s.Create(context.Background(), in)
 	if !errors.Is(err, store.ErrClientIDExists) {
@@ -131,7 +130,7 @@ func TestClientStore_Create_GenericErrorPropagates(t *testing.T) {
 	boom := errors.New("create boom")
 	mock.ExpectQuery(`INSERT INTO "OAuthClient"`).
 		WithArgs(in.ID, in.Name, in.Type, in.RedirectURIs, in.AllowedScopes,
-			in.RequirePKCE, in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash).
+			in.AccessTTLSeconds, in.RefreshTTLSeconds, in.SecretHash).
 		WillReturnError(boom)
 	if _, err := s.Create(context.Background(), in); !errors.Is(err, boom) {
 		t.Fatalf("err=%v, want %v", err, boom)
@@ -146,7 +145,7 @@ func TestClientStore_Update_HappyPath(t *testing.T) {
 	in := store.UpdateInput{Name: &newName}
 	mock.ExpectQuery(`UPDATE "OAuthClient"`).
 		WithArgs("c1", &newName, (*[]string)(nil), (*[]string)(nil),
-			(*bool)(nil), (*int)(nil), (*int)(nil)).
+			(*int)(nil), (*int)(nil)).
 		WillReturnRows(addClientRow(
 			pgxmock.NewRows(clientRowCols),
 			"c1", "Renamed", "public", nil, nil,
@@ -165,7 +164,7 @@ func TestClientStore_Update_NotFound(t *testing.T) {
 	mock, s := newClientMock(t)
 	mock.ExpectQuery(`UPDATE "OAuthClient"`).
 		WithArgs("missing", (*string)(nil), (*[]string)(nil), (*[]string)(nil),
-			(*bool)(nil), (*int)(nil), (*int)(nil)).
+			(*int)(nil), (*int)(nil)).
 		WillReturnError(pgx.ErrNoRows)
 	_, err := s.Update(context.Background(), "missing", store.UpdateInput{})
 	if !errors.Is(err, store.ErrClientNotFound) {
@@ -178,7 +177,7 @@ func TestClientStore_Update_GenericErrorPropagates(t *testing.T) {
 	boom := errors.New("upd boom")
 	mock.ExpectQuery(`UPDATE "OAuthClient"`).
 		WithArgs("c", (*string)(nil), (*[]string)(nil), (*[]string)(nil),
-			(*bool)(nil), (*int)(nil), (*int)(nil)).
+			(*int)(nil), (*int)(nil)).
 		WillReturnError(boom)
 	if _, err := s.Update(context.Background(), "c", store.UpdateInput{}); !errors.Is(err, boom) {
 		t.Fatalf("err=%v, want %v", err, boom)

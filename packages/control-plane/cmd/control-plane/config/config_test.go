@@ -1,12 +1,62 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestLoad_SecretCustody_CommandUnwrapsCrownJewel pins the SEC-W2-03 Layer C
+// wiring: with secretCustody.provider="command", Load() resolves the crown-jewel
+// env vars as base64 wrapped blobs and unwraps each once at boot. `cat {file}` is
+// an identity decrypt, so a base64-encoded plaintext round-trips into the config
+// field — proving Load routes CREDENTIAL_ENCRYPTION_KEY / ADMIN_KEY_HMAC_SECRET
+// through the custody provider rather than reading them raw.
+func TestLoad_SecretCustody_CommandUnwrapsCrownJewel(t *testing.T) {
+	clearAllEnv(t)
+	setRequiredEnvBaseline(t)
+	// Crown jewels arrive as base64 "wrapped" blobs; `cat {file}` returns them
+	// verbatim, so the plaintext is whatever we base64-encoded.
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte("unwrapped-cred-key")))
+	t.Setenv("ADMIN_KEY_HMAC_SECRET", base64.StdEncoding.EncodeToString([]byte("unwrapped-hmac")))
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(p, []byte("secretCustody:\n  provider: command\n  command: [\"cat\", \"{file}\"]\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Crypto.EncryptionKey != "unwrapped-cred-key" {
+		t.Errorf("EncryptionKey = %q, want the unwrapped plaintext", cfg.Crypto.EncryptionKey)
+	}
+	if cfg.Auth.HMACSecret != "unwrapped-hmac" {
+		t.Errorf("HMACSecret = %q, want the unwrapped plaintext", cfg.Auth.HMACSecret)
+	}
+}
+
+// TestLoad_SecretCustody_CommandFailClosed: under provider=command a crown jewel
+// that is not a valid wrapped blob aborts boot rather than silently treating the
+// ciphertext as plaintext.
+func TestLoad_SecretCustody_CommandFailClosed(t *testing.T) {
+	clearAllEnv(t)
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "not-valid-base64!!")
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	_ = os.WriteFile(p, []byte("secretCustody:\n  provider: command\n  command: [\"cat\", \"{file}\"]\n"), 0o644)
+
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected fail-closed error for an unwrappable crown jewel under provider=command")
+	}
+}
 
 // setRequiredEnvBaseline stamps every env-side input that validate() now
 // requires, so the test reaches the branch it actually wants to exercise.
@@ -16,11 +66,43 @@ import (
 func setRequiredEnvBaseline(t *testing.T) {
 	t.Helper()
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	// SEC-W2-02 FIX-5/C: HubConfigToken is now a required env input.
+	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
+	// SEC-W2-03 Layer C: ADMIN_KEY_HMAC_SECRET is now a required validate() input
+	// (it is injected into the apikey hashing layer at boot). Resolved through the
+	// custody loader; under the default noop provider this plaintext passes through.
+	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("CONTROL_PLANE_PUBLIC_URL", "http://localhost:3001")
 	t.Setenv("REDIS_ADDRS", "localhost:6379")
 	t.Setenv("MQ_DRIVER", "nats")
 	t.Setenv("NATS_URL", "nats://localhost:4222")
+}
+
+// TestLoad_HMACSecret_RequiredFailClosed is the SEC-W2-03 Layer C regression:
+// validate() now hard-fails when ADMIN_KEY_HMAC_SECRET is unset, so an operator
+// who forgets it can never boot a Control Plane that would otherwise hash every
+// admin key + VK under an empty secret. Previously the only gate read the env var
+// directly in the bootstrap layer; the requirement now lives in config.validate()
+// against the custody-resolved field.
+func TestLoad_HMACSecret_RequiredFailClosed(t *testing.T) {
+	clearAllEnv(t)
+	setRequiredEnvBaseline(t)
+	// Remove only the HMAC secret; everything else required stays set, so the
+	// failure isolates to the HMAC guard.
+	t.Setenv("ADMIN_KEY_HMAC_SECRET", "")
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	_ = os.WriteFile(p, []byte("{}\n"), 0o644)
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected fail-closed error when ADMIN_KEY_HMAC_SECRET is unset")
+	}
+	if !strings.Contains(err.Error(), "an HMAC secret is required") {
+		t.Errorf("error=%v; want the auth.hmacSecret required guard", err)
+	}
 }
 
 // TestLoad_InternalServiceToken_YAMLIgnored verifies the secrets-env-only
@@ -65,6 +147,31 @@ func TestLoad_InternalServiceToken_FromEnv(t *testing.T) {
 	}
 	if cfg.Auth.InternalServiceToken != "from-env" {
 		t.Errorf("InternalServiceToken = %q, want %q", cfg.Auth.InternalServiceToken, "from-env")
+	}
+}
+
+func TestServerBindAddr(t *testing.T) {
+	if got := (ServerConfig{Port: 3001}).BindAddr(); got != ":3001" {
+		t.Errorf("empty Host BindAddr = %q, want \":3001\"", got)
+	}
+	if got := (ServerConfig{Host: "127.0.0.1", Port: 3001}).BindAddr(); got != "127.0.0.1:3001" {
+		t.Errorf("loopback BindAddr = %q, want \"127.0.0.1:3001\"", got)
+	}
+}
+
+func TestLoad_ServerHost_FromEnv(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	_ = os.WriteFile(p, []byte(""), 0o644)
+	setRequiredEnvBaseline(t)
+	t.Setenv("CONTROL_PLANE_HOST", "127.0.0.1")
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Host != "127.0.0.1" {
+		t.Errorf("Server.Host = %q, want 127.0.0.1 (from CONTROL_PLANE_HOST)", cfg.Server.Host)
 	}
 }
 
@@ -116,13 +223,12 @@ func clearAllEnv(t *testing.T) {
 		"CONTROL_PLANE_PORT", "CONTROL_PLANE_PUBLIC_URL",
 		"DATABASE_URL", "REDIS_ADDRS", "LOG_LEVEL",
 		"COMPLIANCE_PROXY_URL", "AI_GATEWAY_URL", "NEXUS_HUB_URL",
-		"CREDENTIAL_ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_PASSPHRASE",
-		"CREDENTIAL_ENCRYPTION_SALT", "CREDENTIAL_KEY_MAP",
+		"CREDENTIAL_ENCRYPTION_KEY", "CREDENTIAL_KEY_MAP",
 		"AGENT_CA_DIR", "COMPLIANCE_PROXY_RUNTIME_URL",
 		"COMPLIANCE_PROXY_API_TOKEN",
 		"OTEL_ENDPOINT", "OTEL_SERVICE_NAME",
 		"MQ_DRIVER", "NATS_URL",
-		"ADMIN_KEY_HMAC_SECRET", "INTERNAL_SERVICE_TOKEN",
+		"ADMIN_KEY_HMAC_SECRET", "INTERNAL_SERVICE_TOKEN", "HUB_CONFIG_TOKEN",
 		"CONTROL_PLANE_CRYPTO_PRODUCTION",
 		"AUTH_SERVER_ISSUER", "AUTH_SERVER_KEYSTORE_DIR",
 	} {
@@ -224,8 +330,12 @@ func TestLoad_YAMLFieldsParsed(t *testing.T) {
 	// This test asserts that every yaml field unmarshals into cfg —
 	// calling setRequiredEnvBaseline would let envs override yaml values
 	// (env wins post-applyEnvOverrides) and break those assertions. Only
-	// stamp the one required field yaml cannot supply (env-only secret).
+	// stamp the required fields yaml cannot supply (env-only secrets).
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
+	// SEC-W2-03 Layer C: ADMIN_KEY_HMAC_SECRET is an env-only required secret
+	// validate() now enforces — yaml cannot supply it.
+	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
 	dir := t.TempDir()
 	p := filepath.Join(dir, "full.yaml")
 	yamlBody := `
@@ -362,8 +472,6 @@ auth:
   internalServiceToken: "y-ist"
 crypto:
   encryptionKey: "y-key"
-  encryptionPassphrase: "y-pass"
-  encryptionSalt: "y-salt"
   credentialKeyMap: "y-keymap"
 bff:
   complianceProxyAPIToken: "y-cp-api"
@@ -376,15 +484,12 @@ bff:
 		t.Fatalf("Load: %v", err)
 	}
 	// Secrets without an env baseline must end up zero-valued — proves the
-	// yaml:"-" tag dropped them. InternalServiceToken IS required and IS
-	// stamped via baseline ("tok"), so we assert it equals the env value
-	// (NOT the yaml "y-ist") which is a stronger proof: yaml dropped, env
+	// yaml:"-" tag dropped them. InternalServiceToken and HMACSecret ARE
+	// required and ARE stamped via baseline, so we assert each equals its env
+	// value (NOT the yaml string) which is a stronger proof: yaml dropped, env
 	// won.
 	checks := map[string]string{
-		"Auth.HMACSecret":             cfg.Auth.HMACSecret,
 		"Crypto.EncryptionKey":        cfg.Crypto.EncryptionKey,
-		"Crypto.EncryptionPassphrase": cfg.Crypto.EncryptionPassphrase,
-		"Crypto.EncryptionSalt":       cfg.Crypto.EncryptionSalt,
 		"Crypto.CredentialKeyMap":     cfg.Crypto.CredentialKeyMap,
 		"BFF.ComplianceProxyAPIToken": cfg.BFF.ComplianceProxyAPIToken,
 	}
@@ -395,6 +500,11 @@ bff:
 	}
 	if cfg.Auth.InternalServiceToken != "tok" {
 		t.Errorf("Auth.InternalServiceToken = %q; expected env value \"tok\" (yaml \"y-ist\" must be dropped, env must win)", cfg.Auth.InternalServiceToken)
+	}
+	// SEC-W2-03 Layer C: HMACSecret is required + custody-resolved. The env
+	// baseline sets "test-hmac-secret"; the yaml "y-hmac" must be dropped.
+	if cfg.Auth.HMACSecret != "test-hmac-secret" {
+		t.Errorf("Auth.HMACSecret = %q; expected env value \"test-hmac-secret\" (yaml \"y-hmac\" must be dropped, env must win)", cfg.Auth.HMACSecret)
 	}
 }
 
@@ -421,8 +531,6 @@ func TestLoad_AllEnvOverrides(t *testing.T) {
 	t.Setenv("AI_GATEWAY_URL", "http://envai")
 	t.Setenv("NEXUS_HUB_URL", "http://envhub")
 	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "envkey")
-	t.Setenv("CREDENTIAL_ENCRYPTION_PASSPHRASE", "envpass")
-	t.Setenv("CREDENTIAL_ENCRYPTION_SALT", "envsalt")
 	t.Setenv("CREDENTIAL_KEY_MAP", "v1:dead,v2:beef")
 	t.Setenv("AGENT_CA_DIR", "/env/ca")
 	t.Setenv("COMPLIANCE_PROXY_RUNTIME_URL", "http://envcpruntime")
@@ -433,6 +541,7 @@ func TestLoad_AllEnvOverrides(t *testing.T) {
 	t.Setenv("NATS_URL", "nats://envnats")
 	t.Setenv("ADMIN_KEY_HMAC_SECRET", "envhmac")
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "envist")
+	t.Setenv("HUB_CONFIG_TOKEN", "envhcfg")
 	t.Setenv("AUTH_SERVER_ISSUER", "https://envissuer")
 	t.Setenv("AUTH_SERVER_KEYSTORE_DIR", "/env/keys")
 
@@ -460,8 +569,6 @@ func TestLoad_AllEnvOverrides(t *testing.T) {
 		t.Errorf("Registry.NexusHubURL = %q", cfg.Registry.NexusHubURL)
 	}
 	if cfg.Crypto.EncryptionKey != "envkey" ||
-		cfg.Crypto.EncryptionPassphrase != "envpass" ||
-		cfg.Crypto.EncryptionSalt != "envsalt" ||
 		cfg.Crypto.CredentialKeyMap != "v1:dead,v2:beef" {
 		t.Errorf("Crypto = %+v", cfg.Crypto)
 	}
@@ -474,7 +581,8 @@ func TestLoad_AllEnvOverrides(t *testing.T) {
 	if cfg.MQ.Driver != "nats" || cfg.MQ.NATS.URL != "nats://envnats" {
 		t.Errorf("MQ = %+v", cfg.MQ)
 	}
-	if cfg.Auth.HMACSecret != "envhmac" || cfg.Auth.InternalServiceToken != "envist" {
+	if cfg.Auth.HMACSecret != "envhmac" || cfg.Auth.InternalServiceToken != "envist" ||
+		cfg.Auth.HubConfigToken != "envhcfg" {
 		t.Errorf("Auth = %+v", cfg.Auth)
 	}
 	if cfg.AuthServer.Issuer != "https://envissuer" || cfg.AuthServer.KeystoreDir != "/env/keys" {
@@ -621,6 +729,17 @@ func TestValidate_RequiredFields(t *testing.T) {
 				return ""
 			},
 			wantInErr: "auth.internalServiceToken is required",
+		},
+		{
+			// SEC-W2-02 FIX-5/C: CP must fail closed at config load without the
+			// dedicated config token — an empty token would 403 every Hub config
+			// push (and Hub itself refuses to boot without it).
+			name: "missing Auth.HubConfigToken",
+			mutate: func(t *testing.T) string {
+				t.Setenv("HUB_CONFIG_TOKEN", "")
+				return ""
+			},
+			wantInErr: "auth.hubConfigToken is required",
 		},
 		{
 			name: "missing Redis.Addrs (yaml empty AND env empty)",

@@ -1,8 +1,14 @@
 # Linux Nexus Agent image for CI daemon-bound e2e tests.
 #
-# The agent is pure-Go (CGO_ENABLED=0) and depends only on the sibling
-# packages/shared module (its single go.mod replace). Build context is the repo
-# root so both modules are visible:  docker build -f packages/agent/Dockerfile .
+# Depends only on the sibling packages/shared module (its single go.mod
+# replace). Build context is the repo root so both modules are visible:
+#   docker build -f packages/agent/Dockerfile .
+#
+# CGO_ENABLED=1 is REQUIRED: the audit queue uses go-sqlcipher, which has no
+# non-cgo driver — a CGO_ENABLED=0 binary builds but errors at `run` when it
+# opens the encrypted audit DB. (enroll alone would survive without cgo, but
+# the daemon / interception E2E does not.) The golang build image ships gcc;
+# the debian-slim runtime ships the matching glibc.
 #
 # The runtime image carries iptables/nftables because the Linux agent intercepts
 # via netfilter redirect (see agent-linux-platform-architecture.md); `run`
@@ -14,7 +20,7 @@ COPY packages/agent/ packages/agent/
 WORKDIR /src/packages/agent
 # GOWORK=off so the build uses this module's `replace => ../shared`, not the
 # repo go.work (which references modules we did not copy).
-RUN GOWORK=off CGO_ENABLED=0 go build -trimpath -o /out/nexus-agent ./cmd/agent
+RUN GOWORK=off CGO_ENABLED=1 go build -trimpath -o /out/nexus-agent ./cmd/agent
 
 FROM debian:bookworm-slim
 RUN apt-get update \

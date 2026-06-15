@@ -101,8 +101,24 @@ type Config struct {
 	// Role is the operational role of this Thing (e.g., "default", "primary", "canary").
 	Role string
 
-	// Token is the Bearer token for authenticating with Hub.
+	// Token is the Bearer token for authenticating with Hub. It is the
+	// initial / static credential and the fallback when TokenFn is nil or
+	// returns "". Callers that rotate their credential at runtime (the agent
+	// after a device-token renewal) should additionally set TokenFn so the
+	// next WS dial / HTTP request reads the live token rather than this
+	// start-time snapshot.
 	Token string
+
+	// TokenFn, when non-nil, is the authoritative live source of the Bearer
+	// token. The client calls it on every WS handshake (dial + reconnect) and
+	// every HTTP fallback request, so a credential rotated after Start is
+	// picked up on the next connection/request without restarting the client.
+	// A long-lived WS session cannot change its handshake auth mid-stream, so
+	// "live" means "as of the next dial/reconnect" for WS and "as of the next
+	// request" for HTTP fallback. When TokenFn is nil or returns "", the
+	// client falls back to the static Token — callers that don't rotate
+	// credentials leave it nil for unchanged behavior.
+	TokenFn func() string
 
 	// Logger is the structured logger. Must not be nil.
 	Logger *slog.Logger
@@ -142,6 +158,22 @@ type Config struct {
 	// Default: 5 seconds.
 	ShutdownTimeout time.Duration
 
+	// MaxConfigRetryAttempts bounds the proactive per-key config-apply retry
+	// loop. After a Cat-B pull or apply error parks one or more keys
+	// in drift, the client re-attempts them on a backoff timer up to this many
+	// consecutive attempts before giving up and leaving the keys in drift for
+	// the next reconnect snapshot to re-converge. Default: 8. A brand-new
+	// failure resets the budget so a fresh problem gets a full retry allotment.
+	MaxConfigRetryAttempts int
+
+	// RetryInitialBackoff is the first delay before the config-apply retry
+	// timer fires; subsequent attempts grow exponentially up to RetryMaxBackoff.
+	// Default: 2 seconds.
+	RetryInitialBackoff time.Duration
+
+	// RetryMaxBackoff caps the config-apply retry backoff. Default: 60 seconds.
+	RetryMaxBackoff time.Duration
+
 	// OpsMetricsSampler is the optional ops-metrics + L1/L3 sampler. When
 	// non-nil, the client invokes Sampler.Collect() on every heartbeat tick
 	// and pushes the resulting SampleBatch to Hub via PushMetricsSample.
@@ -179,6 +211,15 @@ func (c *Config) setDefaults() {
 	}
 	if c.MetricsNamespace == "" {
 		c.MetricsNamespace = "nexus"
+	}
+	if c.MaxConfigRetryAttempts == 0 {
+		c.MaxConfigRetryAttempts = 8
+	}
+	if c.RetryInitialBackoff == 0 {
+		c.RetryInitialBackoff = 2 * time.Second
+	}
+	if c.RetryMaxBackoff == 0 {
+		c.RetryMaxBackoff = 60 * time.Second
 	}
 	if c.MetricsRegisterer == nil {
 		c.MetricsRegisterer = prometheus.DefaultRegisterer
@@ -357,6 +398,34 @@ type Client struct {
 	// the new value on the very next iteration.
 	heartbeatIntervalNS atomic.Int64
 	heartbeatKick       atomic.Pointer[chan struct{}]
+
+	// dispatchMu serializes every config-apply round so the OnConfigChanged
+	// callback keeps its "called on a single goroutine" contract even though
+	// applies now arrive from two sources: the read pump / HTTP fallback loop
+	// (live deltas + connect snapshot) and the proactive retry timer.
+	dispatchMu sync.Mutex
+
+	// --- proactive config-apply retry ---
+	// retryMu guards failed / retryTimer / retryAttempt / retryCtx.
+	retryMu sync.Mutex
+	// failed maps each config key whose most recent apply/pull attempt failed
+	// to its latest desired ConfigState. A non-empty failed set holds the
+	// global reportedVer behind desiredVer (the node stays in drift) and arms
+	// the retry timer. Cleared per-key the moment a key applies successfully.
+	failed map[string]failureEntry
+	// retryTimer is the single coalesced backoff timer; nil when no retry is
+	// pending. A full desired re-apply on fire re-attempts every failed key at
+	// once and re-reports the complete map, so the Hub per-key merge can never
+	// strand a sibling whose earlier held report was dropped by the monotonic
+	// guard.
+	retryTimer   *time.Timer
+	retryAttempt int
+	// retryCtx is the run context captured in Start; the retry timer no-ops
+	// once it is cancelled (Close) or still nil (client never started — unit
+	// tests that drive applyConfig directly get no background timer).
+	retryCtx context.Context
+	// running gates proactive retry scheduling on the client lifecycle.
+	running atomic.Bool
 }
 
 // CurrentHeartbeatInterval returns the cadence in effect right now,
@@ -412,8 +481,8 @@ func New(cfg Config) (*Client, error) {
 	if cfg.ThingID == "" {
 		return nil, fmt.Errorf("thingclient: ThingID is required")
 	}
-	if cfg.Token == "" {
-		return nil, fmt.Errorf("thingclient: Token is required")
+	if cfg.Token == "" && cfg.TokenFn == nil {
+		return nil, fmt.Errorf("thingclient: Token or TokenFn is required")
 	}
 	if cfg.Logger == nil {
 		return nil, fmt.Errorf("thingclient: Logger is required")
@@ -429,6 +498,7 @@ func New(cfg Config) (*Client, error) {
 		logger:       logger,
 		mode:         ModeDisconnected,
 		desiredCache: make(map[string]ConfigState),
+		failed:       make(map[string]failureEntry),
 		outcomes:     NewOutcomeTracker(),
 		// Total buffer of 96 slots, biased toward metrics (high rate).
 		// Control buffer is small but writePump drains it preferentially,
@@ -458,6 +528,14 @@ func (c *Client) Start(ctx context.Context) error {
 	c.mu.Lock()
 	c.cancel = cancel
 	c.mu.Unlock()
+
+	// Arm proactive config-apply retries only once the lifecycle is
+	// running; the retry timer reads retryCtx and stops the moment it is
+	// cancelled in Close.
+	c.retryMu.Lock()
+	c.retryCtx = runCtx
+	c.retryMu.Unlock()
+	c.running.Store(true)
 
 	c.startBufferDrainer(runCtx)
 
@@ -659,6 +737,19 @@ func (c *Client) waitBackoff(ctx context.Context, failures int) {
 	}
 }
 
+// currentToken returns the live Bearer token. TokenFn is authoritative when it
+// is set and returns a non-empty value; otherwise the static Config.Token is
+// used. This is the single read point for both transports (WS handshake + HTTP
+// fallback) so a rotated credential is picked up uniformly.
+func (c *Client) currentToken() string {
+	if c.cfg.TokenFn != nil {
+		if t := c.cfg.TokenFn(); t != "" {
+			return t
+		}
+	}
+	return c.cfg.Token
+}
+
 // connectWS dials the Hub WebSocket endpoint and processes the "connected" message.
 func (c *Client) connectWS(ctx context.Context) error {
 	c.setMode(ModeWSConnecting)
@@ -666,8 +757,12 @@ func (c *Client) connectWS(ctx context.Context) error {
 	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer dialCancel()
 
+	// Read the token live so a credential rotated since Start (device-token
+	// renewal) is carried on this dial and on every reconnect.
+	token := c.currentToken()
+
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+c.cfg.Token)
+	headers.Set("Authorization", "Bearer "+token)
 
 	// Hub's /ws authenticator reads thing identity from query params (service
 	// token path requires both id and type; device token path requires id).
@@ -680,7 +775,7 @@ func (c *Client) connectWS(ctx context.Context) error {
 
 	conn, resp, err := websocket.Dial(dialCtx, dialURL, &websocket.DialOptions{
 		HTTPHeader:   headers,
-		Subprotocols: []string{"nexus.bearer", c.cfg.Token},
+		Subprotocols: []string{"nexus.bearer", token},
 		// HTTPClient lets us inject a transport with the agent's
 		// SO_MARK control attached on Linux. websocket.Dial uses
 		// HTTPClient.Transport for the underlying TCP+TLS+upgrade,
@@ -909,37 +1004,24 @@ func (c *Client) handleHubMessage(msg hubMessage) {
 			)
 			return
 		}
-		switch {
-		case msg.ConfigKey != "":
-			// Per-key delta: merge into desiredCache and apply the merged map.
-			merged := c.mergeDelta(msg.ConfigKey, msg.State, msg.DesiredVer)
-			// Track the per-key version so KeyVersion() can surface it.
-			c.perKeyVersion.Store(msg.ConfigKey, msg.DesiredVer)
-			c.desiredVer.Store(msg.DesiredVer)
-			if msg.Force {
-				c.applyConfigForce(merged, msg.DesiredVer)
-			} else {
-				c.applyConfig(merged, msg.DesiredVer)
-			}
-		case len(msg.Desired) > 0:
-			// Legacy full-snapshot config_changed path — delete once Task 1.2 (Hub
-			// broadcast alignment) lands; it exists only to keep pre-1.2 tests green.
-			c.mu.Lock()
-			c.desiredCache = make(map[string]ConfigState, len(msg.Desired))
-			for k, v := range msg.Desired {
-				c.desiredCache[k] = v
-			}
-			c.mu.Unlock()
-			c.recordKeyVersions(msg.Desired)
-			c.desiredVer.Store(msg.DesiredVer)
-			if msg.Force {
-				c.applyConfigForce(msg.Desired, msg.DesiredVer)
-			} else {
-				c.applyConfig(msg.Desired, msg.DesiredVer)
-			}
-		default:
-			c.logger.Warn("config_changed missing configKey and desired map; dropping",
+		// config_changed is strictly a per-key delta: Hub only ships full
+		// snapshots on the "connected" frame (handled in connectWS), never via
+		// config_changed (see thing-config-sync-architecture.md §4). A message
+		// with no ConfigKey is malformed and dropped.
+		if msg.ConfigKey == "" {
+			c.logger.Warn("config_changed missing configKey; dropping",
 				slog.String("event", "config_changed_invalid"))
+			return
+		}
+		// Per-key delta: merge into desiredCache and apply the merged map.
+		merged := c.mergeDelta(msg.ConfigKey, msg.State, msg.DesiredVer)
+		// Track the per-key version so KeyVersion() can surface it.
+		c.perKeyVersion.Store(msg.ConfigKey, msg.DesiredVer)
+		c.desiredVer.Store(msg.DesiredVer)
+		if msg.Force {
+			c.applyConfigForce(merged, msg.DesiredVer)
+		} else {
+			c.applyConfig(merged, msg.DesiredVer)
 		}
 	default:
 		c.logger.Debug("Unknown message type from Hub",
@@ -949,20 +1031,26 @@ func (c *Client) handleHubMessage(msg hubMessage) {
 	}
 }
 
-// mergeDelta updates desiredCache with the new key/state/version and returns a
-// copy of the post-merge map safe to hand to the OnConfigChanged callback.
+// mergeDelta records the new key/state/version into desiredCache (the
+// authoritative full view used by SnapshotDesired and the retry full re-apply)
+// and returns a SINGLE-key map carrying only the changed key.
+//
+// Per-key dispatch: a config_changed delta must re-run only
+// the changed key's applier, not every registered applier. Returning just the
+// changed key lets OnConfigChanged → Loader.Apply dispatch that one key; the
+// resulting shadow_report carries only that key and the Hub merges it into
+// thing.reported without clobbering siblings (see UpdateShadowReport's per-key
+// jsonb merge). Full-map apply is reserved for the connect snapshot and the
+// retry re-apply.
 func (c *Client) mergeDelta(key string, state json.RawMessage, ver int64) map[string]ConfigState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.desiredCache == nil {
 		c.desiredCache = make(map[string]ConfigState)
 	}
-	c.desiredCache[key] = ConfigState{State: state, Version: ver}
-	out := make(map[string]ConfigState, len(c.desiredCache))
-	for k, v := range c.desiredCache {
-		out[k] = v
-	}
-	return out
+	cs := ConfigState{State: state, Version: ver}
+	c.desiredCache[key] = cs
+	return map[string]ConfigState{key: cs}
 }
 
 // writePump writes outgoing messages to the WebSocket. Control messages
@@ -1173,11 +1261,19 @@ func (c *Client) Close(ctx context.Context) error {
 		cancel()
 	}
 
+	// Stop proactive retries: flip running off so no new timer arms, and stop
+	// any pending one. A retry goroutine already mid-flight observes the
+	// cancelled retryCtx and returns without touching client state.
+	c.running.Store(false)
+	c.retryMu.Lock()
+	c.cancelRetryLocked()
+	c.retryMu.Unlock()
+
 	if conn != nil && mode == ModeWSConnected {
-		closeCtx, closeCancel := context.WithTimeout(ctx, 2*time.Second)
+		// coder/websocket's Close takes no context; it writes the close
+		// frame synchronously. The overall shutdown deadline is enforced
+		// by the outer select on ctx.Done() below.
 		_ = conn.Close(websocket.StatusNormalClosure, "shutting down")
-		closeCancel()
-		_ = closeCtx
 	}
 
 	if mode == ModeHTTPFallback {

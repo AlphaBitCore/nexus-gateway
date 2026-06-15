@@ -8,12 +8,11 @@ import (
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// TestNormalize_RealClaudeWebRequestShape exercises the actual request
-// body shape captured against the prod /api/organizations/.../chat_conversations/.../completion
-// endpoint (traffic_event b35c8508-ff77-449e-8d42-cf35a5348a9b). Pre-fix
-// this body fell to Tier 3 verbatim because the anthropic-messages spec's
-// locator `messages` array was missing. With the dedicated claude-web
-// spec, single-prompt shape + signature fields claim Tier 1.
+// TestNormalize_RealClaudeWebRequestShape exercises the real claude.ai
+// request shape (single-prompt body against the
+// /api/organizations/.../chat_conversations/.../completion endpoint).
+// The body carries no messages[] array — only the dedicated claude-web
+// spec's single-prompt shape + signature fields claim Tier 1.
 func TestNormalize_RealClaudeWebRequestShape(t *testing.T) {
 	body := []byte(`{
 		"prompt": "dododododo",

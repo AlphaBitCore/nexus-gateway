@@ -3,15 +3,14 @@ package rules
 import "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 
 // BuiltinRules is the Go-side source of truth for built-in alerting rule
-// definitions used by `rules.NewRegistry` at Hub startup. After the DB
-// baseline reset the TS seed file was removed and the AlertRule rows are
-// snapshotted into tools/db-migrate/seed/data/seed-baseline.sql directly;
+// definitions used by `rules.NewRegistry` at Hub startup. The AlertRule rows
+// are seeded from tools/db-migrate/seed/fixtures/AlertRule.json;
 // TestSeedRulesAppearInBuiltin (builtin_seed_lockstep_test.go) enforces
 // the reverse direction so every seed AlertRule has a matching RuleDef
 // here — without that gate, admin "Reset Rule" silently no-ops on
 // seed-only entries.
 //
-// Note on severity casing: AlertRule rows stored in seed-baseline.sql use
+// Note on severity casing: AlertRule rows stored in AlertRule.json use
 // uppercase strings ("HIGH", "CRITICAL") because the Prisma enum is
 // defined in upper case. The Go domain model uses lowercase Severity
 // constants; the reset handler is responsible for normalizing when it

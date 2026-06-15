@@ -1,7 +1,7 @@
 // Package groq implements the groq traffic adapter for Groq's
 // OpenAI-compatible LPU inference API at api.groq.com.
 //
-// Per session policy: every vendor / surface gets its own adapter ID
+// Convention: every vendor / surface gets its own adapter ID
 // even when the wire is shared. The adapter delegates to openai-compat
 // for parsing while attributing traffic to "groq" for audit.
 package groq

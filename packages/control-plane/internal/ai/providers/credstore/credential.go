@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -202,6 +203,12 @@ func (store *Store) GetCredentialEncrypted(ctx context.Context, id string) (*Cre
 
 // CreateCredentialParams holds fields for creating a credential.
 type CreateCredentialParams struct {
+	// ID, when set, is used as the credential's primary key instead of a
+	// DB-generated uuid. The credential handler generates the id
+	// app-side BEFORE encryption so the same immutable id can be folded into the
+	// ciphertext's AAD; the seal and the row must agree on it. Empty falls back
+	// to an app-side uuid here (no AAD binding — not used on the credential path).
+	ID              string
 	Name            string
 	ProviderID      string
 	EncryptedKey    string
@@ -220,6 +227,10 @@ func (store *Store) CreateCredential(ctx context.Context, p CreateCredentialPara
 	if keyID == "" {
 		keyID = "v1"
 	}
+	id := p.ID
+	if id == "" {
+		id = uuid.New().String()
+	}
 	weight := p.SelectionWeight
 	if weight <= 0 {
 		weight = 100
@@ -227,11 +238,11 @@ func (store *Store) CreateCredential(ctx context.Context, p CreateCredentialPara
 	q := fmt.Sprintf(`
 		INSERT INTO "Credential" (id, name, "providerId", "encryptedKey", "encryptionIv", "encryptionTag",
 			"encryption_key_id", enabled, "rotationState", "expiresAt", "selectionWeight", status, "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active', NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', NOW(), NOW())
 		RETURNING %s
 	`, CredMetadataColumns)
 	c, err := scanCredential(store.pool.QueryRow(ctx, q,
-		p.Name, p.ProviderID, p.EncryptedKey, p.EncryptionIV, p.EncryptionTag,
+		id, p.Name, p.ProviderID, p.EncryptedKey, p.EncryptionIV, p.EncryptionTag,
 		keyID, p.Enabled, p.RotationState, p.ExpiresAt, weight,
 	))
 	if err != nil {
@@ -326,16 +337,30 @@ func (store *Store) CountCredentialsNotOnKey(ctx context.Context, keyID string) 
 	return count, nil
 }
 
-// ListCredentialsForRotation returns up to `limit` credentials not yet on the target key.
-func (store *Store) ListCredentialsForRotation(ctx context.Context, targetKeyID string, limit int) ([]CredentialEncrypted, error) {
+// ListCredentialsForRotation returns up to `limit` credentials not yet on the
+// target key, skipping any whose ID is in excludeIDs.
+//
+// excludeIDs is the rotation worker's set of rows it has already determined it
+// cannot re-encrypt (decrypt / encrypt / persist failure — e.g. a row whose
+// encryption_key_id is no longer in CREDENTIAL_KEY_MAP). Excluding them is what
+// guarantees the worker terminates: a stuck row is never re-selected, so each
+// batch strictly shrinks the candidate set, and healthy rows queued behind a
+// run of stuck rows still surface for rotation. Pass a non-nil empty slice (not
+// nil) for the first batch — `id <> ALL('{}')` matches every row, whereas
+// `id <> ALL(NULL)` evaluates to NULL and would exclude every row.
+func (store *Store) ListCredentialsForRotation(ctx context.Context, targetKeyID string, excludeIDs []string, limit int) ([]CredentialEncrypted, error) {
+	if excludeIDs == nil {
+		excludeIDs = []string{}
+	}
 	rows, err := store.pool.Query(ctx, fmt.Sprintf(`
 		SELECT %s,
 			"encryptedKey", "encryptionIv", "encryptionTag", encryption_key_id
 		FROM "Credential"
 		WHERE encryption_key_id != $1
+		  AND id <> ALL($2)
 		ORDER BY "createdAt" ASC
-		LIMIT $2
-	`, CredMetadataColumns), targetKeyID, limit)
+		LIMIT $3
+	`, CredMetadataColumns), targetKeyID, excludeIDs, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list credentials for rotation: %w", err)
 	}

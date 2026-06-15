@@ -24,13 +24,41 @@ LEGACY_CONFIG_DIR="/etc/nexus-agent"
 LEGACY_STATE_DIR="/var/lib/nexus-agent"
 LEGACY_LOG_DIR="/var/log/nexus"
 
-echo "==> Stopping LaunchDaemon (if running)"
-if [ -f "$DAEMON_PLIST" ]; then
-    launchctl bootout system "$DAEMON_PLIST" 2>/dev/null || true
+# App-side teardown FIRST (while the .app still exists). The menu app is the only
+# thing that can deactivate the NE system extension (SIP blocks the shell) and
+# unregister the SMAppService daemon + login item. Launch it headless in the
+# console user's GUI session and wait (`open -W`) for it to finish + quit; the
+# file removal below then cleans up the residue. Best-effort — if it can't run
+# (no console user, app already gone) we fall through to label bootout + rm.
+CONSOLE_UID=$(stat -f "%u" /dev/console 2>/dev/null || true)
+if [ -d "$APP_PATH" ] && [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ]; then
+    echo "==> Running app-side uninstall (NE deactivate + SMAppService unregister)"
+    # -n is REQUIRED: the menu app is normally already running (login item), and
+    # `open` without -n just activates the existing instance and DROPS --args, so
+    # the --uninstall branch would never run. -n forces a fresh instance that
+    # enters runUninstall(); -W waits for that instance to terminate. The fresh
+    # instance operates on shared system state and quits itself, so the transient
+    # second instance is harmless.
+    launchctl asuser "$CONSOLE_UID" /usr/bin/open -n -W -a "$APP_PATH" --args --uninstall 2>/dev/null || \
+        echo "    (app-side teardown could not run; continuing with file removal)"
 fi
 
+echo "==> Stopping LaunchDaemon (if running)"
+# Boot out by label rather than by plist path: this stops the daemon whether it
+# was registered the classic way (free-standing /Library plist) or via
+# SMAppService (bundle-embedded plist) — both land on the same system-domain
+# label. The label form unloads it regardless of any plist file's presence;
+# harmless no-op when nothing is loaded. Under SMAppService, removing the .app
+# (below) is what deregisters the daemon; this bootout just stops the running
+# process first so the removal is clean.
+launchctl bootout "system/${BUNDLE_ID}" 2>/dev/null || true
+
+# Classic LaunchAgent cleanup. Pre-SMAppService builds staged a per-user
+# LaunchAgent; the SMAppService menu-bar app uses SMAppService.mainApp instead.
+# Boot out + remove any classic agent so an upgrade-then-uninstall leaves no
+# residue. Harmless no-op on a fresh SMAppService install (file absent).
 LAUNCHAGENT_PLIST="/Library/LaunchAgents/com.nexus-gateway.agent.menubar.plist"
-echo "==> Stopping LaunchAgent (if running)"
+echo "==> Stopping classic LaunchAgent (if present)"
 if [ -f "$LAUNCHAGENT_PLIST" ]; then
     CONSOLE_UID=$(stat -f "%u" /dev/console 2>/dev/null || true)
     if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ]; then
@@ -38,10 +66,12 @@ if [ -f "$LAUNCHAGENT_PLIST" ]; then
     fi
 fi
 
-echo "==> Removing LaunchDaemon plist"
+echo "==> Removing classic LaunchDaemon plist (if present)"
+# Only the classic free-standing plist lives at this /Library path; the
+# SMAppService daemon plist ships inside the .app and is removed with it below.
 rm -f "$DAEMON_PLIST"
 
-echo "==> Removing LaunchAgent plist"
+echo "==> Removing classic LaunchAgent plist (if present)"
 rm -f "$LAUNCHAGENT_PLIST"
 
 echo "==> Removing application"
@@ -52,6 +82,46 @@ rm -rf "$APP_SUPPORT"
 
 echo "==> Removing logs at $LOGS_DIR"
 rm -rf "$LOGS_DIR"
+
+echo "==> Removing managed device-CA env-var blocks from shell rc files"
+# postinstall.sh exports NEXUS_DEVICE_CA_PEM / NODE_EXTRA_CA_CERTS /
+# REQUESTS_CA_BUNDLE / SSL_CERT_FILE into the console user's ~/.zshenv +
+# ~/.bash_profile and into /etc/zshenv, all pointing at
+# "$APP_SUPPORT/device-ca.pem" — which we just deleted above. If the block
+# is left behind, every Node/OpenSSL process that starts logs
+#   Ignoring extra certs from <path>, load failed:
+#   error:10000002:SSL routines:OPENSSL_internal:system library
+# (ENOENT on the missing file) for the rest of the machine's life. Strip
+# the managed blocks symmetrically so uninstall fully reverses install.
+ENV_SNIPPET_TAG="# nexus-agent device CA (managed — do not edit)"
+ENV_SNIPPET_END="# end nexus-agent"
+RC_CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null || true)
+if [ -n "$RC_CONSOLE_USER" ] && [ "$RC_CONSOLE_USER" != "root" ]; then
+    RC_USER_HOME=$(eval echo "~$RC_CONSOLE_USER")
+    for RC in "$RC_USER_HOME/.zshenv" "$RC_USER_HOME/.bash_profile"; do
+        # Refuse to follow a symlink — same root-touching-user-path defense
+        # postinstall.sh applies when writing these files.
+        if [ -L "$RC" ]; then
+            echo "    SKIP $RC (symlink)"
+            continue
+        fi
+        if [ -f "$RC" ] && grep -q "$ENV_SNIPPET_TAG" "$RC" 2>/dev/null; then
+            # Edit AS the user so the kernel enforces user-level path
+            # resolution (mirrors the su -m write in postinstall.sh).
+            if /usr/bin/su -m "$RC_CONSOLE_USER" -c "/usr/bin/sed -i.bak '/$ENV_SNIPPET_TAG/,/$ENV_SNIPPET_END/d' '$RC' && /bin/rm -f '$RC.bak'"; then
+                echo "    Stripped device-CA block from $RC"
+            else
+                echo "    WARNING — could not strip block from $RC"
+            fi
+        fi
+    done
+fi
+SYSTEM_PROFILE="/etc/zshenv"
+if [ -f "$SYSTEM_PROFILE" ] && grep -q "$ENV_SNIPPET_TAG" "$SYSTEM_PROFILE" 2>/dev/null; then
+    sed -i.bak "/$ENV_SNIPPET_TAG/,/$ENV_SNIPPET_END/d" "$SYSTEM_PROFILE"
+    rm -f "$SYSTEM_PROFILE.bak"
+    echo "    Stripped device-CA block from $SYSTEM_PROFILE"
+fi
 
 echo "==> Removing legacy paths (pre-platform.Paths layout)"
 rm -rf "$LEGACY_CONFIG_DIR" "$LEGACY_STATE_DIR" "$LEGACY_LOG_DIR"
@@ -110,6 +180,8 @@ killall -HUP mDNSResponder 2>/dev/null || true
 
 echo ""
 echo "==> Uninstall complete"
-echo "    Note: macOS does NOT allow uninstalling system extensions while SIP"
-echo "    is enabled. The extension binary remains at /Library/SystemExtensions/"
-echo "    but is harmless — it will be replaced on next install."
+echo "    The app-side step above requested deactivation of the NE system"
+echo "    extension (the only SIP-legal path) and unregistered the SMAppService"
+echo "    daemon + login item. macOS may defer the extension's actual removal to"
+echo "    the next reboot — if 'systemextensionsctl list' still shows a Nexus"
+echo "    entry, reboot to finish removing it."

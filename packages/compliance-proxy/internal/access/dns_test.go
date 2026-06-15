@@ -210,13 +210,18 @@ func TestWithResolver_InjectsStubAndNilIsNoOp(t *testing.T) {
 		t.Fatalf("ResolveAndCheck with public-IP stub: %v", err)
 	}
 
-	// Nil resolver: must not overwrite the default.
+	// Nil resolver: must not overwrite the default caching resolver, which
+	// wraps net.DefaultResolver.
 	checkerDefault, err := NewPrivateIPChecker(nil, WithResolver(nil))
 	if err != nil {
 		t.Fatalf("NewPrivateIPChecker with nil resolver: %v", err)
 	}
-	if checkerDefault.resolver != net.DefaultResolver {
-		t.Fatal("WithResolver(nil): expected net.DefaultResolver to remain, got a different resolver")
+	cr, ok := checkerDefault.resolver.(*cachingResolver)
+	if !ok {
+		t.Fatalf("WithResolver(nil): expected default *cachingResolver, got %T", checkerDefault.resolver)
+	}
+	if cr.upstream != net.DefaultResolver {
+		t.Fatal("WithResolver(nil): caching resolver must wrap net.DefaultResolver")
 	}
 }
 

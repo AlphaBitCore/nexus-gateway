@@ -5,6 +5,7 @@
 package providers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"github.com/pashagolub/pgxmock/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 )
 
 // resetRotation clears the package-level rotationInProgress flag between
@@ -92,8 +95,8 @@ func TestRotateCredentialKey_HappyKicksOffWorker(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(3))
 	// worker's first ListCredentialsForRotation returns no rows so it exits
 	// fast — the goroutine + DB expectations + invalidation are exercised.
-	mock.ExpectQuery(`FROM "Credential"\s+WHERE encryption_key_id != \$1\s+ORDER BY "createdAt"`).
-		WithArgs("v2", 50).
+	mock.ExpectQuery(`FROM "Credential"\s+WHERE encryption_key_id != \$1\s+AND id <> ALL\(\$2\)\s+ORDER BY "createdAt"`).
+		WithArgs("v2", pgxmock.AnyArg(), 50).
 		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols))
 	hub := &hubSpy{}
 	aud := &auditSpy{}
@@ -221,7 +224,7 @@ func TestRotateCredentialsWorker_ListErrorExits(t *testing.T) {
 	rotationInProgress.Store(true)
 	mock, db := newMockStore(t)
 	mock.ExpectQuery(`FROM "Credential"`).
-		WithArgs("v2", 50).
+		WithArgs("v2", pgxmock.AnyArg(), 50).
 		WillReturnError(errors.New("planner err"))
 	mv := newTestMultiVault(t)
 	hub := &hubSpy{}
@@ -249,7 +252,9 @@ func TestRotateCredentialsWorker_DecryptEncryptUpdateAllPaths(t *testing.T) {
 	// encrypts with the current key (v2), so we drive v1 directly via a
 	// standalone Vault keyed off the same raw bytes the MultiVault parses.
 	v1Vault := vaultForKey(t, "v1")
-	row1Enc, err := v1Vault.Encrypt("plaintext-row-1")
+	// SEC-C1-02: seal under the same row-identity AAD the rotation worker
+	// rebuilds from (cred.ID, cred.ProviderID). row1 is cred-1 / prov-1.
+	row1Enc, err := v1Vault.Encrypt("plaintext-row-1", keyderive.ProviderCredentialAAD("cred-1", "prov-1"))
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -265,9 +270,9 @@ func TestRotateCredentialsWorker_DecryptEncryptUpdateAllPaths(t *testing.T) {
 	row1[len(credentialMetadataCols)+1] = row1Enc.IV
 	row1[len(credentialMetadataCols)+2] = row1Enc.Tag
 
-	// First batch: 2 rows.
+	// First batch: 2 rows, no exclusions yet.
 	mock.ExpectQuery(`FROM "Credential"`).
-		WithArgs("v2", 50).
+		WithArgs("v2", []string{}, 50).
 		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols).
 			AddRow(row1...).AddRow(row2...))
 	// row1 update succeeds.
@@ -275,9 +280,10 @@ func TestRotateCredentialsWorker_DecryptEncryptUpdateAllPaths(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), "v2").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	// Second batch: empty → loop exits.
+	// Second batch: the stuck row (cred-2) is excluded so it is never
+	// re-selected; with nothing left the query returns empty → loop exits.
 	mock.ExpectQuery(`FROM "Credential"`).
-		WithArgs("v2", 50).
+		WithArgs("v2", []string{"cred-2"}, 50).
 		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols))
 
 	hub := &hubSpy{}
@@ -313,7 +319,7 @@ func TestRotateCredentialsWorker_UpdateFailureContinues(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	mv := newTestMultiVault(t)
 	v1Vault := vaultForKey(t, "v1")
-	rowEnc, err := v1Vault.Encrypt("plaintext")
+	rowEnc, err := v1Vault.Encrypt("plaintext", keyderive.ProviderCredentialAAD("cred-1", "prov-1"))
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
@@ -322,14 +328,16 @@ func TestRotateCredentialsWorker_UpdateFailureContinues(t *testing.T) {
 	row[len(credentialMetadataCols)+1] = rowEnc.IV
 	row[len(credentialMetadataCols)+2] = rowEnc.Tag
 	mock.ExpectQuery(`FROM "Credential"`).
-		WithArgs("v2", 50).
+		WithArgs("v2", []string{}, 50).
 		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols).AddRow(row...))
 	mock.ExpectExec(`UPDATE "Credential"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), "v2").
 		WillReturnError(errors.New("update failed"))
+	// The persist-failure row becomes stuck and is excluded next batch, which
+	// then returns empty so the loop exits instead of re-selecting it forever.
 	mock.ExpectQuery(`FROM "Credential"`).
-		WithArgs("v2", 50).
+		WithArgs("v2", []string{"cred-1"}, 50).
 		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols))
 
 	hub := &hubSpy{}
@@ -337,6 +345,160 @@ func TestRotateCredentialsWorker_UpdateFailureContinues(t *testing.T) {
 	h.rotateCredentialsWorker("v2")
 	if rotationInProgress.Load() {
 		t.Error("worker must clear flag even when row updates fail")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet: %v", err)
+	}
+}
+
+// F-0084 regression — a credential whose encryption_key_id is no longer in
+// CREDENTIAL_KEY_MAP (Decrypt → "unknown encryption key ID") must NOT cause the
+// worker to re-select it every batch forever. It is excluded after the first
+// failure, the healthy rows queued alongside it still migrate, and the run
+// reports the stuck count.
+func TestRotateCredentials_StuckRowExcludedReportsCount(t *testing.T) {
+	resetRotation(t)
+	mock, db := newMockStore(t)
+	now := nowFixture()
+	mv := newTestMultiVault(t)
+
+	// A healthy row really encrypted under v1 so the rotation roundtrip works.
+	v1Vault := vaultForKey(t, "v1")
+	enc, err := v1Vault.Encrypt("healthy-secret", keyderive.ProviderCredentialAAD("cred-healthy", "prov-1"))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	healthy := makeCredentialEncryptedRow(now, "v1")
+	healthy[0] = "cred-healthy"
+	healthy[len(credentialMetadataCols)+0] = enc.Ciphertext
+	healthy[len(credentialMetadataCols)+1] = enc.IV
+	healthy[len(credentialMetadataCols)+2] = enc.Tag
+
+	// A row pinned to a key no longer in the vault — Decrypt rejects it.
+	stuck := makeCredentialEncryptedRow(now, "retired-key")
+	stuck[0] = "cred-stuck"
+
+	mock.ExpectQuery(`FROM "Credential"`).
+		WithArgs("v2", []string{}, 50).
+		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols).AddRow(healthy...).AddRow(stuck...))
+	mock.ExpectExec(`UPDATE "Credential"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), "v2").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	// The stuck row is excluded from the next query → it is queried at most
+	// once. With nothing left, the worker terminates.
+	mock.ExpectQuery(`FROM "Credential"`).
+		WithArgs("v2", []string{"cred-stuck"}, 50).
+		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols))
+
+	h := newHandler(db, &hubSpy{}, &auditSpy{}, nil, nil, mv, ProxyConfig{})
+	res, err := h.rotateCredentials(context.Background(), "v2")
+	if err != nil {
+		t.Fatalf("rotateCredentials: %v", err)
+	}
+	if res.rotated != 1 {
+		t.Errorf("rotated = %d; want 1 (healthy row must migrate despite stuck sibling)", res.rotated)
+	}
+	if res.stuck != 1 {
+		t.Errorf("stuck = %d; want 1", res.stuck)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet: %v", err)
+	}
+}
+
+// A full batch of only-stuck rows must terminate via the zero-progress break
+// (every row excluded next query), not spin forever.
+func TestRotateCredentials_AllStuckBatchTerminates(t *testing.T) {
+	resetRotation(t)
+	mock, db := newMockStore(t)
+	now := nowFixture()
+	mv := newTestMultiVault(t)
+
+	r1 := makeCredentialEncryptedRow(now, "gone-key")
+	r1[0] = "s1"
+	r2 := makeCredentialEncryptedRow(now, "gone-key")
+	r2[0] = "s2"
+	r3 := makeCredentialEncryptedRow(now, "gone-key")
+	r3[0] = "s3"
+
+	mock.ExpectQuery(`FROM "Credential"`).
+		WithArgs("v2", []string{}, 50).
+		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols).AddRow(r1...).AddRow(r2...).AddRow(r3...))
+	// All three excluded → empty result → loop exits. Exactly two queries
+	// total: if the worker re-selected stuck rows it would issue a third.
+	mock.ExpectQuery(`FROM "Credential"`).
+		WithArgs("v2", []string{"s1", "s2", "s3"}, 50).
+		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols))
+
+	h := newHandler(db, &hubSpy{}, &auditSpy{}, nil, nil, mv, ProxyConfig{})
+	res, err := h.rotateCredentials(context.Background(), "v2")
+	if err != nil {
+		t.Fatalf("rotateCredentials: %v", err)
+	}
+	if res.rotated != 0 {
+		t.Errorf("rotated = %d; want 0", res.rotated)
+	}
+	if res.stuck != 3 {
+		t.Errorf("stuck = %d; want 3", res.stuck)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet: %v", err)
+	}
+}
+
+// Liveness: after a run that hit an undecryptable row, the in-progress guard is
+// released so a subsequent RotateCredentialKey is accepted (200) rather than
+// permanently rejected with 409 ROTATION_IN_PROGRESS.
+func TestRotateCredentialKey_StuckRunReleasesFlag(t *testing.T) {
+	resetRotation(t)
+	mock, db := newMockStore(t)
+	now := nowFixture()
+	mv := newTestMultiVault(t)
+	hub := &hubSpy{}
+	h := newHandler(db, hub, &auditSpy{}, nil, nil, mv, ProxyConfig{})
+
+	stuck := makeCredentialEncryptedRow(now, "retired-key")
+	stuck[0] = "cred-stuck"
+	mock.ExpectQuery(`FROM "Credential"`).
+		WithArgs("v2", []string{}, 50).
+		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols).AddRow(stuck...))
+	mock.ExpectQuery(`FROM "Credential"`).
+		WithArgs("v2", []string{"cred-stuck"}, 50).
+		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols))
+	h.rotateCredentialsWorker("v2")
+
+	if rotationInProgress.Load() {
+		t.Fatal("worker stuck on undecryptable row must still release the in-progress flag")
+	}
+
+	// A fresh rotation must be accepted, proving the flag did not leak.
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM "Credential" WHERE encryption_key_id`).
+		WithArgs("v2").
+		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	mock.ExpectQuery(`FROM "Credential"`).
+		WithArgs("v2", pgxmock.AnyArg(), 50).
+		WillReturnRows(pgxmock.NewRows(credentialEncryptedCols))
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u-1")
+	if err := h.RotateCredentialKey(c); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if rec.Code == http.StatusConflict {
+		t.Fatalf("subsequent rotation returned 409 — in-progress flag leaked after a stuck row")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Drain the second worker goroutine before asserting expectations.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && rotationInProgress.Load() {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if rotationInProgress.Load() {
+		t.Error("second worker should have cleared the in-progress flag")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet: %v", err)

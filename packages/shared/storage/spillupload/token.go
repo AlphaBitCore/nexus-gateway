@@ -66,6 +66,12 @@ type Claims struct {
 	ExpiresAt int64  `json:"exp"`               // unix seconds
 	Backend   string `json:"backend,omitempty"` // "localfs" | "s3"
 	Mime      string `json:"mime,omitempty"`    // optional contentType hint
+	// NodeID is the authenticated device (thing) identity that minted this
+	// token, bound into the HMAC signature. The mint namespaces the
+	// storage Key by NodeID so one node can never address another node's spill
+	// object; the blob handler writes to the signed Key, so a node cannot tamper
+	// with the destination. Empty for trusted service-token mints (flat key).
+	NodeID string `json:"nid,omitempty"`
 }
 
 // Validate checks structural invariants the token signing/verification

@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -31,12 +32,14 @@ const vkPrefix = "nvk_"
 
 // HubVKInvalidator is the narrow Hub surface virtualkey/ needs:
 // targeted invalidate-by-hash via NotifyConfigChange (for VK
-// update/delete/regenerate) PLUS fire-and-forget InvalidateConfig
+// update/delete/regenerate) PLUS error-returning InvalidateConfigE
 // (for approve/renew/revoke — the approval workflow doesn't carry a
-// per-hash payload). Fourth narrow-Hub pattern in the catalog.
+// per-hash payload). Both surfaces are security-sensitive: a missed
+// push leaves the data plane honoring a revoked/expired VK, so both
+// fail loud (HTTP 502) instead of fire-and-forget.
 type HubVKInvalidator interface {
 	NotifyConfigChange(ctx context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error)
-	InvalidateConfig(ctx context.Context, thingType, configKey string)
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 }
 
 // Deps is the construction-time arg shape.
@@ -86,15 +89,8 @@ func (h *Handler) RegisterApprovalRoutes(g *echo.Group, iamMW func(action string
 	g.POST("/virtual-keys/:id/revoke", h.RevokeVirtualKey, iamMW(iam.ResourceVirtualKey.Action(iam.VerbRevoke)))
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 func internalServerError(c echo.Context, msg string) error {
 	return c.JSON(http.StatusInternalServerError, errJSON(msg, "server_error", ""))
@@ -165,10 +161,15 @@ func (h *Handler) isSuperAdmin(c echo.Context, aa *auth.AdminAuth) bool {
 
 // notifyVKInvalidate pushes a targeted invalidate-by-hash to ai-gateway
 // for the affected VK key hash. The data plane drops just that LRU
-// entry instead of purging the whole VK cache. Best-effort.
-func (h *Handler) notifyVKInvalidate(c echo.Context, keyHash *string) {
+// entry instead of purging the whole VK cache.
+//
+// Returns the push error so the caller can fail loud (HTTP 502): a VK
+// update/delete/regenerate that does not reach the gateway leaves the OLD
+// secret valid in the gateway cache, so a silently-dropped push is a security
+// hole. Returns nil when there is nothing to push (no hub wired, or no hash).
+func (h *Handler) notifyVKInvalidate(c echo.Context, keyHash *string) error {
 	if h.hub == nil || keyHash == nil || *keyHash == "" {
-		return
+		return nil
 	}
 	payload := map[string]any{
 		"op":  "invalidate",
@@ -187,12 +188,37 @@ func (h *Handler) notifyVKInvalidate(c echo.Context, keyHash *string) {
 			"key_hash", *keyHash,
 			"error", err,
 		)
+		return err
 	}
+	return nil
 }
 
 // resolveVK loads the VK row identified by the :id path param.
 func (h *Handler) resolveVK(c echo.Context) (*vkstore.VirtualKey, error) {
 	return h.vks.GetVirtualKey(c.Request().Context(), c.Param("id"))
+}
+
+// ownedVKOrDeny resolves the VK named by the :id route param and, for a
+// non-super-admin caller, enforces ownership. On success it returns
+// the VK and a nil response; otherwise it returns nil plus the echo response the
+// caller must return (404 not-found / 403 access-denied). This mirrors the owner
+// re-check the Update/Delete CRUD handlers already enforce, closing the gap where
+// the revoke/renew lifecycle verbs could mutate another principal's key by id.
+func (h *Handler) ownedVKOrDeny(c echo.Context) (*vkstore.VirtualKey, error) {
+	existing, err := h.resolveVK(c)
+	if err != nil {
+		return nil, internalServerError(c, "Internal server error")
+	}
+	if existing == nil {
+		return nil, c.JSON(http.StatusNotFound, errJSON("Virtual key not found", "not_found", ""))
+	}
+	aa := middleware.AdminAuthFromContext(c)
+	if aa != nil && !h.isSuperAdmin(c, aa) {
+		if existing.OwnerID == nil || *existing.OwnerID != aa.KeyID {
+			return nil, c.JSON(http.StatusForbidden, errJSON("Access denied", "authorization_error", ""))
+		}
+	}
+	return existing, nil
 }
 
 // generateVirtualKey produces a fresh raw key, its hash, and the
@@ -203,7 +229,9 @@ func generateVirtualKey() (rawKey, keyHash, keyPrefix string, err error) {
 		return "", "", "", err
 	}
 	rawKey = vkPrefix + hex.EncodeToString(b)
-	keyHash = auth.HashAPIKey(rawKey)
+	// Virtual keys are hashed under the VK-domain sub-key, distinct
+	// from admin API keys; [MUST MATCH] the AI Gateway VK-admission hash.
+	keyHash = auth.HashVirtualKey(rawKey)
 	keyPrefix = rawKey[:12]
 	return
 }
@@ -236,4 +264,33 @@ func extractNullableTimeFromBody(body []byte, field string) (present bool, t *ti
 		}
 	}
 	return false, nil, "invalid " + field + ": expected RFC3339 or YYYY-MM-DD"
+}
+
+// capApplicationExpiry is the single source of truth for the maker-checker
+// lifetime cap on APPLICATION virtual keys, enforced identically at create
+// (CreateVirtualKey), edit (UpdateVirtualKey), and renewal (RenewVirtualKey).
+// An application VK must carry a bounded, future expiry so the re-approval
+// cadence (SEC-W2-01) cannot be escaped by minting/editing a never-expiring or
+// far-future key. Returns "" when expiresAt is acceptable, otherwise the 400
+// validation message; callers wrap it in errJSON(..., "validation_error", "").
+//
+// All three checks anchor to time.Now().UTC() so the comparison is timezone-
+// stable regardless of the request's parsed offset:
+//   - nil (never-expire / cleared)   → rejected
+//   - expiresAt > now + 3 months     → rejected
+//   - expiresAt <= now (past/now)    → rejected
+//
+// Personal VKs are exempt and must not be passed to this helper.
+func capApplicationExpiry(expiresAt *time.Time) (errMsg string) {
+	if expiresAt == nil {
+		return "expiresAt is required for application virtual keys"
+	}
+	now := time.Now().UTC()
+	if expiresAt.After(now.AddDate(0, 3, 0)) {
+		return "expiresAt must not exceed 3 months from now"
+	}
+	if !expiresAt.After(now) {
+		return "expiresAt must be in the future"
+	}
+	return ""
 }

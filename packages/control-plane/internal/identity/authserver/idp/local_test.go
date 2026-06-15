@@ -122,6 +122,10 @@ func TestLocal_Authenticate_UnknownEmail(t *testing.T) {
 	}
 }
 
+// TestLocal_Authenticate_Disabled asserts the F-0078 anti-enumeration fix: a
+// disabled local account — even when the correct password is presented —
+// returns the SAME generic ErrInvalidCredentials as a wrong password, so an
+// anonymous caller cannot distinguish a disabled account from a failed login.
 func TestLocal_Authenticate_Disabled(t *testing.T) {
 	past := time.Now().Add(-time.Hour)
 	lookup := fakeLookup{users: map[string]fakeUser{
@@ -133,8 +137,8 @@ func TestLocal_Authenticate_Disabled(t *testing.T) {
 		"email":    "alice@corp.com",
 		"password": "hunter2",
 	})
-	if !errors.Is(err, idp.ErrUserDisabled) {
-		t.Fatalf("expected ErrUserDisabled, got %v", err)
+	if !errors.Is(err, idp.ErrInvalidCredentials) {
+		t.Fatalf("expected ErrInvalidCredentials (no disabled-account enumeration), got %v", err)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/killswitch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/interception"
+	cphttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // fakeReporter records every SendBreakGlassShadowReport call. failWith forces
@@ -595,10 +596,11 @@ func TestReplayPending_ReadError(t *testing.T) {
 	}
 }
 
-// TestEscapeBGError_QuoteAndNewline covers the
-// escapeBGError helper indirectly. We pass an error containing
-// problematic characters and ensure HandleBreakGlassPut's response
-// stays valid JSON. (Direct call kept simple via the handler.)
+// TestEscapeBGError_QuoteAndNewlineInResponse passes an error containing
+// problematic characters and ensures HandleBreakGlassPut's response stays valid
+// JSON. httperr.WriteError uses json.NewEncoder which handles all control
+// characters correctly — this test guards against regressions to hand-built
+// JSON string concatenation.
 func TestEscapeBGError_QuoteAndNewlineInResponse(t *testing.T) {
 	deps, bg, _, _ := newBGTestDeps(t)
 	h := HandleBreakGlassPut(deps, "exemptions", bg)
@@ -617,7 +619,47 @@ func TestEscapeBGError_QuoteAndNewlineInResponse(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Errorf("response body not valid JSON: %v body=%q", err, rec.Body.String())
 	}
-	_ = errors.New("unused") // touch the errors import.
+}
+
+// TestWriteError_ControlChars verifies that error messages containing control
+// characters (newlines, tabs, carriage returns, quotes, backslashes, and non-ASCII
+// control bytes that KMS / subprocess stderr routinely carries) survive the
+// WriteError → JSON encode → JSON decode round-trip intact.
+// Prior to F-0319 the handler hand-built JSON literals via string concatenation;
+// a missing escaper caused raw control bytes to produce invalid JSON.
+// json.NewEncoder in WriteError handles all of these correctly.
+func TestWriteError_ControlChars(t *testing.T) {
+	cases := map[string]string{
+		"newline":         "kms: signing failed\nretry exhausted",
+		"tab":             "kms:\tdenied",
+		"carriage_return": "line1\r\nline2",
+		"quote_and_slash": `bad path "C:\secrets\key"`,
+		"all_control":     "a\b\f\n\r\t\vz",
+		"unit_separator":  "x\x1fy", // a non-named control char
+		"plain":           "no special characters here",
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			cphttperr.WriteError(rec, http.StatusBadRequest, in, "validation_error", "INVALID_BODY")
+
+			var got map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("response body is not valid JSON: %v\nbody=%q", err, rec.Body.String())
+			}
+			inner, ok := got["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("response body missing 'error' object; body=%q", rec.Body.String())
+			}
+			msg, ok := inner["message"].(string)
+			if !ok {
+				t.Fatalf("'error.message' missing or non-string; body=%q", rec.Body.String())
+			}
+			if msg != in {
+				t.Errorf("round-trip mismatch:\n got  %q\n want %q", msg, in)
+			}
+		})
+	}
 }
 
 // TestWritePending_MkdirAllError covers writePending's MkdirAll error

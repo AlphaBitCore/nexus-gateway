@@ -208,54 +208,6 @@ func TestUpdateThingAgentTrustLevel_ExecError(t *testing.T) {
 	}
 }
 
-func TestExpireAgentCert_HappyPath(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	mock.ExpectExec(`UPDATE thing_agent SET cert_expires_at`).
-		WithArgs("thing-1", pgxmock.AnyArg()). // window.String() computed internally
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-
-	s := New(mock)
-	if err := s.ExpireAgentCert(context.Background(), "thing-1", 2*time.Hour); err != nil {
-		t.Fatalf("ExpireAgentCert: %v", err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %v", err)
-	}
-}
-
-func TestExpireAgentCert_NotFound(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	mock.ExpectExec(`UPDATE thing_agent SET cert_expires_at`).
-		WithArgs("missing", pgxmock.AnyArg()).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-
-	s := New(mock)
-	err := s.ExpireAgentCert(context.Background(), "missing", time.Hour)
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
-	}
-}
-
-func TestExpireAgentCert_ExecError(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	sentinel := errors.New("exec err")
-	mock.ExpectExec(`UPDATE thing_agent SET cert_expires_at`).
-		WithArgs("t1", pgxmock.AnyArg()).
-		WillReturnError(sentinel)
-
-	s := New(mock)
-	err := s.ExpireAgentCert(context.Background(), "t1", time.Hour)
-	if !errors.Is(err, sentinel) {
-		t.Errorf("err = %v, want sentinel", err)
-	}
-}
-
 func TestUpsertDeviceAssignment_EmptyThingID(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -450,85 +402,9 @@ func TestRefreshActiveDeviceAssignmentIP_ExecError(t *testing.T) {
 	}
 }
 
-func TestValidateEnrollmentToken_NotFound(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	// Returning nil (scanEnrollmentToken returns nil on pgx.ErrNoRows).
-	mock.ExpectQuery(`FROM enrollment_token`).
-		WithArgs(pgxmock.AnyArg()). // token hash computed internally
-		WillReturnError(pgx.ErrNoRows)
-
-	s := New(mock)
-	et, err := s.ValidateEnrollmentToken(context.Background(), "enroll-deadbeef")
-	if err != nil {
-		t.Fatalf("ValidateEnrollmentToken: %v", err)
-	}
-	if et != nil {
-		t.Errorf("expected nil for not-found token, got %+v", et)
-	}
-}
-
-func TestValidateEnrollmentToken_QueryError(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	sentinel := errors.New("db error")
-	mock.ExpectQuery(`FROM enrollment_token`).
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnError(sentinel)
-
-	s := New(mock)
-	_, err := s.ValidateEnrollmentToken(context.Background(), "some-token")
-	if !errors.Is(err, sentinel) {
-		t.Errorf("err = %v, want sentinel", err)
-	}
-}
-
-func TestMarkEnrollmentTokenUsed_HappyPath(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	mock.ExpectExec(`UPDATE enrollment_token`).
-		WithArgs("tok-1", "thing-1").
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-
-	s := New(mock)
-	if err := s.MarkEnrollmentTokenUsed(context.Background(), "tok-1", "thing-1"); err != nil {
-		t.Fatalf("MarkEnrollmentTokenUsed: %v", err)
-	}
-}
-
-func TestMarkEnrollmentTokenUsed_NotFound(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	mock.ExpectExec(`UPDATE enrollment_token`).
-		WithArgs("tok-2", "t2").
-		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-
-	s := New(mock)
-	err := s.MarkEnrollmentTokenUsed(context.Background(), "tok-2", "t2")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("err = %v, want ErrNotFound", err)
-	}
-}
-
-func TestMarkEnrollmentTokenUsed_ExecError(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-
-	sentinel := errors.New("exec err")
-	mock.ExpectExec(`UPDATE enrollment_token`).
-		WithArgs("tok-3", "t3").
-		WillReturnError(sentinel)
-
-	s := New(mock)
-	err := s.MarkEnrollmentTokenUsed(context.Background(), "tok-3", "t3")
-	if !errors.Is(err, sentinel) {
-		t.Errorf("err = %v, want sentinel", err)
-	}
-}
+// The ValidateEnrollmentToken / MarkEnrollmentTokenUsed two-step was removed
+// in F-0204 (replaced by the atomic ConsumeEnrollmentToken +
+// LinkEnrollmentTokenThing pair, covered in enrollment_token_consume_test.go).
 
 func TestRevokeEnrollmentToken_HappyPath(t *testing.T) {
 	mock, _ := pgxmock.NewPool()

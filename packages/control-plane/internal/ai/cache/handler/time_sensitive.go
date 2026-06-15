@@ -12,7 +12,8 @@
 // Persistence: the full rule set is stored in
 // semantic_cache_config.time_sensitive_overrides (JSONB). seed.ts populates
 // the default rules on a fresh DB
-// (tools/db-migrate/seed/data/time-sensitive-rules.json). Every mutating
+// (tools/db-migrate/seed/fixtures/semantic_cache_config.json, the single row's
+// time_sensitive_overrides field). Every mutating
 // endpoint reads, mutates, writes back, and pushes the full list to the Hub
 // shadow under configkey ResponseCacheTimeSensitivePatterns. There is no
 // Go-side default list — if seed didn't run, the rule list is empty and the
@@ -134,9 +135,15 @@ func (h *Handler) PutTimeSensitivePattern(c echo.Context) error {
 		return internalServerError(c, "failed to save: "+err.Error())
 	}
 
-	patterns := blobToPatterns(blob)
+	patterns := BlobToPatterns(blob)
 	if err := h.pushTimeSensitiveToHub(c, patterns); err != nil {
-		return internalServerError(c, "failed to push rules to Hub: "+err.Error())
+		// A dropped push is escalated to 502 like the rest of the cache domain
+		// (the unified propagation policy) AND healed within one cycle by the
+		// configreconcile content-diff watch for this key: the loader
+		// projects GetOverrides through the same BlobToPatterns transform used
+		// here, so the source-of-truth diff is apples-to-apples.
+		h.logger.Error("time-sensitive: hub push failed", "error", err)
+		return hub.RespondPropagationFailure(c, err)
 	}
 	return c.JSON(http.StatusOK, timeSensitivePatternsResponse{Patterns: patterns, Source: "db"})
 }
@@ -172,9 +179,15 @@ func (h *Handler) PostTimeSensitivePattern(c echo.Context) error {
 		return internalServerError(c, "failed to save: "+err.Error())
 	}
 
-	patterns := blobToPatterns(blob)
+	patterns := BlobToPatterns(blob)
 	if err := h.pushTimeSensitiveToHub(c, patterns); err != nil {
-		return internalServerError(c, "failed to push rules to Hub: "+err.Error())
+		// A dropped push is escalated to 502 like the rest of the cache domain
+		// (the unified propagation policy) AND healed within one cycle by the
+		// configreconcile content-diff watch for this key: the loader
+		// projects GetOverrides through the same BlobToPatterns transform used
+		// here, so the source-of-truth diff is apples-to-apples.
+		h.logger.Error("time-sensitive: hub push failed", "error", err)
+		return hub.RespondPropagationFailure(c, err)
 	}
 	return c.JSON(http.StatusCreated, req)
 }
@@ -213,9 +226,15 @@ func (h *Handler) DeleteTimeSensitivePattern(c echo.Context) error {
 		return internalServerError(c, "failed to save: "+err.Error())
 	}
 
-	patterns := blobToPatterns(blob)
+	patterns := BlobToPatterns(blob)
 	if err := h.pushTimeSensitiveToHub(c, patterns); err != nil {
-		return internalServerError(c, "failed to push rules to Hub: "+err.Error())
+		// A dropped push is escalated to 502 like the rest of the cache domain
+		// (the unified propagation policy) AND healed within one cycle by the
+		// configreconcile content-diff watch for this key: the loader
+		// projects GetOverrides through the same BlobToPatterns transform used
+		// here, so the source-of-truth diff is apples-to-apples.
+		h.logger.Error("time-sensitive: hub push failed", "error", err)
+		return hub.RespondPropagationFailure(c, err)
 	}
 	return c.JSON(http.StatusOK, timeSensitivePatternsResponse{Patterns: patterns, Source: "db"})
 }
@@ -267,11 +286,15 @@ func (h *Handler) loadPatterns(ctx context.Context) ([]TimeSensitivePattern, err
 	if err != nil {
 		return nil, err
 	}
-	return blobToPatterns(blob), nil
+	return BlobToPatterns(blob), nil
 }
 
-// blobToPatterns converts the store-side rule list to the wire shape.
-func blobToPatterns(blob configstore.TimeSensitiveOverridesBlob) []TimeSensitivePattern {
+// BlobToPatterns converts the store-side rule list to the canonical Hub-shadow
+// wire shape for response_cache.time_sensitive_patterns. Exported so the
+// configreconcile SourceLoader projects the source of truth
+// through the EXACT same transform the admin push uses, so the two can never
+// drift.
+func BlobToPatterns(blob configstore.TimeSensitiveOverridesBlob) []TimeSensitivePattern {
 	out := make([]TimeSensitivePattern, 0, len(blob.Rules))
 	for _, r := range blob.Rules {
 		out = append(out, overrideRuleToPattern(r))
@@ -295,13 +318,7 @@ func (h *Handler) pushTimeSensitiveToHub(c echo.Context, rules []TimeSensitivePa
 		return nil
 	}
 	act := actorFromContext(c)
-	_, err := h.hub.NotifyConfigChange(c.Request().Context(), hub.ConfigChangeRequest{
-		ThingType: "ai-gateway",
-		ConfigKey: configkey.ResponseCacheTimeSensitivePatterns,
-		State:     rules,
-		ActorID:   act.UserID,
-		ActorName: act.Name,
-	})
+	_, err := hub.PushTypeA(c.Request().Context(), h.hub, "ai-gateway", configkey.ResponseCacheTimeSensitivePatterns, rules, hub.Actor{ID: act.UserID, Name: act.Name})
 	return err
 }
 

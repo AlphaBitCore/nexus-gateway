@@ -21,6 +21,14 @@ type StoreInput struct {
 	EmbeddingInput string    // exact text fed to the embedding model
 	Embedding      []float32 // float32 vector produced by the embedding model
 
+	// AllowCrossModel mirrors the fleet semantic policy at write time. It
+	// controls whether upstream_provider + upstream_model are folded into the
+	// entry key: when false (strict, the default) each (provider, model) gets
+	// its own key so entries for distinct models do not mutually evict; when
+	// true the model is interchangeable for retrieval, so it is left out of the
+	// key. See entryKey.
+	AllowCrossModel bool
+
 	// Payload
 	ResponseBody []byte         // canonical bytes (response) or JSON ChunkRecord array (stream)
 	Usage        map[string]any // canonical usage stamps

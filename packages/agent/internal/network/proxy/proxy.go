@@ -8,6 +8,7 @@ package proxy
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,17 @@ import (
 	"sync"
 	"time"
 )
+
+// tlsRecordTypeHandshake is the TLS record content type for a handshake
+// record — the only record that can carry a ClientHello / SNI.
+const tlsRecordTypeHandshake = 0x16
+
+// ErrNotTLSClientHello is returned by PeekSNI when the first bytes on the
+// connection are not a TLS handshake record (plaintext HTTP, or a
+// server-speaks-first protocol where the client has not sent a ClientHello).
+// Callers treat it like any other peek failure: skip inspection and pass the
+// flow through, replaying the peeked bytes.
+var ErrNotTLSClientHello = errors.New("proxy: not a TLS ClientHello")
 
 // Relay copies data bidirectionally between two connections.
 // Blocks until both directions complete. Returns bytes transferred.
@@ -65,6 +77,17 @@ func PeekSNI(conn net.Conn, timeout time.Duration) (sni string, peeked []byte, e
 	header := make([]byte, 5)
 	if _, err := io.ReadFull(conn, header); err != nil {
 		return "", nil, fmt.Errorf("read TLS header: %w", err)
+	}
+
+	// Only a TLS handshake record (content type 0x16, major version 0x03) can
+	// carry a ClientHello. For anything else — plaintext HTTP, or a
+	// server-speaks-first protocol where the client sent no ClientHello —
+	// return the 5 peeked bytes and stop. Continuing would read header[3:5] as
+	// a record length and block on bytes that never come (server-first) or
+	// consume and corrupt the request body (e.g. "GET /" parses to an 8 KB
+	// "length"), which manifests as a ~5 s stall and a broken plain-HTTP flow.
+	if header[0] != tlsRecordTypeHandshake || header[1] != 0x03 {
+		return "", header, ErrNotTLSClientHello
 	}
 
 	recordLen := int(header[3])<<8 | int(header[4])

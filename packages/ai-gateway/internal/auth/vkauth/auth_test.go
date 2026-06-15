@@ -1,20 +1,19 @@
 package vkauth
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -37,78 +36,65 @@ func (f *fakeLookup) GetVirtualKeyByHash(_ context.Context, h string) (*store.Vi
 	return vk, nil
 }
 
-// quietLogger returns a slog.Logger that discards output. We still need
-// a real *slog.Logger because NewAuthenticator's dev-fallback path calls
-// .Warn — passing nil would panic.
+// quietLogger returns a slog.Logger that discards output.
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// captureLogger returns a logger writing to a buffer for assertion.
-func captureLogger() (*slog.Logger, *bytes.Buffer) {
-	buf := &bytes.Buffer{}
-	return slog.New(slog.NewTextHandler(buf, nil)), buf
-}
-
 func TestNewAuthenticator_WithSecret(t *testing.T) {
 	lookup := &fakeLookup{}
-	a := NewAuthenticator(lookup, "real-secret", quietLogger())
+	a := NewAuthenticator(lookup, mustKeyring("real-secret"), quietLogger())
 	if a == nil {
 		t.Fatal("nil authenticator")
 	}
-	if string(a.hmacSecret) != "real-secret" {
-		t.Errorf("hmacSecret = %q, want real-secret", a.hmacSecret)
+	// SEC-W2-01 Layer A: the authenticator stores the HKDF-derived VK-domain
+	// sub-key PER keyring version (current first), not the raw master. A
+	// single-version keyring yields exactly one stored sub-key.
+	wantSub := keyderive.DeriveSubkey([]byte("real-secret"), keyderive.ClassAPIKeyVirtualKey)
+	if len(a.vkHashKeys) != 1 {
+		t.Fatalf("vkHashKeys len = %d, want 1 for a single-version keyring", len(a.vkHashKeys))
+	}
+	if string(a.vkHashKeys[0]) != string(wantSub[:]) {
+		t.Error("vkHashKeys[0] is not the derived VK sub-key of the master")
 	}
 	if a.db == nil {
 		t.Error("db not wired")
 	}
 }
 
-func TestNewAuthenticator_EmptySecretFallsBackToDev(t *testing.T) {
-	lookup := &fakeLookup{}
-	logger, buf := captureLogger()
-	a := NewAuthenticator(lookup, "", logger)
+// TestAuthenticate_TryAllVersions_NoLazy is the SEC-W2-01 Layer A core: a VK
+// whose stored hash was sealed under an OLDER keyring version still admits
+// (try-all, current-first). VKs are NOT lazy-migrated (the ai-gw admission path
+// is read-only), so the stored hash is unchanged after admission — the VK is
+// pruned by re-issue/expiry, not migrated in place.
+func TestAuthenticate_TryAllVersions_NoLazy(t *testing.T) {
+	kr := mustKeyringMap("v1:old-secret,*v2:current-secret")
+	const token = "nvk_rotated_key_aaaaaaaa"
+	// The VK was issued under v1 (old) and never re-issued; current is v2.
+	oldHash := vkHashFor("old-secret", token)
+	curHash := vkHashFor("current-secret", token)
+	if oldHash == curHash {
+		t.Fatal("old and current hashes must differ for this test to be meaningful")
+	}
+	lookup := &fakeLookup{byHash: map[string]*store.VirtualKey{
+		oldHash: {ID: "vk-old", Enabled: true},
+	}}
+	a := NewAuthenticator(lookup, kr, quietLogger())
 
-	// The fallback is observable: the resulting authenticator computes
-	// hashes deterministically and the logger emitted a warning.
-	if string(a.hmacSecret) != "nexus-gateway-default-hmac-secret" {
-		t.Errorf("dev fallback secret mismatch: %q", a.hmacSecret)
+	meta, err := a.Authenticate(context.Background(), reqWithBearer(token))
+	if err != nil {
+		t.Fatalf("Authenticate under an old keyring version: %v", err)
 	}
-	if !strings.Contains(buf.String(), "ADMIN_KEY_HMAC_SECRET not set") {
-		t.Errorf("expected warning log; got: %s", buf.String())
+	if meta.ID != "vk-old" {
+		t.Errorf("admitted VK ID=%q, want vk-old", meta.ID)
 	}
-}
-
-func TestValidateHMACSecret(t *testing.T) {
-	tests := []struct {
-		name     string
-		secret   string
-		nodeEnv  string
-		wantErr  bool
-		wantText string
-	}{
-		{"secret set, dev", "real", "", false, ""},
-		{"secret set, prod", "real", "production", false, ""},
-		{"empty, dev", "", "development", false, ""},
-		{"empty, prod fails loud", "", "production", true, "ADMIN_KEY_HMAC_SECRET is required"},
+	// No lazy migration: the stored map is untouched (still keyed by oldHash, and
+	// the current-version hash was never written).
+	if _, ok := lookup.byHash[oldHash]; !ok {
+		t.Error("VK must NOT be removed/migrated on admission (read-only path)")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Each subtest sets/unsets NODE_ENV explicitly.
-			if tt.nodeEnv == "" {
-				_ = os.Unsetenv("NODE_ENV")
-			} else {
-				_ = os.Setenv("NODE_ENV", tt.nodeEnv)
-				defer os.Unsetenv("NODE_ENV") //nolint:errcheck
-			}
-			err := ValidateHMACSecret(tt.secret)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
-			}
-			if tt.wantText != "" && !strings.Contains(err.Error(), tt.wantText) {
-				t.Errorf("err %q does not contain %q", err, tt.wantText)
-			}
-		})
+	if _, ok := lookup.byHash[curHash]; ok {
+		t.Error("VK must NOT be re-hashed to the current version (no lazy migrate)")
 	}
 }
 
@@ -118,8 +104,8 @@ func TestValidateHMACSecret(t *testing.T) {
 // request carrying the given Bearer token.
 func newAuthTestRig(t *testing.T, vk *store.VirtualKey, lookupErr error) (*Authenticator, *fakeLookup) {
 	t.Helper()
-	a := NewAuthenticator(&fakeLookup{}, "test-secret", quietLogger())
-	hash := a.hashKey("nvk_testkey_aaaaaaaaaaaaaa") // length > 4, prefix nvk_
+	a := NewAuthenticator(&fakeLookup{}, mustKeyring("test-secret"), quietLogger())
+	hash := vkHashFor("test-secret", "nvk_testkey_aaaaaaaaaaaaaa") // length > 4, prefix nvk_
 	lookup := &fakeLookup{
 		byHash: map[string]*store.VirtualKey{},
 		err:    lookupErr,
@@ -329,7 +315,7 @@ func TestAuthenticate_LookupReturnsNilNilTreatedAsInvalid(t *testing.T) {
 	// A lookup that returns (nil, nil) without ErrNoRows — degraded
 	// cache layer behaviour. The handler must still 401.
 	lookup := &fakeLookupReturnsNilNil{}
-	a := NewAuthenticator(lookup, "test-secret", quietLogger())
+	a := NewAuthenticator(lookup, mustKeyring("test-secret"), quietLogger())
 	r := reqWithBearer("nvk_testkey_aaaaaaaaaaaaaa")
 	_, err := a.Authenticate(context.Background(), r)
 	if !errors.Is(err, ErrInvalid) {

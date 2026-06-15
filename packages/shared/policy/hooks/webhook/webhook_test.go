@@ -29,9 +29,13 @@ func newWebhookHook(t *testing.T, endpoint string, extraConfig map[string]any) H
 	for k, v := range extraConfig {
 		cfg.Config[k] = v
 	}
-	h, err := NewWebhookForward(cfg)
+	// Execute-path tests dial a 127.0.0.1 httptest server, so they must use an
+	// unguarded client: NewWebhookForward(cfg) installs the AdminEgressExternalOnly
+	// SSRF guard (F-0370) which refuses loopback. The guard itself is covered by
+	// TestWebhookForward_Factory_NilClientInstallsSSRFGuard.
+	h, err := NewWebhookForwardWithClient(cfg, http.DefaultClient)
 	if err != nil {
-		t.Fatalf("NewWebhookForward: %v", err)
+		t.Fatalf("NewWebhookForwardWithClient: %v", err)
 	}
 	return h
 }
@@ -119,6 +123,35 @@ func TestWebhookForward_Factory_WithClientUsesProvidedClient(t *testing.T) {
 	wf := h.(*WebhookForward)
 	if wf.client != custom {
 		t.Error("custom client was not retained")
+	}
+}
+
+// TestWebhookForward_Factory_NilClientInstallsSSRFGuard proves F-0370: when no
+// client is supplied the hook builds its own guarded client that refuses to dial
+// a cloud-metadata / private endpoint, so a compliance webhook pointed at
+// 169.254.169.254 cannot exfiltrate captured traffic to the instance-metadata
+// service. Execute must return the wrapped request-failed error, not reach the
+// endpoint.
+func TestWebhookForward_Factory_NilClientInstallsSSRFGuard(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://169.254.169.254/latest/meta-data/",
+		"http://10.0.0.1/hook",
+		"http://127.0.0.1:1/hook",
+	} {
+		h, err := NewWebhookForwardWithClient(&HookConfig{
+			Config: map[string]any{"endpoint": endpoint},
+		}, nil)
+		if err != nil {
+			t.Fatalf("construct %q: %v", endpoint, err)
+		}
+		_, execErr := h.Execute(context.Background(), &HookInput{Stage: "request"})
+		if execErr == nil {
+			t.Errorf("endpoint %q: Execute succeeded; want SSRF-guard dial failure", endpoint)
+			continue
+		}
+		if !strings.Contains(execErr.Error(), "webhook-forward") {
+			t.Errorf("endpoint %q: err=%v; want webhook-forward-wrapped error", endpoint, execErr)
+		}
 	}
 }
 
@@ -701,9 +734,9 @@ func TestWebhookForward_PartialOnMatchStorageOnlyStillGetsApproveCeiling(t *test
 			},
 		},
 	}
-	h, err := NewWebhookForward(cfg)
+	h, err := NewWebhookForwardWithClient(cfg, http.DefaultClient)
 	if err != nil {
-		t.Fatalf("NewWebhookForward: %v", err)
+		t.Fatalf("NewWebhookForwardWithClient: %v", err)
 	}
 	res, err := h.Execute(context.Background(), &HookInput{})
 	if err != nil {
@@ -738,9 +771,9 @@ func TestWebhookForward_DefaultOnMatchIsApproveCeiling(t *testing.T) {
 		Name:             "test-webhook-default",
 		Config:           map[string]any{"endpoint": srv.URL},
 	}
-	h, err := NewWebhookForward(cfg)
+	h, err := NewWebhookForwardWithClient(cfg, http.DefaultClient)
 	if err != nil {
-		t.Fatalf("NewWebhookForward: %v", err)
+		t.Fatalf("NewWebhookForwardWithClient: %v", err)
 	}
 	res, err := h.Execute(context.Background(), &HookInput{})
 	if err != nil {

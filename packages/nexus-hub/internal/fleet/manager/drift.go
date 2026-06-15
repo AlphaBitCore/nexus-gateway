@@ -16,8 +16,8 @@ import (
 // Hub errors.
 var ErrConfigKeyNotInDesired = errors.New("config key not in thing desired state")
 
-// ErrNoDeliveryPath is returned by RePushConfigKey / RePushAllKeys when neither
-// WebSocket nor MQ can deliver the force-push. The caller is responsible for
+// ErrNoDeliveryPath is returned by RePushConfigKey when neither WebSocket nor
+// MQ can deliver the force-push. The caller is responsible for
 // surfacing this so override-set / override-clear post-commit warnings fire
 // consistently — silent nil here causes audit-committed overrides that the
 // client never receives to look like success.
@@ -89,7 +89,7 @@ func (m *Manager) rePushConfigForThing(ctx context.Context, thingType string, th
 				State:     state,
 				Version:   thing.DesiredVer,
 			}
-			sigData, err := json.Marshal(sig)
+			sigData, err := SignHubSignal(sig, m.signalSecret)
 			if err != nil {
 				return fmt.Errorf("marshal hub signal for key %q: %w", configKey, err)
 			}
@@ -110,52 +110,24 @@ type RePushFailure struct {
 	Err       string `json:"error"`
 }
 
-// RePushAllResult summarises a RePushAllKeys run. Pushed counts the keys
-// that delivered (WS or MQ); Failed lists every key that erred. The two
-// together cover every key in thing.Desired.
+// RePushAllResult summarises a ForceResyncAll run. Pushed counts the keys that
+// will reach the Thing (delivered now via WS/MQ, or guaranteed via the
+// heartbeat pull after the desired_ver bump); Failed lists every key that erred
+// for a non-delivery reason. The two together cover every key in thing.Desired.
 type RePushAllResult struct {
 	Pushed int             `json:"pushed"`
 	Failed []RePushFailure `json:"failed,omitempty"`
 }
 
-// RePushAllKeys re-pushes every key currently in thing.Desired with Force=true.
-// Used by:
-//   - admin "Force resync all" action on the node detail page;
-//   - override-expiry job after clearing the last override on a Thing
-//     (whole-Thing replay is overkill, but harmless).
-//
-// Per-key failures are accumulated into Failed rather than aborting the
-// loop — admin operators expect "push as many as possible, tell me what
-// didn't make it" semantics. The function returns (result, nil) even when
-// every key failed; a non-nil error is reserved for whole-Thing failures
-// like GetThing surfacing a missing Thing.
-//
-// Empty desired map returns (&RePushAllResult{}, nil) — not an error; a
-// freshly-enrolled Thing with no template yet is valid.
-func (m *Manager) RePushAllKeys(ctx context.Context, thingID string) (*RePushAllResult, error) {
-	if thingID == "" {
-		return nil, fmt.Errorf("thingID is required")
-	}
-	thing, err := m.store.RegistryStore().GetThing(ctx, thingID)
-	if err != nil {
-		return nil, err
-	}
-	res := &RePushAllResult{}
-	for k := range thing.Desired {
-		if err := m.rePushConfigKeyForThing(ctx, thing, k); err != nil {
-			res.Failed = append(res.Failed, RePushFailure{ConfigKey: k, Err: err.Error()})
-			continue
-		}
-		res.Pushed++
-	}
-	return res, nil
-}
-
 // RePushConfigKey re-pushes the current desired state for a single key to a
-// specific Thing. Unlike UpdateConfig it does not bump the config template
-// version, touch thing.Desired, insert a config_change_event row, or fan out
-// to peer Things of the same type — it is a pure WebSocket replay driven by
-// the admin "Re-sync this key" action on the Node Detail page.
+// specific Thing without bumping desired_ver. It is the post-commit delivery
+// primitive for the override / break-glass paths, which have ALREADY bumped
+// desired_ver inside their own transaction — so a successful WS push is an
+// immediacy optimization and ErrNoDeliveryPath there just means "the heartbeat
+// pull (driven by the already-bumped version) will deliver it." It is NOT used
+// for the admin force-resync actions, which must bump the version themselves
+// (ForceResyncKey / ForceResyncAll) so an in-sync HTTP-fallback Thing is not a
+// silent no-op.
 //
 // Returns ErrConfigKeyNotInDesired when the key is not present on the Thing
 // so callers can return a clean 404 instead of a silent success.
@@ -168,6 +140,108 @@ func (m *Manager) RePushConfigKey(ctx context.Context, thingID, configKey string
 		return err
 	}
 	return m.rePushConfigKeyForThing(ctx, thing, configKey)
+}
+
+// bumpDesiredVerForResync re-stamps the Thing's desired_ver, rewriting the
+// current desired map unchanged, so an admin force-resync converges on Things
+// reachable only via the HTTP heartbeat-pull path — not just WS-connected ones.
+//
+// Why the bump is required: rePushConfigKeyForThing delivers a Force=true
+// config_changed over local WS, or best-effort over the nexus.hub.signal MQ
+// broadcast. An HTTP-fallback Thing is on no Hub's WS pool, so the MQ broadcast
+// is silently dropped (ws/signal.go pool.Send → not-found), and because a pure
+// replay does NOT bump desired_ver the heartbeat version-compare
+// (desired_ver != reported_ver) never fires a pull either — the resync is a
+// silent no-op while the admin sees success. Bumping desired_ver makes the
+// resync behave like every other reliable config delivery: the heartbeat pull
+// (and any reconnect snapshot) carries it. The override / break-glass paths do
+// NOT use this — they already bump desired_ver inside their own tx.
+//
+// Takes AcquireConfigVersionLock first so the per-Thing bump serializes
+// against the type-fanout and admin-override version allocations. Mutates
+// thing.DesiredVer in place so the subsequent immediate WS push carries the new
+// version. Empty desired is a no-op (nothing to deliver).
+func (m *Manager) bumpDesiredVerForResync(ctx context.Context, thing *store.Thing) error {
+	if len(thing.Desired) == 0 {
+		return nil
+	}
+	pool := m.txPool()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("resync begin tx %s: %w", thing.ID, err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := m.store.RegistryStore().AcquireConfigVersionLock(ctx, tx, thing.Type); err != nil {
+		return fmt.Errorf("resync acquire config version lock %s: %w", thing.Type, err)
+	}
+	newVer, err := m.store.RegistryStore().WriteDesiredAndBumpVer(ctx, tx, thing.ID, thing.Desired)
+	if err != nil {
+		return fmt.Errorf("resync bump desired ver %s: %w", thing.ID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("resync commit %s: %w", thing.ID, err)
+	}
+	thing.DesiredVer = newVer
+	return nil
+}
+
+// ForceResyncKey is the admin "Re-sync this key" action. Unlike the internal
+// RePushConfigKey (used post-commit by the override / break-glass paths, which
+// have already bumped desired_ver) it FIRST bumps desired_ver so the resync
+// reaches HTTP-fallback Things via the heartbeat pull, then does an immediate
+// best-effort WS/MQ push at the new version. ErrNoDeliveryPath from the push is
+// non-fatal: the version bump above guarantees delivery on the next heartbeat
+// even when no live WS receiver exists, so reporting it as a failure would lie
+// in the opposite direction. Returns ErrConfigKeyNotInDesired (→ 404)
+// when the key is absent, store.ErrNotFound when the Thing is missing.
+func (m *Manager) ForceResyncKey(ctx context.Context, thingID, configKey string) error {
+	if thingID == "" || configKey == "" {
+		return fmt.Errorf("thingID and configKey are required")
+	}
+	thing, err := m.store.RegistryStore().GetThing(ctx, thingID)
+	if err != nil {
+		return err
+	}
+	if _, ok := thing.Desired[configKey]; !ok {
+		return ErrConfigKeyNotInDesired
+	}
+	if err := m.bumpDesiredVerForResync(ctx, thing); err != nil {
+		return err
+	}
+	if err := m.rePushConfigKeyForThing(ctx, thing, configKey); err != nil && !errors.Is(err, ErrNoDeliveryPath) {
+		return err
+	}
+	return nil
+}
+
+// ForceResyncAll is the admin "Force resync all" action. It bumps desired_ver
+// once (so every key converges via the heartbeat pull on HTTP-fallback Things)
+// then pushes each key immediately, best-effort, over WS/MQ at the new
+// version. A per-key ErrNoDeliveryPath is counted as Pushed because the version
+// bump already guarantees heartbeat delivery; any other per-key error is
+// recorded in Failed without aborting the loop. Empty desired returns
+// (&RePushAllResult{}, nil).
+func (m *Manager) ForceResyncAll(ctx context.Context, thingID string) (*RePushAllResult, error) {
+	if thingID == "" {
+		return nil, fmt.Errorf("thingID is required")
+	}
+	thing, err := m.store.RegistryStore().GetThing(ctx, thingID)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.bumpDesiredVerForResync(ctx, thing); err != nil {
+		return nil, err
+	}
+	res := &RePushAllResult{}
+	for k := range thing.Desired {
+		if err := m.rePushConfigKeyForThing(ctx, thing, k); err != nil && !errors.Is(err, ErrNoDeliveryPath) {
+			res.Failed = append(res.Failed, RePushFailure{ConfigKey: k, Err: err.Error()})
+			continue
+		}
+		res.Pushed++
+	}
+	return res, nil
 }
 
 // rePushConfigKeyForThing performs the single-key WS replay for a pre-fetched
@@ -236,7 +310,12 @@ func (m *Manager) rePushConfigKeyForThing(ctx context.Context, thing *store.Thin
 			ThingID:   thing.ID,
 			Force:     true,
 		}
-		sigData, err := json.Marshal(sig)
+		// Hub signals must be HMAC-signed: peer Hubs verify via
+		// VerifyAndDecodeHubSignal and DROP unsigned frames, so a plain
+		// json.Marshal here would make the targeted resync silently
+		// undeliverable — and would let any actor with bare NATS access
+		// forge a forced replay.
+		sigData, err := SignHubSignal(sig, m.signalSecret)
 		if err != nil {
 			return fmt.Errorf("marshal hub signal for key %q: %w", configKey, err)
 		}

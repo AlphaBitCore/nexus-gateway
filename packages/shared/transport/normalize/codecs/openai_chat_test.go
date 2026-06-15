@@ -2,6 +2,7 @@ package codecs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -160,6 +161,132 @@ func TestOpenAIChat_StreamResponseSimple(t *testing.T) {
 	}
 }
 
+// Stream confidence is frame coverage: a stream interleaved with frames
+// that parse as JSON but carry no chat-completion structure folds the
+// recognized frames with proportionally lower confidence — the operator
+// sees an honest "3 of 4 frames decoded" signal instead of a field-shape
+// score read off the first frame.
+func TestOpenAIChat_StreamConfidenceIsFrameCoverage(t *testing.T) {
+	raw := strings.Join([]string{
+		`data: {"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"}}]}`,
+		``,
+		`data: {"model":"gpt-4o","choices":[{"index":0,"delta":{"content":" there"},"finish_reason":"stop"}]}`,
+		``,
+		`data: {"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`,
+		``,
+		`data: {"ping":"keepalive"}`, // parses, but no chat structure: total only
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	n := NewOpenAIChatNormalizer()
+	got, err := n.Normalize(context.Background(), []byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Confidence != 0.75 {
+		t.Errorf("confidence = %v, want 0.75 (3 of 4 frames recognized)", got.Confidence)
+	}
+	if got.Messages[0].Content[0].Text != "Hi there" {
+		t.Errorf("recognized frames not folded: %q", got.Messages[0].Content[0].Text)
+	}
+}
+
+// Envelope-key recognition: frames that carry the chunk envelope with
+// empty values — a content-filter prologue ({"id":"","model":"",
+// "created":0,"choices":[],...}) or an empty-choices heartbeat — are
+// recognized, so a real provider stream cannot be dragged below the
+// registry claim threshold and demoted to the generic-http fallback by
+// its own protocol chatter.
+func TestOpenAIChat_StreamFilterPrologueAndHeartbeatRecognized(t *testing.T) {
+	raw := strings.Join([]string{
+		`data: {"id":"","model":"","created":0,"choices":[],"prompt_filter_results":[{"prompt_index":0}]}`,
+		``,
+		`data: {"choices":[]}`, // heartbeat: choices key present, empty
+		``,
+		`data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	got, err := NewOpenAIChatNormalizer().Normalize(context.Background(), []byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Confidence != 1.0 {
+		t.Errorf("confidence = %v, want 1.0 (envelope keys recognize prologue + heartbeat frames)", got.Confidence)
+	}
+	if got.Kind != core.KindAIChat || got.Messages[0].Content[0].Text != "hi" {
+		t.Errorf("stream content not folded: %+v", got.Messages)
+	}
+}
+
+// A frame whose choices value is not an array (provider bug / foreign
+// shape) keeps its envelope recognition but folds nothing from it — the
+// rest of the stream still folds.
+func TestOpenAIChat_StreamMalformedChoicesTreeFoldsRest(t *testing.T) {
+	raw := strings.Join([]string{
+		`data: {"id":"chatcmpl-1","choices":{"not":"an array"}}`,
+		``,
+		`data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
+		``,
+	}, "\n")
+	got, err := NewOpenAIChatNormalizer().Normalize(context.Background(), []byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Messages[0].Content[0].Text != "ok" {
+		t.Errorf("remaining stream not folded: %+v", got.Messages)
+	}
+	if got.Confidence != 1.0 {
+		t.Errorf("confidence = %v, want 1.0 (envelope key counts the malformed-choices frame)", got.Confidence)
+	}
+}
+
+// An oversized line aborts the scanner mid-capture: the unread tail
+// weighs on coverage like one undecodable frame, and the decodable
+// prefix still folds — same contract as the anthropic fold.
+func TestOpenAIChat_StreamOversizedLineWeighsOnCoverage(t *testing.T) {
+	huge := strings.Repeat("x", 9*1024*1024) // > the scanner's 8 MiB line cap
+	raw := strings.Join([]string{
+		`data: {"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"}}]}`,
+		``,
+		`data: {"pad":"` + huge + `"}`,
+		``,
+	}, "\n")
+	got, err := NewOpenAIChatNormalizer().Normalize(context.Background(), []byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Messages[0].Content[0].Text != "hi" {
+		t.Errorf("prefix not folded: %+v", got.Messages)
+	}
+	if want := 0.5; got.Confidence != want {
+		t.Errorf("confidence = %v, want %v (1 recognized + 1 lost tail)", got.Confidence, want)
+	}
+}
+
+// A clean full stream pins coverage 1.0 — and the Normalize wrapper must
+// NOT overwrite the fold's frame coverage with the single-document
+// field-shape score (which would read 0.9889 off the first frame).
+func TestOpenAIChat_StreamConfidenceFullCoverage(t *testing.T) {
+	raw := strings.Join([]string{
+		`data: {"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"}}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	n := NewOpenAIChatNormalizer()
+	got, err := n.Normalize(context.Background(), []byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Confidence != 1.0 {
+		t.Errorf("confidence = %v, want 1.0 (every frame recognized; [DONE] is a sentinel)", got.Confidence)
+	}
+}
+
 func TestOpenAIChat_StreamResponseEmptyYieldsErrUnsupported(t *testing.T) {
 	// Empty stream — only the [DONE] marker.
 	raw := "data: [DONE]\n\n"
@@ -167,6 +294,145 @@ func TestOpenAIChat_StreamResponseEmptyYieldsErrUnsupported(t *testing.T) {
 	_, err := n.Normalize(context.Background(), []byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
 	if !errors.Is(err, core.ErrUnsupported) {
 		t.Fatalf("expected core.ErrUnsupported on empty stream, got %v", err)
+	}
+}
+
+// assertContentIsJSONArray marshals msg the same way the audit bridge
+// persists response_normalized and asserts content is a JSON array (never
+// null / missing / string). The prod smoke's P6b check is exactly this
+// assertion (jsonb_typeof(messages[0].content) == 'array').
+func assertContentIsJSONArray(t *testing.T, msg core.Message, wantLen int) {
+	t.Helper()
+	b, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal message: %v", err)
+	}
+	var probe struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(b, &probe); err != nil {
+		t.Fatalf("unmarshal message: %v", err)
+	}
+	if len(probe.Content) == 0 || string(probe.Content) == "null" {
+		t.Fatalf("content is null/missing on the wire: %s", string(b))
+	}
+	var arr []any
+	if err := json.Unmarshal(probe.Content, &arr); err != nil {
+		t.Fatalf("content is not a JSON array (%q): %v", string(probe.Content), err)
+	}
+	if len(arr) != wantLen {
+		t.Fatalf("content array len = %d, want %d (%s)", len(arr), wantLen, string(probe.Content))
+	}
+}
+
+// TestOpenAIChatStream_EmptyAssistantTurnNormalizesToContentArray pins the
+// prod-smoke P6b regression: reasoning models (o3 / gpt-5.5 / kimi-k2.x)
+// can return a structurally valid chat-completion SSE stream whose
+// assistant turn carries ONLY a role delta + a finish_reason — no visible
+// text, no echoed reasoning_content, no tool calls (the model spent the
+// whole budget on hidden reasoning the provider did not stream back).
+//
+// Such a stream must still normalize to an ai-chat payload with exactly
+// one assistant message whose content serializes as an empty JSON array
+// `[]` (never null/missing). Before the fix, sawAny stayed false for these
+// turns, the normalizer returned ErrUnsupported ("no chunks decoded"), and
+// the Coordinator fell through to the Tier-3 generic-http verbatim
+// fallback — producing a payload with NO messages[] at all, so
+// response_normalized.messages[0].content was absent.
+func TestOpenAIChatStream_EmptyAssistantTurnNormalizesToContentArray(t *testing.T) {
+	n := NewOpenAIChatNormalizer()
+
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "role_delta_plus_finish_reason",
+			raw: strings.Join([]string{
+				`data: {"model":"o3","choices":[{"index":0,"delta":{"role":"assistant"}}]}`,
+				``,
+				`data: {"model":"o3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				``,
+				`data: {"model":"o3","choices":[],"usage":{"prompt_tokens":5,"completion_tokens_details":{"reasoning_tokens":50}}}`,
+				``,
+				`data: [DONE]`,
+				``,
+			}, "\n"),
+		},
+		{
+			name: "finish_reason_only_no_role_delta",
+			raw: strings.Join([]string{
+				`data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				``,
+				`data: [DONE]`,
+				``,
+			}, "\n"),
+		},
+		{
+			name: "role_then_explicit_null_content_then_finish",
+			raw: strings.Join([]string{
+				`data: {"model":"kimi-k2.6","choices":[{"index":0,"delta":{"role":"assistant","content":null}}]}`,
+				``,
+				`data: {"model":"kimi-k2.6","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				``,
+				`data: [DONE]`,
+				``,
+			}, "\n"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := n.Normalize(context.Background(), []byte(tc.raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Kind != core.KindAIChat {
+				t.Fatalf("kind = %q, want ai-chat", got.Kind)
+			}
+			if len(got.Messages) != 1 {
+				t.Fatalf("messages = %d, want 1 (empty assistant turn must still produce a message)", len(got.Messages))
+			}
+			if got.Messages[0].Role != core.RoleAssistant {
+				t.Errorf("role = %q, want assistant", got.Messages[0].Role)
+			}
+			if got.FinishReason != "stop" {
+				t.Errorf("finish_reason = %q, want stop", got.FinishReason)
+			}
+			// The core assertion the prod smoke makes: content is an empty
+			// JSON array on the wire, not null.
+			assertContentIsJSONArray(t, got.Messages[0], 0)
+		})
+	}
+}
+
+// TestOpenAIChatStream_ReasoningAndTextStillProduceArrays guards the
+// passing rows: reasoning+text and text-only streams must keep producing
+// non-empty content arrays (the fix must not regress them).
+func TestOpenAIChatStream_ReasoningAndTextStillProduceArrays(t *testing.T) {
+	n := NewOpenAIChatNormalizer()
+
+	reasoningPlusText := strings.Join([]string{
+		`data: {"model":"kimi-k2.5","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"let me think"}}]}`,
+		``,
+		`data: {"model":"kimi-k2.5","choices":[{"index":0,"delta":{"content":"Answer"}}]}`,
+		``,
+		`data: {"model":"kimi-k2.5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	got, err := n.Normalize(context.Background(), []byte(reasoningPlusText), core.Meta{Direction: core.DirectionResponse, Stream: true})
+	if err != nil {
+		t.Fatalf("reasoning+text: unexpected error: %v", err)
+	}
+	if len(got.Messages) != 1 {
+		t.Fatalf("reasoning+text: messages = %d, want 1", len(got.Messages))
+	}
+	// reasoning block + text block = 2 content parts.
+	assertContentIsJSONArray(t, got.Messages[0], 2)
+	if got.Messages[0].Content[0].Type != core.ContentReasoning || got.Messages[0].Content[1].Type != core.ContentText {
+		t.Errorf("blocks = %+v, want [reasoning, text]", got.Messages[0].Content)
 	}
 }
 

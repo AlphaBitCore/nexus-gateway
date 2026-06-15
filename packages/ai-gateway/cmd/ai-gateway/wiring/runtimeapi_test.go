@@ -102,7 +102,7 @@ func TestInitIntrospectRegistry_withAuthToken(t *testing.T) {
 func TestMountRuntimeAPI_nilThingClientIsNoOp(t *testing.T) {
 	mux := http.NewServeMux()
 	// Should not panic.
-	MountRuntimeAPI(nil, mux)
+	MountRuntimeAPI(nil, "test-internal-token", mux)
 }
 
 // newTestCacheLayer creates a cachelayer.Layer backed by pgxmock for introspect tests.

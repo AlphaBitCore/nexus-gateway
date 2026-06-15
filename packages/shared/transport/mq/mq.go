@@ -74,4 +74,15 @@ type Message struct {
 	// handler returns an error. Callers may call it explicitly to nak before
 	// returning.
 	Nak func() error
+
+	// NakWithDelay rejects the message for redelivery but instructs the broker
+	// to wait at least the given delay before re-delivering it. A bare Nak
+	// re-delivers as fast as the broker can, which burns the per-message
+	// MaxDeliver budget in a tight loop during a sustained downstream outage
+	// (e.g. a DB failover) — consumers that DLQ on a redelivery cap should use
+	// NakWithDelay so the budget spans the outage instead of being exhausted in
+	// seconds. Best-effort: brokers that cannot honour a per-message delay fall
+	// back to a plain Nak. Non-nil for the JetStream queue path; a no-op for the
+	// fire-and-forget topic path.
+	NakWithDelay func(delay time.Duration) error
 }

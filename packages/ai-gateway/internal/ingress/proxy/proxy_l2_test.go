@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,19 +40,32 @@ type stubSemanticWriter struct {
 	err       error
 	called    atomic.Int32
 	writeDone chan struct{}
+
+	mu      sync.Mutex
+	lastReq semantic.WriteRequest
 }
 
 func newStubWriter() *stubSemanticWriter {
 	return &stubSemanticWriter{writeDone: make(chan struct{}, 1)}
 }
 
-func (s *stubSemanticWriter) Write(_ context.Context, _ semantic.WriteRequest) (semantic.WriteResult, error) {
+func (s *stubSemanticWriter) Write(_ context.Context, req semantic.WriteRequest) (semantic.WriteResult, error) {
+	s.mu.Lock()
+	s.lastReq = req
+	s.mu.Unlock()
 	s.called.Add(1)
 	select {
 	case s.writeDone <- struct{}{}:
 	default:
 	}
 	return s.result, s.err
+}
+
+// request returns the most recent WriteRequest the writer received.
+func (s *stubSemanticWriter) request() semantic.WriteRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastReq
 }
 
 func enabledFleetCache() *semantic.ConfigCache {
@@ -188,6 +202,80 @@ func TestResolveL2VKScope_None(t *testing.T) {
 	got := resolveL2VKScope(rec, "none")
 	if got != "" {
 		t.Errorf("none scope: got %q, want empty", got)
+	}
+}
+
+// resolveL1CacheScope (F-0051 / F-0229) reads the fleet vary_by from the
+// semantic ConfigCache and returns a type-prefixed isolation token for the L1
+// exact-match key. These tests pin each vary_by branch and the nil/empty
+// fail-safe to fleet-wide ("").
+
+func newConfigCacheVaryBy(varyBy string) *semantic.ConfigCache {
+	cc := semantic.NewConfigCache()
+	// Set normalizes empty/invalid VaryBy to "vk"; to assert the unset path we
+	// leave Set uncalled. For explicit values pass them through Set.
+	cc.Set(semantic.ConfigSnapshot{VaryBy: varyBy})
+	return cc
+}
+
+func TestResolveL1CacheScope_VK(t *testing.T) {
+	cc := newConfigCacheVaryBy("vk")
+	rec := &audit.Record{VirtualKeyID: "vk-1", UserID: "u-1", OrganizationID: "org-1"}
+	if got := resolveL1CacheScope(cc, rec); got != "vk:vk-1" {
+		t.Errorf("vk scope: got %q, want %q", got, "vk:vk-1")
+	}
+}
+
+func TestResolveL1CacheScope_User(t *testing.T) {
+	cc := newConfigCacheVaryBy("user")
+	rec := &audit.Record{VirtualKeyID: "vk-1", UserID: "u-9"}
+	if got := resolveL1CacheScope(cc, rec); got != "user:u-9" {
+		t.Errorf("user scope: got %q, want %q", got, "user:u-9")
+	}
+}
+
+func TestResolveL1CacheScope_Org(t *testing.T) {
+	cc := newConfigCacheVaryBy("org")
+	rec := &audit.Record{OrganizationID: "org-7"}
+	if got := resolveL1CacheScope(cc, rec); got != "org:org-7" {
+		t.Errorf("org scope: got %q, want %q", got, "org:org-7")
+	}
+}
+
+func TestResolveL1CacheScope_None(t *testing.T) {
+	cc := newConfigCacheVaryBy("none")
+	rec := &audit.Record{VirtualKeyID: "vk-1", UserID: "u-1", OrganizationID: "org-1"}
+	if got := resolveL1CacheScope(cc, rec); got != "" {
+		t.Errorf("none scope: got %q, want empty (fleet-wide)", got)
+	}
+}
+
+func TestResolveL1CacheScope_Unset(t *testing.T) {
+	// ConfigCache never Set → zero-value snapshot VaryBy="" → fleet-wide, so L1
+	// keeps cross-tenant dedup until an admin configures isolation.
+	cc := semantic.NewConfigCache()
+	rec := &audit.Record{VirtualKeyID: "vk-1"}
+	if got := resolveL1CacheScope(cc, rec); got != "" {
+		t.Errorf("unset vary_by: got %q, want empty", got)
+	}
+}
+
+func TestResolveL1CacheScope_NilSafe(t *testing.T) {
+	if got := resolveL1CacheScope(nil, &audit.Record{VirtualKeyID: "vk-1"}); got != "" {
+		t.Errorf("nil config cache: got %q, want empty", got)
+	}
+	if got := resolveL1CacheScope(newConfigCacheVaryBy("vk"), nil); got != "" {
+		t.Errorf("nil record: got %q, want empty", got)
+	}
+}
+
+func TestResolveL1CacheScope_MissingIDFallsFleetWide(t *testing.T) {
+	// vary_by=org but the record carries no org id → no usable scope, fall back
+	// to fleet-wide rather than producing an "org:" token with an empty id.
+	cc := newConfigCacheVaryBy("org")
+	rec := &audit.Record{VirtualKeyID: "vk-1"}
+	if got := resolveL1CacheScope(cc, rec); got != "" {
+		t.Errorf("org vary_by with empty org id: got %q, want empty", got)
 	}
 }
 
@@ -440,9 +528,12 @@ func TestTryL2Lookup_NoCanonicalMsgs(t *testing.T) {
 	if rdr.called.Load() != 0 {
 		t.Error("reader should not be called on empty embedding input")
 	}
-	if p.rec.GatewayCacheSkipReason != audit.GatewayCacheSkipReasonOversizeForEmbedding {
+	// F-0231(c): no canonical messages → no text to embed, which must stamp
+	// the accurate no_embeddable_text reason, NOT the oversize reason (the
+	// input was never oversize — there was simply nothing to embed).
+	if p.rec.GatewayCacheSkipReason != audit.GatewayCacheSkipReasonNoEmbeddableText {
 		t.Errorf("skip reason: got %q, want %q",
-			p.rec.GatewayCacheSkipReason, audit.GatewayCacheSkipReasonOversizeForEmbedding)
+			p.rec.GatewayCacheSkipReason, audit.GatewayCacheSkipReasonNoEmbeddableText)
 	}
 }
 
@@ -510,35 +601,47 @@ func TestTryL2Lookup_HitStream_ConversionError(t *testing.T) {
 func TestScheduleL2Write_NilWriter(t *testing.T) {
 	h := &Handler{deps: &Deps{SemanticConfigCache: enabledFleetCache()}}
 	// No panic, no goroutine — just early return.
-	h.scheduleL2Write(&routingcore.RouteResult{}, routingcore.RoutingTarget{},
-		sampleMsgs(), []byte(`{}`), nil, "vk", false, Ingress{}, noopLogger())
+	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
+		sampleMsgs(), []byte(`{}`), nil, false, Ingress{}, noopLogger())
 }
 
 func TestScheduleL2Write_EmptyBody(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	h.scheduleL2Write(&routingcore.RouteResult{}, routingcore.RoutingTarget{},
-		sampleMsgs(), nil, nil, "vk", false, Ingress{}, noopLogger())
+	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
+		sampleMsgs(), nil, nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer should not be called with empty body")
 	}
 }
 
-func TestScheduleL2Write_IsStream(t *testing.T) {
+// F-0228: streaming write-back now fires (previously bailed on isStream),
+// stamping a response_kind=stream entry so equivalent streaming requests can
+// L2-hit instead of paying an embedding charge on a guaranteed miss.
+func TestScheduleL2Write_IsStreamWritesStreamKind(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	h.scheduleL2Write(&routingcore.RouteResult{}, routingcore.RoutingTarget{},
-		sampleMsgs(), []byte(`{}`), nil, "vk", true, Ingress{}, noopLogger())
-	if w.called.Load() != 0 {
-		t.Error("writer should not be called for stream responses")
+	h.scheduleL2Write(&audit.Record{},
+		routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
+		sampleMsgs(), []byte(`[{"delta":"hi","done":true}]`), nil, true, Ingress{}, noopLogger())
+	select {
+	case <-w.writeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("writer goroutine did not fire for stream within 3 seconds")
+	}
+	if w.called.Load() != 1 {
+		t.Fatalf("expected writer.Write called once for stream; got %d", w.called.Load())
+	}
+	if got := w.request().ResponseKind; got != "stream" {
+		t.Errorf("ResponseKind = %q; want stream", got)
 	}
 }
 
 func TestScheduleL2Write_FleetDisabled(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: semantic.NewConfigCache()}}
-	h.scheduleL2Write(&routingcore.RouteResult{}, routingcore.RoutingTarget{},
-		sampleMsgs(), []byte(`{}`), nil, "vk", false, Ingress{}, noopLogger())
+	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
+		sampleMsgs(), []byte(`{}`), nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer should not be called when fleet disabled")
 	}
@@ -547,8 +650,8 @@ func TestScheduleL2Write_FleetDisabled(t *testing.T) {
 func TestScheduleL2Write_NoTextMsgs(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
-	h.scheduleL2Write(&routingcore.RouteResult{}, routingcore.RoutingTarget{},
-		nil, []byte(`{}`), nil, "vk", false, Ingress{}, noopLogger())
+	h.scheduleL2Write(&audit.Record{}, routingcore.RoutingTarget{},
+		nil, []byte(`{}`), nil, false, Ingress{}, noopLogger())
 	if w.called.Load() != 0 {
 		t.Error("writer should not be called when no text content")
 	}
@@ -559,11 +662,11 @@ func TestScheduleL2Write_GoroutineLogsOnError(t *testing.T) {
 	w.err = errors.New("simulated valkey timeout")
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 	h.scheduleL2Write(
-		&routingcore.RouteResult{},
+		&audit.Record{VirtualKeyID: "vk-scope"},
 		routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
 		sampleMsgs(),
 		[]byte(`{"id":"r"}`),
-		nil, "vk-scope", false, Ingress{}, noopLogger(),
+		nil, false, Ingress{}, noopLogger(),
 	)
 	select {
 	case <-w.writeDone:
@@ -579,11 +682,11 @@ func TestScheduleL2Write_FiresGoroutine(t *testing.T) {
 	w := newStubWriter()
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 	h.scheduleL2Write(
-		&routingcore.RouteResult{},
+		&audit.Record{VirtualKeyID: "vk-scope"},
 		routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
 		sampleMsgs(),
 		[]byte(`{"id":"r","choices":[{"message":{"content":"Paris."}}]}`),
-		nil, "vk-scope", false, Ingress{}, noopLogger(),
+		nil, false, Ingress{}, noopLogger(),
 	)
 	select {
 	case <-w.writeDone:
@@ -592,5 +695,52 @@ func TestScheduleL2Write_FiresGoroutine(t *testing.T) {
 	}
 	if w.called.Load() != 1 {
 		t.Errorf("expected writer.Write called once; got %d", w.called.Load())
+	}
+	if got := w.request().ResponseKind; got != "response" {
+		t.Errorf("ResponseKind = %q; want response", got)
+	}
+}
+
+// F-0049: vary_by ∈ {vk, user, org, none} must each isolate the write on the
+// configured dimension. Previously both write sites hardcoded VK scope, making
+// user/org/none a permanent miss against reads that filter on those scopes.
+func TestScheduleL2Write_VaryByResolvesScope(t *testing.T) {
+	rec := &audit.Record{VirtualKeyID: "vk-1", UserID: "user-1", OrganizationID: "org-1"}
+	cases := []struct {
+		varyBy string
+		want   string
+	}{
+		{"vk", "vk-1"},
+		{"user", "user-1"},
+		{"org", "org-1"},
+		{"none", ""},
+		{"", "vk-1"}, // default → strict VK
+	}
+	for _, tc := range cases {
+		t.Run("varyBy="+tc.varyBy, func(t *testing.T) {
+			w := newStubWriter()
+			cc := semantic.NewConfigCache()
+			cc.Set(semantic.ConfigSnapshot{
+				Enabled:                  true,
+				EmbeddingProviderID:      "p",
+				EmbeddingModelID:         "m",
+				EmbeddingDimension:       1536,
+				EmbeddingProviderBaseURL: "https://api.openai.com",
+				EmbeddingProviderModelID: "text-embedding-3-small",
+				VaryBy:                   tc.varyBy,
+			})
+			h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: cc, CredManager: &stubCredManager{}}}
+			h.scheduleL2Write(rec,
+				routingcore.RoutingTarget{ProviderID: "openai", ProviderModelID: "gpt-4o-mini"},
+				sampleMsgs(), []byte(`{"id":"r"}`), nil, false, Ingress{}, noopLogger())
+			select {
+			case <-w.writeDone:
+			case <-time.After(3 * time.Second):
+				t.Fatal("writer goroutine did not fire within 3 seconds")
+			}
+			if got := w.request().VKScope; got != tc.want {
+				t.Errorf("vary_by=%q → VKScope=%q; want %q", tc.varyBy, got, tc.want)
+			}
+		})
 	}
 }

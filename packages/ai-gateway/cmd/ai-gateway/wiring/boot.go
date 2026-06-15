@@ -109,6 +109,7 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 	// Upstream HTTP client.
 	specutil.Configure(specutil.HTTPConfig{
 		Timeout:             time.Duration(cfg.Upstream.TimeoutSec) * time.Second,
+		StreamIdleTimeout:   time.Duration(cfg.Upstream.StreamIdleTimeoutSec) * time.Second,
 		DialTimeout:         time.Duration(cfg.Upstream.DialTimeoutSec) * time.Second,
 		KeepAlive:           time.Duration(cfg.Upstream.KeepAliveSec) * time.Second,
 		TLSHandshakeTimeout: time.Duration(cfg.Upstream.TLSHandshakeTimeoutSec) * time.Second,
@@ -133,7 +134,7 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 
 	d.AdapterReg = InitProviderRegistry(d.Allowlist, logger)
 
-	d.DB, err = InitDB(ctx, cfg.Database.URL)
+	d.DB, err = InitDB(ctx, cfg.Database)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -156,7 +157,7 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 	if err != nil {
 		return nil, nil, err
 	}
-	d.VkAuth, err = InitVKAuth(d.CacheLayer, cfg.Auth.HMACSecret, logger)
+	d.VkAuth, err = InitVKAuth(d.CacheLayer, cfg, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -187,7 +188,8 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 	credStatsMetrics := credstats.NewMetrics(prometheus.DefaultRegisterer)
 	credStatsBuf := credstats.New(d.Rdb, logger, d.Reliability.Resolve, credStatsMetrics)
 	d.FormatBridge, d.TargetExecutor = InitExecutor(d.AdapterReg, d.PtResolver, d.HealthTracker, credStatsBuf, logger)
-	d.QuotaEngine, d.PolicyCache = InitQuota(ctx, d.DB, d.Rdb, logger)
+	quotaMetrics := quota.NewMetrics("nexus", prometheus.DefaultRegisterer)
+	d.QuotaEngine, d.PolicyCache = InitQuota(ctx, d.DB, d.Rdb, logger, quotaMetrics)
 
 	d.MqProducer, err = InitMQProducer(cfg, logger)
 	if err != nil {
@@ -195,7 +197,7 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 	}
 	d.PayloadCapture = InitPayloadCaptureStore(ctx, d.DB)
 	d.StreamingPolicy = InitStreamingPolicyStore(ctx, d.DB)
-	d.AuditWriter, d.NormalizeReg, err = InitAuditWriter(d.MqProducer, cfg.Spill, d.PayloadCapture, d.OpsReg, logger)
+	d.AuditWriter, d.NormalizeReg, err = InitAuditWriter(d.MqProducer, cfg.Spill, cfg.Audit, d.PayloadCapture, d.OpsReg, logger)
 	if err != nil {
 		return nil, nil, err
 	}

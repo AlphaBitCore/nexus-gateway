@@ -4,6 +4,7 @@ package observability
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 
@@ -47,9 +48,8 @@ func New(d Deps) *Handler {
 	}
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{"error": map[string]any{"message": message, "type": errType, "code": code}}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 type Actor struct{ UserID, Name string }
 

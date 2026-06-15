@@ -97,9 +97,11 @@ func RenameConfigUpdateResponse(in []byte) ([]byte, error) {
 }
 
 // RenameDriftResponse renames the "drifted" wrapper and per-item fields into
-// the UI's OutOfSync shape. Hub's DriftedThing doesn't carry per-key drift
-// info, so outOfSyncKeys is surfaced as an empty list — callers needing the
-// per-key breakdown should fetch the node's shadow directly.
+// the UI's OutOfSync shape. Hub's DriftedThing now carries outOfSyncKeys
+// (a sorted list of config keys whose desired value diverges from reported),
+// which is passed through unchanged. When the field is absent (e.g. from an
+// older Hub version) an empty array is synthesized so the UI can render the
+// column unconditionally without a nil-check.
 func RenameDriftResponse(in []byte) ([]byte, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(in, &raw); err != nil {
@@ -137,9 +139,14 @@ func renameDriftArray(arr json.RawMessage) (json.RawMessage, error) {
 			case "lastSeenAt":
 				renamed["lastSeen"] = v
 			default:
+				// outOfSyncKeys and all other fields pass through unchanged.
 				renamed[k] = v
 			}
 		}
+		// Guarantee the field is always present so the UI can render the
+		// column unconditionally. Hub normally provides this, but if an
+		// older Hub version omits it, synthesize an empty array rather than
+		// leaving the field absent (null/absent breaks the UI's .map() call).
 		if _, ok := renamed["outOfSyncKeys"]; !ok {
 			renamed["outOfSyncKeys"] = json.RawMessage("[]")
 		}

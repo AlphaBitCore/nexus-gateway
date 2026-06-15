@@ -13,6 +13,7 @@ export type NormalizedKind =
   | 'http-text'
   | 'http-form'
   | 'http-multipart'
+  | 'http-sse'
   | 'http-binary'
   | 'unsupported';
 
@@ -50,11 +51,23 @@ export interface NormalizedMessage {
   finishReason?: string;
 }
 
+/** One server-sent event captured by the generic-http SSE projection.
+ *  At most one of `data` (frame data parsed as JSON) or `dataText`
+ *  (verbatim non-JSON data) is set; a frame whose data line was empty
+ *  carries neither. */
+export interface SSEFrame {
+  event?: string;
+  data?: unknown;
+  dataText?: string;
+}
+
 export interface HTTPBodyView {
   text?: string;
   json?: unknown;
   form?: Record<string, string>;
   binaryRef?: BinaryRef;
+  sseFrames?: SSEFrame[];
+  sseTruncated?: boolean;
 }
 
 export interface HTTPPayload {
@@ -70,6 +83,7 @@ export interface NormalizedUsage {
   totalTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  reasoningTokens?: number | null;
 }
 
 export interface NormalizedPayload {
@@ -85,9 +99,27 @@ export interface NormalizedPayload {
   finishReason?: string;
   http?: HTTPPayload;
   redacted?: boolean;
+  /** Why the content was dropped: the operator chose drop-content, or a
+   *  redact storage policy could not be applied precisely and degraded.
+   *  Absent on rows written before the reason was stamped — the UI then
+   *  renders a neutral notice asserting neither story. */
+  redactedReason?: 'operator-drop' | 'redact-degraded';
+  /** Degradation diagnosis when redactedReason === 'redact-degraded'.
+   *  failedAddresses lists content addresses only — never content.
+   *  cause is an open vocabulary: the listed tokens render as localized
+   *  phrases, unknown future tokens render verbatim. */
+  redactedDetail?: {
+    cause: 'no-spans' | 'payload-unmarshal' | 'spans-unresolved' | 'marshal-failed' | (string & {});
+    failedAddresses?: string[];
+  };
   ruleIds?: string[];
   confidence?: number;
   detectedSpec?: string;
+  /** "host" when the adapter was chosen by interception-domain host
+   *  match rather than decode coverage — the badge shows a host-matched
+   *  label in place of the (honest but not-comparable) confidence
+   *  numeral. Keep in sync with CP-UI types. */
+  selectionEvidence?: 'host';
   inputs?: string[] | null;
 }
 

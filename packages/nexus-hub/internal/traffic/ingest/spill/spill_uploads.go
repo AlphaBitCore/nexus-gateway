@@ -14,8 +14,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/handler/enroll"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillupload"
+	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // SpillUploadAPI implements the spill upload endpoints:
@@ -120,10 +122,7 @@ func (h *SpillUploadAPI) MintSpillUpload(c echo.Context) error {
 		return badRequest(c, err.Error())
 	}
 	if h.PerObjectCap > 0 && req.SizeBytes > h.PerObjectCap {
-		return c.JSON(http.StatusRequestEntityTooLarge, ErrorResponse{
-			Error: fmt.Sprintf("sizeBytes %d exceeds perObjectCap %d", req.SizeBytes, h.PerObjectCap),
-			Code:  "PAYLOAD_TOO_LARGE",
-		})
+		return c.JSON(http.StatusRequestEntityTooLarge, nexushttperr.ErrJSON(fmt.Sprintf("sizeBytes %d exceeds perObjectCap %d", req.SizeBytes, h.PerObjectCap), "validation_error", "PAYLOAD_TOO_LARGE"))
 	}
 
 	presigner, ok := h.Spill.(spillstore.Presigner)
@@ -133,10 +132,26 @@ func (h *SpillUploadAPI) MintSpillUpload(c echo.Context) error {
 	now := time.Now().UTC()
 	key := presigner.KeyFor(now, req.EventID, req.Direction)
 
+	// Namespace the storage key by the authenticated node identity so
+	// one node can never address (and overwrite) another node's spill object.
+	// DeviceOrServiceAuth resolves the mTLS device token to a Thing; a device
+	// caller (every agent) gets a <nodeId>/ prefix bound into the signed token.
+	// Service-token callers (trusted internal services) carry no Thing and keep
+	// the flat key — they spill via direct in-process Put anyway, and the rogue-
+	// node attack persona only holds a device token.
+	nodeID := ""
+	if t := enroll.ThingFromContext(c); t != nil {
+		nodeID = t.ID
+	}
+	if nodeID != "" {
+		key = nodeID + "/" + key
+	}
+
 	claims := spillupload.Claims{
 		EventID:   req.EventID,
 		Direction: req.Direction,
 		Key:       key,
+		NodeID:    nodeID,
 		SizeBytes: req.SizeBytes,
 		SHA256:    strings.ToLower(req.SHA256),
 		Backend:   h.SpillBackend,
@@ -268,7 +283,7 @@ func (h *SpillUploadAPI) PutSpillBlob(c echo.Context) error {
 	claims, err := spillupload.Verify(h.Secrets, token, h.now())
 	switch {
 	case errors.Is(err, spillupload.ErrTokenExpired):
-		return c.JSON(http.StatusBadRequest, ErrorResponse{Error: "token expired", Code: "TOKEN_EXPIRED"})
+		return c.JSON(http.StatusBadRequest, nexushttperr.ErrJSON("token expired", "auth_error", "TOKEN_EXPIRED"))
 	case errors.Is(err, spillupload.ErrUnknownKID), errors.Is(err, spillupload.ErrTokenInvalid):
 		return unauthorized(c, "invalid token")
 	case err != nil:
@@ -277,44 +292,28 @@ func (h *SpillUploadAPI) PutSpillBlob(c echo.Context) error {
 	}
 
 	if claims.Backend != "" && claims.Backend != h.SpillBackend {
-		return c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: fmt.Sprintf("token backend %q does not match Hub backend %q", claims.Backend, h.SpillBackend),
-			Code:  "BACKEND_MISMATCH",
-		})
+		return c.JSON(http.StatusBadRequest, nexushttperr.ErrJSON(fmt.Sprintf("token backend %q does not match Hub backend %q", claims.Backend, h.SpillBackend), "validation_error", "BACKEND_MISMATCH"))
 	}
 
 	if c.Request().ContentLength < 0 {
-		return c.JSON(http.StatusLengthRequired, ErrorResponse{
-			Error: "Content-Length header is required",
-			Code:  "LENGTH_REQUIRED",
-		})
+		return c.JSON(http.StatusLengthRequired, nexushttperr.ErrJSON("Content-Length header is required", "validation_error", "LENGTH_REQUIRED"))
 	}
 	if c.Request().ContentLength != claims.SizeBytes {
-		return c.JSON(http.StatusRequestEntityTooLarge, ErrorResponse{
-			Error: fmt.Sprintf("Content-Length %d does not match token sizeBytes %d", c.Request().ContentLength, claims.SizeBytes),
-			Code:  "CONTENT_LENGTH_MISMATCH",
-		})
+		return c.JSON(http.StatusRequestEntityTooLarge, nexushttperr.ErrJSON(fmt.Sprintf("Content-Length %d does not match token sizeBytes %d", c.Request().ContentLength, claims.SizeBytes), "validation_error", "CONTENT_LENGTH_MISMATCH"))
 	}
 
-	// One-shot consumption: the token is good for at most one PUT.
-	// SETNX returns false on the second attempt — agents that retry
-	// after a network blip get 409 and must NOT re-upload.
-	dedupKey := spillupload.DedupKey(token)
-	acquired, err := h.Dedup.SetNX(c.Request().Context(), dedupKey, spillupload.DedupTTL)
-	if err != nil {
-		h.logf(slog.LevelError, "spill blob: dedup", "error", err, "eventId", claims.EventID)
-		return serviceUnavailable(c, "dedup unavailable")
-	}
-	if !acquired {
-		return c.JSON(http.StatusConflict, ErrorResponse{
-			Error: "token already consumed",
-			Code:  "TOKEN_REPLAY",
-		})
-	}
-
-	// Stream into spillstore through a sha256-tracking reader. On
-	// hash mismatch we delete the partial via SpillStore.Delete; on
-	// any other error we emit 500 and the operator inspects logs.
+	// Stream into spillstore through a sha256-tracking reader BEFORE the
+	// dedup slot is acquired. Acquiring the one-shot SetNX slot
+	// before the durable Put meant a Put failure (or sha mismatch) burned
+	// the slot for the whole DedupTTL — a legitimate retry of a never-stored
+	// body would then 409 forever. The slot must only be consumed once the
+	// body is durably stored. The upload key is deterministic per
+	// (event, direction), so two concurrent identical PUTs write the same
+	// verified bytes to the same key (idempotent overwrite); the dedup gate
+	// below still ensures exactly one of them is accepted.
+	//
+	// On hash mismatch we delete the partial via SpillStore.Delete; on any
+	// other Put error we emit 500 and the operator inspects logs.
 	hashing := newSHA256Tee(c.Request().Body)
 	ref, putErr := h.Spill.Put(
 		c.Request().Context(),
@@ -324,6 +323,10 @@ func (h *SpillUploadAPI) PutSpillBlob(c echo.Context) error {
 			EventID:     claims.EventID,
 			Direction:   claims.Direction,
 			ContentType: claims.Mime,
+			// Write to the exact node-namespaced key the mint signed
+			// into this token, not a re-derived (shared, attacker-overwritable)
+			// one. claims.Key is HMAC-bound, so a node cannot retarget the write.
+			Key: claims.Key,
 		},
 	)
 	if putErr != nil {
@@ -339,10 +342,25 @@ func (h *SpillUploadAPI) PutSpillBlob(c echo.Context) error {
 		h.logf(slog.LevelWarn, "spill blob: sha256 mismatch",
 			"eventId", claims.EventID, "direction", claims.Direction,
 			"got", got, "want", claims.SHA256)
-		return c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "uploaded body sha256 does not match token",
-			Code:  "SHA256_MISMATCH",
-		})
+		return c.JSON(http.StatusBadRequest, nexushttperr.ErrJSON("uploaded body sha256 does not match token", "validation_error", "SHA256_MISMATCH"))
+	}
+
+	// One-shot consumption: the token is good for at most one ACCEPTED PUT.
+	// Acquired only after the body is durably stored and verified, so a
+	// failed upload never burns the slot. SETNX returns false on a second
+	// (already-accepted) attempt — agents that retry after a successful
+	// upload get 409 and must NOT re-upload.
+	dedupKey := spillupload.DedupKey(token)
+	acquired, err := h.Dedup.SetNX(c.Request().Context(), dedupKey, spillupload.DedupTTL)
+	if err != nil {
+		h.logf(slog.LevelError, "spill blob: dedup", "error", err, "eventId", claims.EventID)
+		return serviceUnavailable(c, "dedup unavailable")
+	}
+	if !acquired {
+		// Another concurrent PUT already won the slot for this token; the
+		// body we just wrote is identical (same key, sha-verified) so the
+		// store is consistent. Report the replay so the agent stops retrying.
+		return c.JSON(http.StatusConflict, nexushttperr.ErrJSON("token already consumed", "conflict", "TOKEN_REPLAY"))
 	}
 
 	h.logf(slog.LevelInfo, "spill blob accepted",

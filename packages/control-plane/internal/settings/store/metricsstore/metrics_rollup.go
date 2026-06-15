@@ -184,8 +184,10 @@ func rollupTailFor(gran metrics.Granularity) (table string, watermarkJob string)
 // keeping the bulk of the range on the coarse table for query cost.
 //
 // The returned rows mix granularities at the boundary: caller's
-// BuildResult sums all rows by (DimensionKey, MetricName) for group-by
-// queries (so granularity does not matter), and emits per-bucket rows
+// BuildResult folds all rows by (DimensionKey, MetricName) for group-by
+// queries (additive metrics sum, distinct-cardinality metrics take the
+// max — see instruments.CombineValues — so granularity does not matter),
+// and emits per-bucket rows
 // for time-series queries (where the trailing finer-grained buckets
 // add detail rather than gaps — strictly more information than the
 // pre-aware behaviour).
@@ -244,7 +246,8 @@ func (store *Store) QueryRollupAware(ctx context.Context, q metrics.MetricsQuery
 // has been accumulating data.
 //
 // Use this for totals and group-by queries where bucket granularity is
-// irrelevant (BuildResult sums all rows by MetricName / DimensionKey). For
+// irrelevant (BuildResult folds all rows by MetricName / DimensionKey —
+// additive metrics sum, distinct-cardinality metrics take the max). For
 // time-series charts at a fixed granularity (daily bars, hourly sparklines),
 // continue using QueryRollupOnTable or QueryRollupAware.
 func (store *Store) QueryRollupCascade(ctx context.Context, q metrics.MetricsQuery) ([]metrics.RollupRow, error) {

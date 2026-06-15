@@ -12,12 +12,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/hmackeyring"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/jackc/pgx/v5"
 )
@@ -97,36 +98,46 @@ type VKLookup interface {
 }
 
 // Authenticator validates virtual keys from HTTP requests.
+//
+// Revocation latency (acknowledged design decision): VK records resolve
+// through the cache layer's virtual-key cache, whose per-entry TTL defaults
+// to 30s (cachelayer.Config.VKTTL). On a revoke/disable, the worst-case
+// window during which a stale VK is still honoured is therefore ≤ VKTTL.
+// In practice it is usually instant: the Hub pushes an InvalidateVirtualKeys
+// event on any VK change, which evicts the cached entry immediately, and the
+// status/enabled/expiry checks below re-run on every request against whatever
+// the cache currently holds. The bounded TTL is the fail-safe for the rare
+// case where the invalidation push is missed.
 type Authenticator struct {
-	db         VKLookup
-	hmacSecret []byte
+	db VKLookup
+	// vkHashKeys are the virtual-key-domain HMAC sub-keys, one per HMAC keyring
+	// version, CURRENT FIRST. Each is HKDF-derived from that
+	// version's secret under ClassAPIKeyVirtualKey — distinct from the
+	// admin-API-key domain key, so a leak/oracle in one domain can't forge the
+	// other. [MUST MATCH] the Control Plane's auth.HashVirtualKey derivation for
+	// the same version's secret. Admission tries each in order; VKs are NOT
+	// lazy-migrated (this path is read-only) and are pruned by re-issue/expiry.
+	vkHashKeys [][]byte
 	logger     *slog.Logger
 }
 
-// NewAuthenticator creates a VK authenticator. hmacSecret is the HMAC-SHA256
-// key used for hashing VK API keys. Pass the value from config (originally
-// sourced from the ADMIN_KEY_HMAC_SECRET env var).
-func NewAuthenticator(lookup VKLookup, hmacSecret string, logger *slog.Logger) *Authenticator {
-	if hmacSecret == "" {
-		hmacSecret = "nexus-gateway-default-hmac-secret" // dev fallback
-		logger.Warn("ADMIN_KEY_HMAC_SECRET not set, using dev default")
+// NewAuthenticator creates a VK authenticator from the HMAC keyring.
+// It derives a virtual-key sub-key per keyring version (current-first)
+// so a VK hashed under any version still admits. The keyring is guaranteed
+// non-nil by config.validate() + wiring (which hard-fail boot when no HMAC secret
+// is configured), so no dev-fallback substitution is performed here.
+func NewAuthenticator(lookup VKLookup, keyring *hmackeyring.Keyring, logger *slog.Logger) *Authenticator {
+	entries := keyring.All()
+	keys := make([][]byte, 0, len(entries))
+	for _, e := range entries {
+		sub := keyderive.DeriveSubkey(e.Secret, keyderive.ClassAPIKeyVirtualKey)
+		keys = append(keys, sub[:])
 	}
 	return &Authenticator{
 		db:         lookup,
-		hmacSecret: []byte(hmacSecret),
+		vkHashKeys: keys,
 		logger:     logger,
 	}
-}
-
-// ValidateHMACSecret checks that HMAC secret is set in production.
-func ValidateHMACSecret(secret string) error {
-	if secret != "" {
-		return nil
-	}
-	if os.Getenv("NODE_ENV") == "production" {
-		return fmt.Errorf("ADMIN_KEY_HMAC_SECRET is required in production")
-	}
-	return nil
 }
 
 // Authenticate extracts and validates a virtual key from the request.
@@ -214,7 +225,10 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*VKM
 //  3. Format-specific carriers, accepted only on the matching native
 //     route:
 //     - Anthropic (`/v1/messages`): `x-api-key: <vk>`.
-//     - Gemini (`/v1beta/…`): `x-goog-api-key: <vk>` header or `?key=<vk>` query.
+//     - Gemini (`/v1beta/…`): `x-goog-api-key: <vk>` header. The Google
+//     `?key=<vk>` URL-query carrier is NOT accepted (a bearer
+//     credential must never travel in the URL, where logs/history/Referer
+//     capture it).
 //     - Azure OpenAI (`/openai/deployments/…`): `api-key: <vk>` header.
 //     - MiniMax and GLM: no extra carrier (their SDKs speak the
 //     standard `Authorization: Bearer` convention already covered by #2).
@@ -238,9 +252,13 @@ func extractVKToken(ctx context.Context, r *http.Request) string {
 		if vk := strings.TrimSpace(r.Header.Get("x-goog-api-key")); vk != "" {
 			return vk
 		}
-		if vk := strings.TrimSpace(r.URL.Query().Get("key")); vk != "" {
-			return vk
-		}
+		// The Google `?key=<vk>` URL-query carrier is intentionally
+		// NOT accepted. A virtual key is a long-lived bearer credential; in the
+		// URL it leaks verbatim into every fronting-proxy / LB / CDN access log,
+		// browser history, and Referer header (the gateway stores only HMAC(key),
+		// so that logged copy is the only plaintext copy of a live credential).
+		// Real Gemini SDKs send the `x-goog-api-key` header above; raw-URL REST
+		// callers must use that header too.
 	case provcore.FormatAzureOpenAI:
 		if vk := strings.TrimSpace(r.Header.Get("api-key")); vk != "" {
 			return vk
@@ -256,15 +274,24 @@ func (a *Authenticator) lookupVK(ctx context.Context, token string) (*store.Virt
 	if !looksLikeRealKey(token) {
 		return nil, ErrInvalid
 	}
-	hash := a.hashKey(token)
-	vk, err := a.db.GetVirtualKeyByHash(ctx, hash)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrInvalid
+	// Try every keyring version, current-first. The
+	// steady-state common case is a one-hash hit under the current version; older
+	// versions are tried only for VKs not yet re-issued after a rotation. No lazy
+	// migration on this read-only path.
+	for _, k := range a.vkHashKeys {
+		hash := hashKeyWith(k, token)
+		vk, err := a.db.GetVirtualKeyByHash(ctx, hash)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue // not this version; try an older one
+			}
+			return nil, fmt.Errorf("vkauth: hash lookup: %w", err)
 		}
-		return nil, fmt.Errorf("vkauth: hash lookup: %w", err)
+		if vk != nil {
+			return vk, nil
+		}
 	}
-	return vk, nil
+	return nil, ErrInvalid
 }
 
 // looksLikeRealKey returns true if the token appears to be a real API key.
@@ -283,9 +310,10 @@ func classifyVKToken(token string) string {
 	return ""
 }
 
-// hashKey computes HMAC-SHA256 of the key using the configured secret.
-func (a *Authenticator) hashKey(key string) string {
-	mac := hmac.New(sha256.New, a.hmacSecret)
+// hashKeyWith computes HMAC-SHA256 of the key under a specific keyring version's
+// virtual-key sub-key.
+func hashKeyWith(subkey []byte, key string) string {
+	mac := hmac.New(sha256.New, subkey)
 	mac.Write([]byte(key))
 	return hex.EncodeToString(mac.Sum(nil))
 }

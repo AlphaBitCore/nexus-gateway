@@ -48,13 +48,27 @@ func newTestDeps() handler.RuntimeDeps {
 	}
 }
 
-// newTestServer creates a test server with auth disabled (no env vars).
+// testToken is the bearer token used for all auth-gated endpoint calls in tests.
+const testToken = "test-token"
+
+// newTestServer creates a test server with testToken as the runtime API token.
+// Tests that hit auth-gated endpoints must include Authorization: Bearer test-token.
 func newTestServer(t *testing.T, deps handler.RuntimeDeps) *httptest.Server {
 	t.Helper()
-	t.Setenv("COMPLIANCE_PROXY_API_TOKEN", "")
-	tokenAuth := auth.NewTokenAuth(deps.Logger)
+	tokenAuth := auth.NewTokenAuth(testToken)
 	srv := NewServer(":0", deps, tokenAuth)
 	return httptest.NewServer(srv.httpServer.Handler)
+}
+
+// bearerReq returns a new request with the test bearer token attached.
+func bearerReq(t *testing.T, method, url string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		t.Fatalf("bearerReq: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	return req
 }
 
 func TestServer_Healthz(t *testing.T) {
@@ -99,7 +113,7 @@ func TestServer_Connections(t *testing.T) {
 	ts := newTestServer(t, deps)
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/connections")
+	resp, err := http.DefaultClient.Do(bearerReq(t, http.MethodGet, ts.URL+"/connections"))
 	if err != nil {
 		t.Fatalf("GET /connections failed: %v", err)
 	}
@@ -180,7 +194,7 @@ func TestServer_Connections_TargetHostFilter(t *testing.T) {
 	}
 	ts := newTestServer(t, deps)
 	defer ts.Close()
-	resp, err := http.Get(ts.URL + "/connections?targetHost=api.openai.com:443")
+	resp, err := http.DefaultClient.Do(bearerReq(t, http.MethodGet, ts.URL+"/connections?targetHost=api.openai.com:443"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,10 +213,12 @@ func TestServer_Connections_TargetHostFilter(t *testing.T) {
 
 // TestServer_Connections_MethodNotAllowed covers the
 // `if r.Method != http.MethodGet` branch in HandleConnections.
+// Auth is required so the POST reaches the handler (without a bearer token
+// the middleware would intercept with 401 before the method check fires).
 func TestServer_Connections_MethodNotAllowed(t *testing.T) {
 	ts := newTestServer(t, newTestDeps())
 	defer ts.Close()
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/connections", nil)
+	req := bearerReq(t, http.MethodPost, ts.URL+"/connections")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

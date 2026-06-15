@@ -29,6 +29,7 @@ import (
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -61,10 +62,10 @@ func (s *stubProbeAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*pro
 func (s *stubProbeAdapter) Execute(context.Context, provcore.Request) (*provcore.Response, error) {
 	panic("stubProbeAdapter.Execute should not be invoked from the probe handler")
 }
-func (s *stubProbeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, error) {
+func (s *stubProbeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
 	panic("stubProbeAdapter.PrepareBody should not be invoked from the probe handler")
 }
-func (s *stubProbeAdapter) ExecuteWithBody(context.Context, provcore.Request, []byte, []string) (*provcore.Response, error) {
+func (s *stubProbeAdapter) ExecuteWithBody(context.Context, provcore.Request, []byte, []string, string) (*provcore.Response, error) {
 	panic("stubProbeAdapter.ExecuteWithBody should not be invoked from the probe handler")
 }
 
@@ -108,7 +109,7 @@ func newProbeTestEnv(t *testing.T) *probeTestEnv {
 	if err != nil {
 		t.Fatalf("NewMultiDecryptor: %v", err)
 	}
-	credMgr := credmanager.NewMultiKeyManager(cache, md, logger)
+	credMgr := credmanager.NewMultiKeyManager(cache, md)
 
 	return &probeTestEnv{
 		db:      db,
@@ -131,9 +132,15 @@ func envOrDefault(key, def string) string {
 // encryptForKey produces hex-encoded ciphertext + iv + tag for plaintext
 // under the test key. Mirrors the format ai-gateway's MultiDecryptor reads
 // from Credential.encrypted{Key,Iv,Tag}.
-func (e *probeTestEnv) encryptForKey(plaintext string) (cipherHex, ivHex, tagHex string) {
-	keyBytes, _ := hex.DecodeString(e.keyHex)
-	block, err := aes.NewCipher(keyBytes)
+func (e *probeTestEnv) encryptForKey(plaintext string, aad []byte) (cipherHex, ivHex, tagHex string) {
+	master, _ := hex.DecodeString(e.keyHex)
+	// SEC-W2-03/C1-02: derive the provider-credential sub-key and bind aad,
+	// mirroring production so the MultiDecryptor can open it.
+	sub, err := keyderive.DeriveKey32(master, keyderive.ClassProviderCredential)
+	if err != nil {
+		panic(err)
+	}
+	block, err := aes.NewCipher(sub[:])
 	if err != nil {
 		panic(err)
 	}
@@ -145,7 +152,7 @@ func (e *probeTestEnv) encryptForKey(plaintext string) (cipherHex, ivHex, tagHex
 	if _, err := rand.Read(iv); err != nil {
 		panic(err)
 	}
-	sealed := gcm.Seal(nil, iv, []byte(plaintext), nil)
+	sealed := gcm.Seal(nil, iv, []byte(plaintext), aad)
 	// Go appends the 16-byte tag to ciphertext — split for storage.
 	ct := sealed[:len(sealed)-16]
 	tag := sealed[len(sealed)-16:]
@@ -169,9 +176,8 @@ func (e *probeTestEnv) seedProvider(t *testing.T, adapterType string) (string, f
 
 // seedCredentialForProbe inserts a Credential row with the supplied
 // encrypted-key triple. Returns the new credential ID + cleanup.
-func (e *probeTestEnv) seedCredential(t *testing.T, providerID, cipherHex, ivHex, tagHex string) (string, func()) {
+func (e *probeTestEnv) seedCredential(t *testing.T, id, providerID, cipherHex, ivHex, tagHex string) (string, func()) {
 	t.Helper()
-	id := uuid.NewString()
 	_, err := e.db.Pool.Exec(context.Background(), `
 		INSERT INTO "Credential" (
 			id, name, "providerId",
@@ -228,8 +234,9 @@ func TestProbe_HappyPath(t *testing.T) {
 	env := newProbeTestEnv(t)
 	pid, cleanProv := env.seedProvider(t, "openai")
 	defer cleanProv()
-	ct, iv, tag := env.encryptForKey("sk-test-1234")
-	cid, cleanCred := env.seedCredential(t, pid, ct, iv, tag)
+	cid := uuid.NewString()
+	ct, iv, tag := env.encryptForKey("sk-test-1234", keyderive.ProviderCredentialAAD(cid, pid))
+	_, cleanCred := env.seedCredential(t, cid, pid, ct, iv, tag)
 	defer cleanCred()
 	env.reloadCaches(t)
 
@@ -287,8 +294,9 @@ func TestProbe_AdapterNotRegistered(t *testing.T) {
 	env := newProbeTestEnv(t)
 	pid, cleanProv := env.seedProvider(t, "openai")
 	defer cleanProv()
-	ct, iv, tag := env.encryptForKey("sk-test-2")
-	cid, cleanCred := env.seedCredential(t, pid, ct, iv, tag)
+	cid := uuid.NewString()
+	ct, iv, tag := env.encryptForKey("sk-test-2", keyderive.ProviderCredentialAAD(cid, pid))
+	_, cleanCred := env.seedCredential(t, cid, pid, ct, iv, tag)
 	defer cleanCred()
 	env.reloadCaches(t)
 	// Note: NO adapter registered → handler should bail.
@@ -308,8 +316,9 @@ func TestProbe_InvalidAdapterType(t *testing.T) {
 	env := newProbeTestEnv(t)
 	pid, cleanProv := env.seedProvider(t, "not-a-real-adapter")
 	defer cleanProv()
-	ct, iv, tag := env.encryptForKey("sk-test-3")
-	cid, cleanCred := env.seedCredential(t, pid, ct, iv, tag)
+	cid := uuid.NewString()
+	ct, iv, tag := env.encryptForKey("sk-test-3", keyderive.ProviderCredentialAAD(cid, pid))
+	_, cleanCred := env.seedCredential(t, cid, pid, ct, iv, tag)
 	defer cleanCred()
 	env.reloadCaches(t)
 
@@ -330,7 +339,7 @@ func TestProbe_DecryptFailure(t *testing.T) {
 	defer cleanProv()
 	// Seed with a different keyID — the MultiDecryptor has only "test".
 	id := uuid.NewString()
-	ct, iv, tag := env.encryptForKey("sk-test-4")
+	ct, iv, tag := env.encryptForKey("sk-test-4", keyderive.ProviderCredentialAAD(id, pid))
 	_, err := env.db.Pool.Exec(context.Background(), `
 		INSERT INTO "Credential" (
 			id, name, "providerId",
@@ -367,8 +376,9 @@ func TestProbe_UpstreamFailure(t *testing.T) {
 	env := newProbeTestEnv(t)
 	pid, cleanProv := env.seedProvider(t, "openai")
 	defer cleanProv()
-	ct, iv, tag := env.encryptForKey("sk-test-5")
-	cid, cleanCred := env.seedCredential(t, pid, ct, iv, tag)
+	cid := uuid.NewString()
+	ct, iv, tag := env.encryptForKey("sk-test-5", keyderive.ProviderCredentialAAD(cid, pid))
+	_, cleanCred := env.seedCredential(t, cid, pid, ct, iv, tag)
 	defer cleanCred()
 	env.reloadCaches(t)
 	if err := env.reg.Register(&stubProbeAdapter{

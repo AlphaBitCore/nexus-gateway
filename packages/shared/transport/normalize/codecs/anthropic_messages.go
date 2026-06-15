@@ -1,13 +1,13 @@
 package codecs
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"strings"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // AnthropicMessagesNormalizer handles Anthropic's /v1/messages surface
@@ -34,10 +34,60 @@ func NewAnthropicMessagesNormalizer() *AnthropicMessagesNormalizer {
 // ID is the metric / log label.
 func (n *AnthropicMessagesNormalizer) ID() string { return "anthropic-messages" }
 
+// LooksLike implements core.Sniffer: reports whether raw opens like the
+// Anthropic /v1/messages wire. Four shapes match, all probed within
+// the leading bytes only:
+//
+//   - the SSE stream's first frame (`event: message_start` / a data
+//     payload typed message_start) — the most distinctive AI framing
+//     on any wire we capture;
+//   - a non-stream response object carrying BOTH the Anthropic-only
+//     `"type":"message"` discriminator and a `"stop_reason"` key
+//     (Anthropic puts both near the object head; requiring the pair
+//     keeps web-chat protocols that also type their frames "message"
+//     from matching);
+//   - a Bedrock-style request carrying `"anthropic_version"`;
+//   - a request body carrying BOTH `"messages"` and `"max_tokens"` —
+//     Anthropic requires max_tokens on every /v1/messages request, so
+//     the pair is the tightest byte-level request discriminator the
+//     wire offers. OpenAI Chat requests MAY also carry max_tokens
+//     (shape-ambiguous); the sniff walk registers this codec before
+//     openai-chat, so the stricter requirement wins first and the
+//     request-direction keymissed goldens pin the discrimination.
+//     Probed only when meta.Direction is request or unset: a response
+//     body echoing those words must not divert the response probes.
+//
+// Precision over recall: a miss falls through to the Tier-2 pattern
+// probe, but a false positive steals another protocol's traffic.
+func (n *AnthropicMessagesNormalizer) LooksLike(raw []byte, meta core.Meta) bool {
+	if LooksLikeAnthropicSSE(raw) {
+		return true
+	}
+	probe := sniffProbe(raw)
+	if bytes.Contains(probe, []byte(`"anthropic_version"`)) {
+		return true
+	}
+	if meta.Direction != core.DirectionResponse &&
+		bytes.Contains(probe, []byte(`"messages"`)) &&
+		bytes.Contains(probe, []byte(`"max_tokens"`)) {
+		return true
+	}
+	return bytes.Contains(probe, []byte(`"type":"message"`)) &&
+		bytes.Contains(probe, []byte(`"stop_reason"`))
+}
+
 // Normalize routes by direction.
 func (n *AnthropicMessagesNormalizer) Normalize(_ context.Context, raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	if len(raw) == 0 {
 		return zeroAnthropic(meta), fmt.Errorf("anthropic-messages: empty body: %w", core.ErrUnsupported)
+	}
+	// Streamed responses take the SSE fold, which stamps its own
+	// coverage-based Confidence — an event stream has no top-level JSON
+	// object for the FieldSpec scorer below to measure. The byte sniff
+	// covers cp / agent captures that lost the stream flag and the
+	// Content-Type header.
+	if meta.Direction == core.DirectionResponse && (meta.Stream || LooksLikeAnthropicSSE(raw)) {
+		return foldAnthropicSSE(raw, meta)
 	}
 	var p core.NormalizedPayload
 	var err error
@@ -49,13 +99,18 @@ func (n *AnthropicMessagesNormalizer) Normalize(_ context.Context, raw []byte, m
 	default:
 		return zeroAnthropic(meta), fmt.Errorf("anthropic-messages: direction %q not supported: %w", meta.Direction, core.ErrUnsupported)
 	}
-	// Stamp Tier-1 Confidence using the anthropic-messages FieldSpec —
-	// see confidence.go. Anthropic responses carry their own field set
+	// Confidence semantics (one meaning per input shape): a stream fold
+	// computes frame coverage (recognized / total data frames) and sets
+	// Confidence itself; single-document bodies score weighted field
+	// coverage against the anthropic-messages FieldSpec — see
+	// confidence.go. Anthropic responses carry their own field set
 	// (content/stop_reason/usage at the response root, NOT choices); the
 	// declared specs below let core.ScoreTier1Confidence detect spec drift
 	// without false-positive penalising clean parses.
 	if err == nil {
-		p.Confidence = core.ScoreTier1Confidence(raw, anthropicMessagesFieldSpec(meta.Direction))
+		if p.Confidence == 0 {
+			p.Confidence = core.ScoreTier1Confidence(raw, anthropicMessagesFieldSpec(meta.Direction))
+		}
 		if p.DetectedSpec == "" {
 			p.DetectedSpec = "anthropic-messages"
 		}
@@ -293,13 +348,6 @@ type anthropicUsage struct {
 }
 
 func (n *AnthropicMessagesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
-	if meta.Stream || looksLikeAnthropicEventStream(raw) {
-		// cp / agent captures often arrive without a content-type set
-		// even when the body is SSE. Sniff the first bytes for the
-		// canonical Anthropic event-stream prefix so we still get a
-		// real assistant message instead of a JSON-unmarshal failure.
-		return n.normalizeStreamResponse(raw, meta)
-	}
 	var resp anthropicResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return zeroAnthropic(meta), fmt.Errorf("anthropic-messages: response unmarshal: %w", err)
@@ -375,205 +423,6 @@ func (n *AnthropicMessagesNormalizer) normalizeResponse(raw []byte, meta core.Me
 			u.ReasoningTokens = &est
 		}
 		out.Usage = u
-	}
-	return out, nil
-}
-
-// Streaming response (event stream)
-
-// streamBlockState accumulates one content block as deltas arrive.
-type streamBlockState struct {
-	blockType string
-	text      strings.Builder
-	tool      *core.ToolUse
-	toolJSON  strings.Builder
-}
-
-func (n *AnthropicMessagesNormalizer) normalizeStreamResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
-	out := core.NormalizedPayload{
-		Kind:             core.KindAIChat,
-		NormalizeVersion: core.SchemaVersion,
-		Protocol:         "anthropic-messages",
-		Model:            meta.Model,
-		Stream:           true,
-	}
-
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-
-	var (
-		eventName    string
-		blocks       = map[int]*streamBlockState{}
-		order        []int
-		usage        *core.Usage
-		finishReason string
-		sawAny       bool
-		lastErr      error
-	)
-
-	emit := func(eventName, dataLine string) {
-		var chunk map[string]any
-		if err := json.Unmarshal([]byte(dataLine), &chunk); err != nil {
-			lastErr = err
-			return
-		}
-		switch eventName {
-		case "message_start":
-			if msg, ok := chunk["message"].(map[string]any); ok {
-				if m, ok := msg["model"].(string); ok && out.Model == "" {
-					out.Model = m
-				}
-				if u, ok := msg["usage"].(map[string]any); ok {
-					usage = mergeAnthropicUsage(usage, u)
-				}
-			}
-		case "content_block_start":
-			idx := intFromAny(chunk["index"])
-			cb, _ := chunk["content_block"].(map[string]any)
-			st := &streamBlockState{}
-			if cb != nil {
-				st.blockType, _ = cb["type"].(string)
-				if st.blockType == "tool_use" {
-					tu := &core.ToolUse{}
-					tu.CallID, _ = cb["id"].(string)
-					tu.Name, _ = cb["name"].(string)
-					st.tool = tu
-				}
-			}
-			blocks[idx] = st
-			order = append(order, idx)
-		case "content_block_delta":
-			idx := intFromAny(chunk["index"])
-			st, ok := blocks[idx]
-			if !ok {
-				st = &streamBlockState{}
-				blocks[idx] = st
-				order = append(order, idx)
-			}
-			d, _ := chunk["delta"].(map[string]any)
-			if d == nil {
-				return
-			}
-			dtype, _ := d["type"].(string)
-			switch dtype {
-			case "text_delta":
-				if s, ok := d["text"].(string); ok {
-					st.text.WriteString(s)
-					sawAny = true
-				}
-			case "thinking_delta":
-				if s, ok := d["thinking"].(string); ok {
-					st.text.WriteString(s)
-					st.blockType = "thinking"
-					sawAny = true
-				} else if s, ok := d["text"].(string); ok {
-					st.text.WriteString(s)
-					st.blockType = "thinking"
-					sawAny = true
-				}
-			case "input_json_delta":
-				if s, ok := d["partial_json"].(string); ok {
-					st.toolJSON.WriteString(s)
-					sawAny = true
-				}
-			}
-		case "content_block_stop":
-			// nothing to do; stream may include text after stop on tools.
-		case "message_delta":
-			if d, ok := chunk["delta"].(map[string]any); ok {
-				if r, _ := d["stop_reason"].(string); r != "" {
-					finishReason = r
-				}
-			}
-			if u, ok := chunk["usage"].(map[string]any); ok {
-				usage = mergeAnthropicUsage(usage, u)
-			}
-		case "message_stop":
-			// terminal event; nothing to assemble.
-		}
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "event:") {
-			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data == "" {
-				continue
-			}
-			emit(eventName, data)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		lastErr = err
-	}
-
-	if !sawAny && finishReason == "" {
-		return out, fmt.Errorf("anthropic-messages: no events decoded: %w", core.ErrUnsupported)
-	}
-
-	// Stitch the assembled blocks into a single assistant message.
-	msg := core.Message{Role: core.RoleAssistant, FinishReason: finishReason}
-	for _, idx := range order {
-		st := blocks[idx]
-		if st == nil {
-			continue
-		}
-		switch st.blockType {
-		case "thinking":
-			if t := st.text.String(); t != "" {
-				msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentReasoning, Text: t})
-			}
-		case "tool_use":
-			tu := st.tool
-			if tu == nil {
-				tu = &core.ToolUse{}
-			}
-			if js := st.toolJSON.String(); js != "" {
-				var input map[string]any
-				if err := json.Unmarshal([]byte(js), &input); err == nil {
-					tu.Input = input
-				}
-			}
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentToolUse, ToolUse: tu})
-		default:
-			if t := st.text.String(); t != "" {
-				msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentText, Text: t})
-			}
-		}
-	}
-	out.Messages = []core.Message{msg}
-	out.FinishReason = finishReason
-	if usage != nil {
-		out.Usage = usage
-	}
-	// Stream variant: same thinking-tokens heuristic as the non-stream
-	// path (see normalizeResponse). Sum thinking block char-length and
-	// surface as Usage.ReasoningTokens when the wire didn't already
-	// provide an explicit count.
-	reasoningChars := 0
-	for _, b := range msg.Content {
-		if b.Type == core.ContentReasoning {
-			reasoningChars += len(b.Text)
-		}
-	}
-	if reasoningChars > 0 {
-		if out.Usage == nil {
-			out.Usage = &core.Usage{}
-		}
-		if out.Usage.ReasoningTokens == nil {
-			est := reasoningChars * 2 / 7
-			if est < 1 {
-				est = 1
-			}
-			out.Usage.ReasoningTokens = &est
-		}
-	}
-	if lastErr != nil {
-		return out, fmt.Errorf("anthropic-messages: stream parse incomplete: %w", lastErr)
 	}
 	return out, nil
 }
@@ -709,16 +558,4 @@ func zeroAnthropic(meta core.Meta) core.NormalizedPayload {
 		Protocol:         "anthropic-messages",
 		Model:            meta.Model,
 	}
-}
-
-// looksLikeAnthropicEventStream sniffs the first bytes to detect SSE
-// without relying on the Content-Type header — useful when the producer
-// (cp/agent) captures the body without preserving response headers.
-func looksLikeAnthropicEventStream(raw []byte) bool {
-	probe := raw
-	if len(probe) > 64 {
-		probe = probe[:64]
-	}
-	s := strings.TrimLeft(string(probe), " \r\n\t")
-	return strings.HasPrefix(s, "event:") || strings.HasPrefix(s, "data:")
 }

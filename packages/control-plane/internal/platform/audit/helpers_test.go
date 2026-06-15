@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/initiator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -113,12 +114,12 @@ func TestEntryForLeavesActorEmptyWhenContextHasNoAdminAuth(t *testing.T) {
 func TestEntryForStampsViaFromInProcessContext(t *testing.T) {
 	c := newTestEcho("203.0.113.9:4444")
 	req := c.Request()
-	c.SetRequest(req.WithContext(WithInitiator(req.Context(), ViaAssistant)))
+	c.SetRequest(req.WithContext(initiator.With(req.Context(), initiator.ViaAssistant)))
 
 	e := EntryFor(c, iam.ResourceVirtualKey, iam.VerbCreate)
 
-	if e.Via != ViaAssistant {
-		t.Errorf("Via = %q; want %q", e.Via, ViaAssistant)
+	if e.Via != initiator.ViaAssistant {
+		t.Errorf("Via = %q; want %q", e.Via, initiator.ViaAssistant)
 	}
 }
 
@@ -129,7 +130,7 @@ func TestEntryForStampsViaFromInProcessContext(t *testing.T) {
 // so a human write can never be mis-attributed as AI-initiated.
 func TestEntryForIgnoresForgedHeader(t *testing.T) {
 	c := newTestEcho("203.0.113.9:4444")
-	c.Request().Header.Set(InitiatedByHeader, ViaAssistant) // forged by a client
+	c.Request().Header.Set(InitiatedByHeader, initiator.ViaAssistant) // forged by a client
 
 	e := EntryFor(c, iam.ResourceVirtualKey, iam.VerbCreate)
 
@@ -178,7 +179,7 @@ func TestEntryForActionMatchesCatalogActionBody(t *testing.T) {
 // the next handler regardless.
 func TestStripInitiatorHeader(t *testing.T) {
 	c := newTestEcho("203.0.113.9:4444")
-	c.Request().Header.Set(InitiatedByHeader, ViaAssistant) // forged inbound copy
+	c.Request().Header.Set(InitiatedByHeader, initiator.ViaAssistant) // forged inbound copy
 
 	called := false
 	h := StripInitiatorHeader(func(c echo.Context) error {

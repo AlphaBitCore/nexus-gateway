@@ -1,8 +1,12 @@
 package enroll
 
 import (
+	"context"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillupload"
 )
 
 // jtiCache is a TTL-aware set of JWT IDs used to prevent enrollment-JWT
@@ -12,20 +16,29 @@ import (
 // enrollment attempts) rather than growing for the lifetime of the
 // process.
 //
-// Single-Hub scope only. A multi-Hub HA deployment needs a shared
-// store (Redis SETNX with TTL) — tracked as a follow-up.
+// Two layers: the in-process map is an L1 fast path that gives the
+// single-Hub guarantee even when Redis is down; the optional `dedup` is the
+// authoritative L2 (Redis SETNX with TTL) that makes the single-use property
+// survive Hub restarts and extend to multi-Hub HA. A nil dedup is the legacy
+// single-Hub-uptime behaviour.
 type jtiCache struct {
 	mu      sync.Mutex
 	entries map[string]time.Time
+
+	// dedup is the optional Redis SETNX L2. nil → in-memory only.
+	dedup  spillupload.Dedup
+	logger *slog.Logger
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	now      func() time.Time
 }
 
-func newJTICache() *jtiCache {
+func newJTICache(dedup spillupload.Dedup, logger *slog.Logger) *jtiCache {
 	c := &jtiCache{
 		entries: make(map[string]time.Time),
+		dedup:   dedup,
+		logger:  logger,
 		stopCh:  make(chan struct{}),
 		now:     time.Now,
 	}
@@ -33,20 +46,49 @@ func newJTICache() *jtiCache {
 	return c
 }
 
-// MarkSeen records `jti` with expiry `exp`. Returns true if this is the
-// first time the JTI has been seen (caller may proceed), false on
-// replay. JTIs whose `exp` is already in the past are rejected as
-// replays so a stale token cannot reset itself via the sweep window.
-func (c *jtiCache) MarkSeen(jti string, exp time.Time) bool {
+// jtiRedisKey namespaces the enrollment-JTI dedup key so it cannot collide with
+// the spill-upload dedup keys that share the same Redis instance.
+func jtiRedisKey(jti string) string { return "nexus:enroll:jti:" + jti }
+
+// MarkSeen records `jti` with expiry `exp`. Returns true if this is the first
+// time the JTI has been seen (caller may proceed), false on replay.
+//
+// L1 (in-process) is checked first so an in-flight replay is rejected instantly.
+// When an L2 dedup is wired, a Redis SETNX is then attempted with TTL = exp-now:
+// a miss (key already set — possibly by a redemption before THIS process
+// started, or on another Hub) is a replay across the restart/HA boundary that L1
+// alone would miss. A Redis error degrades to the L1 single-Hub
+// guarantee rather than blocking enrollment on a transient outage.
+func (c *jtiCache) MarkSeen(ctx context.Context, jti string, exp time.Time) bool {
 	if jti == "" {
 		return false
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if _, exists := c.entries[jti]; exists {
+		c.mu.Unlock()
 		return false
 	}
 	c.entries[jti] = exp
+	c.mu.Unlock()
+
+	if c.dedup != nil {
+		ttl := exp.Sub(c.now())
+		if ttl <= 0 {
+			// Already expired — the JWT exp check should have caught this, but
+			// never persist a non-expiring SETNX key for a stale token.
+			return false
+		}
+		acquired, err := c.dedup.SetNX(ctx, jtiRedisKey(jti), ttl)
+		if err != nil {
+			if c.logger != nil {
+				c.logger.Warn("enroll JTI dedup: redis SETNX failed; single-Hub guard only", "error", err)
+			}
+			return true // degrade to the L1 guarantee already recorded above
+		}
+		if !acquired {
+			return false // seen in Redis: cross-restart / cross-Hub replay
+		}
+	}
 	return true
 }
 

@@ -1,9 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  E23-S5: MDM configuration profile for the Nexus Agent.
-  Pre-approves the System Extension and Network Extension capabilities so that
-  end users do not see consent prompts when the agent is silently deployed
-  through Jamf, Mosyle, Kandji, Intune, or another MDM.
+  MDM configuration profile for the Nexus Agent.
+  Pre-approves, with no end-user prompts, all three approvals the agent needs on
+  a managed Mac deployed through Jamf, Mosyle, Kandji, Intune, or another MDM:
+    - the System / Network Extension (com.apple.system-extension-policy),
+    - the content-filter capability (com.apple.webcontent-filter),
+    - the SMAppService boot daemon + login item (com.apple.servicemanagement).
+  With this profile installed, SMAppService.daemon/.mainApp register() lands
+  directly in .enabled, so the menu app never shows the "finish setup" row.
+
+  Note on NON-REMOVABILITY: this profile sets PayloadRemovalDisallowed so the
+  PROFILE cannot be removed by the user. Making the APP itself non-removable is
+  a separate MDM managed-app attribute (Jamf/Intune "prevent removal" on the
+  app deployment), not a config-profile payload — see the operator runbook.
 
   USAGE:
     1. Replace {{TEAM_ID}} with your Apple Developer Team ID (10 characters).
@@ -70,6 +79,35 @@
             <true/>
             <key>FilterPackets</key>
             <false/>
+        </dict>
+
+        <!-- Service Management: pre-approve the SMAppService boot daemon and the
+             menu-bar login item, both registered by the com.nexus-gateway.agent
+             app. Without this the user must approve them once in System Settings
+             → General → Login Items & Extensions; with it, register() lands in
+             .enabled silently on a managed device. -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.servicemanagement</string>
+            <key>PayloadIdentifier</key>
+            <string>com.nexus-gateway.agent.servicemanagement</string>
+            <key>PayloadUUID</key>
+            <string>{{PROFILE_UUID}}-sm</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadDisplayName</key>
+            <string>Nexus Agent Background Services</string>
+            <key>PayloadDescription</key>
+            <string>Pre-approves the Nexus Agent daemon and login item so they run without user consent.</string>
+            <key>Rules</key>
+            <array>
+                <dict>
+                    <key>RuleType</key>
+                    <string>BundleIdentifier</string>
+                    <key>RuleValue</key>
+                    <string>com.nexus-gateway.agent</string>
+                </dict>
+            </array>
         </dict>
     </array>
     <key>PayloadDisplayName</key>

@@ -22,6 +22,26 @@ const DefaultInterval = 6 * time.Hour
 // matches the localfs backend's own default retention.
 const DefaultRetention = 30 * 24 * time.Hour
 
+// DBQuerier resolves which spill blob keys are still referenced by a live
+// `traffic_event.spill_ref` row. The sweep consults it so a blob whose row
+// still points at it is never deleted (orphaning the spill) and a blob whose
+// row was already erased (GDPR / retention pruning) is collected promptly
+// rather than lingering until its age window expires.
+//
+// HasSpillRefs is handed the age-eligible candidate keys in one batch and
+// returns the subset still referenced (value true). The canonical pgx
+// implementation runs:
+//
+//	SELECT DISTINCT spill_ref FROM "TrafficEvent"
+//	 WHERE spill_ref IS NOT NULL AND spill_ref = ANY($1)
+//
+// On error the sweep deletes nothing and logs — a DB hiccup must never be
+// read as "no rows reference these keys" (fail-safe). The wiring layer in
+// each service supplies the pgx-backed implementation.
+type DBQuerier interface {
+	HasSpillRefs(ctx context.Context, keys []string) (referenced map[string]bool, err error)
+}
+
 // Options configures the sweep loop.
 type Options struct {
 	// Interval between sweeps. Defaults to DefaultInterval when <= 0.
@@ -31,6 +51,22 @@ type Options struct {
 	// now-Retention. A non-positive Retention disables the loop — the caller
 	// asked to keep bodies indefinitely.
 	Retention time.Duration
+
+	// DB, when non-nil AND the store implements spillstore.RefAwareSweeper,
+	// turns the age-based sweep into a reference-checked sweep: only blobs
+	// that are both older than the retention window AND no longer referenced
+	// by any traffic_event.spill_ref row are deleted. Leave nil to keep the
+	// pure age-based behaviour (e.g. the agent's local store, which has no
+	// traffic_event table to consult).
+	DB DBQuerier
+}
+
+// dbFilter adapts a DBQuerier to spillstore.SweepFilter so the store-side
+// sweep can run the reference check without importing this package.
+type dbFilter struct{ db DBQuerier }
+
+func (f dbFilter) KeepReferenced(ctx context.Context, candidateKeys []string) (map[string]bool, error) {
+	return f.db.HasSpillRefs(ctx, candidateKeys)
 }
 
 // Run sweeps store every Options.Interval until ctx is cancelled. It blocks for
@@ -50,7 +86,22 @@ func Run(ctx context.Context, store spillstore.SpillStore, opts Options, logger 
 	}
 	logger = logger.With("component", "spillsweep", "backend", store.Backend())
 
-	sweepOnce(ctx, store, opts.Retention, logger)
+	// Resolve the reference-checked path once: only when a DBQuerier is
+	// configured AND the backend can run a filtered sweep. Otherwise fall
+	// back to the plain age-based Sweep.
+	var filter spillstore.SweepFilter
+	refAware, _ := store.(spillstore.RefAwareSweeper)
+	if opts.DB != nil && refAware != nil {
+		filter = dbFilter{db: opts.DB}
+		logger = logger.With("reference_check", true)
+	} else {
+		logger = logger.With("reference_check", false)
+		if opts.DB != nil && refAware == nil {
+			logger.Warn("spill sweep: DBQuerier set but backend is not reference-aware; sweeping age-only")
+		}
+	}
+
+	sweepOnce(ctx, store, refAware, filter, opts.Retention, logger)
 
 	ticker := time.NewTicker(opts.Interval)
 	defer ticker.Stop()
@@ -59,17 +110,36 @@ func Run(ctx context.Context, store spillstore.SpillStore, opts Options, logger 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sweepOnce(ctx, store, opts.Retention, logger)
+			sweepOnce(ctx, store, refAware, filter, opts.Retention, logger)
 		}
 	}
 }
 
-// sweepOnce runs a single sweep against the store. Errors are logged and
-// swallowed — a failed sweep is a transient storage problem, not a reason to
-// stop the loop or crash the service.
-func sweepOnce(ctx context.Context, store spillstore.SpillStore, retention time.Duration, logger *slog.Logger) {
+// sweepOnce runs a single sweep against the store. When a filter is supplied
+// (DBQuerier configured and backend reference-aware), it runs the filtered
+// sweep so still-referenced blobs are never deleted; otherwise it runs the
+// plain age-based Sweep. Errors are logged and swallowed — a failed sweep is a
+// transient storage problem, not a reason to stop the loop or crash the
+// service. A reference-check error therefore deletes nothing this cycle and
+// retries next interval (fail-safe).
+func sweepOnce(
+	ctx context.Context,
+	store spillstore.SpillStore,
+	refAware spillstore.RefAwareSweeper,
+	filter spillstore.SweepFilter,
+	retention time.Duration,
+	logger *slog.Logger,
+) {
 	cutoff := time.Now().Add(-retention)
-	deleted, err := store.Sweep(ctx, cutoff)
+	var (
+		deleted int
+		err     error
+	)
+	if filter != nil && refAware != nil {
+		deleted, err = refAware.SweepFiltered(ctx, cutoff, filter)
+	} else {
+		deleted, err = store.Sweep(ctx, cutoff)
+	}
 	if err != nil {
 		logger.Warn("spill sweep failed", "error", err, "cutoff", cutoff.Format(time.RFC3339))
 		return

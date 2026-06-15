@@ -112,6 +112,40 @@ func TestCatBRegistry_Register_NilLoadersMap(t *testing.T) {
 	}
 }
 
+// TestCatBRegistry_StructKey_NoDelimiterCollision is the F-0257 regression.
+// With the previous string key thingType+"|"+configKey, the pairs
+// ("a", "b|c") and ("a|b", "c") both produced "a|b|c" and aliased to the same
+// loader — a registration under one would shadow the other. The struct key
+// compares thingType and configKey independently, so these two distinct pairs
+// must resolve to their OWN loaders.
+func TestCatBRegistry_StructKey_NoDelimiterCollision(t *testing.T) {
+	r := NewCatBRegistry()
+	la := &stubLoader{version: 1}
+	lb := &stubLoader{version: 2}
+
+	// These two pairs collide to "a|b|c" under the old delimiter scheme.
+	r.Register("a", "b|c", la)
+	r.Register("a|b", "c", lb)
+
+	gotA, okA := r.Lookup("a", "b|c")
+	if !okA || gotA != la {
+		t.Fatalf("(a, b|c) resolved to wrong loader: ok=%v got=%v want=%v", okA, gotA, la)
+	}
+	gotB, okB := r.Lookup("a|b", "c")
+	if !okB || gotB != lb {
+		t.Fatalf("(a|b, c) resolved to wrong loader: ok=%v got=%v want=%v", okB, gotB, lb)
+	}
+	if gotA == gotB {
+		t.Fatal("distinct (thingType, configKey) pairs collided to the same loader")
+	}
+
+	// A cross pair that was never registered must still miss — the struct
+	// key must not synthesise a hit from the other two registrations.
+	if _, ok := r.Lookup("a", "b"); ok {
+		t.Error("(a, b) was never registered but Lookup hit — phantom key")
+	}
+}
+
 // itoa avoids pulling in strconv just for a test helper.
 func itoa(i int) string {
 	if i == 0 {

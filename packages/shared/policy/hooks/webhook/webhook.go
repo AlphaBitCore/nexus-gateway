@@ -95,6 +95,12 @@ func NewWebhookForwardWithClient(cfg *core.HookConfig, client *http.Client) (cor
 			Timeout:        timeout,
 			Caller:         "webhook-hook",
 			PropagateReqID: true,
+			// F-0370: the endpoint is an admin-configured URL the compliance
+			// pipeline POSTs captured traffic to — external by nature and an
+			// SSRF primitive. Block every non-public address at dial time
+			// (loopback / RFC-1918 / link-local / metadata); the guard runs on
+			// the resolved IP so it also defeats DNS-rebinding.
+			DialControl: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly),
 		})
 	}
 

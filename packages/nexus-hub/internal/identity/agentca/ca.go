@@ -1,6 +1,6 @@
-// Package agentca manages the X.509 Certificate Authority for agent mTLS.
-// It generates a self-signed ECDSA P-256 CA, issues client certificates,
-// and signs CSRs submitted by agents during enrollment.
+// Package agentca manages the X.509 Certificate Authority used to issue
+// agent attestation certificates. It generates a self-signed ECDSA P-256 CA
+// and signs the Ed25519 attestation CSRs agents submit during enrollment.
 package agentca
 
 import (
@@ -103,51 +103,8 @@ func (ca *CA) CACertPEM() string {
 	return ca.certPEM
 }
 
-// SignCSR signs a PKCS#10 Certificate Signing Request submitted by an agent.
-func (ca *CA) SignCSR(csrPEM string, subjectCN string) (*CertResult, error) {
-	ca.mu.RLock()
-	defer ca.mu.RUnlock()
-
-	block, _ := pem.Decode([]byte(csrPEM))
-	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		return nil, errors.New("invalid CSR PEM")
-	}
-
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse CSR: %w", err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return nil, fmt.Errorf("CSR signature invalid: %w", err)
-	}
-
-	serial, serialHex := randomSerial()
-	expiresAt := time.Now().Add(certValidityDays * 24 * time.Hour)
-
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: subjectCN},
-		NotBefore:    time.Now(),
-		NotAfter:     expiresAt,
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	certDER, err := x509.CreateCertificate(caRandReader, template, ca.cert, csr.PublicKey, ca.key)
-	if err != nil {
-		return nil, fmt.Errorf("sign CSR: %w", err)
-	}
-
-	return &CertResult{
-		CertPEM:   pemEncode("CERTIFICATE", certDER),
-		CaCertPEM: ca.certPEM,
-		Serial:    serialHex,
-		ExpiresAt: expiresAt,
-	}, nil
-}
-
 // SignAttestationCSR signs an Ed25519 CSR for the agent-attestation
-// use-case. Unlike SignCSR, it enforces two extra invariants:
+// use-case. It enforces two invariants:
 //
 //  1. The CSR public key MUST be Ed25519. ECDSA / RSA / DSA CSRs are
 //     rejected. The architecture freezes Ed25519 as the attestation
@@ -163,9 +120,23 @@ func (ca *CA) SignCSR(csrPEM string, subjectCN string) (*CertResult, error) {
 //     the agent's mTLS identity. CP-side cert chain validation should
 //     reject any "attestation" cert that carries ClientAuth EKU.
 //
-// Returned CertResult.KeyPEM is empty — the agent keeps the private key
-// in its platform keystore (Apple Keychain / Linux Secret Service /
-// Windows CNG) and only ever ships the CSR + public key to Hub.
+// Returned CertResult.KeyPEM is empty — the agent generates and holds the
+// attestation private key itself and only ever ships the CSR + public key to
+// Hub.
+//
+// Key-at-rest: the agent holds this Ed25519 private key in its
+// platform keystore — macOS Keychain / Windows DPAPI / (Linux best-effort)
+// a 0600 file — under keystore.AttestationKeyName, NOT a plaintext PEM on
+// disk (packages/agent/internal/identity/enrollment/enroll.go Sets it; the
+// attestation signer Gets it). On macOS/Windows a host or backup filesystem
+// read no longer yields the signing key. On Linux the keystore is still only
+// a 0600 file, so the residual there remains BOUNDED, not eliminated, by
+// The attestation cert's 90-day expiry is enforced at the CP
+// verifier and unenrolling the device (status='revoked') stops the key being
+// served within the CP key cache's ≤60s TTL, so a stolen key is time-bounded
+// and revocable rather than a permanent forgery oracle. NOTE: the keystore
+// code is wired for all platforms but the Keychain/DPAPI behaviour can only
+// be built+run-tested on a macOS/Windows host via Skill('build-agent').
 func (ca *CA) SignAttestationCSR(csrPEM string, subjectCN string) (*CertResult, error) {
 	ca.mu.RLock()
 	defer ca.mu.RUnlock()
@@ -196,8 +167,7 @@ func (ca *CA) SignAttestationCSR(csrPEM string, subjectCN string) (*CertResult, 
 		NotAfter:     expiresAt,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		// ExtKeyUsage deliberately empty: this cert must NOT be usable
-		// as an mTLS client cert. The agent already holds a separate
-		// P-256 cert (issued via SignCSR) for that role.
+		// as an mTLS client cert.
 	}
 
 	certDER, err := x509.CreateCertificate(caRandReader, template, ca.cert, csr.PublicKey, ca.key)
@@ -207,49 +177,6 @@ func (ca *CA) SignAttestationCSR(csrPEM string, subjectCN string) (*CertResult, 
 
 	return &CertResult{
 		CertPEM:   pemEncode("CERTIFICATE", certDER),
-		CaCertPEM: ca.certPEM,
-		Serial:    serialHex,
-		ExpiresAt: expiresAt,
-	}, nil
-}
-
-// IssueClientCert generates a new keypair and issues a client certificate
-// (legacy mode — private key returned to caller).
-func (ca *CA) IssueClientCert(subjectCN string) (*CertResult, error) {
-	ca.mu.RLock()
-	defer ca.mu.RUnlock()
-
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), caRandReader)
-	if err != nil {
-		return nil, fmt.Errorf("generate client key: %w", err)
-	}
-
-	serial, serialHex := randomSerial()
-	expiresAt := time.Now().Add(certValidityDays * 24 * time.Hour)
-
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: subjectCN},
-		NotBefore:    time.Now(),
-		NotAfter:     expiresAt,
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	certDER, err := x509.CreateCertificate(caRandReader, template, ca.cert, &clientKey.PublicKey, ca.key)
-	if err != nil {
-		return nil, fmt.Errorf("create certificate: %w", err)
-	}
-
-	certPEM := pemEncode("CERTIFICATE", certDER)
-	keyDER, err := x509.MarshalECPrivateKey(clientKey)
-	if err != nil {
-		return nil, fmt.Errorf("marshal client key: %w", err)
-	}
-
-	return &CertResult{
-		CertPEM:   certPEM,
-		KeyPEM:    pemEncode("EC PRIVATE KEY", keyDER),
 		CaCertPEM: ca.certPEM,
 		Serial:    serialHex,
 		ExpiresAt: expiresAt,

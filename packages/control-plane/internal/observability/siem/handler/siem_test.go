@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
 // Test helpers
@@ -237,18 +239,121 @@ func TestGetSIEMConfig_WithConfig_ReturnsMaskedHeaders(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// Authorization header should be masked (len > 8)
+	// F-0197: secret headers are redacted to the FIXED sentinel — no byte of the
+	// real token may appear in the read-back (not even a partial first/last-4
+	// reveal). The full token must not leak, and the sentinel must not contain
+	// any substring of the real value.
 	authMasked := out.Headers["Authorization"]
-	if authMasked == "Bearer supersecrettoken1234" {
-		t.Errorf("Authorization header was not masked")
+	if authMasked != redactedSecretSentinel {
+		t.Errorf("Authorization = %q; want fixed sentinel %q (no partial reveal)", authMasked, redactedSecretSentinel)
 	}
-	// x-api-key is short (< 8 chars) → "****"
-	if out.Headers["x-api-key"] != "****" {
-		t.Errorf("x-api-key = %q; want ****", out.Headers["x-api-key"])
+	if strings.Contains(authMasked, "supersecret") || strings.Contains(authMasked, "1234") ||
+		strings.Contains(authMasked, "Bear") {
+		t.Errorf("Authorization read-back %q leaks part of the real token", authMasked)
 	}
-	// Content-Type should pass through unchanged.
+	// x-api-key (non-empty secret) is also redacted to the fixed sentinel.
+	if out.Headers["x-api-key"] != redactedSecretSentinel {
+		t.Errorf("x-api-key = %q; want fixed sentinel %q", out.Headers["x-api-key"], redactedSecretSentinel)
+	}
+	// Content-Type (non-secret) passes through unchanged.
 	if out.Headers["Content-Type"] != "application/json" {
 		t.Errorf("Content-Type = %q; want application/json", out.Headers["Content-Type"])
+	}
+}
+
+// TestGetSIEMConfig_EmptySecretHeaderNotSentinel proves an unset secret header
+// reads back as empty (not the sentinel) so the UI can tell "no value" apart
+// from "value set but hidden".
+func TestGetSIEMConfig_EmptySecretHeaderNotSentinel(t *testing.T) {
+	cfg := SIEMConfig{
+		Enabled: true,
+		URL:     "https://siem.example.com",
+		Format:  "json",
+		Headers: map[string]string{"Authorization": ""},
+	}
+	raw, _ := json.Marshal(cfg)
+	mock, h := newHandlerWithMock(t)
+	mock.ExpectQuery(`SELECT value`).
+		WithArgs("siem.config").
+		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(raw))
+	c, rec := echoGET("/api/admin/settings/siem")
+	if err := h.GetSIEMConfig(c); err != nil {
+		t.Fatalf("GetSIEMConfig: %v", err)
+	}
+	var out SIEMConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Headers["Authorization"] != "" {
+		t.Errorf("empty secret header should read back empty, got %q", out.Headers["Authorization"])
+	}
+}
+
+// TestUpdateSIEMConfig_PreservesSecretOnSentinelRoundTrip is the core F-0197
+// write-side assertion: when the client PUTs the redaction sentinel for a secret
+// header (the value GetSIEMConfig handed it), the previously stored REAL token
+// must be persisted — not the placeholder — so the SIEM forwarder keeps working
+// without the admin re-typing the secret.
+func TestUpdateSIEMConfig_PreservesSecretOnSentinelRoundTrip(t *testing.T) {
+	mock, h := newHandlerWithMock(t)
+
+	// Prior stored config carries the real token.
+	prior := SIEMConfig{
+		Enabled: true,
+		URL:     "https://siem.example.com",
+		Format:  "json",
+		Headers: map[string]string{"Authorization": "Bearer real-token-xyz"},
+	}
+	priorRaw, _ := json.Marshal(prior)
+	mock.ExpectQuery(`SELECT value`).
+		WithArgs("siem.config").
+		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(priorRaw))
+
+	// The write must persist the REAL token, never the sentinel.
+	mock.ExpectExec(`INSERT INTO system_metadata`).
+		WithArgs("siem.config", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	// Client replays the masked sentinel (as GetSIEMConfig returned it).
+	c, rec := echoPUT("/api/admin/settings/siem", SIEMConfig{
+		Enabled: true,
+		URL:     "https://siem.example.com",
+		Format:  "json",
+		Headers: map[string]string{"Authorization": redactedSecretSentinel},
+	})
+	if err := h.UpdateSIEMConfig(c); err != nil {
+		t.Fatalf("UpdateSIEMConfig: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// TestUpdateSIEMConfig_AcceptsNewSecret proves a genuinely new secret value (not
+// the sentinel) is taken as submitted and overwrites the stored token.
+func TestUpdateSIEMConfig_AcceptsNewSecret(t *testing.T) {
+	mock, h := newHandlerWithMock(t)
+	prior := SIEMConfig{Headers: map[string]string{"Authorization": "Bearer old"}}
+	priorRaw, _ := json.Marshal(prior)
+	mock.ExpectQuery(`SELECT value`).
+		WithArgs("siem.config").
+		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(priorRaw))
+	mock.ExpectExec(`INSERT INTO system_metadata`).
+		WithArgs("siem.config", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	c, rec := echoPUT("/api/admin/settings/siem", SIEMConfig{
+		Format:  "json",
+		Headers: map[string]string{"Authorization": "Bearer brand-new"},
+	})
+	if err := h.UpdateSIEMConfig(c); err != nil {
+		t.Fatalf("UpdateSIEMConfig: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -418,34 +523,16 @@ func TestTestSIEMConfig_NoURL_400(t *testing.T) {
 	}
 }
 
-func TestTestSIEMConfig_ConnectError_ReturnsOKFalse(t *testing.T) {
-	// Config has a URL that cannot be dialed → 200 with ok=false.
-	// Using a test HTTP server that closes immediately to trigger a
-	// connection error is the preferred approach, but pointing to a
-	// guaranteed-unreachable address works for the error-path branch.
-	cfg := SIEMConfig{Enabled: true, URL: "http://127.0.0.1:1", Format: "json"}
-	raw, _ := json.Marshal(cfg)
-	mock, h := newHandlerWithMock(t)
-	mock.ExpectQuery(`SELECT value`).
-		WithArgs("siem.config").
-		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(raw))
-	c, rec := echoPOST("/api/admin/settings/siem/test", nil)
-	if err := h.TestSIEMConfig(c); err != nil {
-		t.Fatalf("TestSIEMConfig: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d; want 200 (ok=false for unreachable)", rec.Code)
-	}
-	body := decodeJSON(t, rec)
-	if body["ok"] != false {
-		t.Errorf("ok = %v; want false (connection refused)", body["ok"])
-	}
-}
-
-func TestTestSIEMConfig_ServerError_ReturnsOKFalse(t *testing.T) {
-	// Config points to a real test server that returns 500 → ok=false.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+// TestTestSIEMConfig_PrivateURL_SSRFBlocked is the SEC-M6-01 end-to-end SSRF
+// regression: a SIEM URL pointing at a loopback / private address must be
+// refused at dial time by the scoped BlockPrivateDialControl guard, and the
+// response must be the GENERIC unreachable envelope — no statusCode field, and
+// no raw transport-error text that would fingerprint the internal endpoint.
+func TestTestSIEMConfig_PrivateURL_SSRFBlocked(t *testing.T) {
+	// A live httptest server binds to 127.0.0.1, so it doubles as a real
+	// internal endpoint the guard must refuse to reach even though it is up.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK) // would be ok=true WITHOUT the guard
 	}))
 	defer ts.Close()
 
@@ -464,38 +551,91 @@ func TestTestSIEMConfig_ServerError_ReturnsOKFalse(t *testing.T) {
 	}
 	body := decodeJSON(t, rec)
 	if body["ok"] != false {
-		t.Errorf("ok = %v; want false (HTTP 500 from SIEM)", body["ok"])
+		t.Errorf("ok = %v; want false (loopback blocked by SSRF guard)", body["ok"])
+	}
+	if body["error"] != "Failed to reach the SIEM endpoint" {
+		t.Errorf("error = %q; want the generic unreachable message (no raw transport error)", body["error"])
+	}
+	if _, leaked := body["statusCode"]; leaked {
+		t.Errorf("response leaked statusCode %v — that is an internal-endpoint oracle", body["statusCode"])
 	}
 }
 
-func TestTestSIEMConfig_ServerOK_ReturnsOKTrue(t *testing.T) {
-	// Config points to a test server returning 200 → ok=true.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
+// TestSiemProbeResult_NoOracle is the SEC-M6-01 unit contract for the response
+// mapper: a dial failure and an upstream error status each collapse to a fixed
+// boolean + message with NO statusCode, and a 2xx is a bare ok=true. The key
+// assertion is that two DISTINCT upstream error statuses (403 vs 500) yield
+// byte-identical bodies — otherwise the probe is a fingerprinting oracle.
+func TestSiemProbeResult_NoOracle(t *testing.T) {
+	dial := siemProbeResult(nil, errGeneric())
+	if dial["ok"] != false || dial["error"] != "Failed to reach the SIEM endpoint" {
+		t.Errorf("dial-error result = %v; want generic unreachable", dial)
+	}
+	if _, ok := dial["statusCode"]; ok {
+		t.Error("dial-error result must not carry statusCode")
+	}
 
-	cfg := SIEMConfig{
-		Enabled: true,
-		URL:     ts.URL + "/ingest",
-		Format:  "json",
-		Headers: map[string]string{"x-custom": "val"},
+	r403 := siemProbeResult(&http.Response{StatusCode: http.StatusForbidden}, nil)
+	r500 := siemProbeResult(&http.Response{StatusCode: http.StatusInternalServerError}, nil)
+	b403, _ := json.Marshal(r403)
+	b500, _ := json.Marshal(r500)
+	if string(b403) != string(b500) {
+		t.Errorf("403 body %s != 500 body %s — distinguishable statuses are an SSRF oracle", b403, b500)
 	}
-	raw, _ := json.Marshal(cfg)
-	mock, h := newHandlerWithMock(t)
-	mock.ExpectQuery(`SELECT value`).
-		WithArgs("siem.config").
-		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(raw))
-	c, rec := echoPOST("/api/admin/settings/siem/test", nil)
-	if err := h.TestSIEMConfig(c); err != nil {
-		t.Fatalf("TestSIEMConfig: %v", err)
+	if r500["ok"] != false || r500["error"] != "The SIEM endpoint returned an error response" {
+		t.Errorf("error-status result = %v; want generic error response", r500)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d; want 200", rec.Code)
+	if _, ok := r500["statusCode"]; ok {
+		t.Error("error-status result must not carry statusCode")
 	}
-	body := decodeJSON(t, rec)
-	if body["ok"] != true {
-		t.Errorf("ok = %v; want true", body["ok"])
+
+	ok := siemProbeResult(&http.Response{StatusCode: http.StatusNoContent}, nil)
+	if ok["ok"] != true {
+		t.Errorf("2xx result = %v; want ok=true", ok)
+	}
+	if _, leaked := ok["statusCode"]; leaked {
+		t.Error("success result must not carry statusCode")
+	}
+}
+
+// TestRegisterSIEMRoutes_MutatingVerbsRequireSettingsWrite is the SEC-M6-01 IAM
+// tier regression: the egress-mutating verbs (PUT config, POST test) must be
+// gated on settings:write — NOT the old audit-log:write — so a narrow audit-log
+// grant can no longer redirect the org-wide audit stream. The read verbs stay on
+// audit-log:read.
+func TestRegisterSIEMRoutes_MutatingVerbsRequireSettingsWrite(t *testing.T) {
+	_, h := newHandlerWithMock(t)
+	g := echo.New().Group("/api/admin")
+	// RegisterSIEMRoutes calls iamMW(action) once per route in registration
+	// order: GET config, PUT config, POST test, GET event-types. Capture that
+	// ordered list of action strings and assert the egress-mutating verbs moved
+	// off audit-log:write onto settings:write.
+	var actions []string
+	iamMW := func(action string) echo.MiddlewareFunc {
+		actions = append(actions, action)
+		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
+	}
+	h.RegisterSIEMRoutes(g, iamMW)
+
+	want := []string{
+		iam.ResourceAuditLog.Action(iam.VerbRead),  // GET config
+		iam.ResourceSettings.Action(iam.VerbWrite), // PUT config
+		iam.ResourceSettings.Action(iam.VerbWrite), // POST test
+		iam.ResourceAuditLog.Action(iam.VerbRead),  // GET event-types
+	}
+	if len(actions) != len(want) {
+		t.Fatalf("captured %d gate actions %v; want %d", len(actions), actions, len(want))
+	}
+	for i := range want {
+		if actions[i] != want[i] {
+			t.Errorf("route #%d gated on %q; want %q", i, actions[i], want[i])
+		}
+	}
+	// Belt-and-suspenders: the old under-privileged gate must be fully gone.
+	for _, a := range actions {
+		if a == iam.ResourceAuditLog.Action(iam.VerbWrite) {
+			t.Errorf("a SIEM route is still gated on audit-log:write (%q) — SEC-M6-01 regression", a)
+		}
 	}
 }
 
@@ -522,6 +662,36 @@ func TestListSIEMEventTypes_ReturnsNonEmpty(t *testing.T) {
 		}
 		if row["type"] == nil || row["resource"] == nil || row["service"] == nil {
 			t.Errorf("[%d] missing field; got %v", i, row)
+		}
+	}
+}
+
+// TestListSIEMEventTypes_IncludesAuthLoginTypes is the picker half of F-0192:
+// the auth.login_failure / auth.login_success identities ClassifyAdminEvent maps
+// login rows to must be selectable in the filter, otherwise enabling any
+// whitelist silently stops forwarding login events.
+func TestListSIEMEventTypes_IncludesAuthLoginTypes(t *testing.T) {
+	_, h := newHandlerWithMock(t)
+	c, rec := echoGET("/api/admin/settings/siem/event-types")
+	_ = h.ListSIEMEventTypes(c)
+
+	body := decodeJSON(t, rec)
+	types, _ := body["eventTypes"].([]any)
+	authTypes := map[string]bool{
+		"auth.login_failure": false,
+		"auth.login_success": false,
+	}
+	for _, et := range types {
+		row, _ := et.(map[string]any)
+		if t2, ok := row["type"].(string); ok {
+			if _, want := authTypes[t2]; want {
+				authTypes[t2] = true
+			}
+		}
+	}
+	for k, found := range authTypes {
+		if !found {
+			t.Errorf("auth login type %q not found in event types (F-0192 picker gap)", k)
 		}
 	}
 }

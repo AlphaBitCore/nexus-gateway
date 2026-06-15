@@ -11,6 +11,7 @@ import (
 
 	"log/slog"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/initiator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
@@ -55,7 +56,7 @@ func TestLog_PropagatesViaToMQ(t *testing.T) {
 
 	w.LogObserved(context.Background(), Entry{
 		ActorID: "user-admin-1", Action: "create", EntityType: "virtual-key", EntityID: "vk-1",
-		Via: ViaAssistant,
+		Via: initiator.ViaAssistant,
 	})
 	w.LogObserved(context.Background(), Entry{
 		ActorID: "user-admin-2", Action: "create", EntityType: "virtual-key", EntityID: "vk-2",
@@ -70,8 +71,8 @@ func TestLog_PropagatesViaToMQ(t *testing.T) {
 	if err := json.Unmarshal(msgs[0].data, &assistantMsg); err != nil {
 		t.Fatalf("unmarshal assistant msg: %v", err)
 	}
-	if assistantMsg.Via != ViaAssistant {
-		t.Errorf("assistant msg Via = %q, want %q", assistantMsg.Via, ViaAssistant)
+	if assistantMsg.Via != initiator.ViaAssistant {
+		t.Errorf("assistant msg Via = %q, want %q", assistantMsg.Via, initiator.ViaAssistant)
 	}
 
 	// Human row: via must be ABSENT from the JSON (omitempty), not just empty —
@@ -279,6 +280,43 @@ func TestLog_FailureWithoutLoggerOrObserver(t *testing.T) {
 	err := w.Log(context.Background(), Entry{Action: "X", EntityType: "T"})
 	if !errors.Is(err, wantErr) {
 		t.Errorf("Log error = %v; want %v", err, wantErr)
+	}
+}
+
+// TestLogCritical_SurfacesEnqueueFailure is the F-0069 fail-closed
+// regression: for a security-relevant mutation, an MQ enqueue failure must
+// be RETURNED to the caller (so the handler can answer 500) — not swallowed
+// like LogObserved. The failure must still be counted via the observer (the
+// admin.audit_log_failed_total metric is driven from there).
+func TestLogCritical_SurfacesEnqueueFailure(t *testing.T) {
+	wantErr := errors.New("nats: connection closed")
+	prod := &memProducer{enqueueErr: wantErr}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	w := NewWriter(prod, "q", logger)
+	var seen []string
+	w = w.WithFailureObserver(func(action string) { seen = append(seen, action) })
+
+	err := w.LogCritical(context.Background(), Entry{Action: "iam.policy.update", EntityType: "IamPolicy", EntityID: "p-1"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("LogCritical error = %v; want %v (must NOT swallow — fail-closed)", err, wantErr)
+	}
+	if len(seen) != 1 || seen[0] != "iam.policy.update" {
+		t.Errorf("observer invocations = %v; want [iam.policy.update] (metric must still count the failure)", seen)
+	}
+}
+
+// TestLogCritical_SuccessReturnsNil verifies the happy path: a successful
+// publish returns nil so the caller proceeds normally, and the entry lands
+// on the queue.
+func TestLogCritical_SuccessReturnsNil(t *testing.T) {
+	prod := &memProducer{}
+	w := NewWriter(prod, "nexus.event.admin-audit", slog.Default())
+
+	if err := w.LogCritical(context.Background(), Entry{Action: "credential.rotate", EntityType: "Credential", EntityID: "cred-7"}); err != nil {
+		t.Fatalf("LogCritical returned %v; want nil on success", err)
+	}
+	if len(prod.msgs()) != 1 {
+		t.Fatalf("producer received %d messages; want 1", len(prod.msgs()))
 	}
 }
 

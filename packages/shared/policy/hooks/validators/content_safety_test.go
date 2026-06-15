@@ -257,3 +257,22 @@ func TestContentSafety_Execute_LatencyRecorded(t *testing.T) {
 		t.Errorf("hook metadata not propagated: %+v", res)
 	}
 }
+
+// TestContentSafety_StampsStorageActionOnMatch mirrors the keyword-filter
+// guarantee: an approve-inflight safety match still carries the storage
+// policy so the audit writer can drop/redact the persisted copy.
+func TestContentSafety_StampsStorageActionOnMatch(t *testing.T) {
+	hook := newContentSafetyHook(t,
+		map[string]any{"violence": true},
+		map[string]any{"inflightAction": "approve", "storageAction": "drop-content"})
+	result, err := hook.Execute(context.Background(), &HookInput{Normalized: PayloadFromTextSegments([]string{"the attack plan is ready"})})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Decision != Approve {
+		t.Errorf("decision = %s, want APPROVE", result.Decision)
+	}
+	if string(result.StorageAction) != "drop-content" {
+		t.Errorf("storageAction = %q, want self-stamped drop-content", result.StorageAction)
+	}
+}

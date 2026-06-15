@@ -18,6 +18,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"os"
 	"time"
@@ -25,8 +26,17 @@ import (
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/metrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/tls/kms"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/kms"
 )
+
+// LeafValidity is the validity window of every minted leaf certificate
+// (NotAfter = NotBefore + LeafValidity). It is exported so the cert-cache TTL
+// can be DERIVED from it (cacheTTL < LeafValidity) instead of being a second,
+// independently-maintained magic number — with two numbers, a cache lease
+// a cache lease could outlive the leaf and serve an expired cert. See
+// wiring/cert.go and tls/cache (the LRU clamps every lease to the leaf's
+// NotAfter).
+const LeafValidity = 24 * time.Hour
 
 // certRandReader is the entropy source used by ECDSA key generation, serial
 // number selection, x509.CreateCertificate signing randomization, and GCM
@@ -57,12 +67,27 @@ var newGCMFn = cipher.NewGCM
 // Test-only override; production never reassigns this variable.
 var hkdfReadFn = io.ReadFull
 
+// warnIfCAPathLenUnconstrained logs a warning when a loaded CA certificate
+// lacks the pathlen:0 basic constraint. The proxy CA only ever signs leaf
+// certificates, so pathlen:0 caps the blast radius of a CA-key compromise:
+// with the constraint, a stolen key cannot mint a subordinate CA that devices
+// trusting this CA would accept. This is a warning rather than a refusal —
+// deployments may still carry a CA generated before the constraint was added
+// to the recipes, and the operator signal is "regenerate with
+// basicConstraints=critical,CA:TRUE,pathlen:0", not an outage.
+func warnIfCAPathLenUnconstrained(caCert *x509.Certificate, certPath string) {
+	if caCert.IsCA && !caCert.MaxPathLenZero {
+		slog.Warn("CA certificate lacks the pathlen:0 basic constraint; regenerate it with basicConstraints=critical,CA:TRUE,pathlen:0 so a compromised CA key cannot mint subordinate CAs",
+			"certPath", certPath)
+	}
+}
+
 // Issuer signs leaf certificates using an enterprise CA.
 type Issuer struct {
 	caCert       *x509.Certificate
 	caKey        *ecdsa.PrivateKey // nil when using remote signing
 	remoteSigner crypto.Signer     // non-nil when using remote signing
-	aesKey       []byte            // 32 bytes, derived from CA key or cert via HKDF
+	aesKey       []byte            // 32 bytes; HKDF of the CA private key (local mode) or a KMS-managed DEK (remote mode)
 }
 
 // NewIssuer loads CA cert and key from PEM files and derives the AES-256
@@ -84,6 +109,7 @@ func NewIssuer(caCertPath, caKeyPath string, kmsProvider kms.KMSProvider) (*Issu
 	if err != nil {
 		return nil, fmt.Errorf("cert: parse CA cert: %w", err)
 	}
+	warnIfCAPathLenUnconstrained(caCert, caCertPath)
 
 	// Load CA private key (optionally KMS-wrapped on disk).
 	keyBlob, err := os.ReadFile(caKeyPath)
@@ -152,7 +178,7 @@ func (i *Issuer) SignCert(hostname string) (*tls.Certificate, error) {
 		},
 		DNSNames:    []string{hostname},
 		NotBefore:   now.Add(-2 * time.Minute), // back-date for clock skew tolerance
-		NotAfter:    now.Add(24 * time.Hour),
+		NotAfter:    now.Add(LeafValidity),
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -169,9 +195,19 @@ func (i *Issuer) SignCert(hostname string) (*tls.Certificate, error) {
 		return nil, fmt.Errorf("cert: sign leaf cert: %w", err)
 	}
 
+	// Parse and attach Leaf so every minted cert is self-describing: the cache
+	// layer reads Leaf.NotAfter to clamp the LRU lease, and the TLS
+	// stack avoids a lazy re-parse on each handshake. (The Redis-read path sets
+	// Leaf too — both paths must carry it for the clamp to be universal.)
+	leaf, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		return nil, fmt.Errorf("cert: parse signed leaf: %w", err)
+	}
+
 	return &tls.Certificate{
 		Certificate: [][]byte{leafDER, i.caCert.Raw},
 		PrivateKey:  leafKey,
+		Leaf:        leaf,
 	}, nil
 }
 

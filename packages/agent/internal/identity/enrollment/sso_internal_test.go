@@ -210,18 +210,18 @@ func TestGenerateNonce_NonRepeating(t *testing.T) {
 	}
 }
 
-// TestGenerateCSR_RoundTrip pins generateCSR's output shape — both
-// PEM blocks must parse and the CSR's CN must encode the hostname.
-func TestGenerateCSR_RoundTrip(t *testing.T) {
-	keyPEM, csrPEM, err := generateCSR("my-host")
+// TestGenerateSSODeviceIdentity_RoundTrip pins the output shape — both
+// PEM blocks must parse: an EC private key and a self-signed certificate.
+func TestGenerateSSODeviceIdentity_RoundTrip(t *testing.T) {
+	keyPEM, certPEM, err := generateSSODeviceIdentity("my-host")
 	if err != nil {
-		t.Fatalf("generateCSR: %v", err)
+		t.Fatalf("generateSSODeviceIdentity: %v", err)
 	}
 	if !strings.Contains(string(keyPEM), "EC PRIVATE KEY") {
 		t.Errorf("keyPEM should be EC PRIVATE KEY; got first line: %s", firstLine(keyPEM))
 	}
-	if !strings.Contains(string(csrPEM), "CERTIFICATE REQUEST") {
-		t.Errorf("csrPEM should be CERTIFICATE REQUEST; got first line: %s", firstLine(csrPEM))
+	if !strings.Contains(string(certPEM), "BEGIN CERTIFICATE") {
+		t.Errorf("certPEM should be a CERTIFICATE; got first line: %s", firstLine(certPEM))
 	}
 }
 

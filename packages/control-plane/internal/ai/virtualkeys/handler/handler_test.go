@@ -346,14 +346,17 @@ func TestNotifyVKInvalidate_HappyPath(t *testing.T) {
 	}
 }
 
-// TestNotifyVKInvalidate_HubError logs but does not panic; the handler
-// path must not surface invalidate errors to the caller.
+// TestNotifyVKInvalidate_HubError returns the push error so the caller can
+// fail loud (HTTP 502) — a dropped VK-cache invalidation leaves the old secret
+// valid on the gateway, so it must not be swallowed.
 func TestNotifyVKInvalidate_HubError(t *testing.T) {
 	h, _, hub, _ := newHandlerWithMockDB(t)
 	hub.notifyErr = errors.New("hub unreachable")
 	c, _ := makeJSONReq(t, http.MethodGet, "/x", "")
 	hash := "k"
-	h.notifyVKInvalidate(c, &hash) // must not panic
+	if err := h.notifyVKInvalidate(c, &hash); err == nil {
+		t.Error("notifyVKInvalidate returned nil on hub error; want propagated error")
+	}
 	if len(hub.NotifyCalls()) != 1 {
 		t.Errorf("expected 1 attempted notify; got %d", len(hub.NotifyCalls()))
 	}
@@ -681,6 +684,10 @@ func TestRejectVirtualKey_DBError(t *testing.T) {
 // response body.
 func TestRenewVirtualKey_Happy(t *testing.T) {
 	h, mock, hub, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	future := time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
 		WithArgs("vk-1", future).
@@ -703,7 +710,11 @@ func TestRenewVirtualKey_Happy(t *testing.T) {
 
 // TestRenewVirtualKey_BindError covers the bad-JSON 400.
 func TestRenewVirtualKey_BindError(t *testing.T) {
-	h, _, _, _ := newHandlerWithMockDB(t)
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{nope`)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")
@@ -718,7 +729,11 @@ func TestRenewVirtualKey_BindError(t *testing.T) {
 
 // TestRenewVirtualKey_MissingExpiresAt covers the required-field 400.
 func TestRenewVirtualKey_MissingExpiresAt(t *testing.T) {
-	h, _, _, _ := newHandlerWithMockDB(t)
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{}`)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")
@@ -736,7 +751,11 @@ func TestRenewVirtualKey_MissingExpiresAt(t *testing.T) {
 
 // TestRenewVirtualKey_TooFar covers the 3-month-ceiling 400.
 func TestRenewVirtualKey_TooFar(t *testing.T) {
-	h, _, _, _ := newHandlerWithMockDB(t)
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	far := time.Now().UTC().AddDate(1, 0, 0)
 	body := `{"expiresAt":"` + far.Format(time.RFC3339) + `"}`
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", body)
@@ -755,7 +774,11 @@ func TestRenewVirtualKey_TooFar(t *testing.T) {
 
 // TestRenewVirtualKey_PastDate covers the past-date 400.
 func TestRenewVirtualKey_PastDate(t *testing.T) {
-	h, _, _, _ := newHandlerWithMockDB(t)
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	past := time.Now().UTC().Add(-24 * time.Hour)
 	body := `{"expiresAt":"` + past.Format(time.RFC3339) + `"}`
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", body)
@@ -775,6 +798,10 @@ func TestRenewVirtualKey_PastDate(t *testing.T) {
 // TestRenewVirtualKey_NotFound covers pgx.ErrNoRows → 404.
 func TestRenewVirtualKey_NotFound(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	future := time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
 		WithArgs("missing", future).
@@ -796,6 +823,10 @@ func TestRenewVirtualKey_NotFound(t *testing.T) {
 // TestRenewVirtualKey_DBError covers the generic-error → 500 path.
 func TestRenewVirtualKey_DBError(t *testing.T) {
 	h, mock, hub, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	future := time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
 		WithArgs("vk-1", future).
@@ -823,6 +854,10 @@ func TestRenewVirtualKey_NilHub(t *testing.T) {
 		t.Fatalf("pgxmock: %v", err)
 	}
 	t.Cleanup(mock.Close)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	future := time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
 		WithArgs("vk-1", future).
@@ -849,6 +884,10 @@ func TestRenewVirtualKey_NilHub(t *testing.T) {
 // + ai-gateway invalidate.
 func TestRevokeVirtualKey_Happy(t *testing.T) {
 	h, mock, hub, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	mock.ExpectExec(`UPDATE "VirtualKey"\s+SET "vkStatus" = 'revoked'`).
 		WithArgs("vk-1").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -870,6 +909,10 @@ func TestRevokeVirtualKey_Happy(t *testing.T) {
 // TestRevokeVirtualKey_NotFound covers pgx.ErrNoRows → 404.
 func TestRevokeVirtualKey_NotFound(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
 		WithArgs("missing").
 		WillReturnError(pgx.ErrNoRows)
@@ -889,6 +932,10 @@ func TestRevokeVirtualKey_NotFound(t *testing.T) {
 // TestRevokeVirtualKey_DBError covers the generic-error → 500 path.
 func TestRevokeVirtualKey_DBError(t *testing.T) {
 	h, mock, hub, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
 		WithArgs("vk-1").
 		WillReturnError(errors.New("boom"))
@@ -914,6 +961,10 @@ func TestRevokeVirtualKey_NilHub(t *testing.T) {
 		t.Fatalf("pgxmock: %v", err)
 	}
 	t.Cleanup(mock.Close)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "active", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
 		WithArgs("vk-1").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))

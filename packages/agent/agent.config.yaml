@@ -1,5 +1,6 @@
 # Nexus Agent - production config template.
-# Every field in internal/config/config.go.AgentConfig appears here.
+# Covers the COMMON fields of internal/sync/schema/config.go.AgentConfig;
+# the full field set lives in internal/sync/schema/config.go.
 # Only env override applied inside Load is LOG_LEVEL (all other
 # settings come from YAML + Hub-pushed shadow config at runtime).
 
@@ -11,6 +12,17 @@ log:
 hubURL: ""       # e.g. wss://hub.example.com/ws
 hubHTTPURL: ""   # e.g. https://hub.example.com
 hubCACertFile: "" # optional bootstrap CA for Hub enrollment (falls back to caCertFile)
+
+# Control Plane base URL — serves the OAuth callback for browser-based
+# enrollment and returns the enrollment JWT.
+# cpURL: "https://nexus.example.com"
+
+# Which FlowResult events are uploaded to Hub. Default "processed".
+# trafficUploadLevel: processed
+
+# Whether the agent captures + stores request/response bodies locally.
+# Default true.
+# localBodyCapture: true
 
 # Device identity / mTLS materials. Paths must be readable by the
 # agent user.
@@ -29,7 +41,6 @@ heartbeatIntervalSec: 60
 auditDrainIntervalSec: 30
 auditBatchSize: 200
 auditRetentionDays: 30
-configRefreshSec: 300
 
 # Policy engine default action (overridden by Hub-pushed shadow config).
 # The retired policy_rules shadow key was deleted in PR-0 with no live

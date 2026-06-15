@@ -76,8 +76,8 @@ func (e *IdentityEnricher) Interval() time.Duration { return e.interval }
 // double-counts the gap — OFFSET 500 after processing the first 500
 // skips ANOTHER 500 rows that should be handled. The bug only
 // surfaces with large backlogs (real-world cron pending stays under
-// 500 so batch 1 sweeps everything); it was caught by a 10K backfill
-// on prod-20260515-identity-fix. Loop exits when SELECT returns
+// 500 so batch 1 sweeps everything); it was caught by a 10K backfill.
+// Loop exits when SELECT returns
 // fewer rows than batch size (terminal short read = nothing left to
 // page through).
 //

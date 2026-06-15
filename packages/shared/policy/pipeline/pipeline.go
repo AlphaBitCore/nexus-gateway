@@ -9,8 +9,19 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
+
+// textRedetector is the optional hook capability behind the storage-time
+// redaction retry. A hook that produces byte-addressed redact spans from
+// compiled patterns (pii-detector) implements it so the pipeline can
+// export pattern re-scanning to the audit writers without exposing the
+// patterns themselves. Hooks whose spans come from elsewhere (remote AI
+// guard suggestions) cannot re-detect and simply do not implement it.
+type textRedetector interface {
+	RedetectText(text string, ruleIDs []string) []redact.Match
+}
 
 // applyModifiedContentToNormalized walks the first text fragments of the
 // payload and replaces them with the hook-produced modified text, in order.
@@ -137,8 +148,39 @@ func (p *Pipeline) Execute(ctx context.Context, input *core.HookInput) *core.Com
 	}
 
 	merged := p.mergeResults(results)
+	// Export the executed hooks' pattern re-scanning capability alongside
+	// the spans: the audit writers run at a point where the hook instances
+	// (and their compiled patterns) are out of reach, and storage-time
+	// redaction needs them when a span's hook-time address does not
+	// resolve on the storage-time payload.
+	if len(merged.TransformSpans) > 0 {
+		merged.Redetect = p.redetector()
+	}
 	PipelineDecisionTotal.WithLabelValues(string(merged.Decision)).Inc()
 	return merged
+}
+
+// redetector fans RedetectText out across every bound hook that supports
+// it and concatenates the matches. Returns nil when no bound hook can
+// re-detect — the audit writer then degrades unresolved spans to the
+// diagnosed drop placeholder.
+func (p *Pipeline) redetector() redact.Redetector {
+	var capable []textRedetector
+	for i := range p.hooks {
+		if r, ok := p.hooks[i].hook.(textRedetector); ok {
+			capable = append(capable, r)
+		}
+	}
+	if len(capable) == 0 {
+		return nil
+	}
+	return func(text string, ruleIDs []string) []redact.Match {
+		var out []redact.Match
+		for _, r := range capable {
+			out = append(out, r.RedetectText(text, ruleIDs)...)
+		}
+		return out
+	}
 }
 
 // executeParallel runs all hooks concurrently and collects results.
@@ -324,15 +366,30 @@ func (p *Pipeline) executeOneHook(ctx context.Context, bh *boundHook, input *cor
 			Error:            err.Error(),
 		}
 
+		// Fail-posture on hook ERROR / TIMEOUT / PANIC is a single documented
+		// decision: AVAILABILITY-FIRST (fail-open) by default. A hook that
+		// errors, times out, or panics yields APPROVE so one broken hook
+		// cannot take the gateway's traffic path offline (a fail-closed
+		// default would turn any hook bug into a full outage / 500-storm).
+		// The strict posture is opt-in per hook via FailBehavior=="fail-closed":
+		// security-critical hooks (block-on-PII, block-on-secret) that MUST NOT
+		// let traffic through on failure should be seeded fail-closed in their
+		// HookConfig so an error rejects rather than approves. This mirrors the
+		// per-hook graceful-degradation posture in resolve()/NewRulePackEngine:
+		// one bad rule degrades to "that rule off", not "all compliance off".
 		if bh.config.FailBehavior == "fail-closed" {
 			hr.Decision = core.RejectHard
 			hr.Reason = fmt.Sprintf("hook error (fail-closed): %v", err)
 			hr.ReasonCode = "HOOK_ERROR_FAIL_CLOSED"
 		} else {
-			// Default: fail-open
+			// Default: fail-open (availability-first; see comment above).
+			// A sustained nonzero rate on this counter means a hook is silently
+			// degraded — the traffic path is unprotected by that hook while the
+			// gateway keeps serving. Operators alert on hook_fail_open_total.
 			hr.Decision = core.Approve
 			hr.Reason = fmt.Sprintf("hook error (fail-open): %v", err)
 			hr.ReasonCode = "HOOK_ERROR_FAIL_OPEN"
+			HookFailOpenTotal.WithLabelValues(hookName).Inc()
 		}
 		HookDecisionTotal.WithLabelValues(hookName, string(hr.Decision)).Inc()
 		return hr

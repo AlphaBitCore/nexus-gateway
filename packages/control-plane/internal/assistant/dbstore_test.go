@@ -67,6 +67,20 @@ var _ spillstore.SpillStore = (*fakeSpill)(nil)
 // per-user isolation guarantee (I3): a store bound to "alice" can only ever read or
 // write alice's rows, and the transcript content is reachable only through that row.
 
+// expectChatChainAppend queues the trusted-audit chain append every
+// dbStore.Save / Delete performs: the head read (empty chain here) plus the
+// chain-entry insert at seq 1. Tests that assert specific entry fields (kind /
+// origin / digest) expect the insert themselves instead.
+func expectChatChainAppend(mock pgxmock.PgxPoolIface, sessionID, userID string) {
+	mock.ExpectQuery(`SELECT "seq","hash" FROM "AssistantChatEvent"`).
+		WithArgs(sessionID, userID).
+		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO "AssistantChatEvent"`).
+		WithArgs(sessionID, userID, 1, pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+}
+
 func TestDBStoreSaveAndLoadRoundTrip(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {
@@ -77,9 +91,11 @@ func TestDBStoreSaveAndLoadRoundTrip(t *testing.T) {
 	s := newDBStore(context.Background(), mock, spill, "alice")
 	sess := &agent.Session{ID: "s1", Messages: []agent.Message{agent.TextMessage(agent.RoleUser, "is it healthy?")}}
 
-	// Save: content → spill, metadata + ref → DB (the ref is AnyArg JSON).
+	// Save: content → spill, chain entry → audit log, metadata + ref + head
+	// anchor → DB (the ref is AnyArg JSON; the appended entry is seq 1).
+	expectChatChainAppend(mock, "s1", "alice")
 	mock.ExpectExec(`INSERT INTO "AssistantSession"`).
-		WithArgs("s1", "alice", "is it healthy?", 1, 1, pgxmock.AnyArg()).
+		WithArgs("s1", "alice", "is it healthy?", 1, 1, pgxmock.AnyArg(), 1, pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	if err := s.Save(sess); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -90,9 +106,9 @@ func TestDBStoreSaveAndLoadRoundTrip(t *testing.T) {
 
 	// Load: read the ref from DB (scoped by userID), then fetch content from spill.
 	refJSON, _ := json.Marshal(spill.lastRef)
-	mock.ExpectQuery(`SELECT "spillRef" FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2`).
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2`).
 		WithArgs("s1", "alice").
-		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(refJSON))
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(refJSON, rowT, rowT))
 	loaded, err := s.Load("s1")
 	if err != nil || loaded.ID != "s1" || len(loaded.Messages) != 1 {
 		t.Fatalf("Load round-trip: %v %+v", err, loaded)
@@ -108,7 +124,7 @@ func TestDBStoreLoadNotFoundAndNullRef(t *testing.T) {
 	s := newDBStore(context.Background(), mock, &fakeSpill{}, "alice")
 
 	// A cross-user / missing id surfaces as not-found (no leak).
-	mock.ExpectQuery(`SELECT "spillRef" FROM "AssistantSession"`).
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession"`).
 		WithArgs("s2", "alice").
 		WillReturnError(pgx.ErrNoRows)
 	if _, err := s.Load("s2"); err == nil {
@@ -116,9 +132,9 @@ func TestDBStoreLoadNotFoundAndNullRef(t *testing.T) {
 	}
 
 	// A row that exists but has no ref yet → empty session, no spill fetch.
-	mock.ExpectQuery(`SELECT "spillRef" FROM "AssistantSession"`).
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession"`).
 		WithArgs("s3", "alice").
-		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow([]byte("null")))
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow([]byte("null"), rowT, rowT))
 	sess, err := s.Load("s3")
 	if err != nil || len(sess.Messages) != 0 {
 		t.Fatalf("null-ref session must load empty: %v %+v", err, sess)
@@ -127,9 +143,9 @@ func TestDBStoreLoadNotFoundAndNullRef(t *testing.T) {
 	// Content expired/reaped under shared spill retention (Get → ErrNotFound) while
 	// the metadata row survives → degrade to an empty session, not a hard error.
 	refGone, _ := json.Marshal(audit.SpillRef{Backend: "fake", Key: "gone:transcript"})
-	mock.ExpectQuery(`SELECT "spillRef" FROM "AssistantSession"`).
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession"`).
 		WithArgs("s4", "alice").
-		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(refGone))
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(refGone, rowT, rowT))
 	sess4, err := s.Load("s4")
 	if err != nil || len(sess4.Messages) != 0 {
 		t.Fatalf("expired content must load as empty: %v %+v", err, sess4)
@@ -147,10 +163,20 @@ func TestDBStoreSavePropagatesSpillAndDBErrors(t *testing.T) {
 		t.Fatal("Save must propagate a spill Put error")
 	}
 
-	// DB Exec failure after a successful spill Put.
+	// A chain-append failure refuses the save BEFORE the row upsert, so the
+	// session row never points at unattested content.
 	s2 := newDBStore(context.Background(), mock, &fakeSpill{}, "alice")
+	mock.ExpectQuery(`SELECT "seq","hash" FROM "AssistantChatEvent"`).
+		WithArgs("s1", "alice").WillReturnError(boom)
+	if err := s2.Save(&agent.Session{ID: "s1"}); err == nil || !errors.Is(err, boom) {
+		t.Fatalf("Save must refuse on a chain-append failure: %v", err)
+	}
+
+	// DB Exec failure after a successful spill Put + chain append.
+	s3 := newDBStore(context.Background(), mock, &fakeSpill{}, "alice")
+	expectChatChainAppend(mock, "s1", "alice")
 	mock.ExpectExec(`INSERT INTO "AssistantSession"`).WillReturnError(boom)
-	if err := s2.Save(&agent.Session{ID: "s1"}); err == nil {
+	if err := s3.Save(&agent.Session{ID: "s1"}); err == nil {
 		t.Fatal("Save must propagate a DB error")
 	}
 }
@@ -171,7 +197,7 @@ func TestDBStoreLoadPropagatesErrors(t *testing.T) {
 	ref, _ := json.Marshal(audit.SpillRef{Backend: "fake", Key: "s1:transcript"})
 	s2 := newDBStore(context.Background(), mock, &fakeSpill{getErr: boom}, "alice")
 	mock.ExpectQuery(`SELECT "spillRef"`).WithArgs("s1", "alice").
-		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(ref))
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(ref, rowT, rowT))
 	if _, err := s2.Load("s1"); err == nil {
 		t.Fatal("Load must propagate a spill Get error")
 	}
@@ -208,6 +234,15 @@ func TestDBStoreDelete(t *testing.T) {
 	mock.ExpectQuery(`DELETE FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2 RETURNING "spillRef"`).
 		WithArgs("s1", "alice").
 		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(ref))
+	// The deletion lands on the audit chain as a tombstone (kind, empty digest)
+	// — deletion evidence outlives the session row.
+	mock.ExpectQuery(`SELECT "seq","hash" FROM "AssistantChatEvent"`).
+		WithArgs("s1", "alice").
+		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO "AssistantChatEvent"`).
+		WithArgs("s1", "alice", 1, "tombstone", "web", 0, "",
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectQuery(`DELETE FROM "AssistantFile" WHERE "sessionId" = \$1 AND "userId" = \$2 RETURNING "spillRef"`).
 		WithArgs("s1", "alice").
 		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(fileRef))
@@ -230,14 +265,25 @@ func TestDBStoreDelete(t *testing.T) {
 		t.Fatal("Delete must propagate a DB error")
 	}
 
-	// A null ref deletes the row without a transcript spill call; the file-reclaim
-	// query still runs (here it returns no files).
+	// A null ref deletes the row without a transcript spill call; the tombstone
+	// is still chained and the file-reclaim query still runs (no files here).
 	mock.ExpectQuery(`DELETE FROM "AssistantSession"`).WithArgs("s4", "alice").
 		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow([]byte("null")))
+	expectChatChainAppend(mock, "s4", "alice")
 	mock.ExpectQuery(`DELETE FROM "AssistantFile" WHERE "sessionId" = \$1 AND "userId" = \$2 RETURNING "spillRef"`).
 		WithArgs("s4", "alice").WillReturnRows(pgxmock.NewRows([]string{"spillRef"}))
 	if err := s.Delete("s4"); err != nil {
 		t.Fatalf("Delete null-ref: %v", err)
+	}
+
+	// The row is gone but the tombstone append fails → the audit gap surfaces
+	// as a named error, never silently.
+	mock.ExpectQuery(`DELETE FROM "AssistantSession"`).WithArgs("s5", "alice").
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow([]byte("null")))
+	mock.ExpectQuery(`SELECT "seq","hash" FROM "AssistantChatEvent"`).
+		WithArgs("s5", "alice").WillReturnError(errors.New("chain down"))
+	if err := s.Delete("s5"); err == nil || !strings.Contains(err.Error(), "audit tombstone failed") {
+		t.Fatalf("a failed tombstone must surface the audit gap: %v", err)
 	}
 }
 
@@ -364,7 +410,7 @@ func TestDBStoreMemoryScanAndDecodeErrors(t *testing.T) {
 
 	// Load: the DB ref column is malformed JSON.
 	mock.ExpectQuery(`SELECT "spillRef"`).WithArgs("s1", "alice").
-		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow([]byte("{bad")))
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow([]byte("{bad"), rowT, rowT))
 	if _, err := store.Load("s1"); err == nil {
 		t.Fatal("Load must surface a malformed-ref decode error")
 	}
@@ -374,7 +420,7 @@ func TestDBStoreMemoryScanAndDecodeErrors(t *testing.T) {
 	store2 := newDBStore(context.Background(), mock, spill, "alice")
 	ref, _ := json.Marshal(audit.SpillRef{Backend: "fake", Key: "s1:transcript"})
 	mock.ExpectQuery(`SELECT "spillRef"`).WithArgs("s1", "alice").
-		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(ref))
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(ref, rowT, rowT))
 	if _, err := store2.Load("s1"); err == nil {
 		t.Fatal("Load must surface a malformed-transcript decode error")
 	}
@@ -400,5 +446,59 @@ func TestDBStoreMemoryScanAndDecodeErrors(t *testing.T) {
 	mock.ExpectExec(`UPDATE "AssistantMemory" SET body`).WithArgs("bob", "region", "v").WillReturnError(boom)
 	if err := mem.Update("region", "v"); err == nil {
 		t.Fatal("Update must propagate a DB Exec error")
+	}
+}
+
+// TestDBStoreRoundTripPreservesBirthplaceAndTimestamps pins the lossless
+// sync round-trip: a device-born session projected into the cloud and later
+// TestDBStoreRoundTripPreservesTimestamps: a save stamps Created/Updated; a
+// later load restores identity from the spilled full-session JSON, and a
+// pre-format spill (bare message array) falls back to the ROW's timestamps
+// instead of zero values.
+func TestDBStoreRoundTripPreservesTimestamps(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+	spill := &fakeSpill{}
+	born := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	moved := time.Date(2026, 6, 10, 9, 30, 0, 0, time.UTC)
+
+	s := newDBStore(context.Background(), mock, spill, "alice")
+	wsess := &agent.Session{ID: "w1", Env: "web",
+		Messages: []agent.Message{agent.TextMessage(agent.RoleUser, "from the web")}}
+	expectChatChainAppend(mock, "w1", "alice")
+	mock.ExpectExec(`INSERT INTO "AssistantSession"`).
+		WithArgs("w1", "alice", "from the web", 1, 1, pgxmock.AnyArg(), 1, pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	if err := s.Save(wsess); err != nil {
+		t.Fatalf("web Save: %v", err)
+	}
+	if wsess.Created.IsZero() || wsess.Updated.IsZero() {
+		t.Fatal("a web save must stamp Created/Updated")
+	}
+
+	// A pre-format spill (bare message array) falls back to the ROW's
+	// timestamps instead of zero values.
+	legacy, _ := json.Marshal([]agent.Message{agent.TextMessage(agent.RoleUser, "old format")})
+	ref, _ := spill.Put(context.Background(), bytes.NewReader(legacy), int64(len(legacy)),
+		spillstore.PutOptions{EventID: "old", Direction: "transcript"})
+	legacyRef, _ := json.Marshal(ref)
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession"`).
+		WithArgs("old", "alice").
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(legacyRef, born, moved))
+	old, err := s.Load("old")
+	if err != nil {
+		t.Fatalf("legacy Load: %v", err)
+	}
+	if len(old.Messages) != 1 {
+		t.Fatalf("legacy spill: messages must decode, got %d", len(old.Messages))
+	}
+	if !old.Created.Equal(born) || !old.Updated.Equal(moved) {
+		t.Fatalf("legacy spill must take row timestamps, got %v %v", old.Created, old.Updated)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

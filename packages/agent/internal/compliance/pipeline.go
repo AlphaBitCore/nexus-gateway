@@ -179,6 +179,7 @@ func (p *AgentPipeline) EvaluateConnection(ctx context.Context, in EvaluateConne
 		connectionStagePerHookTimeout,
 		connectionStageTotalTimeout,
 		false,
+		false, // strictFailClosed=false: agent NE proxy is in the host outbound packet path; a build error MUST stay fail-open, never refuse
 		p.logger,
 	)
 	if err != nil {

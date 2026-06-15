@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 func TestAdapter_ID(t *testing.T) {
@@ -607,56 +606,5 @@ func TestDetectResponseUsage_CompletionTokensOnly(t *testing.T) {
 	}
 	if um.CompletionTokens == nil || *um.CompletionTokens != 9 {
 		t.Errorf("CompletionTokens=%v want 9", um.CompletionTokens)
-	}
-}
-
-// Normalize: cohere advertises the openai-chat wire spec, so a body
-// shaped like an OpenAI chat completion must claim Tier-1 with
-// DetectedSpec=cohere and surface the user prompt + model.
-func TestNormalize_OpenAIChatShape(t *testing.T) {
-	body := []byte(`{
-		"model":"command-r-plus",
-		"messages":[{"role":"user","content":"hello cohere"}]
-	}`)
-	a := &Adapter{}
-	payload, err := a.Normalize(context.Background(), body, normalize.Meta{
-		AdapterType:  adapterID,
-		Direction:    normalize.DirectionRequest,
-		ContentType:  "application/json",
-		EndpointPath: "/v2/chat",
-	})
-	if err != nil {
-		t.Fatalf("Normalize err=%v", err)
-	}
-	if payload.Kind != normalize.KindAIChat {
-		t.Errorf("Kind=%v want ai-chat", payload.Kind)
-	}
-	if payload.DetectedSpec != adapterID {
-		t.Errorf("DetectedSpec=%q want %q", payload.DetectedSpec, adapterID)
-	}
-	if payload.Model != "command-r-plus" {
-		t.Errorf("Model=%q", payload.Model)
-	}
-	if len(payload.Messages) != 1 {
-		t.Fatalf("messages=%d want 1", len(payload.Messages))
-	}
-	if payload.Messages[0].Role != normalize.RoleUser {
-		t.Errorf("role=%v want user", payload.Messages[0].Role)
-	}
-}
-
-// Normalize_NonChatBody: a body that doesn't match the openai-chat
-// shape (no `messages` array, no signature fields) must fall through
-// with an error so the coordinator advances to Tier 2 / Tier 3.
-func TestNormalize_NonChatBody(t *testing.T) {
-	body := []byte(`{"foo":"bar","count":42}`)
-	a := &Adapter{}
-	_, err := a.Normalize(context.Background(), body, normalize.Meta{
-		AdapterType: adapterID,
-		Direction:   normalize.DirectionRequest,
-		ContentType: "application/json",
-	})
-	if err == nil {
-		t.Fatal("expected error for non-chat body")
 	}
 }

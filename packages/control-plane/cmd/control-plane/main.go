@@ -138,6 +138,7 @@ func run() int {
 		RevocationService: revResult.Service,
 		AuditWriter:       auditWriter,
 		JWTVerifier:       adminJWTVerifier,
+		RedisClient:       redisClient,
 		Logger:            logger,
 	})
 	if err != nil {

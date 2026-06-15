@@ -27,18 +27,16 @@ DEFINE_GUID(NEXUS_WFP_CALLOUT_REDIRECT_V6_GUID,
     0x6F1E4D17, 0x7C19, 0x4D7B,
     0x9B, 0x4C, 0x1A, 0x5F, 0x2E, 0x2D, 0x8B, 0x02);
 
-DEFINE_GUID(NEXUS_WFP_CALLOUT_AUTH_CONNECT_V4_GUID,
-    0x6F1E4D17, 0x7C19, 0x4D7B,
-    0x9B, 0x4C, 0x1A, 0x5F, 0x2E, 0x2D, 0x8B, 0x03);
-
-DEFINE_GUID(NEXUS_WFP_CALLOUT_AUTH_CONNECT_V6_GUID,
-    0x6F1E4D17, 0x7C19, 0x4D7B,
-    0x9B, 0x4C, 0x1A, 0x5F, 0x2E, 0x2D, 0x8B, 0x04);
+// GUID suffixes ...8B03 / ...8B04 are retired: they belonged to a pair
+// of ALE_AUTH_CONNECT callouts that only ever permitted (the redirect
+// layer makes every decision), yet were registered and bound to live
+// terminating filters — kernel attack/maintenance surface plus a
+// per-connect dispatch cost for a feature that does not exist. Add
+// AUTH-layer callouts back only when admin deny rules actually ship,
+// and mint FRESH GUIDs for them.
 
 static UINT32 g_RedirectV4CalloutId = 0;
 static UINT32 g_RedirectV6CalloutId = 0;
-static UINT32 g_AuthConnectV4CalloutId = 0;
-static UINT32 g_AuthConnectV6CalloutId = 0;
 
 // Single global redirect handle (per architecture §5.1). Created at
 // DriverEntry, destroyed at Unload.
@@ -334,62 +332,6 @@ NexusConnectRedirectV6(
     classifyOut->rights    &= ~FWPS_RIGHT_ACTION_WRITE;
 }
 
-//
-// NexusAuthConnectV4 — block decisions (architecture §4). At present
-// we only block when killSwitch is OFF and an explicit "destination
-// in block list" rule fires. Since the only "block list" we wire up
-// is the destBypass = permit list, the AUTH callout's job is mostly
-// to emit a definitive permit/block audit event after the redirect
-// has been applied. Future expansion: explicit deny CIDRs.
-//
-static VOID
-NTAPI
-NexusAuthConnectV4(
-    _In_     const FWPS_INCOMING_VALUES0*       inFixedValues,
-    _In_     const FWPS_INCOMING_METADATA_VALUES0* inMetaValues,
-    _Inout_  VOID*                              layerData,
-    _In_opt_ const VOID*                        classifyContext,
-    _In_     const FWPS_FILTER1*                filter,
-    _In_     UINT64                             flowContext,
-    _Inout_  FWPS_CLASSIFY_OUT0*                classifyOut)
-{
-    UNREFERENCED_PARAMETER(layerData);
-    UNREFERENCED_PARAMETER(classifyContext);
-    UNREFERENCED_PARAMETER(filter);
-    UNREFERENCED_PARAMETER(flowContext);
-
-    classifyOut->actionType = FWP_ACTION_PERMIT;
-    classifyOut->rights    &= ~FWPS_RIGHT_ACTION_WRITE;
-
-    UNREFERENCED_PARAMETER(inFixedValues);
-    UNREFERENCED_PARAMETER(inMetaValues);
-    // Current policy model: REDIRECT layer already made the decision.
-    // AUTH layer simply permits — block rules will be added when
-    // admin denylists land (epic §4 MoSCoW Could).
-}
-
-static VOID
-NTAPI
-NexusAuthConnectV6(
-    _In_     const FWPS_INCOMING_VALUES0*       inFixedValues,
-    _In_     const FWPS_INCOMING_METADATA_VALUES0* inMetaValues,
-    _Inout_  VOID*                              layerData,
-    _In_opt_ const VOID*                        classifyContext,
-    _In_     const FWPS_FILTER1*                filter,
-    _In_     UINT64                             flowContext,
-    _Inout_  FWPS_CLASSIFY_OUT0*                classifyOut)
-{
-    UNREFERENCED_PARAMETER(inFixedValues);
-    UNREFERENCED_PARAMETER(inMetaValues);
-    UNREFERENCED_PARAMETER(layerData);
-    UNREFERENCED_PARAMETER(classifyContext);
-    UNREFERENCED_PARAMETER(filter);
-    UNREFERENCED_PARAMETER(flowContext);
-
-    classifyOut->actionType = FWP_ACTION_PERMIT;
-    classifyOut->rights    &= ~FWPS_RIGHT_ACTION_WRITE;
-}
-
 static NTSTATUS
 NTAPI
 NexusCalloutNotify(
@@ -401,22 +343,6 @@ NexusCalloutNotify(
     UNREFERENCED_PARAMETER(filterKey);
     UNREFERENCED_PARAMETER(filter);
     return STATUS_SUCCESS;
-}
-
-static VOID
-NTAPI
-NexusCalloutFlowDelete(
-    _In_ UINT16 layerId,
-    _In_ UINT32 calloutId,
-    _In_ UINT64 flowContext)
-{
-    UNREFERENCED_PARAMETER(layerId);
-    UNREFERENCED_PARAMETER(calloutId);
-    // flowContext was set to (srcPort | (isUDP<<31)) at flow create
-    // by the redirect callout (if we extend it to set flow context).
-    // For v1 we evict via NexusFlowTableSweep on a timer; this hook
-    // is here as a placeholder.
-    UNREFERENCED_PARAMETER(flowContext);
 }
 
 static NTSTATUS
@@ -437,7 +363,9 @@ NexusRegisterOneCallout(
     sCallout.calloutKey       = *CalloutKey;
     sCallout.classifyFn       = ClassifyFn;
     sCallout.notifyFn         = NexusCalloutNotify;
-    sCallout.flowDeleteFn     = NexusCalloutFlowDelete;
+    // flowDeleteFn stays NULL: it only fires for callouts that
+    // associate flow contexts, which the redirect callouts do not —
+    // flow-table eviction is consume-on-lookup plus the TTL sweep.
 
     status = FwpsCalloutRegister2(DeviceObject, &sCallout, OutCalloutId);
     if (!NT_SUCCESS(status)) {
@@ -465,13 +393,16 @@ NTSTATUS
 NexusWfpRegisterAllCallouts(_In_ PDEVICE_OBJECT DeviceObject)
 {
     NTSTATUS status;
-    HANDLE   engineHandle;
 
-    FWPM_SESSION0 session = {0};
-    status = FwpmEngineOpen0(NULL, RPC_C_AUTHN_WINNT, NULL, &session,
-                             &engineHandle);
-    if (!NT_SUCCESS(status)) {
-        return status;
+    // The FWPM callout management objects go onto the same dynamic
+    // session as the sublayer and filters (Filter.c), so all of them
+    // auto-delete from the BFE store when that engine closes. A
+    // non-dynamic session here would persist the callout objects past
+    // unload, and the next load's FwpmCalloutAdd0 would fail with
+    // FWP_E_ALREADY_EXISTS — driver unloadable-until-reboot.
+    HANDLE engineHandle = NexusWfpFilterEngineHandle();
+    if (engineHandle == NULL) {
+        return STATUS_INVALID_HANDLE;
     }
 
     status = NexusRegisterOneCallout(
@@ -492,43 +423,17 @@ NexusWfpRegisterAllCallouts(_In_ PDEVICE_OBJECT DeviceObject)
         NexusConnectRedirectV6,
         engineHandle,
         &g_RedirectV6CalloutId);
-    if (!NT_SUCCESS(status)) { goto cleanup; }
-
-    status = NexusRegisterOneCallout(
-        DeviceObject,
-        &NEXUS_WFP_CALLOUT_AUTH_CONNECT_V4_GUID,
-        &FWPM_LAYER_ALE_AUTH_CONNECT_V4,
-        L"NexusAuthConnectV4",
-        NexusAuthConnectV4,
-        engineHandle,
-        &g_AuthConnectV4CalloutId);
-    if (!NT_SUCCESS(status)) { goto cleanup; }
-
-    status = NexusRegisterOneCallout(
-        DeviceObject,
-        &NEXUS_WFP_CALLOUT_AUTH_CONNECT_V6_GUID,
-        &FWPM_LAYER_ALE_AUTH_CONNECT_V6,
-        L"NexusAuthConnectV6",
-        NexusAuthConnectV6,
-        engineHandle,
-        &g_AuthConnectV6CalloutId);
 
 cleanup:
-    FwpmEngineClose0(engineHandle);
+    // The engine handle belongs to Filter.c — partially-registered
+    // callouts are unwound by the caller via UnregisterAllCallouts +
+    // FilterEngineClose (the dynamic session deletes the FWPM halves).
     return status;
 }
 
 VOID
 NexusWfpUnregisterAllCallouts(VOID)
 {
-    if (g_AuthConnectV6CalloutId) {
-        FwpsCalloutUnregisterByKey0(&NEXUS_WFP_CALLOUT_AUTH_CONNECT_V6_GUID);
-        g_AuthConnectV6CalloutId = 0;
-    }
-    if (g_AuthConnectV4CalloutId) {
-        FwpsCalloutUnregisterByKey0(&NEXUS_WFP_CALLOUT_AUTH_CONNECT_V4_GUID);
-        g_AuthConnectV4CalloutId = 0;
-    }
     if (g_RedirectV6CalloutId) {
         FwpsCalloutUnregisterByKey0(&NEXUS_WFP_CALLOUT_REDIRECT_V6_GUID);
         g_RedirectV6CalloutId = 0;

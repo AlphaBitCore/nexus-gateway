@@ -8,10 +8,9 @@ import (
 
 // dispatchStreamMode is the single switch site that routes an SSE
 // request to the correct streaming pipeline based on the admin
-// streampolicy.Mode. Extracted from handleStreamWithSubscription so
-// the dispatch contract can be unit-tested in isolation (the host
-// handler is a 400-line function with too many other dependencies to
-// reach for a small switch-table assertion).
+// streampolicy.Mode. Kept separate from the relay stage
+// (stream_relay.go) so the dispatch contract can be unit-tested in
+// isolation with a small switch-table assertion.
 //
 // Three-service alignment (#115/R2 follow-up): the `default` arm
 // MUST fall through to passthrough, matching the same default in

@@ -206,7 +206,7 @@ func TestInitAuditWriter_nilSpill(t *testing.T) {
 	pcs := payloadcapture.NewStore(payloadcapture.DefaultConfig())
 	// Pass nil MQ producer — AuditWriter does not require a live producer
 	// to construct; it degrades gracefully.
-	w, normReg, err := InitAuditWriter(nil, spillfactory.FactoryConfig{Enabled: false}, pcs, opsReg, discardLogger())
+	w, normReg, err := InitAuditWriter(nil, spillfactory.FactoryConfig{Enabled: false}, config.AuditConfig{}, pcs, opsReg, discardLogger())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

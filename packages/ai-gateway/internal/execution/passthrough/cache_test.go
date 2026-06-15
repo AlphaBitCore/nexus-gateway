@@ -103,6 +103,43 @@ func TestSnapshot_3TierMerge_FlagsOrAcrossTiers(t *testing.T) {
 	}
 }
 
+// TestSnapshot_AdditiveMerge_SpecificFalseCannotVetoGlobalTrue is the
+// F-0137 invariant: merge is strictly additive (union of bypasses). A more
+// specific tier setting a bypass flag to false MUST NOT subtract a bypass a
+// broader tier turned on. A global BypassCache=true plus a provider tier
+// that leaves BypassCache=false still yields BypassCache=true for that
+// provider — passthrough is a safety release valve and a narrower scope may
+// never silently re-arm a layer an operator deliberately bypassed
+// fleet-wide.
+func TestSnapshot_AdditiveMerge_SpecificFalseCannotVetoGlobalTrue(t *testing.T) {
+	s := &Snapshot{
+		Global: TierEntry{Enabled: true, BypassCache: true, ExpiresAt: futureExpiry(3 * time.Hour)},
+		Providers: map[string]TierEntry{
+			// Provider tier is active (Enabled+future expiry) but deliberately
+			// leaves BypassCache=false. The global true must still win.
+			"p-1": {Enabled: true, BypassCache: false, ExpiresAt: futureExpiry(1 * time.Hour)},
+		},
+	}
+	cfg := s.Effective("p-1", "")
+	if cfg == nil {
+		t.Fatalf("additive merge: expected non-nil config (global tier active)")
+	}
+	if !cfg.BypassCache {
+		t.Errorf("BypassCache should stay true: provider tier false cannot veto a global true (got %#v)", cfg)
+	}
+	// The flag set surfaced to audit must reflect the union, i.e. bypassCache.
+	flags := cfg.Flags()
+	found := false
+	for _, f := range flags {
+		if f == "bypassCache" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Flags() = %v, want it to contain bypassCache (additive union)", flags)
+	}
+}
+
 func TestSnapshot_ExpiredTier_FilteredOutAtLookup(t *testing.T) {
 	s := &Snapshot{
 		Global: TierEntry{Enabled: true, BypassHooks: true, ExpiresAt: pastExpiry(1 * time.Hour)},

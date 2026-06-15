@@ -564,7 +564,7 @@ func TestRewriteResponseBody_Unsupported(t *testing.T) {
 // Normalize (Tier-1 spec dispatch)
 
 // TestNormalize_RequestChatShape pins that an openai-chat-shaped body
-// claims Tier 1 via the openai-chat spec and stamps DetectedSpec to
+// claims Tier 1 via the shared OpenAI Chat codec and stamps DetectedSpec to
 // the adapter ID directly (no "pattern:" prefix).
 func TestNormalize_RequestChatShape(t *testing.T) {
 	body := []byte(`{

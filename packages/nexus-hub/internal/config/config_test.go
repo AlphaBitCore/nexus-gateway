@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ import (
 //
 // Required fields are documented in HubConfig.validate; the set is:
 //
-//	PublicURL, Database.URL, Auth.InternalServiceToken,
+//	PublicURL, Database.URL, Auth.InternalServiceToken, Auth.HubConfigToken,
 //	Hub.ID, Redis.Addrs, MQ.Driver, (MQ.NATS.URL when Driver=="nats").
 //
 // Hub.ID is intentionally NOT stamped here — it auto-defaults via
@@ -23,11 +24,89 @@ import (
 func setRequiredEnvBaseline(t *testing.T) {
 	t.Helper()
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	// SEC-W2-02 FIX-5/C: HubConfigToken is now a required env input.
+	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
+	// SEC-W2-03 Layer C: CREDENTIAL_ENCRYPTION_KEY is now a required validate()
+	// input (custody-resolved; encrypts alert-channel secrets at rest). Under the
+	// default noop provider this plaintext passes through.
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "test-credential-master-key")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("NEXUS_HUB_PUBLIC_URL", "http://localhost:3060")
 	t.Setenv("REDIS_ADDRS", "localhost:6379")
 	t.Setenv("MQ_DRIVER", "nats")
 	t.Setenv("NATS_URL", "nats://localhost:4222")
+}
+
+// TestLoad_SecretCustody_CommandUnwrapsCredKey pins the SEC-W2-03 Layer C wiring
+// for Hub: with secretCustody.provider="command", Load() resolves the shared
+// crown jewel CREDENTIAL_ENCRYPTION_KEY as a base64 wrapped blob and unwraps it
+// once at boot into Auth.CredentialMasterKey. `cat {file}` is an identity
+// decrypt, so a base64-encoded plaintext round-trips — proving Hub routes the
+// key through custody rather than reading it raw at the alert cipher, so a
+// wrapped env var no longer makes Hub read a blob as 64-hex and fail to boot.
+func TestLoad_SecretCustody_CommandUnwrapsCredKey(t *testing.T) {
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte("unwrapped-cred-key")))
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(p, []byte("secretCustody:\n  provider: command\n  command: [\"cat\", \"{file}\"]\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.CredentialMasterKey != "unwrapped-cred-key" {
+		t.Errorf("CredentialMasterKey = %q, want the unwrapped plaintext", cfg.Auth.CredentialMasterKey)
+	}
+}
+
+// TestLoad_SecretCustody_NoopRawPassthrough proves the default provider returns
+// the raw env value byte-identically (dev path) — non-breaking when unconfigured.
+func TestLoad_SecretCustody_NoopRawPassthrough(t *testing.T) {
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "raw-plain-key")
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	_ = os.WriteFile(p, []byte("{}\n"), 0o644)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.CredentialMasterKey != "raw-plain-key" {
+		t.Errorf("CredentialMasterKey = %q, want raw env passthrough", cfg.Auth.CredentialMasterKey)
+	}
+}
+
+// TestLoad_SecretCustody_CommandFailClosed: under provider=command a crown jewel
+// that is not a valid wrapped blob aborts boot rather than feeding ciphertext on
+// to the alert cipher.
+func TestLoad_SecretCustody_CommandFailClosed(t *testing.T) {
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "not-valid-base64!!")
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	_ = os.WriteFile(p, []byte("secretCustody:\n  provider: command\n  command: [\"cat\", \"{file}\"]\n"), 0o644)
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected fail-closed error for an unwrappable crown jewel under provider=command")
+	}
+}
+
+// TestLoad_SecretCustody_UnknownProviderFailsClosed: an unrecognised provider is
+// a typo that must abort the boot, never silently fall back to raw-env (which
+// would defeat custody). NewCustody rejects it inside resolveCustodySecrets.
+func TestLoad_SecretCustody_UnknownProviderFailsClosed(t *testing.T) {
+	setRequiredEnvBaseline(t)
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	_ = os.WriteFile(p, []byte("secretCustody:\n  provider: bogus\n"), 0o644)
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected fail-closed error for an unknown secretCustody provider")
+	}
 }
 
 func TestLoadValidYAML(t *testing.T) {
@@ -122,6 +201,64 @@ database:
 	}
 }
 
+func TestServerBindAddr(t *testing.T) {
+	// Empty Host → all interfaces (":port"), the historical default that
+	// container / Kubernetes / direct deployments rely on.
+	if got := (ServerConfig{Port: 3060}).BindAddr(); got != ":3060" {
+		t.Errorf("empty Host BindAddr = %q, want \":3060\"", got)
+	}
+	// Explicit loopback (appliance) → host:port.
+	if got := (ServerConfig{Host: "127.0.0.1", Port: 3060}).BindAddr(); got != "127.0.0.1:3060" {
+		t.Errorf("loopback BindAddr = %q, want \"127.0.0.1:3060\"", got)
+	}
+}
+
+func TestEnvVarOverride_Host(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	_ = os.WriteFile(p, []byte("database:\n  url: \"postgres://test@localhost/test\"\n"), 0644)
+
+	setRequiredEnvBaseline(t)
+	t.Setenv("NEXUS_HUB_HOST", "127.0.0.1")
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Server.Host != "127.0.0.1" {
+		t.Errorf("Server.Host = %q, want 127.0.0.1 (from NEXUS_HUB_HOST)", cfg.Server.Host)
+	}
+}
+
+// TestDevModeDefaultsFalseAndEnvEnables covers F-0256 at the config layer: the
+// Hub WebSocket dev-mode (which relaxes the origin allowlist to accept
+// localhost) must default to false so production never auto-allows localhost,
+// and must be enabled only via an explicit NEXUS_HUB_DEV_MODE=true.
+func TestDevModeDefaultsFalseAndEnvEnables(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	_ = os.WriteFile(p, []byte("database:\n  url: \"postgres://test@localhost/test\"\n"), 0644)
+
+	setRequiredEnvBaseline(t)
+	// No NEXUS_HUB_DEV_MODE set → default must be false (production-safe).
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hub.DevMode {
+		t.Error("Hub.DevMode must default to false (production-safe origin policy)")
+	}
+
+	t.Setenv("NEXUS_HUB_DEV_MODE", "true")
+	cfg, err = Load(p)
+	if err != nil {
+		t.Fatalf("Load with NEXUS_HUB_DEV_MODE=true: %v", err)
+	}
+	if !cfg.Hub.DevMode {
+		t.Error("NEXUS_HUB_DEV_MODE=true must enable Hub.DevMode")
+	}
+}
+
 func TestMissingDatabaseURL(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.yaml")
@@ -157,6 +294,52 @@ database:
 	_, err := Load(p)
 	if err == nil {
 		t.Fatal("expected error for missing INTERNAL_SERVICE_TOKEN")
+	}
+}
+
+// TestMissingHubConfigToken pins the SEC-W2-02 FIX-5/C fail-closed boot guard:
+// without HUB_CONFIG_TOKEN, Hub must refuse to start rather than fall back to
+// ServiceAuth("") (which would accept an empty bearer and open the config-write
+// surface). The error must name the missing field.
+func TestMissingHubConfigToken(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	_ = os.WriteFile(p, []byte(`
+database:
+  url: "postgres://localhost/test"
+`), 0644)
+	setRequiredEnvBaseline(t)
+	t.Setenv("HUB_CONFIG_TOKEN", "")
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for missing HUB_CONFIG_TOKEN")
+	}
+	if !strings.Contains(err.Error(), "hubConfigToken") {
+		t.Fatalf("error should name hubConfigToken; got %q", err.Error())
+	}
+}
+
+// TestMissingCredentialMasterKey is the SEC-W2-03 Layer C regression: Hub's
+// validate() now fail-closes when CREDENTIAL_ENCRYPTION_KEY is unset (it always
+// wires the alert cipher), gating it at config load for symmetry with CP + ai-gw
+// rather than only at InitAlerts.
+func TestMissingCredentialMasterKey(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	_ = os.WriteFile(p, []byte(`
+database:
+  url: "postgres://localhost/test"
+`), 0644)
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "")
+
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for missing CREDENTIAL_ENCRYPTION_KEY")
+	}
+	if !strings.Contains(err.Error(), "credentialMasterKey") {
+		t.Fatalf("error should name credentialMasterKey; got %q", err.Error())
 	}
 }
 
@@ -357,6 +540,7 @@ func TestEnvOverrides_AllStringFields(t *testing.T) {
 	// redisfactory.LoadEnv at wiring time, but the presence-check fires here.
 	setRequiredEnvBaseline(t)
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "the-token")
+	t.Setenv("HUB_CONFIG_TOKEN", "the-config-token")
 	t.Setenv("DATABASE_URL", "postgres://envhost:5432/envdb")
 	t.Setenv("NEXUS_HUB_PUBLIC_URL", "https://hub.env.example")
 	t.Setenv("MQ_DRIVER", "nats-env")
@@ -396,6 +580,7 @@ func TestEnvOverrides_AllStringFields(t *testing.T) {
 		{"MQ.Driver", cfg.MQ.Driver, "nats-env"},
 		{"MQ.NATS.URL", cfg.MQ.NATS.URL, "nats://envhost:4222"},
 		{"Auth.InternalServiceToken", cfg.Auth.InternalServiceToken, "the-token"},
+		{"Auth.HubConfigToken", cfg.Auth.HubConfigToken, "the-config-token"},
 		{"AuthServer.JWKSURL", cfg.AuthServer.JWKSURL, "https://cp.env/.well-known/jwks.json"},
 		{"AuthServer.Issuer", cfg.AuthServer.Issuer, "https://cp.env/"},
 		{"AuthServer.URL", cfg.AuthServer.URL, "https://cp.env"},

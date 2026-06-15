@@ -14,10 +14,8 @@ import (
 	sharedopsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
-	normalizecodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
 	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
 )
 
 // InitDiagSink wires the Hub SlogSink so Hub's own ERROR+ slog records are
@@ -149,18 +147,12 @@ func InitSelfInstrumentation(
 
 // InitNormalizeRegistry builds the shared/normalize registry for agent-audit
 // traffic. Projects agent-uploaded request/response bytes into the canonical
-// NormalizedPayload shape before publishing to MQ.
-func InitNormalizeRegistry(buildVersion string) normalizecore.AuditFn {
-	agentNormRegistry := normalizecore.NewRegistry()
-	normalizecodecs.RegisterDefaultAIBuiltins(agentNormRegistry)
-	// Tier 1: per-host adapter Normalizers (chatgpt-web / claude-web /
-	// gemini-web / openai-compat / ...). Skips adapter IDs already covered by
-	// RegisterDefaultAIBuiltins (anthropic, gemini).
-	adapters.RegisterTier1AdapterNormalizers(agentNormRegistry)
-	// Tier 2: pattern-based extraction fallback.
-	extract.WireTier2(agentNormRegistry)
-	agentNormRegistry.Freeze()
-
+// NormalizedPayload shape before publishing to MQ. The registry is the
+// canonical normalize.BuildRegistry assembly — Tier 1 AI builtins +
+// per-host adapters + Tier 1.5 sniffers + Tier 2 pattern probe + Tier 3
+// verbatim fallback, frozen — so Hub-side agent-audit rows normalize
+// identically to every other data-plane service.
+func InitNormalizeRegistry() normalizecore.AuditFn {
 	agentNormMetrics := normalizecore.MustRegisterPrometheus(prometheus.DefaultRegisterer, "nexus_hub_agent")
-	return normalizecore.BuildAuditFn(agentNormRegistry, agentNormMetrics)
+	return normalizecore.BuildAuditFn(normalize.BuildRegistry(), agentNormMetrics)
 }

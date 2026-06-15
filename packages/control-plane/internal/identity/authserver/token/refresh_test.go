@@ -39,8 +39,8 @@ func seedRefreshFixtures(t *testing.T, ctx context.Context) (userID, clientID st
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM "NexusUser" WHERE id=$1`, userID) })
 
 	_, err = pool.Exec(ctx,
-		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","requirePkce","updatedAt")
-		 VALUES ($1,$2,'public',$3,$4,TRUE,NOW())`,
+		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","updatedAt")
+		 VALUES ($1,$2,'public',$3,$4,NOW())`,
 		clientID, "Refresh Client",
 		[]string{"http://127.0.0.1:*/callback"}, []string{"traffic:write"},
 	)

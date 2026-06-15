@@ -90,9 +90,13 @@ func (store *Store) GetAdminAPIKey(ctx context.Context, id string) (*AdminAPIKey
 
 // CreateAdminAPIKeyParams holds fields for creating an API key.
 type CreateAdminAPIKeyParams struct {
-	Name        string
-	KeyHash     string
-	KeyPrefix   string
+	Name      string
+	KeyHash   string
+	KeyPrefix string
+	// KeyVersion is the HMAC keyring version that produced KeyHash —
+	// auth.CurrentKeyVersion() at issue time. Stamped so the
+	// key_version column accurately reports which version sealed each key.
+	KeyVersion  string
 	CreatedBy   string
 	ExpiresAt   *time.Time
 	OwnerUserID *string
@@ -101,10 +105,10 @@ type CreateAdminAPIKeyParams struct {
 // CreateAdminAPIKey inserts a new API key.
 func (store *Store) CreateAdminAPIKey(ctx context.Context, p CreateAdminAPIKeyParams) (*AdminAPIKey, error) {
 	row := store.pool.QueryRow(ctx, fmt.Sprintf(`
-		INSERT INTO "AdminApiKey" (id, name, "keyHash", "keyPrefix", "createdBy", "expiresAt", "ownerUserId", "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW(), NOW())
+		INSERT INTO "AdminApiKey" (id, name, "keyHash", "key_version", "keyPrefix", "createdBy", "expiresAt", "ownerUserId", "createdAt", "updatedAt")
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		RETURNING %s
-	`, apiKeyListColumns), p.Name, p.KeyHash, p.KeyPrefix, p.CreatedBy, p.ExpiresAt, p.OwnerUserID)
+	`, apiKeyListColumns), p.Name, p.KeyHash, p.KeyVersion, p.KeyPrefix, p.CreatedBy, p.ExpiresAt, p.OwnerUserID)
 
 	var k AdminAPIKey
 	if err := scanAdminAPIKey(row, &k); err != nil {

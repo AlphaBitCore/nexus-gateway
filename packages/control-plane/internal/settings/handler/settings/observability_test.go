@@ -41,6 +41,11 @@ func (f *fanoutSpy) InvalidateConfig(_ context.Context, thingType, configKey str
 	f.calls = append(f.calls, fanoutCall{ThingType: thingType, ConfigKey: configKey})
 }
 
+func (f *fanoutSpy) InvalidateConfigE(ctx context.Context, thingType, configKey string) error {
+	f.InvalidateConfig(ctx, thingType, configKey)
+	return nil
+}
+
 func (f *fanoutSpy) snapshot() []fanoutCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()

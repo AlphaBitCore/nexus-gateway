@@ -98,8 +98,11 @@ func (t *Transport) BuildURL(target provcore.CallTarget, endpoint typology.WireS
 	}
 }
 
-// ApplyAuth is intentionally a no-op — SigV4 must be applied after
-// the request body is finalised. We sign inside Do instead.
+// ApplyAuth validates that the SigV4 credentials are present and sets the
+// content-type / Accept headers. The actual SigV4 signature is applied in
+// Do (after the body is finalised); Do reads the credentials straight from
+// the CallTarget it now receives, so ApplyAuth no longer smuggles them
+// through internal request headers.
 func (t *Transport) ApplyAuth(r *http.Request, target provcore.CallTarget) error {
 	if target.Get("aws.accessKey") == "" || target.Get("aws.secretKey") == "" {
 		return fmt.Errorf("bedrock: missing aws.accessKey / aws.secretKey")
@@ -120,27 +123,21 @@ func (t *Transport) ApplyAuth(r *http.Request, target provcore.CallTarget) error
 			r.Header.Set("Accept", "application/json")
 		}
 	}
-	r.Header.Set("X-Nexus-Bedrock-AccessKey", target.Get("aws.accessKey"))
-	r.Header.Set("X-Nexus-Bedrock-SecretKey", target.Get("aws.secretKey"))
-	r.Header.Set("X-Nexus-Bedrock-Region", target.Get("aws.region"))
-	if st := target.Get("aws.sessionToken"); st != "" {
-		r.Header.Set("X-Nexus-Bedrock-SessionToken", st)
-	}
 	return nil
 }
 
-// Do signs the request with SigV4 and sends it via the shared client.
-func (t *Transport) Do(ctx context.Context, r *http.Request) (*http.Response, error) {
-	accessKey := r.Header.Get("X-Nexus-Bedrock-AccessKey")
-	secretKey := r.Header.Get("X-Nexus-Bedrock-SecretKey")
-	region := r.Header.Get("X-Nexus-Bedrock-Region")
-	sessionToken := r.Header.Get("X-Nexus-Bedrock-SessionToken")
-	r.Header.Del("X-Nexus-Bedrock-AccessKey")
-	r.Header.Del("X-Nexus-Bedrock-SecretKey")
-	r.Header.Del("X-Nexus-Bedrock-Region")
-	r.Header.Del("X-Nexus-Bedrock-SessionToken")
+// Do signs the request with SigV4 and sends it via the shared client. The
+// AWS credentials come from the CallTarget's Extras (set by the Resolver),
+// read here rather than threaded through internal request headers — SigV4
+// must run after the body is finalised, which is why it lives in Do and not
+// ApplyAuth.
+func (t *Transport) Do(ctx context.Context, r *http.Request, target provcore.CallTarget) (*http.Response, error) {
+	accessKey := target.Get("aws.accessKey")
+	secretKey := target.Get("aws.secretKey")
+	region := target.Get("aws.region")
+	sessionToken := target.Get("aws.sessionToken")
 	if accessKey == "" || secretKey == "" || region == "" {
-		return nil, fmt.Errorf("bedrock: internal signer state missing")
+		return nil, fmt.Errorf("bedrock: missing SigV4 credentials (aws.accessKey / aws.secretKey / aws.region)")
 	}
 
 	var payload []byte

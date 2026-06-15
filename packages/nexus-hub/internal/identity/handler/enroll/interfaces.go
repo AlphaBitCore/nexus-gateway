@@ -21,7 +21,6 @@ import (
 // Ed25519-only attestation-key enrollment flow that the compliance-proxy uses
 // to verify signed attestation headers.
 type CertAuthority interface {
-	SignCSR(csrPEM string, subjectCN string) (*agentca.CertResult, error)
 	SignAttestationCSR(csrPEM string, subjectCN string) (*agentca.CertResult, error)
 }
 
@@ -35,9 +34,14 @@ type FleetManager interface {
 
 // EnrollmentSvc is the subset of *enrollment.Service the enrollment handler uses.
 // *enrollment.Service satisfies this interface.
+//
+// ConsumeToken atomically validates + single-use-consumes the token:
+// the validate-then-mark two-step that preceded it let two concurrent requests
+// both pass a SELECT and both enroll. LinkThing records the minted thing id on
+// the already-consumed token row (best-effort).
 type EnrollmentSvc interface {
-	ValidateToken(ctx context.Context, rawToken string) (*enrollment.Token, bool)
-	MarkUsed(ctx context.Context, tokenID, thingID string) error
+	ConsumeToken(ctx context.Context, rawToken string) (*enrollment.Token, error)
+	LinkThing(ctx context.Context, tokenID, thingID string) error
 }
 
 // JWKSKeyGetter is the one method the enrollment handler calls on the JWKS cache

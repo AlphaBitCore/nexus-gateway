@@ -37,7 +37,15 @@ func InitFleet(
 ) FleetResult {
 	wsPool := ws.NewPool(opsReg, logger)
 	mgr := manager.New(st, redisClient, mqProducer, wsPool, cfg.Hub.ID, logger)
-	wsServer := ws.NewServer(wsPool, mgr, cfg.Hub.ID, cfg.Auth.InternalServiceToken, cfg.Hub.AllowedOrigins, logger)
+	// Sign outbound nexus.hub.signal frames so peer Hubs can
+	// authenticate them and a forged frame from a data-plane producer is dropped
+	// at the subscriber.
+	mgr.SetSignalSecret(cfg.Auth.SignalSecret)
+	// Wire the config_fanout_failed_total{path} counter so post-commit fan-out
+	// failures (WS broadcast skip/marshal, MQ marshal/publish) are observable
+	// without waiting for the drift gauge to lag.
+	mgr.SetFanoutMetrics(opsReg)
+	wsServer := ws.NewServer(wsPool, mgr, cfg.Hub.ID, cfg.Auth.InternalServiceToken, cfg.Hub.AllowedOrigins, cfg.Hub.DevMode, logger)
 
 	return FleetResult{
 		WSPool:   wsPool,

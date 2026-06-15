@@ -1,15 +1,19 @@
 # Nexus Control Plane — production config template.
-# Every field in internal/config/config.go.Config appears here.
+# Covers the COMMON fields of cmd/control-plane/config/config.go.Config;
+# the full field set lives in cmd/control-plane/config/config.go.
 # Env var overrides (applied after YAML): CONTROL_PLANE_PORT,
-# DATABASE_URL, REDIS_* (see packages/shared/storage/redisfactory for
-# the full universal Redis env contract), LOG_LEVEL, COMPLIANCE_PROXY_URL,
+# CONTROL_PLANE_PUBLIC_URL, DATABASE_URL, REDIS_* (see
+# packages/shared/storage/redisfactory for the full universal Redis env
+# contract), LOG_LEVEL, COMPLIANCE_PROXY_URL,
 # AI_GATEWAY_URL, NEXUS_HUB_URL, CREDENTIAL_ENCRYPTION_KEY,
-# CREDENTIAL_ENCRYPTION_PASSPHRASE, CREDENTIAL_ENCRYPTION_SALT,
 # CREDENTIAL_KEY_MAP, CONTROL_PLANE_CRYPTO_PRODUCTION,
-# INTERNAL_SERVICE_TOKEN, AGENT_CA_DIR, COMPLIANCE_PROXY_RUNTIME_URL,
+# ADMIN_KEY_HMAC_SECRET, INTERNAL_SERVICE_TOKEN, AGENT_CA_DIR, COMPLIANCE_PROXY_RUNTIME_URL,
 # COMPLIANCE_PROXY_API_TOKEN, OTEL_ENDPOINT, OTEL_SERVICE_NAME,
-# SCHEDULER_ENABLED, RETENTION_*, MQ_DRIVER, NATS_URL,
-# AUTH_SERVER_ISSUER, AUTH_SERVER_KEYSTORE_DIR.
+# MQ_DRIVER, NATS_URL, AUTH_SERVER_ISSUER, AUTH_SERVER_KEYSTORE_DIR.
+
+# REQUIRED. Externally-reachable base URL for this service; startup
+# validation fails when empty. Env CONTROL_PLANE_PUBLIC_URL overrides.
+# publicURL: "https://nexus.example.com"
 
 server:
   port: 3001
@@ -17,8 +21,16 @@ server:
 
 database:
   url: ""
-  maxConns: 25
-  minConns: 5
+  # Connection-pool sizing. The Control Plane is the admin API + BFF +
+  # IAM + analytics — NOT on the data-plane per-token path. Its queries
+  # hit Postgres directly (not cached like the gateway), but concurrency
+  # is LOW: a handful of admins, where the heaviest consumer is an
+  # analytics dashboard fanning out a few parallel aggregation queries.
+  # 15 covers that burst without hoarding Postgres backends. Coordinate
+  # across services: the SUM of all services' maxConns must stay below
+  # Postgres `max_connections` (appliance default 200).
+  maxConns: 15
+  minConns: 3
   maxConnLifetime: "300s"
 
 redis:
@@ -62,25 +74,22 @@ bff:
   complianceProxyUrl: "http://127.0.0.1:3040"
   aiGatewayUrl: "http://127.0.0.1:3050"
   complianceProxyRuntimeUrl: "http://127.0.0.1:3040"
-  complianceProxyApiToken: ""
+  # complianceProxyApiToken is env-only (COMPLIANCE_PROXY_API_TOKEN); the
+  # yaml field is ignored by the loader.
 
 # Hub registration (thingclient). Symmetric with ai-gateway /
 # compliance-proxy. Env override: NEXUS_HUB_URL.
 registry:
   nexusHubUrl: "http://127.0.0.1:3060"
 
-auth:
-  # Internal service token used by thingclient (WebSocket to Hub)
-  # and hubclient (HTTP to Hub). Must match Hub auth.internalServiceToken.
-  internalServiceToken: ""
+# auth.internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN); the yaml
+# field is ignored by the loader. Must match Hub's INTERNAL_SERVICE_TOKEN.
 
 crypto:
-  # Either encryptionKey (64-hex) or encryptionPassphrase + encryptionSalt
-  # must be set. credentialKeyMap overrides the single-key path when set.
-  encryptionKey: ""
-  encryptionPassphrase: ""
-  encryptionSalt: ""
-  credentialKeyMap: ""
+  # The credential-encryption secrets are env-only; the yaml fields are
+  # ignored by the loader:
+  #   encryptionKey     → CREDENTIAL_ENCRYPTION_KEY
+  #   credentialKeyMap  → CREDENTIAL_KEY_MAP
   production: true
 
 agent:
@@ -90,10 +99,10 @@ otel:
   endpoint: ""
   serviceName: "nexus-control-plane"
 
-scheduler:
-  enabled: true
-
 mq:
   driver: "nats"
   nats:
+    # url is the only per-service knob; NATS server-side limits (max_payload,
+    # max_connections) live in the appliance (nexus-ami/scripts/install-nats.sh)
+    # and docker-compose.yml.
     url: "nats://localhost:4222"

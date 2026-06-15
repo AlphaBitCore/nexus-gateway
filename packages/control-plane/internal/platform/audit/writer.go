@@ -24,11 +24,11 @@ type Entry struct {
 	AfterState     any
 	NexusRequestID string
 	// Via is the request channel ("assistant" for AI-initiated web-assistant
-	// writes, empty for direct human/UI actions). EntryFor populates it from the
-	// unforgeable in-process initiator context value (WithInitiator), set only by the
-	// assistant self-call transport; it flows to the Hub consumer and into the
-	// tamper-evident audit hash chain so AI writes are distinguishable from human
-	// ones (E90 I5).
+	// writes, "workflow" for durable run writes, empty for direct human/UI
+	// actions). EntryFor populates it from the unforgeable in-process initiator
+	// context value (initiator.With), set only by the self-dispatch transport; it
+	// flows to the Hub consumer and into the tamper-evident audit hash chain so
+	// AI/workflow writes are distinguishable from human ones.
 	Via string
 }
 
@@ -121,11 +121,33 @@ func (w *Writer) Log(_ context.Context, e Entry) error {
 // LogObserved is the fire-and-forget variant of Log: failures are already
 // surfaced through Writer.observeFailure (warn log + FailureObserver
 // metric), so the typical admin-handler caller has nothing actionable to
-// do with the returned error from Log. Use LogObserved for those call
-// sites; reserve Log() for the rare path that needs to react to the
-// failure (e.g. break-glass paths that must escalate to an operator).
+// do with the returned error from Log. Use LogObserved for lower-sensitivity
+// mutations and read-only list/export handlers; reserve Log()/LogCritical()
+// for paths that must react to the failure.
 func (w *Writer) LogObserved(ctx context.Context, e Entry) {
 	_ = w.Log(ctx, e)
+}
+
+// LogCritical is the FAIL-CLOSED audit primitive for security-relevant
+// mutations — IAM policy/group/attachment changes, credential and key
+// rotation, kill-switch toggles. For these operations the
+// audit trail is part of the security contract: if the entry cannot be
+// published, the mutation must NOT be reported as successful, so the
+// caller surfaces a 500 and the operator retries against a healthy MQ.
+//
+// It returns the same error Log does (already counted on the
+// admin.audit_log_failed_total{action} metric and warn-logged via
+// observeFailure), so the handler can map a non-nil result to a 500
+// without re-instrumenting. Unlike LogObserved, the error is NOT swallowed.
+//
+// Contract for callers: write the audit entry AFTER the upstream mutation
+// has committed but treat a non-nil return as a hard failure of the request
+// (the operation succeeded but is unaudited — surface that to the operator
+// rather than silently returning 200). For mutations that can be performed
+// transactionally with their audit row, prefer that; LogCritical is the
+// MQ-published path's fail-closed equivalent.
+func (w *Writer) LogCritical(ctx context.Context, e Entry) error {
+	return w.Log(ctx, e)
 }
 
 // observeFailure runs the warn log + observer hook on a publish failure.

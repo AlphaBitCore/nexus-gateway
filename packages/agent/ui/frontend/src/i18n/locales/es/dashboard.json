@@ -200,13 +200,6 @@
         }
       }
     },
-    "deviceGroup": {
-      "title": "Grupo de dispositivos",
-      "subtitle": "Grupo de flota al que está asignado este dispositivo.",
-      "empty": "No asignado a ningún grupo.",
-      "id": "ID",
-      "name": "Nombre"
-    },
     "diagMode": {
       "title": "Modo de diagnóstico",
       "subtitle": "Ventana de diagnóstico detallado.",
@@ -585,7 +578,16 @@
     "tier": {
       "tier1": "Tier 1",
       "tier2": "Tier 2",
-      "hint": "Qué normalizador procesó esta fila: Tier 1 = análisis preciso por host; Tier 2 = sondeo de patrones multi-spec; sin distintivo = Tier 3 textual."
+      "structural": "Estructural",
+      "hostMatched": "por host",
+      "hint": "Qué decodificador procesó esta fila: Tier 1 = decodificador exacto del protocolo (resuelto por clave, host o inspección del contenido); Tier 2 = sondeo de patrones para superficies web de consumo; Estructural = proyección tipada del cuerpo HTTP sin decodificación de protocolo; sin distintivo = fila textual heredada sin procesar. \"por host\" reemplaza el número de confianza cuando el adaptador se eligió por host: su cobertura es honesta pero no es una puntuación comparable a una decodificación por inspección."
+    },
+    "emptyBody": "Cuerpo vacío.",
+    "sse": {
+      "framesTitle": "Tramas SSE",
+      "eventFallbackLabel": "message",
+      "showAllFrames": "Mostrar las {{count}} tramas",
+      "truncatedNote": "Vista de tramas truncada — el flujo completo se capturó y está disponible en la pestaña Sin procesar."
     },
     "modelLabel": "Modelo",
     "finishReason": "Razón de cierre",
@@ -600,7 +602,8 @@
       "completion": "Compleción",
       "total": "Total",
       "cacheRead": "Lectura caché",
-      "cacheCreate": "Escritura caché"
+      "cacheCreate": "Escritura caché",
+      "reasoning": "Razonamiento"
     },
     "banner": {
       "failedTitle": "Falló la normalización para esta dirección.",
@@ -612,7 +615,17 @@
     "dropped": {
       "title": "Contenido descartado según la política de almacenamiento.",
       "hint": "El operador configuró storageAction=drop-content para el hook que coincidió. El registro de auditoría conserva solo la decisión y los metadatos.",
-      "ruleIds": "Reglas que dispararon"
+      "ruleIds": "Reglas que dispararon",
+      "degradedTitle": "Contenido descartado: la política de redacción no pudo aplicarse de forma segura a la copia almacenada.",
+      "degradedHint": "La política de almacenamiento del hook era redact; la copia almacenada se descartó porque la redacción no pudo aplicarse de forma segura a ella. Causa: {{cause}}.",
+      "degradedAddresses": "Direcciones de contenido sin resolver",
+      "neutralHint": "Contenido no almacenado según la política de almacenamiento. Esta fila no registra si el descarte fue la acción configurada o un recurso alternativo de la redacción.",
+      "cause": {
+        "no-spans": "la política no produjo posiciones de redacción (no-spans)",
+        "payload-unmarshal": "la copia almacenada no pudo analizarse (payload-unmarshal)",
+        "spans-unresolved": "las posiciones de redacción no pudieron resolverse en la copia almacenada (spans-unresolved)",
+        "marshal-failed": "la copia redactada no pudo volver a serializarse (marshal-failed)"
+      }
     },
     "binary": {
       "title": "Contenido binario",
@@ -630,6 +643,6 @@
   "trafficDetail": {
     "tabRaw": "Sin procesar",
     "tabNormalized": "Normalizado",
-    "tabNormalizedDisabled": "Sin payload normalizado para este evento (tráfico no IA o flujo sin interceptar)."
+    "tabNormalizedDisabled": "No se capturó una proyección normalizada para este evento (el flujo no fue inspeccionado)."
   }
 }

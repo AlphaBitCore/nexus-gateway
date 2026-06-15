@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -39,6 +40,10 @@ type ProxyConfig struct {
 	ComplianceProxyRuntimeURL string
 	ComplianceProxyAPIToken   string
 	AIGatewayURL              string
+	// AIGatewayInternalToken is the shared internal-service bearer token
+	// (env INTERNAL_SERVICE_TOKEN) the BFF presents on every CP→ai-gateway
+	// /internal/* admin call. Must match the gateway's INTERNAL_SERVICE_TOKEN.
+	AIGatewayInternalToken string
 }
 
 // HubNotifier is the narrow seam AdminHandler uses to push config changes to
@@ -49,11 +54,11 @@ type ProxyConfig struct {
 type HubNotifier interface {
 	NotifyConfigChange(ctx context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error)
 	InvalidateConfig(ctx context.Context, thingType, configKey string)
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 	CreateEnrollmentToken(ctx context.Context, req hub.CreateEnrollmentTokenRequest) (*hub.CreateEnrollmentTokenResponse, error)
 	GetThingRuntime(ctx context.Context, thingID string) ([]byte, int, error)
 	GetThingServiceMeta(ctx context.Context, thingID string) (*hub.ThingServiceMeta, error)
 	ForceResyncAll(ctx context.Context, thingID string) (map[string]any, error)
-	RotateAgentCert(ctx context.Context, thingID string) (map[string]any, error)
 	ListDLQ(ctx context.Context, subject, limit, cursor string) ([]byte, int, error)
 	RetryDLQ(ctx context.Context, id string) ([]byte, int, error)
 	BaseURL() string
@@ -167,17 +172,14 @@ type Pagination struct {
 func parseAdminAuditParams(c echo.Context) trafficstore.AdminAuditLogListParams {
 	pg := parsePagination(c)
 	params := trafficstore.AdminAuditLogListParams{
-		ActorID:         c.QueryParam("actorId"),
-		ActorLabel:      c.QueryParam("actorLabel"),
-		ActorRole:       c.QueryParam("actorRole"),
-		Action:          c.QueryParam("action"),
-		EntityType:      c.QueryParam("entityType"),
-		NexusRequestID:  c.QueryParam("nexusRequestId"),
-		ClientRequestID: c.QueryParam("clientRequestId"),
-		ClientUserID:    c.QueryParam("clientUserId"),
-		ClientSessionID: c.QueryParam("clientSessionId"),
-		Limit:           pg.Limit,
-		Offset:          pg.Offset,
+		ActorID:        c.QueryParam("actorId"),
+		ActorLabel:     c.QueryParam("actorLabel"),
+		ActorRole:      c.QueryParam("actorRole"),
+		Action:         c.QueryParam("action"),
+		EntityType:     c.QueryParam("entityType"),
+		NexusRequestID: c.QueryParam("nexusRequestId"),
+		Limit:          pg.Limit,
+		Offset:         pg.Offset,
 	}
 	if v := c.QueryParam("startTime"); v != "" {
 		if t, ok := parseRFC3339Flexible(v); ok {
@@ -255,16 +257,8 @@ func deref(p *string) string {
 	return *p
 }
 
-// errJSON builds a canonical JSON error envelope used across admin handlers.
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 // parseRFC3339Flexible parses a time string in either RFC3339Nano (e.g.
 // "2024-01-01T00:00:00.000Z" as produced by JS toISOString()) or plain

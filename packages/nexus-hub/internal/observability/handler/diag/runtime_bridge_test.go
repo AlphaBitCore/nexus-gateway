@@ -95,6 +95,30 @@ func TestRuntime_MissingID_400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status %d; want 400 when id missing", rec.Code)
 	}
+	// F-0320: canonical {error, code} envelope.
+	assertCanonicalErrorEnvelope(t, rec, "INVALID_REQUEST")
+}
+
+// assertCanonicalErrorEnvelope checks the response body is the canonical
+// {error:{message,type,code}} nested envelope with the expected machine-readable
+// code (F-0320 / F-0319).
+func assertCanonicalErrorEnvelope(t *testing.T, rec *httptest.ResponseRecorder, wantCode string) {
+	t.Helper()
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("error body not JSON: %s", rec.Body.String())
+	}
+	inner, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Errorf("error field missing/empty: %v", resp)
+		return
+	}
+	if msg, _ := inner["message"].(string); msg == "" {
+		t.Errorf("error.message missing/empty: %v", resp)
+	}
+	if c, _ := inner["code"].(string); c != wantCode {
+		t.Errorf("code=%q, want %q; body=%s", inner["code"], wantCode, rec.Body.String())
+	}
 }
 
 func TestRuntime_ThingNotFound_404(t *testing.T) {
@@ -116,6 +140,7 @@ func TestRuntime_ThingNotFound_404(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status %d; want 404 for ErrNoRows", rec.Code)
 	}
+	assertCanonicalErrorEnvelope(t, rec, "NOT_FOUND")
 }
 
 func TestRuntime_DBError_500(t *testing.T) {

@@ -1,0 +1,27 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "anthropic-messages",
+  "model": "claude-haiku-4-5-20251001",
+  "stream": true,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "A gateway is a device or software that connects two different networks and controls the flow of data between them."
+        }
+      ],
+      "finishReason": "end_turn"
+    }
+  ],
+  "usage": {
+    "promptTokens": 17,
+    "completionTokens": 24,
+    "totalTokens": 41
+  },
+  "finishReason": "end_turn",
+  "confidence": 1,
+  "detectedSpec": "anthropic-messages"
+}

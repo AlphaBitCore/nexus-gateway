@@ -223,6 +223,156 @@ func TestDetectResponseUsage_Llama(t *testing.T) {
 	}
 }
 
+// TestAdapterIdentity pins the registry contract: the adapter registers
+// under the "bedrock" key (traffic dispatch routes by this id) and
+// Configure accepts any config without error — bedrock exposes no knobs,
+// so a non-nil error here would wrongly disable the adapter at startup.
+func TestAdapterIdentity(t *testing.T) {
+	a := &Adapter{}
+	if got := a.ID(); got != "bedrock" {
+		t.Errorf("ID() = %q, want bedrock", got)
+	}
+	if err := a.Configure(nil); err != nil {
+		t.Errorf("Configure(nil) = %v, want nil", err)
+	}
+	if err := a.Configure(map[string]any{"unknown": true}); err != nil {
+		t.Errorf("Configure(map) = %v, want nil (no knobs, arbitrary config ignored)", err)
+	}
+}
+
+// Unsupported-publisher dispatch: Titan/Cohere/AI21 model ids must yield
+// ErrUnknownSchema on every extraction surface — detect-level
+// attribution still works, but content extraction is explicitly skipped.
+
+func TestExtractRequest_UnsupportedPublisher(t *testing.T) {
+	a := &Adapter{}
+	_, err := a.ExtractRequest(context.Background(),
+		[]byte(`{"inputText":"hi"}`), "/model/amazon.titan-text-express-v1/invoke")
+	if !errors.Is(err, traffic.ErrUnknownSchema) {
+		t.Errorf("err=%v want ErrUnknownSchema", err)
+	}
+}
+
+func TestExtractResponse_UnsupportedPublisher(t *testing.T) {
+	a := &Adapter{}
+	_, err := a.ExtractResponse(context.Background(),
+		[]byte(`{"results":[{"outputText":"hi"}]}`), "/model/amazon.titan-text-express-v1/invoke")
+	if !errors.Is(err, traffic.ErrUnknownSchema) {
+		t.Errorf("err=%v want ErrUnknownSchema", err)
+	}
+}
+
+func TestExtractStreamChunk_UnsupportedPublisher(t *testing.T) {
+	a := &Adapter{}
+	_, err := a.ExtractStreamChunk(context.Background(),
+		[]byte(`{"outputText":"hi"}`), "/model/cohere.command-r-v1:0/invoke-with-response-stream")
+	if !errors.Is(err, traffic.ErrUnknownSchema) {
+		t.Errorf("err=%v want ErrUnknownSchema", err)
+	}
+}
+
+// Anthropic-on-Bedrock delegation for the response surfaces.
+
+func TestExtractResponse_AnthropicOnBedrock(t *testing.T) {
+	body := []byte(`{
+		"id":"msg_bdrk_1","type":"message","role":"assistant",
+		"model":"claude-3-5-sonnet-20241022",
+		"content":[{"type":"text","text":"Hello from Bedrock"}],
+		"stop_reason":"end_turn",
+		"usage":{"input_tokens":5,"output_tokens":4}
+	}`)
+	a := &Adapter{}
+	nc, err := a.ExtractResponse(context.Background(), body, "/model/anthropic.claude-3-5-sonnet-20241022-v2:0/invoke")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(nc.Segments) != 1 || nc.Segments[0] != "Hello from Bedrock" {
+		t.Errorf("Segments=%v", nc.Segments)
+	}
+	if nc.Metadata["stop_reason"] != "end_turn" {
+		t.Errorf("stop_reason=%q want end_turn", nc.Metadata["stop_reason"])
+	}
+	if nc.Metadata["id"] != "msg_bdrk_1" {
+		t.Errorf("id=%q", nc.Metadata["id"])
+	}
+}
+
+func TestExtractStreamChunk_AnthropicOnBedrock(t *testing.T) {
+	chunk := []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`)
+	a := &Adapter{}
+	nc, err := a.ExtractStreamChunk(context.Background(), chunk, "/model/anthropic.claude-3-5-sonnet-20241022-v2:0/invoke-with-response-stream")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(nc.Segments) != 1 || nc.Segments[0] != "partial" {
+		t.Errorf("Segments=%v want text_delta routed through anthropic delegation", nc.Segments)
+	}
+}
+
+// Llama malformed-input failure modes.
+
+func TestExtractResponse_LlamaMalformed(t *testing.T) {
+	a := &Adapter{}
+	_, err := a.ExtractResponse(context.Background(), []byte(`not json`), "/model/meta.llama3-70b-instruct-v1:0/invoke")
+	if !errors.Is(err, traffic.ErrMalformed) {
+		t.Errorf("err=%v want ErrMalformed", err)
+	}
+}
+
+func TestExtractStreamChunk_LlamaMalformed(t *testing.T) {
+	a := &Adapter{}
+	_, err := a.ExtractStreamChunk(context.Background(), []byte(`not json`), "/model/meta.llama3-70b-instruct-v1:0/invoke-with-response-stream")
+	if !errors.Is(err, traffic.ErrMalformed) {
+		t.Errorf("err=%v want ErrMalformed", err)
+	}
+}
+
+// TestDetectRequestMeta_NonModelPath pins attribution on a path that does
+// not match the Bedrock /model/<id>/<verb> shape: provider stays
+// "bedrock" (the adapter was selected by host) but no model is invented.
+func TestDetectRequestMeta_NonModelPath(t *testing.T) {
+	a := &Adapter{}
+	r, _ := http.NewRequest(http.MethodPost,
+		"https://bedrock-runtime.us-east-1.amazonaws.com/foundation-models", nil)
+	got := a.DetectRequestMeta(r, nil)
+	if got.Provider != "bedrock" {
+		t.Errorf("provider=%q", got.Provider)
+	}
+	if got.Model != "" {
+		t.Errorf("model=%q want empty for non-model path", got.Model)
+	}
+}
+
+func TestDetectResponseUsage_UnsupportedPublisherNoBody(t *testing.T) {
+	a := &Adapter{}
+	u, _ := url.Parse("https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.titan-text-express-v1/invoke")
+	resp := &http.Response{Request: &http.Request{URL: u}}
+	um := a.DetectResponseUsage(resp, nil)
+	if um.Status != traffic.UsageStatusNoBody {
+		t.Errorf("Status=%q want no_body for empty body", um.Status)
+	}
+}
+
+func TestDetectResponseUsage_LlamaNoBody(t *testing.T) {
+	a := &Adapter{}
+	u, _ := url.Parse("https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1:0/invoke")
+	resp := &http.Response{Request: &http.Request{URL: u}}
+	um := a.DetectResponseUsage(resp, nil)
+	if um.Status != traffic.UsageStatusNoBody {
+		t.Errorf("Status=%q want no_body", um.Status)
+	}
+}
+
+func TestDetectResponseUsage_LlamaMalformedBody(t *testing.T) {
+	a := &Adapter{}
+	u, _ := url.Parse("https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1:0/invoke")
+	resp := &http.Response{Request: &http.Request{URL: u}}
+	um := a.DetectResponseUsage(resp, []byte(`<html>throttled</html>`))
+	if um.Status != traffic.UsageStatusParseFailed {
+		t.Errorf("Status=%q want parse_failed for non-JSON body", um.Status)
+	}
+}
+
 func TestDetectResponseUsage_LlamaParseFailed(t *testing.T) {
 	a := &Adapter{}
 	u, _ := url.Parse("https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1:0/invoke")

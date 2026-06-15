@@ -81,10 +81,9 @@ func run() int {
 				BootstrapConfig: cfg, DB: d.DB, CacheLayer: d.CacheLayer,
 				CredManager: d.CredManager, GeminiCacheMgrSet: d.GeminiMgrSet,
 				HookConfigCache: d.HookConfigCache, TelemetryProvider: d.Tp,
-				ObservabilityState:   &d.ObsState,
-				PayloadCaptureStore:  d.PayloadCapture,
-				StreamingPolicyStore: d.StreamingPolicy,
-				Reliability:          d.Reliability, PolicyCache: d.PolicyCache,
+				ObservabilityState:  &d.ObsState,
+				PayloadCaptureStore: d.PayloadCapture,
+				Reliability:         d.Reliability, PolicyCache: d.PolicyCache,
 				AIGuardConfigCache: func() *aiguard.ConfigCache { return d.AiguardConfigCache },
 				NormEngine:         d.NormEngine, PassthroughCache: d.PassthroughCache,
 				SemanticIndexLifecycle: d.Semantic.IndexLifecycle,
@@ -123,7 +122,7 @@ func run() int {
 
 	h := wiring.MountRoutes(http.NewServeMux(), tcClient, d, agID, buildVersion, cfg, logger)
 
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := cfg.Server.BindAddr()
 	server := &http.Server{
 		Addr: addr, Handler: h,
 		ReadTimeout:  cfg.Server.ReadTimeout,

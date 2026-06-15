@@ -5,15 +5,20 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	agentcompliance "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/attestation"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	agentproxy "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/proxy"
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	localfsspill "github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/localfs"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillsweep"
 	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
@@ -35,6 +40,17 @@ type BridgeDepsArgs struct {
 	// the bridge's UpstreamTransport gets the X-Nexus-Attestation header
 	// injected. Nil disables attestation (no per-request signing cost).
 	AttestationSigner *attestation.Signer
+	// Keystore supplies the device-held secret the spill store derives its
+	// at-rest key from. The composition root passes the platform store;
+	// tests pass keystore.NewMemoryStore(). Nil skips spill (oversize
+	// bodies truncate inline) rather than constructing a platform store
+	// here — wiring code must never open the real Keychain itself.
+	Keystore keystore.Store
+	// UpstreamProxy — when non-empty, the bridge's MITM upstream forwards every
+	// inspected flow through this egress proxy ("socks5://host:port" or
+	// "http://host:port"). Empty = direct egress (default). Raw cfg string;
+	// parsed + validated here via tlsbump.ParseEgressProxy.
+	UpstreamProxy string
 }
 
 // BuildBridgeDeps assembles the shared/tlsbump-backed proxy.BridgeDeps the
@@ -75,6 +91,16 @@ func BuildBridgeDeps(args BridgeDepsArgs) (*agentproxy.BridgeDeps, error) {
 		upstreamOpts.RequestInjector = args.AttestationSigner.InjectInto
 		logger.Info("attestation: request injector installed on UpstreamTransport")
 	}
+	if proxyURL, perr := tlsbump.ParseEgressProxy(args.UpstreamProxy); perr != nil {
+		// Bad proxy config falls back to direct egress (which is what the
+		// operator was trying to avoid) — surface it loudly so it gets fixed.
+		logger.Error("egress proxy: invalid upstreamProxy; using DIRECT egress",
+			"value", args.UpstreamProxy, "error", perr)
+	} else if proxyURL != nil {
+		upstreamOpts.UpstreamProxy = proxyURL
+		logger.Info("egress proxy: MITM upstream routed via proxy",
+			"scheme", proxyURL.Scheme, "host", proxyURL.Host)
+	}
 	upstream, err := tlsbump.NewUpstreamTransportWith(100, 90*time.Second, 10*time.Second, upstreamOpts)
 	if err != nil {
 		return nil, fmt.Errorf("BuildBridgeDeps: new upstream transport: %w", err)
@@ -82,7 +108,11 @@ func BuildBridgeDeps(args BridgeDepsArgs) (*agentproxy.BridgeDeps, error) {
 
 	// Same root the audit drain reads back from (SpillRoot is the single
 	// source of truth) so spilled bodies can be uploaded to S3 at drain time.
-	spill, spillErr := NewLocalSpillStore()
+	var spill *localfsspill.Store
+	spillErr := fmt.Errorf("no keystore supplied")
+	if args.Keystore != nil {
+		spill, spillErr = NewLocalSpillStore(args.Keystore)
+	}
 	if spillErr != nil {
 		logger.Warn("bridge deps: localfs spillstore init failed; oversize bodies will truncate",
 			"root", SpillRoot(), "error", spillErr)
@@ -110,4 +140,24 @@ func BuildBridgeDeps(args BridgeDepsArgs) (*agentproxy.BridgeDeps, error) {
 		PerHookTimeout:      5 * time.Second,
 		TotalTimeout:        30 * time.Second,
 	}, nil
+}
+
+// WireInspectBridge wires the shared/tlsbump bridge deps onto the platform on
+// Linux/Windows BEFORE Start launches the accept loop, so inspect flows bump
+// through proxy.BumpFlow — the same engine macOS, the compliance proxy, and
+// the AI gateway use. macOS wires its own deps and starts the NE bridge
+// listener separately (platformshim.WireDarwinBridge), so this is a no-op on
+// darwin. A deps-build failure is fail-open: inspect flows fall through to
+// passthrough.
+func WireInspectBridge(plat platform.Platform, args BridgeDepsArgs) {
+	if runtime.GOOS == "darwin" {
+		return
+	}
+	logger := args.Logger
+	if bridgeDeps, depErr := BuildBridgeDeps(args); depErr != nil {
+		logger.Warn("bridge deps build failed; inspect flows fall through to passthrough", "error", depErr)
+	} else if r, ok := plat.(api.BridgeDepsReceiver); ok {
+		r.SetBridgeDeps(bridgeDeps)
+		logger.Info("inspect flows wired through shared/tlsbump.BumpConnection")
+	}
 }

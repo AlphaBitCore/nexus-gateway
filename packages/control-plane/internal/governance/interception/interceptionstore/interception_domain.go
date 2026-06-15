@@ -18,27 +18,23 @@ import (
 // control-plane store layer; any new admin/agent surface that consumes
 // domains + paths should keep the JSON tags below stable.
 type InterceptionDomainRow struct {
-	ID                string          `json:"id"`
-	Name              string          `json:"name"`
-	Description       *string         `json:"description,omitempty"`
-	HostPattern       string          `json:"hostPattern"`
-	HostMatchType     string          `json:"hostMatchType"`
-	AdapterID         string          `json:"adapterId"`
-	AdapterConfig     json.RawMessage `json:"adapterConfig,omitempty"`
-	Enabled           bool            `json:"enabled"`
-	Priority          int             `json:"priority"`
-	DefaultPathAction string          `json:"defaultPathAction"`
-	OnAdapterError    string          `json:"onAdapterError"`
-	NetworkZone       string          `json:"networkZone"`
-	Source            string          `json:"source,omitempty"`
-	// ApplicableEndpoints is the endpoint filter. When non-empty, CP only
-	// applies this domain rule to traffic whose classified EndpointType is
-	// in the list. Empty list = all endpoints.
-	ApplicableEndpoints []string              `json:"applicableEndpoints,omitempty"`
-	CreatedAt           time.Time             `json:"createdAt,omitempty"`
-	UpdatedAt           time.Time             `json:"updatedAt,omitempty"`
-	CreatedBy           *string               `json:"createdBy,omitempty"`
-	Paths               []InterceptionPathRow `json:"paths"`
+	ID                string                `json:"id"`
+	Name              string                `json:"name"`
+	Description       *string               `json:"description,omitempty"`
+	HostPattern       string                `json:"hostPattern"`
+	HostMatchType     string                `json:"hostMatchType"`
+	AdapterID         string                `json:"adapterId"`
+	AdapterConfig     json.RawMessage       `json:"adapterConfig,omitempty"`
+	Enabled           bool                  `json:"enabled"`
+	Priority          int                   `json:"priority"`
+	DefaultPathAction string                `json:"defaultPathAction"`
+	OnAdapterError    string                `json:"onAdapterError"`
+	NetworkZone       string                `json:"networkZone"`
+	Source            string                `json:"source,omitempty"`
+	CreatedAt         time.Time             `json:"createdAt,omitempty"`
+	UpdatedAt         time.Time             `json:"updatedAt,omitempty"`
+	CreatedBy         *string               `json:"createdBy,omitempty"`
+	Paths             []InterceptionPathRow `json:"paths"`
 }
 
 // InterceptionPathRow represents a path rule within an InterceptionDomain.
@@ -60,7 +56,7 @@ type InterceptionPathRow struct {
 // path stays byte-identical with the admin CRUD response shape.
 const idDomainColumns = `id, name, description, host_pattern, host_match_type,
 	adapter_id, adapter_config, enabled, priority, default_path_action,
-	on_adapter_error, network_zone, source, applicable_endpoints,
+	on_adapter_error, network_zone, source,
 	created_at, updated_at, created_by`
 
 const idPathColumns = `id, domain_id, path_pattern, match_type, action,
@@ -74,7 +70,7 @@ func scanDomain(row pgx.Row) (*InterceptionDomainRow, error) {
 		&d.ID, &d.Name, &d.Description, &d.HostPattern, &d.HostMatchType,
 		&d.AdapterID, &d.AdapterConfig, &d.Enabled, &d.Priority,
 		&d.DefaultPathAction, &d.OnAdapterError, &d.NetworkZone,
-		&d.Source, &d.ApplicableEndpoints,
+		&d.Source,
 		&d.CreatedAt, &d.UpdatedAt, &d.CreatedBy,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -177,7 +173,7 @@ func (store *Store) ListEnabledInterceptionDomains(ctx context.Context) ([]Inter
 			&d.ID, &d.Name, &d.Description, &d.HostPattern, &d.HostMatchType,
 			&d.AdapterID, &d.AdapterConfig, &d.Enabled, &d.Priority,
 			&d.DefaultPathAction, &d.OnAdapterError, &d.NetworkZone,
-			&d.Source, &d.ApplicableEndpoints,
+			&d.Source,
 			&d.CreatedAt, &d.UpdatedAt, &d.CreatedBy,
 		); err != nil {
 			return nil, fmt.Errorf("scan interception domain: %w", err)
@@ -266,7 +262,7 @@ func (store *Store) ListInterceptionDomains(ctx context.Context, p InterceptionD
 			&d.ID, &d.Name, &d.Description, &d.HostPattern, &d.HostMatchType,
 			&d.AdapterID, &d.AdapterConfig, &d.Enabled, &d.Priority,
 			&d.DefaultPathAction, &d.OnAdapterError, &d.NetworkZone,
-			&d.Source, &d.ApplicableEndpoints,
+			&d.Source,
 			&d.CreatedAt, &d.UpdatedAt, &d.CreatedBy,
 		); err != nil {
 			return nil, fmt.Errorf("scan interception domain: %w", err)
@@ -352,10 +348,7 @@ type CreateInterceptionDomainInput struct {
 	OnAdapterError    string // empty => DB default (FAIL_OPEN)
 	NetworkZone       string // empty => DB default (PUBLIC)
 	Source            string // empty => DB default (admin)
-	// ApplicableEndpoints is the endpoint filter.
-	// nil or empty slice => DB default (ARRAY[]::TEXT[], all endpoints).
-	ApplicableEndpoints []string
-	CreatedBy           *string
+	CreatedBy         *string
 
 	Paths []CreateInterceptionPathInput
 }

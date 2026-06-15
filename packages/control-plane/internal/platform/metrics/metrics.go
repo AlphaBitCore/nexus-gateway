@@ -51,7 +51,9 @@ var (
 	// documented as derivations, not faked here. See e90-s8 §5.
 
 	// AssistantTurnsTotal — counter: assistant.turns_total{result}
-	// result ∈ {ok, error, unavailable, unsupported_auth}. The per-turn outcome
+	// result ∈ {ok, error, aborted, unavailable, unsupported_auth, user_limit}.
+	// user_limit is the per-user concurrent-turn cap rejection (the user already
+	// has the max turns in flight on the shared system VK). The per-turn outcome
 	// signal; per-user attribution is via the audit trail, not a label (admin
 	// userId would be unbounded cardinality). result="error" is also the
 	// raw-error-exposure guardrail signal (it pairs with the SSE `error` event the

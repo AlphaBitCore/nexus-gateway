@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"strings"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // GeminiGenerateNormalizer handles Google's native generateContent surface
@@ -54,14 +55,19 @@ func (n *GeminiGenerateNormalizer) Normalize(_ context.Context, raw []byte, meta
 	default:
 		return zeroGemini(meta), fmt.Errorf("gemini-generate: direction %q not supported: %w", meta.Direction, core.ErrUnsupported)
 	}
-	// Stamp Tier-1 Confidence using the gemini-generate FieldSpec — see
-	// confidence.go. Gemini's response shape carries `candidates` +
-	// `usageMetadata` at the root; the FieldSpec captures both required
-	// keys plus the (numerous) Gemini-specific cosmetic fields like
-	// `modelVersion`, `responseId`, `promptFeedback` so they don't trip
-	// the unknown-field penalty.
+	// Confidence semantics (one meaning per input shape): a stream fold
+	// computes frame coverage (recognized / total data frames) and sets
+	// Confidence itself; single-document bodies score weighted field
+	// coverage using the gemini-generate FieldSpec — see confidence.go.
+	// Gemini's response shape carries `candidates` + `usageMetadata` at
+	// the root; the FieldSpec captures both required keys plus the
+	// (numerous) Gemini-specific cosmetic fields like `modelVersion`,
+	// `responseId`, `promptFeedback` so they don't trip the
+	// unknown-field penalty.
 	if err == nil {
-		p.Confidence = core.ScoreTier1Confidence(raw, geminiGenerateFieldSpec(meta.Direction))
+		if p.Confidence == 0 {
+			p.Confidence = core.ScoreTier1Confidence(raw, geminiGenerateFieldSpec(meta.Direction))
+		}
 		if p.DetectedSpec == "" {
 			p.DetectedSpec = "gemini-generate"
 		}
@@ -314,6 +320,26 @@ func (n *GeminiGenerateNormalizer) normalizeResponse(raw []byte, meta core.Meta)
 	}
 	if len(resp.Candidates) == 0 {
 		return out, fmt.Errorf("gemini-generate: no candidates in response: %w", core.ErrUnsupported)
+	}
+	// A body can carry a "candidates" array yet not be Gemini at all
+	// (any JSON API returning a list of options unmarshals into the
+	// struct with every Gemini field zero). When NO candidate carries
+	// content AND usageMetadata is absent there is nothing Gemini-shaped
+	// to project — decline with ErrUnsupported so the registry walk
+	// continues, instead of claiming an empty ai-chat payload whose
+	// required-fields-present score can sit exactly at the 0.70
+	// threshold. A genuine empty Gemini response (safety block,
+	// stream-final accounting chunk) always carries usageMetadata, so
+	// this costs no recall.
+	hasContent := false
+	for _, c := range resp.Candidates {
+		if c.Content != nil {
+			hasContent = true
+			break
+		}
+	}
+	if !hasContent && resp.UsageMetadata == nil {
+		return zeroGemini(meta), fmt.Errorf("gemini-generate: candidates carry no content and usageMetadata absent: %w", core.ErrUnsupported)
 	}
 	for _, c := range resp.Candidates {
 		if c.Content == nil {

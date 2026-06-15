@@ -163,31 +163,40 @@ func TestRegisterCPLogLevel_MalformedJSON(t *testing.T) {
 	}
 }
 
-// TestRegisterCPLogLevel_EmptyPayload verifies that an empty state payload
-// (Hub occasionally sends empty bytes for keys not yet materialised) does
-// NOT fail the apply. ParseJSON treats empty as "no-op", leaving the level
-// unchanged.
-func TestRegisterCPLogLevel_EmptyPayload(t *testing.T) {
+// TestRegisterCPLogLevel_EmptyPayloadDoesNotClobberLevel verifies the F-0127
+// fix: an empty/null/{} state payload (Hub occasionally sends empty bytes for
+// keys not yet materialised) is a NO-OP and must NOT reset the live level. We
+// boot at debug and assert it STAYS debug — the old code called
+// SetLevel("")→Info, silently clobbering a deliberate debug level.
+func TestRegisterCPLogLevel_EmptyPayloadDoesNotClobberLevel(t *testing.T) {
 	defer logging.SetLevel("info")
-	logging.SetLevel("info")
 
-	loader := buildConfigLoader(configDispatchDeps{
-		Logger:   newTestLogger(),
-		ThingID:  "test-cp",
-		Outcomes: thingclient.NewOutcomeTracker(),
-	})
-
-	desired := map[string]thingclient.ConfigState{
-		"log_level": {State: []byte{}, Version: 4},
-	}
-	if _, err := loader.Apply(context.Background(), desired); err != nil {
-		t.Fatalf("Apply: unexpected error on empty payload: %v", err)
-	}
-	// Level stays at Info; Apply ran (no error) because ParseJSON[cpLogLevelState]
-	// returns the zero struct on empty input and Apply calls logging.SetLevel("").
-	// ParseLevel("") maps to Info, so the observable level is still Info.
-	if got := logging.CurrentLevel(); got != slog.LevelInfo {
-		t.Errorf("current level = %v, want INFO after empty payload", got)
+	for _, tc := range []struct {
+		name  string
+		state []byte
+	}{
+		{"empty bytes", []byte{}},
+		{"json null", []byte("null")},
+		{"empty object", []byte("{}")},
+		{"explicit empty level", []byte(`{"level":""}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logging.SetLevel("debug") // deliberate boot-time debug
+			loader := buildConfigLoader(configDispatchDeps{
+				Logger:   newTestLogger(),
+				ThingID:  "test-cp",
+				Outcomes: thingclient.NewOutcomeTracker(),
+			})
+			desired := map[string]thingclient.ConfigState{
+				"log_level": {State: tc.state, Version: 4},
+			}
+			if _, err := loader.Apply(context.Background(), desired); err != nil {
+				t.Fatalf("Apply: unexpected error on %s: %v", tc.name, err)
+			}
+			if got := logging.CurrentLevel(); got != slog.LevelDebug {
+				t.Errorf("level = %v after %s; want DEBUG (empty tick must not clobber)", got, tc.name)
+			}
+		})
 	}
 }
 

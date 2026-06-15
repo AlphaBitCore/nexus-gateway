@@ -38,7 +38,7 @@ func EnsureStreams(ctx context.Context, js jetstream.JetStream) error {
 			// compliance-proxy, agent, and control-plane (admin audit).
 			// InterestPolicy: messages retained until ALL defined consumers
 			// have acked — enables multiple consumer groups (hub-db-writer +
-			// hub-siem) to each receive every message (Kafka-style fan-out).
+			// hub-alerting) to each receive every message (Kafka-style fan-out).
 			// MaxBytes 8 GiB: covers ~8h of sustained perf-test load at
 			// ~1 GiB/h while staying well within the 7.6 GiB host RAM so
 			// FileStorage does not pressure the kernel page cache against
@@ -46,7 +46,7 @@ func EnsureStreams(ctx context.Context, js jetstream.JetStream) error {
 			// js_max_file_store: 32GB in /etc/nats/nats-server.conf.
 			// DiscardOld: a stalled consumer cannot pin the stream and
 			// trigger NATS "insufficient_resources" publish errors.
-			// MaxAge 6h: with healthy hub-db-writer + hub-siem drainage,
+			// MaxAge 6h: with healthy consumer drainage,
 			// events older than 6h are already written to traffic_event /
 			// admin_audit; shorter MaxAge means a wedged consumer
 			// auto-recovers faster once the wedge is fixed.

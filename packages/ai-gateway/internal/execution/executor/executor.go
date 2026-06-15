@@ -79,10 +79,15 @@ type ExecutionResult struct {
 	// Coerced lists any in-place request rewrites the adapter applied before
 	// dispatching upstream, formatted as "<from>→<to>". Sourced from
 	// provcore.Response.Coerced. Empty when no rewrite occurred.
-	Coerced  []string
-	Target   routingcore.RoutingTarget
-	Attempts []Attempt
-	Error    error
+	Coerced []string
+	// Truncated propagates provcore.Response.Truncated: the non-streaming
+	// upstream body was clamped at the read cap (or decompressed-size bound)
+	// before usage extraction, so the parsed token counts are incomplete. The
+	// handler stamps usage_extraction_status="truncated" instead of "ok".
+	Truncated bool
+	Target    routingcore.RoutingTarget
+	Attempts  []Attempt
+	Error     error
 	// ProviderError is the canonical, normalised view of an upstream 4xx
 	// (or other non-retryable provider failure). Set on the terminal
 	// classNoFailoverNoRetry path so the handler can reshape the error
@@ -200,7 +205,9 @@ func (e *TargetExecutor) Execute(
 //
 // preparedBody MUST be the bytes Adapter.PrepareBody would produce for
 // targets[0]; preparedRewrites MUST be the rewrites slice from the same
-// call. Pass nil/nil to fall back to Execute.
+// call; preparedURLOverride MUST be the URLOverride from the same call (so
+// a shape-driven action URL — Gemini :batchEmbedContents — reaches the
+// dispatch). Pass nil/nil/"" to fall back to Execute.
 func (e *TargetExecutor) ExecuteWithPreparedBody(
 	ctx context.Context,
 	targets []routingcore.RoutingTarget,
@@ -208,13 +215,15 @@ func (e *TargetExecutor) ExecuteWithPreparedBody(
 	policy cfgpolicy.RetryPolicy,
 	preparedBody []byte,
 	preparedRewrites []string,
+	preparedURLOverride string,
 ) *ExecutionResult {
 	if preparedBody == nil {
 		return e.Execute(ctx, targets, base, policy)
 	}
 	return e.executeInner(ctx, targets, base, policy, &preparedFirstAttempt{
-		body:     preparedBody,
-		rewrites: preparedRewrites,
+		body:        preparedBody,
+		rewrites:    preparedRewrites,
+		urlOverride: preparedURLOverride,
 	})
 }
 
@@ -222,9 +231,10 @@ func (e *TargetExecutor) ExecuteWithPreparedBody(
 // attempt on the first target. Once consumed, prepared.body is set to
 // nil so subsequent attempts go through the normal path.
 type preparedFirstAttempt struct {
-	body     []byte
-	rewrites []string
-	consumed bool
+	body        []byte
+	rewrites    []string
+	urlOverride string
+	consumed    bool
 }
 
 func (e *TargetExecutor) executeInner(
@@ -294,6 +304,15 @@ func (e *TargetExecutor) executeInner(
 		// translation path — chat and embeddings each have their own
 		// canonical→target-wire hub codec.
 		usePrepared := tIdx == 0 && prepared != nil && !prepared.consumed && prepared.body != nil
+		// bridgeURLOverride carries an embeddings codec's endpoint-selection
+		// action suffix (Gemini :embedContent vs :batchEmbedContents) across
+		// the cross-format bridge translation below. The body is already in
+		// target wire shape after the bridge encode, so adapter.Execute's
+		// internal PrepareBody hits its same-format passthrough and never
+		// re-derives the override — we MUST thread it explicitly to the
+		// attempt or the batch body ({"requests":[…]}) is POSTed to the
+		// single-embed URL and Gemini 400s (audit F-0053).
+		var bridgeURLOverride string
 		switch {
 		case usePrepared:
 			req.Body = prepared.body
@@ -313,13 +332,14 @@ func (e *TargetExecutor) executeInner(
 			req.Body = wireBody
 			req.BodyFormat = callTarget.Format
 		case e.bridge != nil && base.BodyFormat != callTarget.Format && ingressKind == typology.EndpointKindEmbeddings:
-			wireBody, terr := e.bridge.IngressEmbeddingsToWire(base.BodyFormat, callTarget.Format, base.Body, callTarget)
+			wireBody, urlOverride, terr := e.bridge.IngressEmbeddingsToWire(base.BodyFormat, callTarget.Format, base.Body, callTarget)
 			if terr != nil {
 				attempts = append(attempts, Attempt{Target: target, Error: fmt.Sprintf("hub translate: %v", terr)})
 				continue
 			}
 			req.Body = wireBody
 			req.BodyFormat = callTarget.Format
+			bridgeURLOverride = urlOverride
 		}
 
 		// L2 — per-target retry loop.
@@ -329,13 +349,22 @@ func (e *TargetExecutor) executeInner(
 			attemptCtx := nexushttp.WithAttempt(ctx, attemptCounter)
 
 			var outcome attemptOutcome
-			if usePrepared && tryIdx == 1 {
+			switch {
+			case usePrepared && tryIdx == 1:
 				// First attempt of the primary target with prepared
 				// body — call adapter.ExecuteWithBody to skip the
 				// adapter's internal PrepareBody.
-				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, prepared.body, prepared.rewrites)
+				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, prepared.body, prepared.rewrites, prepared.urlOverride)
 				prepared.consumed = true
-			} else {
+			case bridgeURLOverride != "":
+				// Cross-format embeddings translated by the bridge: req.Body is
+				// already the target wire body, but the codec's endpoint-selection
+				// override (Gemini :batchEmbedContents) only exists here. Hand the
+				// prepared body + override straight to ExecuteWithBody so the
+				// override reaches the dispatched URL — adapter.Execute would
+				// passthrough the same-format body and emit no override (F-0053).
+				outcome = e.attemptWithBody(attemptCtx, adapter, req, target, req.Body, nil, bridgeURLOverride)
+			default:
 				outcome = e.attempt(attemptCtx, adapter, req, target)
 			}
 			outcome.attempt.CredentialID = callTarget.CredentialID
@@ -407,9 +436,9 @@ func (e *TargetExecutor) attempt(ctx context.Context, adapter provcore.Adapter, 
 // path: skips Adapter.PrepareBody by calling Adapter.ExecuteWithBody
 // with the body the cache layer already produced. Classification and
 // outcome shape match attempt() exactly.
-func (e *TargetExecutor) attemptWithBody(ctx context.Context, adapter provcore.Adapter, req provcore.Request, target routingcore.RoutingTarget, body []byte, rewrites []string) attemptOutcome {
+func (e *TargetExecutor) attemptWithBody(ctx context.Context, adapter provcore.Adapter, req provcore.Request, target routingcore.RoutingTarget, body []byte, rewrites []string, urlOverride string) attemptOutcome {
 	start := time.Now()
-	resp, err := adapter.ExecuteWithBody(ctx, req, body, rewrites)
+	resp, err := adapter.ExecuteWithBody(ctx, req, body, rewrites, urlOverride)
 	return e.classifyAttempt(start, resp, err, target)
 }
 
@@ -438,6 +467,7 @@ func (e *TargetExecutor) classifyAttempt(start time.Time, resp *provcore.Respons
 				Stream:       resp.Stream,
 				Usage:        resp.Usage,
 				Coerced:      resp.Coerced,
+				Truncated:    resp.Truncated,
 				Target:       target,
 				TargetMethod: resp.TargetMethod,
 				TargetPath:   resp.TargetPath,

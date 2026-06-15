@@ -128,7 +128,7 @@ func TestBedrock_Codec_DecodeToolUse(t *testing.T) {
 		"stop_reason":"tool_use",
 		"usage":{"input_tokens":10,"output_tokens":5}
 	}`)
-	decRes, err := codec.DecodeResponse(typology.WireShapeBedrockConverse, native, "")
+	decRes, err := codec.DecodeResponse(typology.WireShapeBedrockConverse, native, "", provcore.DecodeContext{})
 	canon := decRes.CanonicalBody
 	if err != nil {
 		t.Fatal(err)

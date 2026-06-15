@@ -58,10 +58,21 @@ const (
 type GatewayCacheSkipReason string
 
 const (
-	GatewayCacheSkipReasonDisabled     GatewayCacheSkipReason = "disabled"      // cache module nil (config off)
-	GatewayCacheSkipReasonNoCache      GatewayCacheSkipReason = "no_cache"      // client sent x-nexus-aigw-no-cache
-	GatewayCacheSkipReasonPassthrough  GatewayCacheSkipReason = "passthrough"   // emergency passthrough.BypassCache active
-	GatewayCacheSkipReasonNotCacheable GatewayCacheSkipReason = "not_cacheable" // response shape ineligible
+	GatewayCacheSkipReasonDisabled    GatewayCacheSkipReason = "disabled"    // cache module nil (config off)
+	GatewayCacheSkipReasonNoCache     GatewayCacheSkipReason = "no_cache"    // client sent x-nexus-aigw-no-cache
+	GatewayCacheSkipReasonPassthrough GatewayCacheSkipReason = "passthrough" // emergency passthrough.BypassCache active
+
+	// GatewayCacheSkipReasonEmbeddingsEndpoint is stamped when the request
+	// targets the embeddings endpoint (typology.EndpointKindEmbeddings). The
+	// response cache (both L1 exact-match and the HIT_LIVE broker dedup) is
+	// short-circuited at pre-lookup: each embedding input is unique per
+	// workflow step and not user-session-bound, so caching it yields minimal
+	// hit value while occupying Redis with single-use entries and diluting the
+	// chat cache-hit dashboards. The L2 semantic tier already self-skips
+	// embeddings; this reason makes the L1/broker skip explicit and visible in
+	// gateway_cache_skip_reason. Pre-lookup short-circuit, peer to disabled /
+	// no_cache / passthrough — NOT an E61 semantic-cache failure mode.
+	GatewayCacheSkipReasonEmbeddingsEndpoint GatewayCacheSkipReason = "embeddings_endpoint"
 
 	// GatewayCacheSkipReasonTimeSensitive is stamped when the freshness
 	// detector (cache/freshness) matches a Hub-pushed time-sensitive pattern
@@ -70,12 +81,33 @@ const (
 	// poisons future lookups.
 	GatewayCacheSkipReasonTimeSensitive GatewayCacheSkipReason = "time_sensitive"
 
+	// GatewayCacheSkipReasonAgenticToolUse is stamped when the request is an
+	// AGENTIC conversation — it declares a tools array, or its transcript
+	// already carries tool-role messages. The L2 semantic tier skips BOTH
+	// lookup and write for these: semantic similarity is the wrong notion for
+	// an agent loop, where consecutive requests are near-identical prefixes
+	// that differ only by the latest tool result. Observed in production: a
+	// similarity hit replayed the same failing tool call 10 times in 6
+	// seconds (the cached response re-matched every retry), and a cross-model
+	// hit served one model's answer to another. L1 exact-match is unaffected
+	// (byte-identical requests may still replay).
+	GatewayCacheSkipReasonAgenticToolUse GatewayCacheSkipReason = "agentic_tool_use"
+
 	// GatewayCacheSkipReasonOversizeForEmbedding is stamped when the L2
 	// semantic-cache input-staging plan (inputstaging.Plan) determines that
 	// even the strategy-truncated embedding input exceeds the embedding model's
 	// context window. L2 lookup and write are skipped; L1 (extract) is
 	// unaffected. See response-cache-architecture.md §3.4.
 	GatewayCacheSkipReasonOversizeForEmbedding GatewayCacheSkipReason = "oversize_for_embedding"
+
+	// GatewayCacheSkipReasonNoEmbeddableText is stamped when the L2
+	// input-staging step (buildEmbeddingInput) produces no text to embed —
+	// the request carried no text content (image-only / tool-only turns) or
+	// the staging plan yielded an empty selection. Distinct from
+	// oversize_for_embedding, which means text existed but exceeded the
+	// embedding model's context window. L2 lookup and write are skipped;
+	// L1 (extract) is unaffected.
+	GatewayCacheSkipReasonNoEmbeddableText GatewayCacheSkipReason = "no_embeddable_text"
 
 	// GatewayCacheSkipReasonValkeyUnavailable is stamped when the Valkey
 	// connection is unavailable for the L2 FT.SEARCH lookup. The gateway
@@ -115,18 +147,9 @@ const (
 	// out).
 	GatewayCacheSkipReasonSemanticSearchTimeout GatewayCacheSkipReason = "semantic_search_timeout"
 
-	// GatewayCacheSkipReasonSemanticReindexInProgress is stamped when the L1
-	// fingerprint observed at lookup time does not match the fingerprint stored
-	// in semantic_cache_config (a blue/green index swap is in flight). Lookups
-	// are skipped to prevent stale vectors from a previous embedding model
-	// being served. See response-cache-architecture.md §3.5.2.
-	GatewayCacheSkipReasonSemanticReindexInProgress GatewayCacheSkipReason = "semantic_reindex_in_progress"
-
 	// GatewayCacheSkipReasonSemanticUnavailable is stamped when the L2 layer
 	// is administratively disabled (semantic_cache_config.enabled = false, the
-	// fleet-wide kill switch). Distinct from per-route disabled
-	// (not_cacheable) so ops can distinguish a fleet kill-switch activation
-	// from a per-route policy decision.
+	// fleet-wide kill switch).
 	GatewayCacheSkipReasonSemanticUnavailable GatewayCacheSkipReason = "semantic_unavailable"
 
 	// GatewayCacheSkipReasonEmbeddingCircuitOpen is stamped when the per-

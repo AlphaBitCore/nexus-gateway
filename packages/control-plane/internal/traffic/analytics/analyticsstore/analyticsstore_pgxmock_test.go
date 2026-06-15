@@ -37,9 +37,9 @@ func TestGetAnalyticsGroupBy_InvalidKey(t *testing.T) {
 func TestGetAnalyticsGroupBy_Default(t *testing.T) {
 	// provider key, no sum, no time, no params → source='ai-gateway' filter.
 	s, m := newMock(t)
-	m.ExpectQuery(`SELECT COUNT\(DISTINCT provider_name\) FROM traffic_event WHERE source = 'ai-gateway'`).WithArgs().
+	m.ExpectQuery(`SELECT COUNT\(DISTINCT COALESCE\(routed_provider_name, provider_name\)\) FROM traffic_event WHERE source = 'ai-gateway'`).WithArgs().
 		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(2))
-	m.ExpectQuery(`SELECT provider_name AS grp, COUNT\(\*\) AS cnt FROM traffic_event WHERE source = 'ai-gateway'`).WithArgs().
+	m.ExpectQuery(`SELECT COALESCE\(routed_provider_name, provider_name\) AS grp, COUNT\(\*\) AS cnt FROM traffic_event WHERE source = 'ai-gateway'`).WithArgs().
 		WillReturnRows(pgxmock.NewRows([]string{"grp", "cnt"}).AddRow("openai", 10).AddRow("anthropic", 5))
 	res, total, err := s.GetAnalyticsGroupBy(context.Background(), "provider", nil, nil, "", nil)
 	if err != nil || total != 2 || len(res) != 2 || res[0].Group != "openai" || res[0].RequestCount != 10 {
@@ -51,9 +51,9 @@ func TestGetAnalyticsGroupBy_TokensWithTimeAndSearch(t *testing.T) {
 	// modelUsed + tokens sum + start/end + search + limit/offset.
 	s, m := newMock(t)
 	start, end := tNow.Add(-time.Hour), tNow
-	m.ExpectQuery(`COUNT\(DISTINCT model_name\).*model_name IS NOT NULL.*ILIKE \$3`).
+	m.ExpectQuery(`COUNT\(DISTINCT COALESCE\(routed_model_name, model_name\)\).*ILIKE \$3`).
 		WithArgs(start, end, "%gpt%").WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
-	m.ExpectQuery(`SELECT model_name AS grp.*SUM\(prompt_tokens\).*LIMIT 5 OFFSET 10`).
+	m.ExpectQuery(`SELECT COALESCE\(routed_model_name, model_name\) AS grp.*SUM\(prompt_tokens\).*LIMIT 5 OFFSET 10`).
 		WithArgs(start, end, "%gpt%").
 		WillReturnRows(pgxmock.NewRows([]string{"grp", "cnt", "pt", "ct", "tt"}).
 			AddRow("gpt-4o", 7, i64(100), i64(200), i64(300)).
@@ -144,7 +144,7 @@ func TestGetProviderAnalyticsDetail_Happy(t *testing.T) {
 	s, m := newMock(t)
 	// Each list query returns one good row + one bad row (skipped via scan!=nil).
 	m.ExpectQuery(`SELECT COUNT\(\*\), COUNT`).WithArgs("prov1").WillReturnRows(pgxmock.NewRows(summaryCols).AddRow(summaryRow(10, 2, 3, true)...))
-	m.ExpectQuery(`COALESCE\(NULLIF\(m.name`).WithArgs("prov1").
+	m.ExpectQuery(`COALESCE\(NULLIF\(a.routed_model_name`).WithArgs("prov1").
 		WillReturnRows(pgxmock.NewRows(byModelCols).
 			AddRow("gpt-4o", 5, fp(1), i64(1), i64(1), i64(1), fp(1), fp(1), fp(1)).
 			AddRow("bad", "not-an-int", nil, nil, nil, nil, nil, nil, nil)) // cnt bad → skip
@@ -186,7 +186,7 @@ func TestGetProviderAnalyticsDetail_SummaryZeroAndTimeClause(t *testing.T) {
 	s, m := newMock(t)
 	start, end := tNow.Add(-time.Hour), tNow
 	m.ExpectQuery(`SELECT COUNT\(\*\), COUNT`).WithArgs("prov1", start, end).WillReturnRows(pgxmock.NewRows(summaryCols).AddRow(summaryRow(0, 0, 0, false)...))
-	m.ExpectQuery(`COALESCE\(NULLIF\(m.name`).WithArgs("prov1", start, end).WillReturnRows(pgxmock.NewRows(byModelCols))
+	m.ExpectQuery(`COALESCE\(NULLIF\(a.routed_model_name`).WithArgs("prov1", start, end).WillReturnRows(pgxmock.NewRows(byModelCols))
 	m.ExpectQuery(`INNER JOIN "Project"`).WithArgs("prov1", start, end).WillReturnRows(pgxmock.NewRows(byProjCols))
 	m.ExpectQuery(`INNER JOIN "VirtualKey"`).WithArgs("prov1", start, end).WillReturnRows(pgxmock.NewRows(byVKCols))
 	m.ExpectQuery(`DATE_TRUNC\('day'`).WithArgs("prov1", start, end).WillReturnRows(pgxmock.NewRows(dailyCols))
@@ -208,7 +208,7 @@ func TestGetProviderAnalyticsDetail_QueryErrors(t *testing.T) {
 		m.ExpectQuery(`SELECT COUNT\(\*\), COUNT`).WithArgs("prov1").WillReturnRows(pgxmock.NewRows(summaryCols).AddRow(summaryRow(1, 0, 0, false)...))
 	}
 	emptyByModel := func(m pgxmock.PgxPoolIface) {
-		m.ExpectQuery(`COALESCE\(NULLIF\(m.name`).WithArgs("prov1").WillReturnRows(pgxmock.NewRows(byModelCols))
+		m.ExpectQuery(`COALESCE\(NULLIF\(a.routed_model_name`).WithArgs("prov1").WillReturnRows(pgxmock.NewRows(byModelCols))
 	}
 	emptyByProj := func(m pgxmock.PgxPoolIface) {
 		m.ExpectQuery(`INNER JOIN "Project"`).WithArgs("prov1").WillReturnRows(pgxmock.NewRows(byProjCols))
@@ -222,7 +222,7 @@ func TestGetProviderAnalyticsDetail_QueryErrors(t *testing.T) {
 
 	cases := []stage{
 		{"summary", `SELECT COUNT\(\*\), COUNT`, func(m pgxmock.PgxPoolIface) {}},
-		{"byModel", `COALESCE\(NULLIF\(m.name`, emptySummary},
+		{"byModel", `COALESCE\(NULLIF\(a.routed_model_name`, emptySummary},
 		{"byProject", `INNER JOIN "Project"`, func(m pgxmock.PgxPoolIface) { emptySummary(m); emptyByModel(m) }},
 		{"byVK", `INNER JOIN "VirtualKey"`, func(m pgxmock.PgxPoolIface) { emptySummary(m); emptyByModel(m); emptyByProj(m) }},
 		{"daily", `DATE_TRUNC\('day'`, func(m pgxmock.PgxPoolIface) { emptySummary(m); emptyByModel(m); emptyByProj(m); emptyByVK(m) }},

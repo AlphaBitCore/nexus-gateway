@@ -3,17 +3,21 @@ package v0web
 import (
 	"context"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
 )
 
-// Normalize implements normalize.Normalizer. Delegates to extract.NormalizeForAdapter
-// with the openai-chat spec; low-confidence matches fall through to Tier 2.
-func (a *Adapter) Normalize(_ context.Context, raw []byte, meta normalize.Meta) (normalize.NormalizedPayload, error) {
-	return extract.NormalizeForAdapter(raw, meta, extract.AdapterSpecHint{
-		AdapterID:     "v0-web",
-		ReqSpecIDs:    []string{"openai-chat"},
-		RespSpecIDs:   []string{"openai-chat-nonstream", "openai-chat-sse"},
-		MinConfidence: 0.5,
-	})
+// Normalize implements normalize.Normalizer. This host speaks the
+// OpenAI Chat wire shape, so decoding delegates to the shared
+// full-fidelity OpenAI Chat codec; only DetectedSpec is re-stamped
+// with this adapter's ID so audit rows keep per-host provenance.
+// Decode failures propagate so the Coordinator falls through to
+// Tier 2 / Tier 3.
+func (a *Adapter) Normalize(ctx context.Context, raw []byte, meta normalize.Meta) (normalize.NormalizedPayload, error) {
+	p, err := codecs.SharedOpenAIChat().Normalize(ctx, raw, meta)
+	if err != nil {
+		return p, err
+	}
+	p.DetectedSpec = a.ID()
+	return p, nil
 }

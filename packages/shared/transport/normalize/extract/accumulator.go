@@ -138,7 +138,7 @@ func (a *JSONPatchAccumulator) applyAdd(path string, rawVal json.RawMessage) err
 	if err := json.Unmarshal(rawVal, &decoded); err != nil {
 		return fmt.Errorf("extract: add %s: %w", path, err)
 	}
-	return setAtPointer(&a.state, tokens, decoded)
+	return setAtPointer(a.state, tokens, decoded)
 }
 
 // applyAppend appends a string value to the string at path. Tolerates
@@ -162,10 +162,10 @@ func (a *JSONPatchAccumulator) applyAppend(path string, rawVal json.RawMessage) 
 	}
 	existing := getAtPointer(a.state, tokens)
 	if cur, ok := existing.(string); ok {
-		return setAtPointer(&a.state, tokens, cur+s)
+		return setAtPointer(a.state, tokens, cur+s)
 	}
 	// Missing or non-string — set as a new string.
-	return setAtPointer(&a.state, tokens, s)
+	return setAtPointer(a.state, tokens, s)
 }
 
 // applyRemove deletes the key/index at path.
@@ -179,7 +179,7 @@ func (a *JSONPatchAccumulator) applyRemove(path string) error {
 		a.state = map[string]any{}
 		return nil
 	}
-	return removeAtPointer(&a.state, tokens)
+	return removeAtPointer(a.state, tokens)
 }
 
 // applyPatch decodes val as []JSONPatchOp and applies each in order.
@@ -258,20 +258,15 @@ func getAtPointer(root map[string]any, tokens []string) any {
 }
 
 // setAtPointer sets val at the token path, creating intermediate maps as
-// needed. Arrays grow on numeric token > len-1. Modifying root requires
-// a pointer-to-map indirection so the caller can swap the root.
-func setAtPointer(root *map[string]any, tokens []string, val any) error {
-	if len(tokens) == 0 {
-		m, ok := val.(map[string]any)
-		if !ok {
-			(*root)["_root"] = val
-			return nil
-		}
-		*root = m
-		return nil
-	}
-	var cur any = *root
-	for i, t := range tokens {
+// needed. Arrays grow on numeric token > len-1. Callers (applyAdd /
+// applyAppend) resolve the empty-path root case before descending, so
+// tokens always carries at least one element here; every iteration
+// either returns (terminal token, or an invalid shape error) or
+// descends one level, so the loop is the function's only exit.
+func setAtPointer(root map[string]any, tokens []string, val any) error {
+	var cur any = root
+	for i := 0; ; i++ {
+		t := tokens[i]
 		isLast := i == len(tokens)-1
 		switch node := cur.(type) {
 		case map[string]any:
@@ -329,12 +324,10 @@ func setAtPointer(root *map[string]any, tokens []string, val any) error {
 			}
 			cur = next
 		case string:
-			// Path runs into a leaf string when we're not yet at the
-			// last token. Replace with a fresh map and continue.
-			fresh := map[string]any{}
-			// We need to write this back to the parent — but we don't
-			// have the parent here. Punt: leave as best-effort no-op.
-			_ = fresh
+			// The JSON-pointer path tries to descend through a scalar
+			// string while there are still tokens left to traverse. That
+			// is an invalid path for the current document shape, so we
+			// reject it rather than silently overwriting the leaf.
 			return fmt.Errorf("extract: path traverses scalar at %q", t)
 		case nil:
 			return fmt.Errorf("extract: nil at intermediate token %q", t)
@@ -342,7 +335,6 @@ func setAtPointer(root *map[string]any, tokens []string, val any) error {
 			return fmt.Errorf("extract: unexpected type %T at %q", node, t)
 		}
 	}
-	return nil
 }
 
 // isStringJSON returns true when raw is a JSON-encoded string (first
@@ -362,14 +354,16 @@ func isStringJSON(raw json.RawMessage) bool {
 	return false
 }
 
-// removeAtPointer deletes the key/index at tokens.
-func removeAtPointer(root *map[string]any, tokens []string) error {
-	if len(tokens) == 0 {
-		*root = map[string]any{}
-		return nil
-	}
-	var cur any = *root
-	for i, t := range tokens {
+// removeAtPointer deletes the key/index at tokens. The caller
+// (applyRemove) resolves the empty-path root case before descending, so
+// tokens always carries at least one element here; every iteration
+// either returns (terminal token, or an absent / non-container path
+// treated as a successful no-op) or descends one level, so the loop is
+// the function's only exit.
+func removeAtPointer(root map[string]any, tokens []string) error {
+	var cur any = root
+	for i := 0; ; i++ {
+		t := tokens[i]
 		isLast := i == len(tokens)-1
 		switch node := cur.(type) {
 		case map[string]any:
@@ -404,5 +398,4 @@ func removeAtPointer(root *map[string]any, tokens []string) error {
 			return nil
 		}
 	}
-	return nil
 }

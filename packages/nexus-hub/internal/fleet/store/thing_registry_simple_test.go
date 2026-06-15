@@ -115,50 +115,6 @@ func TestGetThingManagementURL(t *testing.T) {
 	})
 }
 
-// TestSetPhysicalID covers happy + empty-args no-op + exec err.
-func TestSetPhysicalID(t *testing.T) {
-	t.Run("happy", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		mock.ExpectExec(`UPDATE thing.*physical_id`).
-			WithArgs("thing-1", "phys-1").
-			WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
-		store := New(mock)
-		if err := store.SetPhysicalID(context.Background(), "thing-1", "phys-1"); err != nil {
-			t.Fatalf("SetPhysicalID: %v", err)
-		}
-	})
-	t.Run("empty thingID no-op", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		store := New(mock)
-		if err := store.SetPhysicalID(context.Background(), "", "phys"); err != nil {
-			t.Errorf("empty thingID should no-op; got: %v", err)
-		}
-	})
-	t.Run("empty physicalID no-op", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		store := New(mock)
-		if err := store.SetPhysicalID(context.Background(), "t", ""); err != nil {
-			t.Errorf("empty physicalID should no-op; got: %v", err)
-		}
-	})
-	t.Run("exec err wraps", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		want := errors.New("planner err")
-		mock.ExpectExec(`UPDATE thing.*physical_id`).
-			WithArgs("t", "p").
-			WillReturnError(want)
-		store := New(mock)
-		err := store.SetPhysicalID(context.Background(), "t", "p")
-		if !errors.Is(err, want) {
-			t.Errorf("must wrap; got: %v", err)
-		}
-	})
-}
-
 // TestFindAgentByPhysicalID covers happy + empty-input + not-found
 // + err.
 func TestFindAgentByPhysicalID(t *testing.T) {
@@ -443,7 +399,10 @@ func TestValidateDeviceToken_HappyPath(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 	now := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing\s+WHERE id =`).
+	// The regex requires the fail-closed expiry predicate to be present in the
+	// SQL — if a future edit drops `device_token_expires_at > NOW()`, this
+	// query no longer matches and ExpectationsWereMet fails (F-0202).
+	mock.ExpectQuery(`metadata->>'deviceTokenHash' = \$2[\s\S]*device_token_expires_at > NOW\(\)`).
 		WithArgs("thing-1", "hash-1").
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "type", "name", "version", "address",
@@ -466,6 +425,35 @@ func TestValidateDeviceToken_HappyPath(t *testing.T) {
 	}
 	if got == nil || got.ID != "thing-1" || got.Status != "online" {
 		t.Errorf("thing: %+v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expiry predicate missing from query: %v", err)
+	}
+}
+
+// TestValidateDeviceToken_ExpiredRejected proves the fail-closed expiry behaviour:
+// when a token has expired, the `device_token_expires_at > NOW()` predicate drops
+// the row server-side, so the lookup returns ErrNoRows and the agent is rejected
+// — there is no Go branch that could let an expired token through (F-0202).
+func TestValidateDeviceToken_ExpiredRejected(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+	// Mock returns no rows: that is exactly what Postgres does for an expired
+	// (or NULL-expiry) token because of the WHERE predicate.
+	mock.ExpectQuery(`device_token_expires_at > NOW\(\)`).
+		WithArgs("thing-1", "stale-hash").
+		WillReturnError(pgx.ErrNoRows)
+
+	store := New(mock)
+	_, err := store.ValidateDeviceToken(context.Background(), "thing-1", "stale-hash")
+	if err == nil {
+		t.Fatal("expired token must be rejected, got nil error")
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("must wrap ErrNoRows (token filtered by expiry predicate); got: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expiry predicate missing from query: %v", err)
 	}
 }
 
@@ -490,27 +478,33 @@ func TestValidateDeviceToken_NoMatch(t *testing.T) {
 	}
 }
 
-// TestStoreDeviceTokenHash covers happy + not-found + err wrap.
+// TestStoreDeviceTokenHash covers happy + not-found + err wrap. The happy case
+// also asserts the expiry column is written: the UPDATE must set
+// device_token_expires_at to the supplied time (F-0202), bound as $3.
 func TestStoreDeviceTokenHash(t *testing.T) {
+	expiry := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	t.Run("happy", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		defer mock.Close()
-		mock.ExpectExec(`UPDATE thing.*jsonb_set.*deviceTokenHash`).
-			WithArgs("thing-1", "hash-abc").
+		mock.ExpectExec(`UPDATE thing.*jsonb_set.*deviceTokenHash.*device_token_expires_at = \$3`).
+			WithArgs("thing-1", "hash-abc", expiry).
 			WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 		store := New(mock)
-		if err := store.StoreDeviceTokenHash(context.Background(), "thing-1", "hash-abc"); err != nil {
+		if err := store.StoreDeviceTokenHash(context.Background(), "thing-1", "hash-abc", expiry); err != nil {
 			t.Fatalf("StoreDeviceTokenHash: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("expiry column not written as expected: %v", err)
 		}
 	})
 	t.Run("not found", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		defer mock.Close()
 		mock.ExpectExec(`UPDATE thing.*jsonb_set.*deviceTokenHash`).
-			WithArgs("missing", "h").
+			WithArgs("missing", "h", expiry).
 			WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
 		store := New(mock)
-		err := store.StoreDeviceTokenHash(context.Background(), "missing", "h")
+		err := store.StoreDeviceTokenHash(context.Background(), "missing", "h", expiry)
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected ErrNotFound; got: %v", err)
 		}
@@ -520,10 +514,10 @@ func TestStoreDeviceTokenHash(t *testing.T) {
 		defer mock.Close()
 		want := errors.New("planner err")
 		mock.ExpectExec(`UPDATE thing.*jsonb_set.*deviceTokenHash`).
-			WithArgs("x", "h").
+			WithArgs("x", "h", expiry).
 			WillReturnError(want)
 		store := New(mock)
-		err := store.StoreDeviceTokenHash(context.Background(), "x", "h")
+		err := store.StoreDeviceTokenHash(context.Background(), "x", "h", expiry)
 		if !errors.Is(err, want) {
 			t.Errorf("must wrap; got: %v", err)
 		}
@@ -573,78 +567,6 @@ func TestStoreAttestationPubKey(t *testing.T) {
 	})
 }
 
-func TestGetAttestationPubKey(t *testing.T) {
-	t.Run("happy", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		mock.ExpectQuery(`SELECT COALESCE.*attestation`).
-			WithArgs("thing-1").
-			WillReturnRows(pgxmock.NewRows([]string{"coalesce"}).
-				AddRow("AQID")) // base64 of [0x01, 0x02, 0x03]
-		s := New(mock)
-		got, err := s.GetAttestationPubKey(context.Background(), "thing-1")
-		if err != nil {
-			t.Fatalf("GetAttestationPubKey: %v", err)
-		}
-		want := []byte{0x01, 0x02, 0x03}
-		if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
-			t.Errorf("bytes mismatch: got=%v want=%v", got, want)
-		}
-	})
-	t.Run("empty row → ErrNotFound", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		mock.ExpectQuery(`SELECT COALESCE.*attestation`).
-			WithArgs("none").
-			WillReturnRows(pgxmock.NewRows([]string{"coalesce"}).AddRow(""))
-		s := New(mock)
-		_, err := s.GetAttestationPubKey(context.Background(), "none")
-		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("expected ErrNotFound; got: %v", err)
-		}
-	})
-	t.Run("pgx ErrNoRows → ErrNotFound", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		mock.ExpectQuery(`SELECT COALESCE.*attestation`).
-			WithArgs("missing-thing").
-			WillReturnError(pgx.ErrNoRows)
-		s := New(mock)
-		_, err := s.GetAttestationPubKey(context.Background(), "missing-thing")
-		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("expected ErrNotFound; got: %v", err)
-		}
-	})
-	t.Run("query error wraps", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		want := errors.New("planner err")
-		mock.ExpectQuery(`SELECT COALESCE.*attestation`).
-			WithArgs("x").
-			WillReturnError(want)
-		s := New(mock)
-		_, err := s.GetAttestationPubKey(context.Background(), "x")
-		if !errors.Is(err, want) {
-			t.Errorf("must wrap; got: %v", err)
-		}
-	})
-	t.Run("malformed base64 wraps", func(t *testing.T) {
-		mock, _ := pgxmock.NewPool()
-		defer mock.Close()
-		mock.ExpectQuery(`SELECT COALESCE.*attestation`).
-			WithArgs("bad").
-			WillReturnRows(pgxmock.NewRows([]string{"coalesce"}).AddRow("!!!"))
-		s := New(mock)
-		_, err := s.GetAttestationPubKey(context.Background(), "bad")
-		if err == nil {
-			t.Fatal("expected base64 decode error")
-		}
-		if !strings.Contains(err.Error(), "decode attestation pubkey") {
-			t.Errorf("err should wrap decode: %v", err)
-		}
-	})
-}
-
 // TestUpdateThingStatus covers happy + not-found + err wrap.
 func TestUpdateThingStatus(t *testing.T) {
 	t.Run("happy", func(t *testing.T) {
@@ -681,6 +603,70 @@ func TestUpdateThingStatus(t *testing.T) {
 		err := store.UpdateThingStatus(context.Background(), "x", "s")
 		if !errors.Is(err, want) {
 			t.Errorf("must wrap; got: %v", err)
+		}
+	})
+}
+
+// TestGetAttestationPubKeyWithExpiry covers the SEC-M4-01 getter that surfaces
+// the cert NotAfter alongside the pubkey so CP can reject an expired key.
+func TestGetAttestationPubKeyWithExpiry(t *testing.T) {
+	t.Run("happy with expiry", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		mock.ExpectQuery(`SELECT COALESCE.*publicKey.*COALESCE.*certExpiresAt`).
+			WithArgs("thing-1").
+			WillReturnRows(pgxmock.NewRows([]string{"publicKey", "certExpiresAt"}).
+				AddRow("AQID", "2099-01-02T03:04:05Z")) // base64 of [1,2,3]
+		s := New(mock)
+		pub, exp, err := s.GetAttestationPubKeyWithExpiry(context.Background(), "thing-1")
+		if err != nil {
+			t.Fatalf("GetAttestationPubKeyWithExpiry: %v", err)
+		}
+		if len(pub) != 3 || pub[0] != 0x01 {
+			t.Errorf("pub = %v; want [1 2 3]", pub)
+		}
+		want, _ := time.Parse(time.RFC3339, "2099-01-02T03:04:05Z")
+		if !exp.Equal(want) {
+			t.Errorf("certExpiresAt = %v; want %v", exp, want)
+		}
+	})
+	t.Run("legacy stamp without expiry returns zero time", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		mock.ExpectQuery(`SELECT COALESCE.*certExpiresAt`).
+			WithArgs("thing-2").
+			WillReturnRows(pgxmock.NewRows([]string{"publicKey", "certExpiresAt"}).AddRow("AQID", ""))
+		s := New(mock)
+		_, exp, err := s.GetAttestationPubKeyWithExpiry(context.Background(), "thing-2")
+		if err != nil || !exp.IsZero() {
+			t.Errorf("legacy: exp=%v err=%v; want zero,nil", exp, err)
+		}
+	})
+	t.Run("empty publicKey is not-found", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		mock.ExpectQuery(`SELECT COALESCE`).
+			WithArgs("none").
+			WillReturnRows(pgxmock.NewRows([]string{"publicKey", "certExpiresAt"}).AddRow("", ""))
+		s := New(mock)
+		if _, _, err := s.GetAttestationPubKeyWithExpiry(context.Background(), "none"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("want ErrNotFound; got %v", err)
+		}
+	})
+	// SEC-M4-01 revocation: the query joins thing and excludes status='revoked',
+	// so a revoked (unenrolled) device's attestation is no longer served — the
+	// JOIN+filter yields no row (ErrNoRows) → ErrNotFound → CP MITM fallback.
+	t.Run("revoked device not served", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		// The expected query MUST carry the revocation filter; pgxmock matches on
+		// the regex, so this asserts the JOIN + status guard are present.
+		mock.ExpectQuery(`JOIN thing t[\s\S]*status != 'revoked'`).
+			WithArgs("revoked-thing").
+			WillReturnError(pgx.ErrNoRows)
+		s := New(mock)
+		if _, _, err := s.GetAttestationPubKeyWithExpiry(context.Background(), "revoked-thing"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("revoked device must yield ErrNotFound; got %v", err)
 		}
 	})
 }

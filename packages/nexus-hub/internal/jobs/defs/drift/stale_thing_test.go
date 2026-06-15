@@ -45,8 +45,13 @@ func TestStaleThingJob_DefaultThresholds(t *testing.T) {
 	if j.cfg.AgentThreshold != 5*time.Minute {
 		t.Errorf("AgentThreshold default = %v, want 5m", j.cfg.AgentThreshold)
 	}
-	if j.cfg.ServiceThreshold != 30*time.Second {
-		t.Errorf("ServiceThreshold default = %v, want 30s", j.cfg.ServiceThreshold)
+	// F-0209: default must be >=2x the 30s ping interval to avoid false-offline
+	// flap from a single jittered/missed ping.
+	if j.cfg.ServiceThreshold != 90*time.Second {
+		t.Errorf("ServiceThreshold default = %v, want 90s", j.cfg.ServiceThreshold)
+	}
+	if j.cfg.ServiceThreshold < 2*30*time.Second {
+		t.Errorf("ServiceThreshold default %v < 2x pingInterval (60s) — flap risk", j.cfg.ServiceThreshold)
 	}
 }
 
@@ -55,7 +60,7 @@ func TestStaleThingJob_NegativeThresholdsUseDefaults(t *testing.T) {
 		AgentThreshold:   -1 * time.Second,
 		ServiceThreshold: 0,
 	})
-	if j.cfg.AgentThreshold != 5*time.Minute || j.cfg.ServiceThreshold != 30*time.Second {
+	if j.cfg.AgentThreshold != 5*time.Minute || j.cfg.ServiceThreshold != 90*time.Second {
 		t.Errorf("defaults not applied: %+v", j.cfg)
 	}
 }

@@ -1,8 +1,7 @@
 // Coverage for provider_test_conn.go: RegisterProviderTestRoutes,
-// RegisterPricingRoutes, ProviderTestConnection, ProviderTest,
-// decryptCredentialByID, getFirstCredentialKey, decryptCredential,
-// forwardProviderTest, ListProviderHealth, ListPricing, CreatePricing,
-// DeletePricing. All were at 0% coverage.
+// ProviderTestConnection, ProviderTest, decryptCredentialByID,
+// getFirstCredentialKey, decryptCredential, forwardProviderTest,
+// ListProviderHealth.
 package providers
 
 import (
@@ -18,6 +17,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 )
 
 // RegisterProviderTestRoutes — wires 3 routes
@@ -47,29 +48,42 @@ func TestRegisterProviderTestRoutes_WiresThreeRoutes(t *testing.T) {
 	}
 }
 
-// RegisterPricingRoutes — wires 3 routes
-
-func TestRegisterPricingRoutes_WiresThreeRoutes(t *testing.T) {
+// TestRegisterProviderTestRoutes_TestConnectionGatedOnCreate proves F-0369: the
+// draft test-connection route is gated on the provider-config-write tier
+// (provider:create), NOT provider:read. A read-only viewer can no longer use the
+// probe as a blind-SSRF / internal-endpoint fingerprinting oracle. The
+// stored-provider test stays on provider:read + credential:probe.
+func TestRegisterProviderTestRoutes_TestConnectionGatedOnCreate(t *testing.T) {
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
 	e := echo.New()
 	g := e.Group("/api/admin")
-	iamMW := func(_ string) echo.MiddlewareFunc {
+
+	// Record the action string each iamMW is constructed with, in registration
+	// order, so we can map them back to routes.
+	var actions []string
+	iamMW := func(action string) echo.MiddlewareFunc {
+		actions = append(actions, action)
 		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
 	}
-	h.RegisterPricingRoutes(g, iamMW)
-	want := map[string]bool{
-		"GET /api/admin/pricing":        false,
-		"POST /api/admin/pricing":       false,
-		"DELETE /api/admin/pricing/:id": false,
+	h.RegisterProviderTestRoutes(g, iamMW)
+
+	// RegisterProviderTestRoutes constructs the middlewares in this fixed order:
+	//   1) test-connection            -> provider:create   (raised, F-0369)
+	//   2) /:id/test provider gate     -> provider:read
+	//   3) /:id/test credential gate   -> credential:probe
+	//   4) provider-health             -> provider:read
+	want := []string{
+		"admin:provider.create",
+		"admin:provider.read",
+		"admin:credential.probe",
+		"admin:provider.read",
 	}
-	for _, r := range e.Routes() {
-		if _, ok := want[r.Method+" "+r.Path]; ok {
-			want[r.Method+" "+r.Path] = true
-		}
+	if len(actions) != len(want) {
+		t.Fatalf("iamMW invoked %d times %v; want %d %v", len(actions), actions, len(want), want)
 	}
-	for k, found := range want {
-		if !found {
-			t.Errorf("route %s not registered", k)
+	for i := range want {
+		if actions[i] != want[i] {
+			t.Errorf("iamMW[%d] = %q; want %q", i, actions[i], want[i])
 		}
 	}
 }
@@ -318,14 +332,17 @@ func TestDecryptCredential_MultiVault_Success(t *testing.T) {
 	multi := newTestMultiVault(t)
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, multi, ProxyConfig{})
 
-	// Encrypt something with v2 (current) so we can decrypt it back.
+	// Encrypt something with v2 (current) so we can decrypt it back. SEC-C1-02:
+	// seal under the same row-identity AAD the decrypt path rebuilds from
+	// (credentialID, providerID).
 	v2Vault := vaultForKey(t, "v2")
-	enc, err := v2Vault.Encrypt("my-secret-key")
+	aad := keyderive.ProviderCredentialAAD("cred-tc", "prov-tc")
+	enc, err := v2Vault.Encrypt("my-secret-key", aad)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
 
-	got := h.decryptCredential(context.Background(), enc.Ciphertext, enc.IV, enc.Tag, "v2")
+	got := h.decryptCredential(context.Background(), "cred-tc", "prov-tc", enc.Ciphertext, enc.IV, enc.Tag, "v2")
 	if got != "my-secret-key" {
 		t.Errorf("decryptCredential = %q; want 'my-secret-key'", got)
 	}
@@ -334,7 +351,7 @@ func TestDecryptCredential_MultiVault_Success(t *testing.T) {
 func TestDecryptCredential_MultiVault_WrongKey_ReturnsEmpty(t *testing.T) {
 	multi := newTestMultiVault(t)
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, multi, ProxyConfig{})
-	got := h.decryptCredential(context.Background(), "bad-cipher", "bad-iv", "bad-tag", "v999")
+	got := h.decryptCredential(context.Background(), "cid", "pid", "bad-cipher", "bad-iv", "bad-tag", "v999")
 	if got != "" {
 		t.Errorf("bad key should return empty; got %q", got)
 	}
@@ -344,11 +361,12 @@ func TestDecryptCredential_SingleVault_Success(t *testing.T) {
 	vault := newTestVault(t)
 	h := newHandler(nil, nil, &auditSpy{}, nil, vault, nil, ProxyConfig{})
 
-	enc, err := vault.Encrypt("plain-key")
+	aad := keyderive.ProviderCredentialAAD("cred-sv", "prov-sv")
+	enc, err := vault.Encrypt("plain-key", aad)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-	got := h.decryptCredential(context.Background(), enc.Ciphertext, enc.IV, enc.Tag, "v1")
+	got := h.decryptCredential(context.Background(), "cred-sv", "prov-sv", enc.Ciphertext, enc.IV, enc.Tag, "v1")
 	if got != "plain-key" {
 		t.Errorf("decryptCredential = %q; want 'plain-key'", got)
 	}
@@ -357,7 +375,7 @@ func TestDecryptCredential_SingleVault_Success(t *testing.T) {
 func TestDecryptCredential_SingleVault_BadCiphertext_ReturnsEmpty(t *testing.T) {
 	vault := newTestVault(t)
 	h := newHandler(nil, nil, &auditSpy{}, nil, vault, nil, ProxyConfig{})
-	got := h.decryptCredential(context.Background(), "bad", "bad", "bad", "v1")
+	got := h.decryptCredential(context.Background(), "c", "p", "bad", "bad", "bad", "v1")
 	if got != "" {
 		t.Errorf("bad ciphertext should return empty; got %q", got)
 	}
@@ -365,7 +383,7 @@ func TestDecryptCredential_SingleVault_BadCiphertext_ReturnsEmpty(t *testing.T) 
 
 func TestDecryptCredential_NoVaults_ReturnsEmpty(t *testing.T) {
 	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	got := h.decryptCredential(context.Background(), "c", "i", "t", "v1")
+	got := h.decryptCredential(context.Background(), "cid", "pid", "c", "i", "t", "v1")
 	if got != "" {
 		t.Errorf("no vaults should return empty; got %q", got)
 	}
@@ -501,181 +519,6 @@ func TestListProviderHealth_DBError_Returns500(t *testing.T) {
 	}
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("code = %d; want 500", rec.Code)
-	}
-}
-
-func TestListPricing_Happy(t *testing.T) {
-	mock, db := newMockStore(t)
-	now := nowFixture()
-	mock.ExpectQuery(`FROM "ModelPricing"`).
-		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "modelId", "inputPricePerMillion", "outputPricePerMillion", "effectiveDate",
-		}).AddRow("price-1", "model-1", 2.5, 10.0, now))
-
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/pricing", nil)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	if err := h.ListPricing(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	data, _ := out["data"].([]any)
-	if len(data) != 1 {
-		t.Errorf("expected 1 pricing row; got %d", len(data))
-	}
-}
-
-func TestListPricing_DBError_Returns500(t *testing.T) {
-	mock, db := newMockStore(t)
-	mock.ExpectQuery(`FROM "ModelPricing"`).WillReturnError(errors.New("err"))
-
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/pricing", nil)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	_ = h.ListPricing(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d; want 500", rec.Code)
-	}
-}
-
-func TestCreatePricing_MissingModelID_Returns400(t *testing.T) {
-	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/pricing",
-		strings.NewReader(`{}`))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	_ = h.CreatePricing(c)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d; want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "modelId is required") {
-		t.Errorf("body: %s", rec.Body.String())
-	}
-}
-
-func TestCreatePricing_BadJSON_Returns400(t *testing.T) {
-	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/pricing",
-		strings.NewReader("not-json"))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	_ = h.CreatePricing(c)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d; want 400", rec.Code)
-	}
-}
-
-func TestCreatePricing_DBError_Returns500(t *testing.T) {
-	mock, db := newMockStore(t)
-	// CreateModelPricing SQL: INSERT INTO "ModelPricing" ... RETURNING id
-	mock.ExpectQuery(`INSERT INTO "ModelPricing"`).
-		WithArgs("model-1", 2.5, 10.0).
-		WillReturnError(errors.New("db err"))
-
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	body := `{"modelId":"model-1","inputPricePerMillion":2.5,"outputPricePerMillion":10.0}`
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/pricing", strings.NewReader(body))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	_ = h.CreatePricing(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d; want 500", rec.Code)
-	}
-}
-
-func TestCreatePricing_Happy(t *testing.T) {
-	mock, db := newMockStore(t)
-	// CreateModelPricing SQL: INSERT INTO "ModelPricing" ... RETURNING id
-	mock.ExpectQuery(`INSERT INTO "ModelPricing"`).
-		WithArgs("model-1", 2.5, 10.0).
-		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("price-1"))
-
-	spy := &auditSpy{}
-	h := newHandler(db, nil, spy, nil, nil, nil, ProxyConfig{})
-	body := `{"modelId":"model-1","inputPricePerMillion":2.5,"outputPricePerMillion":10.0}`
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/pricing", strings.NewReader(body))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	if err := h.CreatePricing(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("code = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if out["id"] != "price-1" || out["modelId"] != "model-1" {
-		t.Errorf("body: %+v", out)
-	}
-}
-
-func TestDeletePricing_NotFound_Returns404(t *testing.T) {
-	mock, db := newMockStore(t)
-	// DeleteModelPricing SQL: DELETE FROM "ModelPricing" WHERE id = $1
-	mock.ExpectExec(`DELETE FROM "ModelPricing" WHERE id`).
-		WithArgs("missing").
-		WillReturnResult(pgxmock.NewResult("DELETE", 0))
-
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	req := httptest.NewRequest(http.MethodDelete, "/", nil)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	c.SetParamNames("id")
-	c.SetParamValues("missing")
-	_ = h.DeletePricing(c)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("code = %d; want 404", rec.Code)
-	}
-}
-
-func TestDeletePricing_DBError_Returns500(t *testing.T) {
-	mock, db := newMockStore(t)
-	// DeleteModelPricing SQL: DELETE FROM "ModelPricing" WHERE id = $1
-	mock.ExpectExec(`DELETE FROM "ModelPricing" WHERE id`).
-		WithArgs("price-1").
-		WillReturnError(errors.New("db err"))
-
-	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
-	req := httptest.NewRequest(http.MethodDelete, "/", nil)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	c.SetParamNames("id")
-	c.SetParamValues("price-1")
-	_ = h.DeletePricing(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d; want 500", rec.Code)
-	}
-}
-
-func TestDeletePricing_Happy(t *testing.T) {
-	mock, db := newMockStore(t)
-	// DeleteModelPricing SQL: DELETE FROM "ModelPricing" WHERE id = $1
-	mock.ExpectExec(`DELETE FROM "ModelPricing" WHERE id`).
-		WithArgs("price-1").
-		WillReturnResult(pgxmock.NewResult("DELETE", 1))
-
-	spy := &auditSpy{}
-	h := newHandler(db, nil, spy, nil, nil, nil, ProxyConfig{})
-	req := httptest.NewRequest(http.MethodDelete, "/", nil)
-	rec := httptest.NewRecorder()
-	c, _ := echoCtx(req, rec, "u-1")
-	c.SetParamNames("id")
-	c.SetParamValues("price-1")
-	if err := h.DeletePricing(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("code = %d", rec.Code)
 	}
 }
 

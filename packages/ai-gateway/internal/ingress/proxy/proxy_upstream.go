@@ -28,6 +28,7 @@ import (
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -39,15 +40,17 @@ import (
 //
 // preparedBody MUST be the bytes Adapter.PrepareBody would return for
 // routeResult.Targets[0]; preparedRewrites MUST be the matching
-// rewrites slice. Pass nil/nil to fall back to plain Execute behaviour
-// (which re-runs PrepareBody internally — idempotent, behaviour-
-// equivalent, just one redundant µs-scale encode on the success path).
+// rewrites slice; preparedURLOverride MUST be the matching codec
+// URLOverride (so a shape-driven action URL reaches the dispatch).
+// Pass nil/nil/"" to fall back to plain Execute behaviour (which
+// re-runs PrepareBody internally — idempotent, behaviour-equivalent, just
+// one redundant µs-scale encode on the success path).
 //
 // Returns the execution result, the winning target, the retry count,
 // and an error. On failure the error response is already written to w.
 // The ingress descriptor's Endpoint and BodyFormat drive the adapter's
 // passthrough/translate decision.
-func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.ResponseWriter, rec *audit.Record, routeResult *routingcore.RouteResult, body []byte, isStream bool, in Ingress, preparedBody []byte, preparedRewrites []string, start time.Time, logger *slog.Logger) (*executor.ExecutionResult, routingcore.RoutingTarget, int, error) {
+func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.ResponseWriter, rec *audit.Record, routeResult *routingcore.RouteResult, body []byte, isStream bool, in Ingress, preparedBody []byte, preparedRewrites []string, preparedURLOverride string, start time.Time, logger *slog.Logger) (*executor.ExecutionResult, routingcore.RoutingTarget, int, error) {
 	pcCfg := h.payloadCaptureConfig()
 	maxResp := pcCfg.MaxResponseBytes
 	if maxResp <= 0 {
@@ -58,7 +61,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 	req.StickyKey = stickyKeyFromCtx(r.Context())
 	var execResult *executor.ExecutionResult
 	if preparedBody != nil {
-		execResult = h.deps.Executor.ExecuteWithPreparedBody(r.Context(), routeResult.Targets, req, policy, preparedBody, preparedRewrites)
+		execResult = h.deps.Executor.ExecuteWithPreparedBody(r.Context(), routeResult.Targets, req, policy, preparedBody, preparedRewrites, preparedURLOverride)
 	} else {
 		execResult = h.deps.Executor.Execute(r.Context(), routeResult.Targets, req, policy)
 	}
@@ -308,11 +311,16 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// ServeProxy time so the per-endpoint cost formula yields a non-zero
 	// embedding cost. OpenAI/Azure embeddings report real usage, so this
 	// only fires when usage is genuinely absent.
+	embeddingEstimated := false
 	if pt := embeddingTokenFallback(rec.EndpointType, rec.PromptTokens, rec.Metadata); pt != rec.PromptTokens {
 		rec.PromptTokens = pt
 		rec.TotalTokens = pt
 		usage.PromptTokens = pt
 		usage.TotalTokens = pt
+		// The token count is a local heuristic estimate, not a
+		// provider-reported figure — flag it so usage_extraction_status does
+		// not claim "ok" confidence below.
+		embeddingEstimated = true
 	}
 	// Use the per-endpoint cost formula registry so embeddings (prompt
 	// only) and other typologies are priced correctly without a switch.
@@ -347,16 +355,30 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	}
 	// reasoning_cost_usd — subset of EstimatedCostUsd attributable to
 	// ReasoningTokens (billed at the output rate). Stamped here BEFORE
-	// computeCacheCosts which may overwrite EstimatedCostUsd using
-	// provider_pricing; the ratio is preserved because both numerator and
-	// denominator use the same output price.
-	if rec.ReasoningTokens > 0 && quotaOutPrice > 0 {
-		rec.ReasoningCostUsd = float64(rec.ReasoningTokens) * quotaOutPrice / 1_000_000
-	}
+	// computeCacheCosts which may recompute EstimatedCostUsd from the Model
+	// row's price columns; the ratio is preserved because both numerator and
+	// denominator use the same output price. Shared helper so every cost path
+	// (broker, streaming, cache HIT) stamps it identically.
+	stampReasoningCost(rec, quotaOutPrice)
 	h.computeCacheCosts(rec, target)
-	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+	switch {
+	case embeddingEstimated:
+		// Tokens came from the local embedding estimate, not the
+		// provider — distinct status so dashboards/alerting don't treat the
+		// count as provider-confirmed. The estimate is request-side, so it is
+		// honest even when the response body was truncated (checked next).
+		rec.UsageExtractionStatus = "estimated"
+	case result.Truncated:
+		// The upstream response body was clamped at the read cap (or
+		// decompressed-size bound) before usage extraction, so any token
+		// counts parsed from it are incomplete. Refuse to claim "ok" — a
+		// truncated-as-complete buffer silently corrupts billing/analytics.
+		// Also mark ResponseTruncated so the spilled audit body is tagged.
+		rec.ResponseTruncated = true
+		rec.UsageExtractionStatus = "truncated"
+	case usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0:
 		rec.UsageExtractionStatus = "ok"
-	} else {
+	default:
 		rec.UsageExtractionStatus = "parse_failed"
 	}
 	// Update embedding dimension from the live response body.
@@ -374,14 +396,25 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	//
 	// bypassHooks: when the resolved passthrough has BypassHooks active,
 	// skip the response-stage pipeline build + execute. The request-stage
-	// skip already stamped rec.HookDecision = "BYPASSED"; the response
-	// stage just leaves rec.ResponseHookDecision empty.
+	// skip stamps rec.HookDecision = "BYPASSED"; stamp the response stage
+	// symmetrically so a SIEM filter on
+	// ResponseHookDecision='BYPASSED' catches these — leaving it empty
+	// makes a bypass indistinguishable from "no response hook configured".
 	bypassResponseHooks := false
 	if resolved := requestcontext.ResolvedFrom(r.Context()); resolved != nil {
 		if pt := resolved.Passthrough(); pt.AnyBypassActive() && pt.BypassHooks {
 			bypassResponseHooks = true
 		}
 	}
+	if bypassResponseHooks {
+		rec.ResponseHookDecision = "BYPASSED"
+	}
+	// Pre-rewrite snapshot: when the storage policy is redact, the audit
+	// record must carry the ORIGINAL bytes (the writer normalizes them and
+	// applies the spans itself — span offsets address the original text;
+	// feeding it already-rewritten bytes would mis-slice). The raw storage
+	// copy under redact comes from rec.ResponseBodyRedacted instead.
+	origRespBody := respBody
 	if !bypassResponseHooks {
 		extractor := h.trafficAdapterFor(ingress.BodyFormat)
 		ingressFormat := string(ingress.BodyFormat)
@@ -406,7 +439,7 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 			"response", "AI_GATEWAY",
 			epType,
 			respInput.OutputModality,
-			5*time.Second, 15*time.Second, false, logger,
+			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
 		)
 		if pErr != nil {
 			logger.Error("failed to build response hook pipeline", "error", pErr)
@@ -427,6 +460,13 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
 				rec.BlockingRule = br
 			}
+			// Propagate spans + storage policy so the audit writer can
+			// redact (or drop) the persisted response copies — without
+			// this the response-side storageAction is silently inert.
+			rec.ResponseTransformSpans = hookResult.TransformSpans
+			rec.ResponseStorageAction = string(hookResult.StorageAction)
+			rec.ResponseRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
+			rec.ResponseRedetect = hookResult.Redetect
 
 			if h.deps.Metrics != nil {
 				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
@@ -457,6 +497,9 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 					h.writeError(w, rec, http.StatusInternalServerError, "response rewrite failed")
 					return
 				default:
+					// The rewritten bytes double as the storage-safe raw
+					// copy under storageAction=redact (see storageRawBody).
+					rec.ResponseBodyRedacted = rewritten
 					respBody = rewritten
 					rec.ResponseHookRewriteCount = n
 					rec.ResponseHookRewritten = true
@@ -471,9 +514,16 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// (≤ MaxInlineBodyBytes) or to the spill backend (>) at flush time.
 	// Network-side bounding for the upstream read happens independently
 	// in provcore.LimitedReadAll using MaxResponseBytes.
+	// Exception: under storageAction=redact the record carries the
+	// pre-rewrite bytes — the writer applies the spans (original offsets)
+	// to the normalized copy and persists only ResponseBodyRedacted raw.
+	respBodyForAudit := respBody
+	if rec.ResponseStorageAction == string(hookcore.StorageRedact) {
+		respBodyForAudit = origRespBody
+	}
 	pcCfgPost := h.payloadCaptureConfig()
-	if len(respBody) > 0 && pcCfgPost.StoreResponseBody {
-		rec.ResponseBody = respBody
+	if len(respBodyForAudit) > 0 && pcCfgPost.StoreResponseBody {
+		rec.ResponseBody = respBodyForAudit
 		// Non-stream AI Gateway responses are always JSON-shaped after
 		// the canonical bridge; this hint drives the Control Plane
 		// reader's inline-vs-string decoding.
@@ -487,7 +537,13 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 		h.deps.Metrics.RecordRequest(target.ProviderName, target.ModelID, endpointType, rec.StatusCode, time.Since(start), usage)
 	}
 
-	// Quota reconcile — new engine (fire-and-forget).
+	// Quota reconcile — new engine (fire-and-forget). Charge the single
+	// canonical cache-aware cost the cost pipeline already computed
+	// (rec.EstimatedCostUsd = traffic_event.estimated_cost_usd = the rollup's
+	// billed_cost_usd base = the Backfill seed) so the live counter, the
+	// rollup, and the boot seed price identically. Captured into
+	// a local before the goroutine so reconcile cannot race a later rec mutation.
+	reconcileCost := rec.EstimatedCostUsd
 	if h.deps.QuotaEngine != nil && quotaDecision != nil && quotaDecision.Allowed && rec.StatusCode < 400 {
 		go func() {
 			defer func() {
@@ -497,13 +553,7 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 			}()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			h.deps.QuotaEngine.Reconcile(ctx, quotaDecision, quota.ActualUsage{
-				PromptTokens:     usage.PromptTokens,
-				CompletionTokens: usage.CompletionTokens,
-				TotalTokens:      usage.TotalTokens,
-				InputPricePM:     quotaInPrice,
-				OutputPricePM:    quotaOutPrice,
-			})
+			h.deps.QuotaEngine.Reconcile(ctx, quotaDecision, quota.ActualUsage{CostUSD: reconcileCost})
 		}()
 	}
 

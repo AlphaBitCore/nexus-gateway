@@ -4,10 +4,11 @@
 // `bedrock-runtime.<region>.amazonaws.com/model/<modelId>/invoke[-with-response-stream]`
 // and rely on the Anthropic SchemaCodec for payload shaping.
 //
-// Streaming scope: the Bedrock EventStream framing decoder is out of
-// scope this round — clients requesting Bedrock streams receive an
-// explicit error from the stream decoder rather than incorrect output.
-// Non-streaming invocations work end-to-end.
+// Streaming: Bedrock streaming is not supported by this adapter. Bedrock's
+// InvokeModelWithResponseStream uses AWS EventStream binary framing rather
+// than SSE, which this adapter does not decode; a stream request returns a
+// typed `bedrock_stream_unsupported` error from the stream decoder rather
+// than incorrect output. Non-streaming invocations work end-to-end.
 //
 // Authentication is AWS SigV4.
 package bedrock

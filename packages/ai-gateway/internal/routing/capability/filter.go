@@ -12,7 +12,8 @@ package capability
 //     (when SupportedDimensions is empty/nil, the model rejects any dimensions parameter)
 //   - req.BatchSize > cap.Embeddings.MaxBatchSize → reject (when MaxBatchSize > 0)
 //   - req.EncodingFormat != "" → must appear in cap.Embeddings.SupportedEncodingFormats
-//     (defaulting to ["float","base64"] when omitted from the descriptor)
+//     (defaulting to ["float"] when omitted from the descriptor — base64 must be
+//     explicitly opted-in because only some provider codecs re-encode to it)
 //   - req.InputType != "" → must appear in cap.Embeddings.SupportedInputTypes (Cohere)
 //   - req.TaskType != "" → must appear in cap.Embeddings.SupportedTaskTypes (Gemini)
 func Compatible(req *EmbeddingRequest, cap *ModelCapability) (ok bool, reason string, candidate CandidateCapability) {
@@ -78,13 +79,20 @@ func Compatible(req *EmbeddingRequest, cap *ModelCapability) (ok bool, reason st
 }
 
 // effectiveEncodingFormats returns the model's supported encoding formats.
-// When the descriptor omits SupportedEncodingFormats, the OpenAI-compatible
-// default ["float","base64"] applies.
+// When the descriptor omits SupportedEncodingFormats, the safe default
+// ["float"] applies: "float" is the only encoding every embedding codec
+// emits unconditionally. "base64" must be explicitly declared by the model
+// descriptor because only some provider codecs (OpenAI native, which passes
+// encoding_format through to the wire) actually honor it; voyage/gemini/
+// bedrock codecs always emit float and never read encoding_format, and the
+// Cohere codec rejects encoding_format="base64" with a 400. Defaulting to
+// ["float","base64"] would let a base64 request pass the capability filter
+// only to be silently downgraded to float (or 400'd) downstream.
 func effectiveEncodingFormats(emb *EmbeddingsCapability) []string {
 	if len(emb.SupportedEncodingFormats) > 0 {
 		return emb.SupportedEncodingFormats
 	}
-	return []string{"float", "base64"}
+	return []string{"float"}
 }
 
 func containsInt(slice []int, v int) bool {

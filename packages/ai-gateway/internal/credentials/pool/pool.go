@@ -17,6 +17,7 @@ import (
 	"context"
 	"hash/fnv"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -153,9 +154,20 @@ func Select(candidates []Entry, stickyKey string) *Entry {
 	}
 
 	if stickyKey != "" {
+		// Sort eligible candidates by credential ID so the hash index maps
+		// to a stable position regardless of the map-iteration order that
+		// produced `candidates` (callers build the slice from a map range).
+		// Without this sort the same VK could resolve to a different
+		// credential on each call, defeating per-VK stickiness and the
+		// provider-side prompt-cache reuse it exists to maximise.
+		sort.Slice(eligible, func(i, j int) bool { return eligible[i].ID < eligible[j].ID })
 		h := fnv.New32a()
 		_, _ = h.Write([]byte(stickyKey))
-		idx := int(h.Sum32()) % len(eligible)
+		// Reduce modulo in uint32 space before converting to int: int(Sum32())
+		// can be negative on 32-bit platforms (Sum32 occupies the full 32-bit
+		// range), and Go's `%` follows the dividend's sign, so a negative
+		// dividend would yield a negative index and panic on slice access.
+		idx := int(h.Sum32() % uint32(len(eligible)))
 		return &eligible[idx]
 	}
 

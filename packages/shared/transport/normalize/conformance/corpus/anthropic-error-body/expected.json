@@ -1,0 +1,19 @@
+{
+  "kind": "http-json",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "json": {
+        "error": {
+          "message": "model: claude-nonexistent",
+          "type": "not_found_error"
+        },
+        "request_id": "req_011AbCdEf",
+        "type": "error"
+      }
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

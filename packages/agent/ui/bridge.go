@@ -62,11 +62,6 @@ func defaultSocketPath() string {
 	return filepath.Join(home, ".nexus/agent-status.sock")
 }
 
-func (b *AgentBridge) onStartup(ctx context.Context) {
-	// No background work yet; placeholder for future telemetry +
-	// settings-watching hooks.
-}
-
 func (b *AgentBridge) onShutdown(ctx context.Context) {
 	// Best-effort: cancel any in-flight SSO enrollment so closing
 	// the Dashboard window mid-OAuth doesn't leave the daemon
@@ -75,8 +70,9 @@ func (b *AgentBridge) onShutdown(ctx context.Context) {
 	// unconditionally. 500 ms is enough — the cancel handler is a
 	// channel close + atomic store on the daemon; if the daemon
 	// can't be reached that fast we're better off letting the OS
-	// finish tearing down the process.
-	_ = ctx // reserved for future tracing
+	// finish tearing down the process. ctx is part of the Wails
+	// OnShutdown signature but the cancel ping uses its own short
+	// budget, so it is intentionally not threaded through here.
 	_, _ = b.sendJSONWith("AUTHENTICATE CANCEL", 500*time.Millisecond)
 }
 
@@ -204,7 +200,7 @@ func (b *AgentBridge) CheckUpdate() (map[string]any, error) {
 
 // GetDiagnostics returns the data the Troubleshoot / Diagnostics page
 // renders: log tail, Hub connectivity, cert path. Wired through a
-// new statusapi command added in C3.
+// dedicated statusapi command.
 func (b *AgentBridge) GetDiagnostics() (map[string]any, error) {
 	return b.sendJSON("GET_DIAGNOSTICS")
 }

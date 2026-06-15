@@ -161,6 +161,78 @@ func TestFindAPIKeyByHash_QueryError(t *testing.T) {
 	}
 }
 
+// TestUpdateKeyHashAndVersion is the lazy-rehash regression: the UPDATE stamps
+// the new hash + key_version on the targeted row, updates ONLY those two
+// columns (no updatedAt, no rotation-lifecycle columns), and compare-and-swaps
+// on the admission-time hash, so the args are exactly (id, keyHash, keyVersion,
+// matchedHash).
+func TestUpdateKeyHashAndVersion(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec(`UPDATE "AdminApiKey"\s+SET "keyHash" = \$2, "key_version" = \$3\s+WHERE id = \$1 AND "keyHash" = \$4`).
+		WithArgs("k1", "new-hash", "v2", "old-hash").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	s := New(mock)
+	if err := s.UpdateKeyHashAndVersion(context.Background(), "k1", "new-hash", "v2", "old-hash"); err != nil {
+		t.Fatalf("UpdateKeyHashAndVersion: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestUpdateKeyHashAndVersion_ConcurrentRegenerateSkips is the resurrection
+// regression: when the row's keyHash changed between admission and the lazy
+// re-hash (an admin regenerated the key mid-flight), the compare-and-swap
+// matches ZERO rows and the migration must be a silent no-op — overwriting
+// here would restore the superseded (possibly stolen) key. Zero rows is
+// success, not an error: the key still admits via try-all until pruned.
+func TestUpdateKeyHashAndVersion_ConcurrentRegenerateSkips(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	// The stored keyHash no longer equals the admission-time hash → 0 rows.
+	mock.ExpectExec(`UPDATE "AdminApiKey"\s+SET "keyHash" = \$2, "key_version" = \$3\s+WHERE id = \$1 AND "keyHash" = \$4`).
+		WithArgs("k1", "stolen-key-current-hash", "v2", "stolen-key-old-hash").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+
+	s := New(mock)
+	if err := s.UpdateKeyHashAndVersion(context.Background(), "k1", "stolen-key-current-hash", "v2", "stolen-key-old-hash"); err != nil {
+		t.Fatalf("zero-row CAS skip must be silent, got error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestUpdateKeyHashAndVersion_Error covers the wrapped-error branch — a DB
+// failure during the lazy migration must surface (the caller logs it as
+// non-fatal, but the store still reports the error rather than swallowing it).
+func TestUpdateKeyHashAndVersion_Error(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec(`UPDATE "AdminApiKey"`).
+		WithArgs("k1", "h", "v2", "old").
+		WillReturnError(errors.New("conn refused"))
+
+	s := New(mock)
+	if err := s.UpdateKeyHashAndVersion(context.Background(), "k1", "h", "v2", "old"); err == nil {
+		t.Fatal("expected wrapped error from exec failure")
+	}
+}
+
 // TestFindAPIKeyByHash_NotFound covers the ErrNoRows branch — the store
 // must return (nil, nil) so the middleware can render a clean 401 instead
 // of bubbling a DB error.

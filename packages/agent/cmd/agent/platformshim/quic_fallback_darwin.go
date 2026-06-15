@@ -8,12 +8,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/systembundles"
 )
 
 // quicFallbackFilePath is the canonical location the NE system extension
 // reads. Owned by the daemon (root); world-readable so the unsandboxed
-// extension process can stat + read it on its 60s refresh tick.
-const quicFallbackFilePath = "/var/run/nexus-agent/quic-bundles.json"
+// extension process can stat + read it on its 60s refresh tick. A var (not a
+// const) only so tests can redirect it to a temp dir — production never
+// reassigns it.
+var quicFallbackFilePath = "/var/run/nexus-agent/quic-bundles.json"
 
 // writeQUICFallbackBundlesFile writes the bundle-ID allowlist that the
 // NE extension consumes. Atomic write: tmp file + rename so a partial
@@ -33,6 +37,19 @@ func WriteQUICFallbackBundlesFile(bundles []string, logger *slog.Logger) error {
 	}
 	if bundles == nil {
 		bundles = []string{}
+	}
+	// Defense-in-depth: strip any entry that would close UDP for a
+	// macOS system networking/push/continuity daemon BEFORE it reaches the file
+	// the NE reads. The CP write path already rejects these, but a hostile node that
+	// pushes the agent_settings shadow directly bypasses that handler — this is
+	// the last Go-side gate before the safety-critical NE honors the list
+	// (CLAUDE.md NE rule 5). Stripped entries are logged loudly, never silently.
+	if clean, stripped := systembundles.Filter(bundles); len(stripped) > 0 {
+		if logger != nil {
+			logger.Warn("quic-bundles.json: stripped protected system-service entries",
+				"stripped", stripped, "kept", len(clean))
+		}
+		bundles = clean
 	}
 	data, err := json.Marshal(bundles)
 	if err != nil {

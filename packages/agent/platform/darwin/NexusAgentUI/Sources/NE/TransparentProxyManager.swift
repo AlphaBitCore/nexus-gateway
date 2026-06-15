@@ -263,7 +263,7 @@ final class TransparentProxyManager {
                     // a previous build whose protocol shape macOS no
                     // longer accepts. The prior recovery story was
                     // "user clicks Reinstall NE in the menu", but
-                    // the menu was slimmed in 67850926 — leaving
+                    // the menu has since been slimmed — leaving
                     // upgrade-broken users with no GUI escape.
                     // forceReinstall removes every manager bound to
                     // our bundle id and re-saves a fresh one, which

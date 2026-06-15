@@ -26,6 +26,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -233,7 +234,14 @@ func buildGeminiBatchEmbedRequest(texts []string, modelID, taskType, title strin
 //
 // :embedContent response:   {"embedding":{"values":[…]}}
 // :batchEmbedContents response: {"embeddings":[{"values":[…]},…]}
-func decodeGeminiEmbeddingResponse(nativeBody []byte) (provcore.DecodeResult, error) {
+//
+// reqBody is the Gemini wire request body (single :embedContent carries
+// `content`, batch :batchEmbedContents carries `requests`[]). It is used to
+// (1) assert the response vector count matches the request input count
+// and (2) estimate prompt tokens from the request text when
+// the Gemini embedding wire returns no usage. A zero reqBody
+// disables both — they fail open.
+func decodeGeminiEmbeddingResponse(nativeBody, reqBody []byte) (provcore.DecodeResult, error) {
 	if len(nativeBody) == 0 {
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil
 	}
@@ -274,6 +282,16 @@ func decodeGeminiEmbeddingResponse(nativeBody []byte) (provcore.DecodeResult, er
 			}
 			return true
 		})
+	}
+
+	// Guard against a provider silently dropping or reordering items: the
+	// canonical data[] is re-indexed by upstream position, so a count
+	// mismatch means the vectors no longer align with the request inputs.
+	// Fail the decode (→ 502) rather than serve misaligned
+	// vectors. expected = request inputs (single `content`→1, batch
+	// `requests`→len).
+	if err := specutil.ValidateEmbeddingRowCount(geminiEmbedInputCount(reqBody), len(floatRows)); err != nil {
+		return provcore.DecodeResult{}, fmt.Errorf("gemini embed response: %w", err)
 	}
 
 	// Build canonical data[] array.
@@ -325,9 +343,25 @@ func decodeGeminiEmbeddingResponse(nativeBody []byte) (provcore.DecodeResult, er
 		promptTokens = bc.Int() / 4
 	}
 
+	// The Gemini/Vertex embedding wire frequently returns no token counts at
+	// all. Recover a usable prompt-token figure by estimating from the
+	// request text (chars/4 heuristic) so per-call cost accounting is not
+	// silently zeroed (formerly a Gemini-format branch in the
+	// generic dispatcher, now owned by the codec that holds the request).
+	if promptTokens == 0 {
+		if est := geminiEmbedEstimatedPromptTokens(reqBody); est > 0 {
+			promptTokens = est
+		}
+	}
+
 	canonical, _ := sjson.SetBytes([]byte(`{}`), "object", "list")
 	canonical, _ = sjson.SetBytes(canonical, "data", data)
-	canonical, _ = sjson.SetBytes(canonical, "model", "")
+	// The Gemini embedding wire response carries no model field, and the
+	// stateless SchemaCodec.DecodeResponse interface does not receive the
+	// CallTarget, so the model cannot be stamped here. It is back-filled
+	// from req.Target.ProviderModelID by the dispatcher's generic
+	// embeddings model-stamp (spec_adapter.go) so OpenAI SDK callers see
+	// the model they requested instead of an empty string.
 	canonical, _ = sjson.SetBytes(canonical, "usage", map[string]any{
 		"prompt_tokens": promptTokens,
 		"total_tokens":  promptTokens,
@@ -337,4 +371,52 @@ func decodeGeminiEmbeddingResponse(nativeBody []byte) (provcore.DecodeResult, er
 	usage := provcore.ExtractUsage(canonical, provcore.FormatOpenAI)
 
 	return provcore.DecodeResult{CanonicalBody: canonical, Usage: usage}, nil
+}
+
+// geminiEmbedInputCount returns the number of inputs in a Gemini embedding
+// wire request: a single :embedContent body carries `content` (count 1); a
+// batch :batchEmbedContents body carries `requests`[] (count len). Returns
+// 0 when the body is absent or neither field is present (disables the count
+// guard rather than rejecting).
+func geminiEmbedInputCount(reqBody []byte) int {
+	if len(reqBody) == 0 {
+		return 0
+	}
+	if reqs := gjson.GetBytes(reqBody, "requests"); reqs.IsArray() {
+		return len(reqs.Array())
+	}
+	if gjson.GetBytes(reqBody, "content").Exists() {
+		return 1
+	}
+	return 0
+}
+
+// geminiEmbedEstimatedPromptTokens estimates prompt tokens from a Gemini
+// embedding wire request body using the chars/4 heuristic over every
+// `content.parts[].text` (single) and `requests[].content.parts[].text`
+// (batch). Returns 0 when no text is present (caller keeps the upstream 0).
+func geminiEmbedEstimatedPromptTokens(reqBody []byte) int64 {
+	if len(reqBody) == 0 {
+		return 0
+	}
+	var charCount int
+	gjson.GetBytes(reqBody, "content.parts").ForEach(func(_, p gjson.Result) bool {
+		charCount += len(p.Get("text").String())
+		return true
+	})
+	gjson.GetBytes(reqBody, "requests").ForEach(func(_, r gjson.Result) bool {
+		r.Get("content.parts").ForEach(func(_, p gjson.Result) bool {
+			charCount += len(p.Get("text").String())
+			return true
+		})
+		return true
+	})
+	if charCount == 0 {
+		return 0
+	}
+	est := int64(charCount / 4)
+	if est < 1 {
+		est = 1
+	}
+	return est
 }

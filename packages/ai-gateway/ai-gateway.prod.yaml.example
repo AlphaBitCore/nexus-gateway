@@ -92,9 +92,10 @@ cache:
   enabled: true
   ttl: 5m
   prefix: "ai-gw:"
-  # In-flight same-key dedupe broker. Default true preserves cache
-  # fill on MISS. Flip false for same-key high-concurrency perf tests
-  # (cache writes pause; cache reads of existing entries still HIT).
+  # In-flight same-key dedupe broker. Code default is false (every MISS
+  # opens its own upstream session; cache writes pause, cache reads of
+  # existing entries still HIT). Set true to restore 1-leader-N-joiners
+  # semantics + cache fill on MISS.
   broker: true
 
 otel:
@@ -111,15 +112,21 @@ observability:
   latencyDetail: true
 
 upstream:
-  timeoutSec: 300
+  # Request budget. For a non-streaming call this caps the whole exchange;
+  # for a streaming call it only caps time-to-first-byte (think time before
+  # the first token). Raise it for long-reasoning models that take many
+  # minutes before the first byte. Matches the code default.
+  timeoutSec: 600
+  # Streaming silence budget. After the first byte the write deadline resets
+  # on every chunk, so an actively-producing stream runs for any length and
+  # only a stalled upstream is cut after this much quiet.
+  streamIdleTimeoutSec: 120
   dialTimeoutSec: 15
   tlsHandshakeTimeoutSec: 10
   keepAliveSec: 30
-  # Bumped 2026-05-19 to sustain high-concurrency perf-test bursts
-  # (warm connections survive longer, fewer fresh TLS handshakes).
+  # Pool sized for high-concurrency bursts (warm connections survive longer →
+  # fewer fresh TLS handshakes); per-host pool sized for the dominant target.
   idleConnTimeoutSec: 300
-  # Bumped 2026-05-19 — global pool comfortably above any realistic
-  # burst; per-host pool sized for OpenAI as the dominant target.
   maxIdleConns: 2000
   maxIdleConnsPerHost: 500
 

@@ -24,10 +24,17 @@ type Config struct {
 	// BypassCache skips cache lookup + cache write.
 	BypassCache bool
 
-	// BypassNormalize skips normalize.Registry.Normalize and response-side
-	// normalize emission to traffic_event_normalized. Implies BypassCache
-	// (enforced at the admin API + UI layer since the cache key derives
-	// from the canonical normalized payload).
+	// BypassNormalize skips emission of the response-side normalized
+	// projection to traffic_event_normalized. It does NOT change request
+	// normalization or the response cache key: both PrepareBody and the
+	// cache-key NormalizeKey step run unconditionally in proxy.go, so a
+	// request still canonicalizes and still hits/writes the cache the same
+	// way. The flag's effect is purely the normalized-row emission.
+	//
+	// The admin API + UI couple BypassNormalize with BypassCache as a
+	// product rule (a request whose normalized projection is not recorded
+	// should not be cache-served either), not because of any cache-key
+	// dependency on this flag.
 	BypassNormalize bool
 
 	// ExpiresAt is the effective expiry (tightest active tier wins).

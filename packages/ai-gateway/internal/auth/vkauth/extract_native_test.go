@@ -52,12 +52,20 @@ func TestExtractVKToken_Gemini_Header(t *testing.T) {
 	}
 }
 
-func TestExtractVKToken_Gemini_QueryParam(t *testing.T) {
+// SEC-M3-02: the Gemini `?key=<vk>` URL-query carrier is NOT accepted — a
+// bearer credential must never be read from the URL (it leaks into logs /
+// history / Referer). Only the x-goog-api-key header carries the VK.
+func TestExtractVKToken_Gemini_QueryParam_NotAccepted(t *testing.T) {
 	ctx := WithIngressFormat(context.Background(), provcore.FormatGemini)
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-1.5-pro:generateContent?key=nvk_query", nil)
 
-	if got := extractVKToken(ctx, req); got != "nvk_query" {
-		t.Errorf("extractVKToken = %q, want nvk_query", got)
+	if got := extractVKToken(ctx, req); got != "" {
+		t.Errorf("extractVKToken = %q, want \"\" (URL ?key= carrier must be rejected)", got)
+	}
+	// The header carrier still works.
+	req.Header.Set("x-goog-api-key", "nvk_header")
+	if got := extractVKToken(ctx, req); got != "nvk_header" {
+		t.Errorf("extractVKToken = %q, want nvk_header (header carrier)", got)
 	}
 }
 

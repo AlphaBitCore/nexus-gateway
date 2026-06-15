@@ -9,7 +9,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keycheck"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keymap"
 )
 
 var (
@@ -33,8 +36,21 @@ func NewDecryptor(keyHex string) (*Decryptor, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("credentials: key must be 32 bytes, got %d", len(key))
 	}
+	// Refuse a degenerate / known-constant master key (symmetric with
+	// the Control Plane minting side — the same [MUST MATCH] secret).
+	if err := keycheck.ValidateMasterKey(key); err != nil {
+		return nil, fmt.Errorf("credentials: %w", err)
+	}
 
-	block, err := aes.NewCipher(key)
+	// Derive the provider-credential class sub-key from the master via
+	// HKDF — the SAME derivation the Control Plane seal side performs — so the raw
+	// master is never the AEAD key and the provider-credential class is separated
+	// from the alert-channel class that shares the env value. [MUST MATCH] CP.
+	sub, err := keyderive.DeriveKey32(key, keyderive.ClassProviderCredential)
+	if err != nil {
+		return nil, fmt.Errorf("credentials: derive provider key: %w", err)
+	}
+	block, err := aes.NewCipher(sub[:])
 	if err != nil {
 		return nil, fmt.Errorf("credentials: aes.NewCipher: %w", err)
 	}
@@ -49,8 +65,11 @@ func NewDecryptor(keyHex string) (*Decryptor, error) {
 
 // Decrypt decrypts a credential stored as hex-encoded ciphertext, IV, and tag.
 // The IV must be 12 bytes (96 bits) and the tag must be 16 bytes (128 bits).
-// This matches Node's AES-256-GCM implementation (separate tag).
-func (d *Decryptor) Decrypt(ciphertextHex, ivHex, tagHex string) (string, error) {
+// aad is the row-identity binding — keyderive.ProviderCredentialAAD(
+// credentialID, providerID) — and MUST match the value the Control Plane sealed
+// with, or GCM authentication fails (so a ciphertext swapped from another
+// credential's row is rejected instead of yielding the wrong upstream key).
+func (d *Decryptor) Decrypt(ciphertextHex, ivHex, tagHex string, aad []byte) (string, error) {
 	if d == nil {
 		return "", ErrKeyNotInitialized
 	}
@@ -82,7 +101,7 @@ func (d *Decryptor) Decrypt(ciphertextHex, ivHex, tagHex string) (string, error)
 	sealed = append(sealed, ciphertext...)
 	sealed = append(sealed, tag...)
 
-	plaintext, err := d.gcm.Open(nil, iv, sealed, nil)
+	plaintext, err := d.gcm.Open(nil, iv, sealed, aad)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrDecryptFailed, err)
 	}
@@ -95,38 +114,43 @@ type MultiDecryptor struct {
 	keys map[string]*Decryptor
 }
 
-// NewMultiDecryptor creates a MultiDecryptor from a comma-separated key map
-// in the format "keyID1:hexKey1,keyID2:hexKey2,...".
+// NewMultiDecryptor creates a MultiDecryptor from a comma-separated key map in
+// the format "[*]keyID1:hexKey1,keyID2:hexKey2,...".
+//
+// F-0390 fix: the wire parse (comma-split, first-colon id:value split, leading
+// "*" current-marker STRIP, blank-entry skip, dup-id / empty-map fail-closed) is
+// delegated to the shared keymap.Parse — the SAME leaf the Control Plane uses to
+// mint via crypto.NewMultiVault. Previously this side hand-rolled the parse and
+// did NOT strip the "*", so an operator's documented "*v2:" current-marker made
+// the gateway store the key under literal id "*v2" while the CP stamped
+// ciphertext id "v2" — every decrypt then 404'd with "unknown key ID". Stripping
+// here restores the CREDENTIAL_KEY_MAP [MUST MATCH] contract: the gateway keys
+// by the same stripped id the CP stamps. The gateway has no "current" concept
+// (it opens by the stamped id), so the parsed currentID is intentionally
+// ignored; only the stripped-id → value entries matter.
 func NewMultiDecryptor(keyMap string) (*MultiDecryptor, error) {
-	md := &MultiDecryptor{keys: make(map[string]*Decryptor)}
-	for _, pair := range strings.Split(keyMap, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("credentials: invalid key entry: %q", pair)
-		}
-		id := strings.TrimSpace(parts[0])
-		hexKey := strings.TrimSpace(parts[1])
-		d, err := NewDecryptor(hexKey)
-		if err != nil {
-			return nil, fmt.Errorf("credentials: key %q: %w", id, err)
+	entries, _, _, _, err := keymap.Parse(keyMap, nil)
+	if err != nil {
+		// Preserve the package's error prefix for callers/log greps.
+		return nil, fmt.Errorf("credentials: %w", err)
+	}
+	md := &MultiDecryptor{keys: make(map[string]*Decryptor, len(entries))}
+	for id, hexKey := range entries {
+		d, derr := NewDecryptor(hexKey)
+		if derr != nil {
+			return nil, fmt.Errorf("credentials: key %q: %w", id, derr)
 		}
 		md.keys[id] = d
-	}
-	if len(md.keys) == 0 {
-		return nil, errors.New("credentials: empty key map")
 	}
 	return md, nil
 }
 
-// Decrypt decrypts using the key identified by keyID.
-func (md *MultiDecryptor) Decrypt(keyID, ciphertextHex, ivHex, tagHex string) (string, error) {
+// Decrypt decrypts using the key identified by keyID. aad is the
+// row-identity binding (see Decryptor.Decrypt).
+func (md *MultiDecryptor) Decrypt(keyID, ciphertextHex, ivHex, tagHex string, aad []byte) (string, error) {
 	d, ok := md.keys[keyID]
 	if !ok {
 		return "", fmt.Errorf("credentials: unknown key ID: %q", keyID)
 	}
-	return d.Decrypt(ciphertextHex, ivHex, tagHex)
+	return d.Decrypt(ciphertextHex, ivHex, tagHex, aad)
 }

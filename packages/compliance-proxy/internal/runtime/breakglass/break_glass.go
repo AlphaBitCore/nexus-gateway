@@ -14,6 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/interception"
+	cphttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // bgRequest is the JSON body accepted by PUT /runtime/config/{key}. State is
@@ -51,7 +52,7 @@ type pendingBreakGlass struct {
 }
 
 // pendingBreakGlassFileName is the on-disk buffer consulted by the background
-// retry loop (future work) and by restart-replay.
+// retry loop (RunReplay, started from main) and by restart-replay.
 const pendingBreakGlassFileName = "pending_break_glass.json"
 
 // State is the per-server break-glass state: event log, pending buffer
@@ -213,30 +214,28 @@ func (s *State) ReplayPending(ctx context.Context) (bool, error) {
 func HandleBreakGlassPut(deps handler.RuntimeDeps, key string, bg *State) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if bg == nil {
-			http.Error(w, `{"error":"break-glass disabled (no data dir configured)"}`, http.StatusServiceUnavailable)
+			cphttperr.WriteError(w, http.StatusServiceUnavailable, "break-glass disabled (no data dir configured)", "service_unavailable", "BREAKGLASS_DISABLED")
 			return
 		}
 		if r.Method != http.MethodPut {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
 
 		// --- Step 1: decode + validate ---
 		var req bgRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+			cphttperr.WriteError(w, http.StatusBadRequest, "invalid JSON body", "validation_error", "INVALID_BODY")
 			return
 		}
 		if len(req.State) == 0 || bytes.Equal(bytes.TrimSpace(req.State), []byte("null")) {
-			http.Error(w, `{"error":"state is required"}`, http.StatusBadRequest)
+			cphttperr.WriteError(w, http.StatusBadRequest, "state is required", "validation_error", "MISSING_FIELD")
 			return
 		}
 
 		// --- Step 2: apply locally ---
 		if err := applyBreakGlassLocal(deps, key, req.State); err != nil {
-			http.Error(w,
-				`{"error":"`+escapeBGError(err.Error())+`"}`,
-				http.StatusBadRequest)
+			cphttperr.WriteError(w, http.StatusBadRequest, err.Error(), "validation_error", "INVALID_BODY")
 			return
 		}
 
@@ -257,9 +256,7 @@ func HandleBreakGlassPut(deps handler.RuntimeDeps, key string, bg *State) http.H
 			// Durable log failure: the apply already happened, but we cannot
 			// prove it to the operator. Surface a 500 so they see the failure
 			// and page the on-call before we attempt Hub delivery.
-			http.Error(w,
-				`{"error":"break-glass applied but event log failed: `+escapeBGError(err.Error())+`"}`,
-				http.StatusInternalServerError)
+			cphttperr.WriteError(w, http.StatusInternalServerError, "break-glass applied but event log failed: "+err.Error(), "internal_error", "INTERNAL_ERROR")
 			return
 		}
 
@@ -360,19 +357,4 @@ func actorTokenID(r *http.Request) string {
 		return v
 	}
 	return "api"
-}
-
-// escapeBGError applies the minimum escaping needed to embed a Go error
-// string inside a hand-built JSON literal.
-func escapeBGError(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := range len(s) {
-		c := s[i]
-		if c == '\\' || c == '"' {
-			out = append(out, '\\', c)
-			continue
-		}
-		out = append(out, c)
-	}
-	return string(out)
 }

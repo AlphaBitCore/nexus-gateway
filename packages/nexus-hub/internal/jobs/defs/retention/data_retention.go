@@ -34,7 +34,9 @@ type DataRetentionConfig struct {
 }
 
 // DataRetentionJob purges aged audit and rollup rows. Runs once per day.
-// Scheduler advisory lock guarantees at-most-one replica executes per tick.
+// At-most-one replica executes per tick because only the config-leader replica
+// (cfg.Scheduler.Enabled) registers and runs the scheduler — the scheduler
+// holds no advisory locks (see scheduler.go and jobs-architecture.md §2).
 type DataRetentionJob struct {
 	// pool is typed against the package-level defs.PgxPool seam so tests can
 	// drive the four DELETE statements without sharing real tables.

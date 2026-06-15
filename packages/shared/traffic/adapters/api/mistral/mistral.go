@@ -1,7 +1,7 @@
 // Package mistral implements the mistral traffic adapter for Mistral
 // La Plateforme (api.mistral.ai), an OpenAI-compatible API.
 //
-// Per session policy: every vendor / surface gets its own adapter ID
+// Convention: every vendor / surface gets its own adapter ID
 // even when the wire is shared. The adapter delegates to openai-compat
 // for parsing while attributing traffic to "mistral" for audit.
 package mistral

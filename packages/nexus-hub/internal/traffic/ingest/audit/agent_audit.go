@@ -8,7 +8,9 @@ import (
 	"github.com/labstack/echo/v4"
 
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
+	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 const maxAuditBatchSize = 500
@@ -63,10 +65,17 @@ type AgentAuditEvent struct {
 	ComplianceTags []string `json:"complianceTags,omitempty"`
 
 	// Request-side LLM signals from the agent's traffic adapter.
-	ProviderName      string `json:"providerName,omitempty"`
-	ModelName         string `json:"modelName,omitempty"`
-	ApiKeyClass       string `json:"apiKeyClass,omitempty"`
-	ApiKeyFingerprint string `json:"apiKeyFingerprint,omitempty"`
+	ProviderName string `json:"providerName,omitempty"`
+	ModelName    string `json:"modelName,omitempty"`
+	ApiKeyClass  string `json:"apiKeyClass,omitempty"`
+	// The node-asserted attribution fields (apiKeyFingerprint,
+	// entityType/entityId/entityName/orgId/orgName, identity) are intentionally
+	// NOT decoded here. They drove per-VK/per-org billing, analytics, and SIEM,
+	// so trusting a node's self-assertion let any enrolled agent frame a victim
+	// VK/org. The Hub stamps these server-side (empty; thing_id is the only
+	// authoritative attribution on this path) — see UploadAgentAudit. The agent
+	// may still send the JSON keys; Go silently ignores them. Do NOT re-add these
+	// struct fields and copy them into the envelope — that reopens the forgery.
 
 	// Response-side usage extracted by the agent's MITM relay.
 	PromptTokens          *int   `json:"promptTokens,omitempty"`
@@ -79,12 +88,8 @@ type AgentAuditEvent struct {
 
 	HooksPipeline json.RawMessage `json:"hooksPipeline,omitempty"`
 	Details       json.RawMessage `json:"details,omitempty"`
-	EntityType    string          `json:"entityType,omitempty"`
-	EntityID      string          `json:"entityId,omitempty"`
-	EntityName    string          `json:"entityName,omitempty"`
-	OrgID         string          `json:"orgId,omitempty"`
-	OrgName       string          `json:"orgName,omitempty"`
-	Identity      json.RawMessage `json:"identity,omitempty"`
+	// entityType/entityId/entityName/orgId/orgName/identity removed:
+	// see the note above — node-asserted attribution is never trusted.
 
 	// Captured request/response bodies. Exactly one of
 	// {Payload*, *SpillRef} is populated per direction:
@@ -124,6 +129,22 @@ type AgentAuditEvent struct {
 	RequestHooksMs   *int           `json:"requestHooksMs,omitempty"`
 	ResponseHooksMs  *int           `json:"responseHooksMs,omitempty"`
 	LatencyBreakdown map[string]int `json:"latencyBreakdown,omitempty"`
+
+	// NormalizedRequest / NormalizedResponse — the agent's runtime-normalized
+	// payload copies, already governed by the hook stage's storageAction
+	// (span-redacted, or replaced by the drop-content placeholder). When
+	// present they take precedence over Hub-side re-normalization of the
+	// raw bytes: under a redact policy the raw copy may have been dropped
+	// entirely while the governed normalized copy still carries the
+	// redacted content. RequestRedactionSpans / ResponseRedactionSpans are
+	// the span offsets relocated to those governed copies; they land on
+	// traffic_event_normalized.*_redaction_spans. This is content, not
+	// attribution — accepting it from the node is the same trust decision
+	// as accepting the payload bytes themselves.
+	NormalizedRequest      json.RawMessage `json:"normalizedRequest,omitempty"`
+	NormalizedResponse     json.RawMessage `json:"normalizedResponse,omitempty"`
+	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`
+	ResponseRedactionSpans json.RawMessage `json:"responseRedactionSpans,omitempty"`
 }
 
 // UploadAgentAudit handles POST /api/internal/things/agent-audit.
@@ -142,10 +163,7 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 		return badRequest(c, "empty event batch")
 	}
 	if len(events) > maxAuditBatchSize {
-		return c.JSON(http.StatusRequestEntityTooLarge, ErrorResponse{
-			Error: "batch exceeds maximum size of 500 events",
-			Code:  "PAYLOAD_TOO_LARGE",
-		})
+		return c.JSON(http.StatusRequestEntityTooLarge, nexushttperr.ErrJSON("batch exceeds maximum size of 500 events", "validation_error", "PAYLOAD_TOO_LARGE"))
 	}
 
 	thing := ThingFromContext(c)
@@ -187,20 +205,33 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 			"providerName":          evt.ProviderName,
 			"modelName":             evt.ModelName,
 			"apiKeyClass":           evt.ApiKeyClass,
-			"apiKeyFingerprint":     evt.ApiKeyFingerprint,
 			"promptTokens":          evt.PromptTokens,
 			"completionTokens":      evt.CompletionTokens,
 			"usageExtractionStatus": evt.UsageExtractionStatus,
 			"requestHooksPipeline":  evt.HooksPipeline,
 			"details":               evt.Details,
-			"entityType":            evt.EntityType,
-			"entityId":              evt.EntityID,
-			"entityName":            evt.EntityName,
-			"orgId":                 evt.OrgID,
-			"orgName":               evt.OrgName,
-			"identity":              evt.Identity,
-			"thingId":               thingID,
-			"thingName":             thingName,
+			// The per-VK / per-org / per-user attribution columns
+			// (entityType/entityId/entityName/orgId/orgName/identity/
+			// apiKeyFingerprint) drive billing, analytics, and SIEM. They MUST be
+			// server-derived from the authenticated principal — NEVER copied from
+			// the node's self-asserted payload, or any enrolled agent (the lowest-
+			// trust credential) could attribute its traffic to a victim VK/org and
+			// frame them for security events they never generated. The agent path
+			// authenticates only the thing identity (mTLS device token), so the
+			// only authoritative attribution here is thing_id (stamped below);
+			// these fields are left empty and the real user/org is resolved
+			// downstream by joining thing_id → DeviceAssignment → user → org.
+			// They are deliberately NOT read from evt.* — that would re-open the
+			// cross-VK / cross-org forgery.
+			"entityType":        "",
+			"entityId":          "",
+			"entityName":        "",
+			"orgId":             "",
+			"orgName":           "",
+			"identity":          "",
+			"apiKeyFingerprint": "",
+			"thingId":           thingID,
+			"thingName":         thingName,
 		}
 		if evt.ErrorCode != "" {
 			envelope["errorCode"] = evt.ErrorCode
@@ -236,16 +267,39 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 			evt.PayloadResponse, evt.ResponseSpillRef,
 			evt.PayloadResponseContentType, evt.PayloadResponseTruncated)
 
-		// Project agent-captured bytes into the canonical NormalizedPayload
-		// shape. Adapter-type routing uses the agent traffic adapter's stable
-		// Provider identifier (RequestMeta.Provider) — e.g. "openai" /
-		// "anthropic" / "gemini" — which is what the registry expects.
-		// Spilled bodies are skipped; Hub does not re-fetch from spill for
-		// normalize purposes.
+		// The agent's storage-governed normalized copies are authoritative
+		// when uploaded: they are the payloads the agent's hook pipeline
+		// saw, with the storage policy already applied and span offsets
+		// aligned. Re-deriving from raw bytes would discard that
+		// governance — and under a redact policy the raw copy may be
+		// absent entirely.
+		stamped := false
+		if len(evt.NormalizedRequest) > 0 {
+			envelope["requestNormalized"] = evt.NormalizedRequest
+			envelope["requestNormalizeStatus"] = "ok"
+			stamped = true
+		}
+		if len(evt.NormalizedResponse) > 0 {
+			envelope["responseNormalized"] = evt.NormalizedResponse
+			envelope["responseNormalizeStatus"] = "ok"
+			stamped = true
+		}
+		if len(evt.RequestRedactionSpans) > 0 {
+			envelope["requestRedactionSpans"] = evt.RequestRedactionSpans
+		}
+		if len(evt.ResponseRedactionSpans) > 0 {
+			envelope["responseRedactionSpans"] = evt.ResponseRedactionSpans
+		}
+
+		// Directions without an uploaded copy: project agent-captured bytes
+		// into the canonical NormalizedPayload shape. Adapter-type routing
+		// uses the agent traffic adapter's stable Provider identifier
+		// (RequestMeta.Provider) — e.g. "openai" / "anthropic" / "gemini" —
+		// which is what the registry expects. Spilled bodies are skipped;
+		// Hub does not re-fetch from spill for normalize purposes.
 		if h.Normalize != nil && evt.ProviderName != "" {
 			adapter := strings.ToLower(evt.ProviderName)
-			stamped := false
-			if len(evt.PayloadRequest) > 0 {
+			if len(evt.NormalizedRequest) == 0 && len(evt.PayloadRequest) > 0 {
 				ct := evt.PayloadRequestContentType
 				if ct == "" {
 					ct = "application/json"
@@ -258,7 +312,7 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 					stamped = true
 				}
 			}
-			if len(evt.PayloadResponse) > 0 {
+			if len(evt.NormalizedResponse) == 0 && len(evt.PayloadResponse) > 0 {
 				ct := evt.PayloadResponseContentType
 				if ct == "" {
 					ct = "application/json"
@@ -272,9 +326,9 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 					stamped = true
 				}
 			}
-			if stamped {
-				envelope["normalizeVersion"] = "1"
-			}
+		}
+		if stamped {
+			envelope["normalizeVersion"] = normcore.SchemaVersion
 		}
 
 		data, err := json.Marshal(envelope)

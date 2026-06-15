@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"testing"
 )
@@ -80,9 +79,9 @@ func TestPublishHubSignal_WithMockMQ(t *testing.T) {
 	if mq.lastTopic != "nexus.hub.signal" {
 		t.Errorf("topic = %q, want %q", mq.lastTopic, "nexus.hub.signal")
 	}
-	var sig HubSignal
-	if err := json.Unmarshal(mq.lastData, &sig); err != nil {
-		t.Fatalf("unmarshal signal: %v", err)
+	sig, ok := VerifyAndDecodeHubSignal(mq.lastData, nil)
+	if !ok {
+		t.Fatalf("decode signal envelope failed: %x", mq.lastData)
 	}
 	if sig.Action != "config_changed" {
 		t.Errorf("action = %q, want %q", sig.Action, "config_changed")

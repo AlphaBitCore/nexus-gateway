@@ -1,6 +1,7 @@
 package wiring
 
 import (
+	"context"
 	"log/slog"
 
 	agentcompliance "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/compliance"
@@ -8,6 +9,7 @@ import (
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform"
 	policy "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/core"
+	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 )
 
 // InitPlatform creates the platform-specific network interception shim
@@ -75,4 +77,18 @@ func LogPlatformStartup(plat platform.Platform, logger *slog.Logger) {
 	if r, ok := plat.(platform.InterceptionModeReporter); ok {
 		logger.Info("platform interception mode", "mode", string(r.InterceptionMode()))
 	}
+}
+
+// StartPlatformInterception launches the platform interception accept loop
+// in a recovered goroutine. A start failure is fail-open: the agent keeps
+// running without interception and logs a warning.
+func StartPlatformInterception(ctx context.Context, plat platform.Platform, connHandler *ConnectionBridge, recoveryCfg shareddiag.RecoveryConfig) {
+	go func() {
+		rcfg := recoveryCfg
+		rcfg.Source = "platform-intercept"
+		defer shareddiag.Recover(rcfg, nil)
+		if err := plat.Start(ctx, connHandler); err != nil {
+			slog.Warn("platform interception not available", "error", err)
+		}
+	}()
 }

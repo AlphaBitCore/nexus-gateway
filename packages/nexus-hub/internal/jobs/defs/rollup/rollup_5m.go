@@ -112,8 +112,19 @@ func (j *Rollup5mJob) coldStartWatermark(ctx context.Context) time.Time {
 }
 
 // processOneBucket aggregates traffic_event rows for a single 5-minute bucket
-// and writes the rollup rows + watermark in a single transaction.
+// and writes the rollup rows + watermark in a single transaction. Used by the
+// live catch-up loop, which must advance the watermark.
 func (j *Rollup5mJob) processOneBucket(ctx context.Context, bucketStart time.Time) error {
+	return j.processBucket(ctx, bucketStart, true)
+}
+
+// processBucket aggregates one 5-minute bucket inside a single transaction.
+// When writeWatermark is false (the correction backfill path) the live
+// rollup-5m watermark is left untouched, so re-aggregating historical buckets
+// does NOT rewind the live cursor and force the next live tick to re-scan the
+// intervening buckets. The DELETE+INSERT still commits, so the
+// backfill is durable and idempotent.
+func (j *Rollup5mJob) processBucket(ctx context.Context, bucketStart time.Time, writeWatermark bool) error {
 	tx, err := j.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -134,8 +145,10 @@ func (j *Rollup5mJob) processOneBucket(ctx context.Context, bucketStart time.Tim
 		return err
 	}
 
-	if err := rollupstore.SetWatermark(ctx, tx, watermarkRollup5m, bucketStart); err != nil {
-		return err
+	if writeWatermark {
+		if err := rollupstore.SetWatermark(ctx, tx, watermarkRollup5m, bucketStart); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit(ctx)
@@ -301,15 +314,14 @@ func (j *Rollup5mJob) aggregateTrafficEvents(ctx context.Context, tx pgx.Tx, sta
 		srcVal := string(srcDomain)
 
 		// Feed the model dimension from routed_model_id, NOT model_id.
-		// model_id on traffic_event is the requested side (the literal
-		// string the client sent); for OpenAI-style chat completions it
-		// has no Model UUID to populate, so it's always empty since the
-		// requested-vs-routed split landed. Reading the routed column
-		// here keeps the model= rollup dimension fed with a stable UUID
-		// (the actual Model row that handled the call) — same answer
-		// every analytics surface wants. providerID / modelID below the
-		// dim emission are kept only so the latency_sum-by-dim path
-		// preserves its existing keying.
+		// model_id is the REQUESTED side — the Model UUID the client asked
+		// for, populated only when the request pinned a specific catalog
+		// model and empty for "auto" / OpenAI-style. Analytics groups by the
+		// model that actually HANDLED the call, so read the routed column to
+		// keep the model= dimension fed with a stable UUID (the served Model
+		// row) — the same answer every analytics surface wants. providerID /
+		// modelID below the dim emission are kept only so the
+		// latency_sum-by-dim path preserves its existing keying.
 		dims := buildEventDims(
 			deref5m(providerID), deref5m(routedModelID),
 			deref5m(entityID), deref5m(entityType),

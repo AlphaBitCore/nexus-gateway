@@ -90,7 +90,7 @@ func TestIdentityCodec_DecodeResponse_returnsBodyAndUsage(t *testing.T) {
 		"choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],
 		"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {
@@ -120,7 +120,7 @@ func TestIdentityCodec_DecodeResponse_cacheAliasChain(t *testing.T) {
 		"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
 		"usage":{"prompt_tokens":1000,"completion_tokens":50,"total_tokens":1050,"cached_tokens":600}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 	usage := decRes.Usage
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
@@ -132,7 +132,7 @@ func TestIdentityCodec_DecodeResponse_cacheAliasChain(t *testing.T) {
 
 func TestIdentityCodec_DecodeResponse_emptyBody_returnsZeroUsage(t *testing.T) {
 	c := codec.IdentityCodec()
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, []byte{}, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, []byte{}, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {

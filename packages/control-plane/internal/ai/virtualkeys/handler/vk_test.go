@@ -323,15 +323,17 @@ func TestGetVirtualKey_NoAuth(t *testing.T) {
 
 // CreateVirtualKey (admin)
 
-// TestCreateVirtualKey_HappyPersonal covers the personal-VK (default vkType)
-// happy path: vkStatus stays "active", projectId/expiresAt are not required.
+// TestCreateVirtualKey_HappyPersonal covers the explicit personal-VK happy
+// path: vkStatus stays "active", projectId/expiresAt are not required. vkType
+// MUST be set explicitly — an omitted vkType now defaults to "application" and
+// is routed through the approval gate (F-0268).
 func TestCreateVirtualKey_HappyPersonal(t *testing.T) {
 	h, mock, _, aud := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs(anyN(13)...).
+		WithArgs(anyN(14)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-new", "n", strPtr("admin-1"))...))
 
-	body := `{"name":"n"}`
+	body := `{"name":"n","vkType":"personal"}`
 	c, rec := makeJSONReq(t, http.MethodPost, "/api/admin/virtual-keys", body)
 	if err := h.CreateVirtualKey(c); err != nil {
 		t.Fatalf("CreateVirtualKey: %v", err)
@@ -353,7 +355,7 @@ func TestCreateVirtualKey_HappyPersonal(t *testing.T) {
 func TestCreateVirtualKey_HappyApplication(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs(anyN(13)...).
+		WithArgs(anyN(14)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-app", "app", strPtr("admin-1"))...))
 
 	future := time.Now().UTC().Add(30 * 24 * time.Hour)
@@ -389,6 +391,58 @@ func TestCreateVirtualKey_EmptyName(t *testing.T) {
 	}
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d", rec.Code)
+	}
+}
+
+// TestCreateVirtualKey_OmittedVKType_HitsApprovalGate is the F-0268 regression:
+// an OMITTED vkType defaults to "application" and MUST be routed through the same
+// approval gate (projectId + expiresAt required, status → pending). Previously
+// the gate keyed off the literal request field, so an omitted vkType skipped it
+// and minted an immediately-active application key, bypassing the :approve verb.
+func TestCreateVirtualKey_OmittedVKType_HitsApprovalGate(t *testing.T) {
+	h, _, _, _ := newHandlerWithMockDB(t)
+	// No vkType, no projectId/expiresAt — must be rejected, not silently created.
+	body := `{"name":"sneaky"}`
+	c, rec := makeJSONReq(t, http.MethodPost, "/api/admin/virtual-keys", body)
+	if err := h.CreateVirtualKey(c); err != nil {
+		t.Fatalf("CreateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s; want 400 (omitted vkType must hit the application gate)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "projectId is required") {
+		t.Errorf("body=%s; want projectId-required error", rec.Body.String())
+	}
+}
+
+// TestCreateVirtualKey_OmittedVKType_WithProject_Pending confirms that an
+// omitted vkType (defaulted to application) with a valid projectId + expiresAt
+// is persisted as pending (vkStatus="pending"), i.e. it enters the approval
+// workflow rather than active.
+func TestCreateVirtualKey_OmittedVKType_WithProject_Pending(t *testing.T) {
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	// The vkStatus argument ("pending") is positionally inside the INSERT args;
+	// assert it explicitly so the test fails if the defaulted type ever skips the
+	// pending gate again.
+	// Args $1..$13: name,keyHash,keyPrefix,projectId,sourceApp,enabled,rateLimitRpm,
+	// compareEndpointRateLimitRpm,allowedModels,ownerId,expiresAt,vkType,vkStatus.
+	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), "application", "pending").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-p", "p", strPtr("admin-1"))...))
+
+	future := time.Now().UTC().Add(30 * 24 * time.Hour)
+	body := `{"name":"p","projectId":"p-1","expiresAt":"` + future.Format(time.RFC3339) + `"}`
+	c, rec := makeJSONReq(t, http.MethodPost, "/api/admin/virtual-keys", body)
+	if err := h.CreateVirtualKey(c); err != nil {
+		t.Fatalf("CreateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s; want 201", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("INSERT args mismatch (vkType/vkStatus must be application/pending): %v", err)
 	}
 }
 
@@ -457,14 +511,33 @@ func TestCreateVirtualKey_ApplicationExpiresAtTooFar(t *testing.T) {
 	}
 }
 
+// TestCreateVirtualKey_ApplicationExpiresAtPast covers the past-date rejection
+// shared via capApplicationExpiry — an application VK cannot be created with an
+// already-elapsed expiry.
+func TestCreateVirtualKey_ApplicationExpiresAtPast(t *testing.T) {
+	h, _, _, _ := newHandlerWithMockDB(t)
+	past := time.Now().UTC().Add(-time.Hour)
+	body := `{"name":"app","vkType":"application","projectId":"p-1","expiresAt":"` + past.Format(time.RFC3339) + `"}`
+	c, rec := makeJSONReq(t, http.MethodPost, "/x", body)
+	if err := h.CreateVirtualKey(c); err != nil {
+		t.Fatalf("CreateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s; want 400 (past expiry rejected)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "must be in the future") {
+		t.Errorf("body=%s", rec.Body.String())
+	}
+}
+
 // TestCreateVirtualKey_DBError covers the 500 envelope when INSERT fails.
 func TestCreateVirtualKey_DBError(t *testing.T) {
 	h, mock, _, aud := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs(anyN(13)...).
+		WithArgs(anyN(14)...).
 		WillReturnError(errors.New("constraint violation"))
 
-	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{"name":"n"}`)
+	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{"name":"n","vkType":"personal"}`)
 	if err := h.CreateVirtualKey(c); err != nil {
 		t.Fatalf("CreateVirtualKey: %v", err)
 	}
@@ -481,12 +554,12 @@ func TestCreateVirtualKey_DBError(t *testing.T) {
 func TestCreateVirtualKey_NoAuth(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs(anyN(13)...).
+		WithArgs(anyN(14)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-x", "n", nil)...))
 
 	e := echo.New()
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"name":"n","enabled":true,"allowedModels":["m1"]}`))
+	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"name":"n","vkType":"personal","enabled":true,"allowedModels":["m1"]}`))
 	r.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	c := e.NewContext(r, rec)
 	if err := h.CreateVirtualKey(c); err != nil {
@@ -574,7 +647,11 @@ func TestUpdateVirtualKey_HappySuperAdmin(t *testing.T) {
 		WithArgs(anyN(10)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "new", strPtr("u-other"))...))
 
-	body := `{"enabled":false,"sourceApp":"x","rateLimitRpm":100,"allowedModels":["m-2"],"expiresAt":null}`
+	// expiresAt is intentionally omitted: this case exercises the
+	// non-expiry field updates + the super-admin ownership bypass. Clearing
+	// an application VK's expiry to never-expire is a separate (now-rejected)
+	// path covered by TestUpdateVirtualKey_NeverExpire_RejectedForApplication.
+	body := `{"enabled":false,"sourceApp":"x","rateLimitRpm":100,"allowedModels":["m-2"]}`
 	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")
@@ -593,7 +670,8 @@ func TestUpdateVirtualKey_HappySuperAdmin(t *testing.T) {
 }
 
 // TestUpdateVirtualKey_HappyOwner covers a non-super-admin caller updating
-// their own VK with the standard expiresAt date format (YYYY-MM-DD).
+// their own VK with the standard expiresAt date format (YYYY-MM-DD), set to a
+// value comfortably inside the 3-month governance cap so it is accepted.
 func TestUpdateVirtualKey_HappyOwner(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
@@ -606,7 +684,8 @@ func TestUpdateVirtualKey_HappyOwner(t *testing.T) {
 		WithArgs(anyN(10)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "new", strPtr("admin-1"))...))
 
-	body := `{"enabled":true,"expiresAt":"2026-12-31"}`
+	within := time.Now().AddDate(0, 2, 0).Format("2006-01-02")
+	body := `{"enabled":true,"expiresAt":"` + within + `"}`
 	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
 	c.SetParamNames("id")
 	c.SetParamValues("vk-1")
@@ -639,6 +718,133 @@ func TestUpdateVirtualKey_BadExpiresAt(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	assertErrorEnvelope(t, rec, "", "validation_error")
+}
+
+// TestUpdateVirtualKey_ExpiryBeyondCap_Rejected closes the SEC-W2-01 VK-expiry
+// residual. The admin PUT update path must enforce the SAME 3-month ceiling as
+// CreateVirtualKey + RenewVirtualKey for application VKs; without it an edit
+// could set an arbitrarily-far expiry and escape the re-approval cadence. The
+// rejection happens BEFORE any UPDATE / hub-notify / audit side effect.
+func TestUpdateVirtualKey_ExpiryBeyondCap_Rejected(t *testing.T) {
+	h, mock, hub, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
+		WithArgs("vk-1").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "old", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).
+		WithArgs("nexus_user", "admin-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
+
+	beyond := time.Now().AddDate(0, 4, 0).Format("2006-01-02")
+	body := `{"enabled":true,"expiresAt":"` + beyond + `"}`
+	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
+	c.SetParamNames("id")
+	c.SetParamValues("vk-1")
+	if err := h.UpdateVirtualKey(c); err != nil {
+		t.Fatalf("UpdateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s; want 400 (expiry beyond the 3-month cap)", rec.Code, rec.Body.String())
+	}
+	assertErrorEnvelope(t, rec, "", "validation_error")
+	if !strings.Contains(rec.Body.String(), "3 months") {
+		t.Errorf("error message %q should cite the 3-month cap", rec.Body.String())
+	}
+	if len(hub.NotifyCalls()) != 0 || aud.count() != 0 {
+		t.Errorf("a rejected update must not notify the hub or write an audit row")
+	}
+}
+
+// TestUpdateVirtualKey_NeverExpire_RejectedForApplication closes the other half
+// of the residual: clearing an application VK's expiry to never-expire (the
+// `expiresAt: null` intent) escapes the cadence even more thoroughly than a
+// far date, so it is rejected with the same "required" error as create.
+func TestUpdateVirtualKey_NeverExpire_RejectedForApplication(t *testing.T) {
+	h, mock, hub, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
+		WithArgs("vk-1").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "old", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).
+		WithArgs("nexus_user", "admin-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
+
+	body := `{"enabled":true,"expiresAt":null}`
+	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
+	c.SetParamNames("id")
+	c.SetParamValues("vk-1")
+	if err := h.UpdateVirtualKey(c); err != nil {
+		t.Fatalf("UpdateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s; want 400 (application VK cannot be set never-expire)", rec.Code, rec.Body.String())
+	}
+	assertErrorEnvelope(t, rec, "", "validation_error")
+	if !strings.Contains(rec.Body.String(), "required for application") {
+		t.Errorf("error message %q should cite the application required-expiry rule", rec.Body.String())
+	}
+	if len(hub.NotifyCalls()) != 0 || aud.count() != 0 {
+		t.Errorf("a rejected update must not notify the hub or write an audit row")
+	}
+}
+
+// TestUpdateVirtualKey_PastDate_RejectedForApplication asserts the update path
+// shares the same past-date rejection as create/renew via capApplicationExpiry —
+// an edit cannot set an already-elapsed expiry on an application VK.
+func TestUpdateVirtualKey_PastDate_RejectedForApplication(t *testing.T) {
+	h, mock, hub, aud := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
+		WithArgs("vk-1").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "old", strPtr("admin-1"))...))
+	mock.ExpectQuery(`SELECT g.name`).
+		WithArgs("nexus_user", "admin-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
+
+	past := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	body := `{"enabled":true,"expiresAt":"` + past + `"}`
+	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
+	c.SetParamNames("id")
+	c.SetParamValues("vk-1")
+	if err := h.UpdateVirtualKey(c); err != nil {
+		t.Fatalf("UpdateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s; want 400 (past expiry rejected)", rec.Code, rec.Body.String())
+	}
+	assertErrorEnvelope(t, rec, "", "validation_error")
+	if !strings.Contains(rec.Body.String(), "must be in the future") {
+		t.Errorf("error message %q should cite the future-expiry rule", rec.Body.String())
+	}
+	if len(hub.NotifyCalls()) != 0 || aud.count() != 0 {
+		t.Errorf("a rejected update must not notify the hub or write an audit row")
+	}
+}
+
+// TestUpdateVirtualKey_PersonalVK_NotCapped documents the scoping boundary: the
+// 3-month cap applies ONLY to application VKs. A personal VK may carry a
+// far-future expiry through the same PUT path — the governance cadence is an
+// application-VK concern, so capping personal keys would be wrong.
+func TestUpdateVirtualKey_PersonalVK_NotCapped(t *testing.T) {
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
+		WithArgs("vk-1").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRowTyped("vk-1", "old", strPtr("admin-1"), "personal")...))
+	mock.ExpectQuery(`SELECT g.name`).
+		WithArgs("nexus_user", "admin-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
+	mock.ExpectQuery(`UPDATE "VirtualKey"`).
+		WithArgs(anyN(10)...).
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRowTyped("vk-1", "new", strPtr("admin-1"), "personal")...))
+
+	beyond := time.Now().AddDate(0, 6, 0).Format("2006-01-02")
+	body := `{"enabled":true,"expiresAt":"` + beyond + `"}`
+	c, rec := makeJSONReq(t, http.MethodPut, "/x", body)
+	c.SetParamNames("id")
+	c.SetParamValues("vk-1")
+	if err := h.UpdateVirtualKey(c); err != nil {
+		t.Fatalf("UpdateVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s; want 200 (personal VK is exempt from the cap)", rec.Code, rec.Body.String())
+	}
 }
 
 // TestUpdateVirtualKey_BindError covers the bad-JSON 400.
@@ -829,6 +1035,50 @@ func TestDeleteVirtualKey_Forbidden(t *testing.T) {
 	}
 }
 
+// TestRevokeVirtualKey_Forbidden_NonOwner locks SEC-M6-05: a non-super-admin
+// holding virtual-key:revoke cannot revoke a VK owned by another principal —
+// the approval handler now enforces the same owner re-check as Delete.
+func TestRevokeVirtualKey_Forbidden_NonOwner(t *testing.T) {
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
+		WithArgs("vk-1").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "active", strPtr("u-other"))...))
+	mock.ExpectQuery(`SELECT g.name`).
+		WithArgs("nexus_user", "admin-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("viewers"))
+
+	c, rec := makeJSONReq(t, http.MethodPost, "/x", "")
+	c.SetParamNames("id")
+	c.SetParamValues("vk-1")
+	if err := h.RevokeVirtualKey(c); err != nil {
+		t.Fatalf("RevokeVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403 (non-owner must not revoke another principal's VK)", rec.Code)
+	}
+}
+
+// TestRenewVirtualKey_Forbidden_NonOwner locks SEC-M6-05 for the renew verb.
+func TestRenewVirtualKey_Forbidden_NonOwner(t *testing.T) {
+	h, mock, _, _ := newHandlerWithMockDB(t)
+	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).
+		WithArgs("vk-1").
+		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "active", strPtr("u-other"))...))
+	mock.ExpectQuery(`SELECT g.name`).
+		WithArgs("nexus_user", "admin-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("viewers"))
+
+	c, rec := makeJSONReq(t, http.MethodPost, "/x", "")
+	c.SetParamNames("id")
+	c.SetParamValues("vk-1")
+	if err := h.RenewVirtualKey(c); err != nil {
+		t.Fatalf("RenewVirtualKey: %v", err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403 (non-owner must not renew another principal's VK)", rec.Code)
+	}
+}
+
 // TestDeleteVirtualKey_DBDeleteFails covers the 500 envelope when DELETE
 // fails (no side effects).
 func TestDeleteVirtualKey_DBDeleteFails(t *testing.T) {
@@ -895,7 +1145,7 @@ func TestRegenerateVirtualKey_HappySuper(t *testing.T) {
 		WithArgs("nexus_user", "admin-1").
 		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
-		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", "")
@@ -965,7 +1215,7 @@ func TestRegenerateVirtualKey_DBUpdateFails(t *testing.T) {
 		WithArgs("nexus_user", "admin-1").
 		WillReturnRows(pgxmock.NewRows([]string{"name"}).AddRow("super-admins"))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
-		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("update boom"))
 
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", "")
@@ -989,7 +1239,7 @@ func TestRegenerateVirtualKey_NoAuth(t *testing.T) {
 		WithArgs("vk-1").
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "ok", strPtr("u-other"))...))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
-		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	e := echo.New()

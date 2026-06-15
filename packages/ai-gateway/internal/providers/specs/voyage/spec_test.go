@@ -15,6 +15,7 @@ import (
 	provdispatch "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/dispatch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/voyage"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+	"github.com/tidwall/gjson"
 )
 
 // NewSpec — constructor + wiring.
@@ -149,7 +150,7 @@ func TestTransport_Do_DelegatesToHTTPClient(t *testing.T) {
 	tr := voyage.NewTransport(slog.Default())
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v1/embeddings", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer vk-test")
-	resp, err := tr.Do(context.Background(), req)
+	resp, err := tr.Do(context.Background(), req, provcore.CallTarget{})
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -625,7 +626,7 @@ func TestCodec_DecodeResponse_HappyPath(t *testing.T) {
 		"model":"voyage-3",
 		"usage":{"total_tokens":5}
 	}`)
-	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, native, "application/json")
+	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, native, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -649,9 +650,47 @@ func TestCodec_DecodeResponse_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCodec_DecodeResponse_CountMismatch_Rejected pins F-0220: when the
+// request asked for N inputs but the provider returned a different number
+// of vectors, the decode must fail (→ 502) rather than serve misaligned
+// vectors. The request context carries the Voyage wire request body.
+func TestCodec_DecodeResponse_CountMismatch_Rejected(t *testing.T) {
+	spec := voyage.NewSpec(slog.Default())
+	// Request asked for 3 inputs; response carries only 2 embeddings.
+	reqBody := []byte(`{"model":"voyage-3","input":["a","b","c"]}`)
+	native := []byte(`{"object":"list","data":[
+		{"object":"embedding","embedding":[0.1],"index":0},
+		{"object":"embedding","embedding":[0.2],"index":1}
+	],"model":"voyage-3","usage":{"total_tokens":3}}`)
+	_, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, native, "",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err == nil || !strings.Contains(err.Error(), "embedding count mismatch") {
+		t.Fatalf("expected count-mismatch error, got %v", err)
+	}
+}
+
+// TestCodec_DecodeResponse_CountMatch_Passes is the F-0220 positive arm:
+// a matching count decodes cleanly with the request context present.
+func TestCodec_DecodeResponse_CountMatch_Passes(t *testing.T) {
+	spec := voyage.NewSpec(slog.Default())
+	reqBody := []byte(`{"model":"voyage-3","input":["a","b"]}`)
+	native := []byte(`{"object":"list","data":[
+		{"object":"embedding","embedding":[0.1],"index":0},
+		{"object":"embedding","embedding":[0.2],"index":1}
+	],"model":"voyage-3","usage":{"total_tokens":3}}`)
+	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, native, "",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if got := gjson.GetBytes(res.CanonicalBody, "data.#").Int(); got != 2 {
+		t.Errorf("data count=%d want 2", got)
+	}
+}
+
 func TestCodec_DecodeResponse_EmptyBody(t *testing.T) {
 	spec := voyage.NewSpec(slog.Default())
-	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, nil, "")
+	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, nil, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("empty body: %v", err)
 	}
@@ -662,7 +701,7 @@ func TestCodec_DecodeResponse_EmptyBody(t *testing.T) {
 
 func TestCodec_DecodeResponse_InvalidJSON(t *testing.T) {
 	spec := voyage.NewSpec(slog.Default())
-	_, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, []byte(`not-json`), "")
+	_, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, []byte(`not-json`), "", provcore.DecodeContext{})
 	if err == nil || !strings.Contains(err.Error(), "invalid JSON") {
 		t.Fatalf("expected invalid-JSON error, got %v", err)
 	}
@@ -676,7 +715,7 @@ func TestCodec_DecodeResponse_VoyageModelStampedInExt(t *testing.T) {
 		"model":"voyage-3-large",
 		"usage":{"total_tokens":2}
 	}`)
-	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, native, "")
+	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeVoyageEmbeddings, native, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -689,7 +728,7 @@ func TestCodec_DecodeResponse_VoyageModelStampedInExt(t *testing.T) {
 func TestCodec_DecodeResponse_UnsupportedEndpointPassthrough(t *testing.T) {
 	spec := voyage.NewSpec(slog.Default())
 	native := []byte(`{"unexpected":"payload"}`)
-	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, native, "")
+	res, err := spec.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, native, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("unexpected-endpoint passthrough: %v", err)
 	}

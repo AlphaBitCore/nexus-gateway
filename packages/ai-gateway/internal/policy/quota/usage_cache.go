@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,7 +29,7 @@ const usageCachePrefix = "quota:usage:"
 
 // NewUsageCache creates a UsageCache. If rdb is nil, an in-memory map is used.
 // Accepts redis.UniversalClient so standalone / sentinel / cluster all work;
-// completes the Redis-universal migration from refactor PR-3 (a873c46f) which
+// completes the Redis-universal migration, whose earlier pass
 // missed this consumer and left cmd/ai-gateway/wiring failing to build.
 func NewUsageCache(rdb redis.UniversalClient, logger *slog.Logger) *UsageCache {
 	return &UsageCache{
@@ -87,33 +88,6 @@ func (c *UsageCache) GetUsage(ctx context.Context, targetType, targetID, periodK
 	return c.memUsage[key], nil
 }
 
-// IncrUsage atomically increments usage by costCents.
-// Sets TTL on first increment (based on period end).
-func (c *UsageCache) IncrUsage(ctx context.Context, targetType, targetID, periodKey string, costCents int64) error {
-	key := usageKey(targetType, targetID, periodKey)
-
-	if c.rdb != nil {
-		newVal, err := c.rdb.IncrBy(ctx, key, costCents).Result()
-		if err != nil {
-			return fmt.Errorf("usage_cache: INCRBY %s: %w", key, err)
-		}
-		// Set TTL if this was the first increment (value equals what we just added).
-		if newVal == costCents {
-			ttl := periodTTL(periodKey)
-			if ttl > 0 {
-				c.rdb.Expire(ctx, key, ttl)
-			}
-		}
-		return nil
-	}
-
-	// In-memory fallback.
-	c.mu.Lock()
-	c.memUsage[key] += costCents
-	c.mu.Unlock()
-	return nil
-}
-
 // UsageLevel identifies a quota enforcement target for batch increment.
 type UsageLevel struct {
 	TargetType string
@@ -131,8 +105,9 @@ func (c *UsageCache) IncrMulti(ctx context.Context, levels []UsageLevel, periodK
 		for _, l := range levels {
 			key := usageKey(l.TargetType, l.TargetID, periodKey)
 			pipe.IncrBy(ctx, key, costCents)
-			// Set expire on every call — Redis ignores if TTL already set
-			// and we only pay a small overhead.
+			// EXPIRE overwrites any existing TTL; safe here because periodTTL is
+			// absolute to the period end, so re-setting it on every call is
+			// idempotent (the TTL always lands on the same wall-clock instant).
 			ttl := periodTTL(periodKey)
 			if ttl > 0 {
 				pipe.Expire(ctx, key, ttl)
@@ -156,86 +131,143 @@ func (c *UsageCache) IncrMulti(ctx context.Context, levels []UsageLevel, periodK
 }
 
 // Backfill seeds Redis usage keys from the metrics rollup tables for the
-// current billing period. Uses SETNX to avoid overwriting keys that already
-// have live-accumulated data. Call once at startup.
-func (c *UsageCache) Backfill(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) error {
+// CURRENT period of every period type actually in use. periodTypes is the set
+// returned by PolicyCache.ActivePeriodTypes (e.g. ["daily","monthly"]); a nil
+// or empty slice defaults to monthly only. Uses SETNX to avoid overwriting keys
+// that already have live-accumulated data. Call once at startup.
+//
+// Seeding only the monthly key (the previous behaviour) left daily and weekly
+// counters at 0 on every restart, so a freshly-booted gateway granted a full
+// extra daily/weekly budget until live traffic re-accumulated. Re-seeding each
+// active period closes that gap.
+func (c *UsageCache) Backfill(ctx context.Context, pool *pgxpool.Pool, periodTypes []string, logger *slog.Logger) error {
 	// Typed-nil guard: a nil *pgxpool.Pool stored in the PgxPool interface
 	// would compare != nil at the seam, so unwrap to untyped nil here.
 	if pool == nil {
-		return c.backfillWithPgxPool(ctx, nil, logger)
+		return c.backfillWithPgxPool(ctx, nil, periodTypes, logger)
 	}
-	return c.backfillWithPgxPool(ctx, pool, logger)
+	return c.backfillWithPgxPool(ctx, pool, periodTypes, logger)
+}
+
+// periodWindow returns the period key plus [start, end) window for the current
+// period of the given period type, evaluated at now (UTC). The key matches
+// CurrentPeriodKey so the backfilled key and the live-traffic key collide and
+// SETNX correctly no-ops when live data already exists.
+func periodWindow(periodType string, now time.Time) (periodKey string, start, end time.Time) {
+	switch periodType {
+	case "daily":
+		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 0, 1)
+		return now.Format("2006-01-02"), start, end
+	case "weekly":
+		// Monday 00:00 UTC of the current ISO week through the next Monday.
+		// Go weekday Sun=0..Sat=6; ISO Mon=1..Sun=7. Offset from Monday:
+		offsetFromMonday := (int(now.Weekday()) + 6) % 7
+		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		start = dayStart.AddDate(0, 0, -offsetFromMonday)
+		end = start.AddDate(0, 0, 7)
+		y, w := now.ISOWeek()
+		return fmt.Sprintf("%d-W%02d", y, w), start, end
+	default: // monthly
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 1, 0)
+		return now.Format("2006-01"), start, end
+	}
 }
 
 // backfillWithPgxPool is the test-friendly seam — accepts any pgx-compatible
 // pool (real *pgxpool.Pool or pgxmock) so unit tests can exercise the rollup
 // SQL + pipeline path without a live Postgres.
-func (c *UsageCache) backfillWithPgxPool(ctx context.Context, pool PgxPool, logger *slog.Logger) error {
+func (c *UsageCache) backfillWithPgxPool(ctx context.Context, pool PgxPool, periodTypes []string, logger *slog.Logger) error {
 	if c.rdb == nil || pool == nil {
 		return nil
 	}
 
-	now := time.Now().UTC()
-	periodKey := now.Format("2006-01")
-	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	periodEnd := periodStart.AddDate(0, 1, 0)
-
-	dimensions := []string{"user", "virtual_key", "organization"}
-	var totalKeys int
-
-	for _, dim := range dimensions {
-		rows, err := pool.Query(ctx, `
-			SELECT "dimensionKey", SUM(value) AS total_cost
-			FROM "metric_rollup_1h"
-			WHERE "bucketStart" >= $1 AND "bucketStart" < $2
-			  AND "metricName" = 'billed_cost_usd'
-			  AND "dimensionKey" LIKE $3
-			GROUP BY "dimensionKey"
-		`, periodStart, periodEnd, dim+"=%")
-		// Uses billed_cost_usd (success only, excludes cache hits) rather than
-		// estimated_cost_usd (gross) to avoid cold-start over-counting.
-		if err != nil {
-			logger.Warn("usage backfill: query failed", "dimension", dim, "error", err)
+	// Default to monthly when no policy period types are supplied — preserves
+	// the original behaviour for a quota-less or override-less deployment.
+	if len(periodTypes) == 0 {
+		periodTypes = []string{"monthly"}
+	}
+	// Dedupe so a config with many daily policies issues one daily backfill.
+	seen := make(map[string]struct{}, len(periodTypes))
+	uniqueTypes := make([]string, 0, len(periodTypes))
+	for _, pt := range periodTypes {
+		if _, dup := seen[pt]; dup {
 			continue
 		}
+		seen[pt] = struct{}{}
+		uniqueTypes = append(uniqueTypes, pt)
+	}
 
-		pipe := c.rdb.Pipeline()
-		count := 0
+	now := time.Now().UTC()
 
-		for rows.Next() {
-			var dimKey string
-			var costUsd float64
-			if err := rows.Scan(&dimKey, &costUsd); err != nil {
+	// All four enforcement-chain dimensions. The enforcement chain adds a
+	// project level (chain.go) and reconcile increments the live project
+	// counter, so the boot seed must cover project too — otherwise a Redis
+	// cold-start resets the project counter to 0 and a full extra budget of
+	// project overspend is allowed until live traffic re-accumulates. The
+	// seed query (dim+"=%") and key derivation (usageKey(dim, ...)) are
+	// dimension-agnostic, so project flows through the same path.
+	dimensions := []string{"user", "virtual_key", "project", "organization"}
+	var totalKeys int
+
+	for _, periodType := range uniqueTypes {
+		periodKey, periodStart, periodEnd := periodWindow(periodType, now)
+
+		for _, dim := range dimensions {
+			rows, err := pool.Query(ctx, `
+				SELECT "dimensionKey", SUM(value) AS total_cost
+				FROM "metric_rollup_1h"
+				WHERE "bucketStart" >= $1 AND "bucketStart" < $2
+				  AND "metricName" = 'billed_cost_usd'
+				  AND "dimensionKey" LIKE $3
+				GROUP BY "dimensionKey"
+			`, periodStart, periodEnd, dim+"=%")
+			// Uses billed_cost_usd (success only, excludes cache hits) rather than
+			// estimated_cost_usd (gross) to avoid cold-start over-counting.
+			if err != nil {
+				logger.Warn("usage backfill: query failed", "dimension", dim, "periodType", periodType, "error", err)
 				continue
 			}
-			// Extract entityID from "dimension=entityID"
-			parts := strings.SplitN(dimKey, "=", 2)
-			if len(parts) != 2 || parts[1] == "" {
-				continue
-			}
-			entityID := parts[1]
-			costCents := int64(costUsd * 100)
-			if costCents <= 0 {
-				continue
-			}
 
-			key := usageKey(dim, entityID, periodKey)
-			pipe.SetNX(ctx, key, costCents, periodTTL(periodKey))
-			count++
-		}
-		rows.Close()
+			pipe := c.rdb.Pipeline()
+			count := 0
 
-		if count > 0 {
-			if _, err := pipe.Exec(ctx); err != nil {
-				logger.Warn("usage backfill: pipeline exec failed", "dimension", dim, "error", err)
-			} else {
-				totalKeys += count
+			for rows.Next() {
+				var dimKey string
+				var costUsd float64
+				if err := rows.Scan(&dimKey, &costUsd); err != nil {
+					continue
+				}
+				// Extract entityID from "dimension=entityID"
+				parts := strings.SplitN(dimKey, "=", 2)
+				if len(parts) != 2 || parts[1] == "" {
+					continue
+				}
+				entityID := parts[1]
+				costCents := int64(math.Round(costUsd * 100))
+				if costCents <= 0 {
+					continue
+				}
+
+				key := usageKey(dim, entityID, periodKey)
+				pipe.SetNX(ctx, key, costCents, periodTTL(periodKey))
+				count++
+			}
+			rows.Close()
+
+			if count > 0 {
+				if _, err := pipe.Exec(ctx); err != nil {
+					logger.Warn("usage backfill: pipeline exec failed", "dimension", dim, "periodType", periodType, "error", err)
+				} else {
+					totalKeys += count
+				}
 			}
 		}
 	}
 
 	if totalKeys > 0 {
-		logger.Info("usage cache backfill completed", "keys", totalKeys, "periodKey", periodKey)
+		logger.Info("usage cache backfill completed", "keys", totalKeys, "periodTypes", uniqueTypes)
 	}
 	return nil
 }

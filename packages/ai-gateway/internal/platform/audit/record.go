@@ -5,6 +5,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -136,30 +137,16 @@ type Record struct {
 	// IngressFormat is the wire shape the client used on the request
 	// (`openai`, `anthropic`, `gemini`, ...). Captured at the earliest
 	// point in handler.ServeProxy from `resolved.BodyFormat`. ai-gateway
-	// re-encodes both directions through the codec, so the audit's
-	// RequestBody / ResponseBody always match the ingress format — EXCEPT
-	// when the gateway streams an upstream-native body straight to the
-	// audit log (stream-cache fill, passthrough, Gemini SSE) without
-	// a wire→canonical→wire round-trip. In those cases the bytes on
-	// disk are the upstream adapter's shape, not the ingress shape,
-	// so the response-side normalizer must key on UpstreamAdapterType
-	// instead. See normalizeAdapterType.
+	// re-encodes BOTH directions back to the ingress wire shape before
+	// the bytes are captured, so the audit's RequestBody / ResponseBody
+	// always match the ingress format — there is no capture site where
+	// the stored bytes are in the upstream adapter's shape (non-stream
+	// captures happen after egressReshapeNonStream; the streaming tee
+	// wraps the client ResponseWriter so it buffers the reshaped SSE;
+	// error bodies are EncodeErrorEnvelopeForIngress output). This is the
+	// single routing key shared/normalize uses for both directions —
+	// see normalizeAdapterType.
 	IngressFormat string
-
-	// UpstreamAdapterType is the routed target's adapter type (the
-	// `Provider.adapter_type` of the upstream actually called —
-	// "openai", "anthropic", "gemini", "moonshot", "deepseek", …).
-	// Stamped by proxy.handleNonStream / handleStreamWithSubscription
-	// when a target is resolved. Empty when the request failed before
-	// routing or before any target was selected.
-	//
-	// Used by normalizeAdapterType to pick the response-side normalizer
-	// for cross-format requests: when a /v1/responses (ingress format
-	// `openai-responses`) request is routed to an Anthropic / Gemini /
-	// Moonshot target, the response bytes on disk are in the target's
-	// shape after streaming captures, and the openai-responses
-	// normalizer would fail to unmarshal them.
-	UpstreamAdapterType string
 
 	// CacheStatus is the UNIFIED cache outcome (HIT | MISS) recorded on
 	// traffic_event.cache_status. Derived at audit-write time from
@@ -202,7 +189,13 @@ type Record struct {
 	CacheReadSavingsUsd float64 // savings from reading from cache
 	CacheNetSavingsUsd  float64 // = CacheReadSavingsUsd - CacheWriteCostUsd
 
-	// Normaliser audit. Zero when the normaliser did not run.
+	// Normaliser audit. NormalizerRan distinguishes "normaliser executed
+	// and stripped nothing" (NormalizerRan=true, counts 0 → persist real 0)
+	// from "normaliser never ran" (NormalizerRan=false → persist NULL). The
+	// strip counts alone are ambiguous because 0 is both a legitimate result
+	// and the zero value; the message writer keys on NormalizerRan to decide
+	// NULL vs 0.
+	NormalizerRan        bool
 	NormalizedStripCount int // number of rule matches that stripped bytes
 	NormalizedStripBytes int // total bytes removed by normaliser
 	CacheMarkerInjected  int // cache_control markers injected by L4
@@ -336,6 +329,25 @@ type Record struct {
 	// {redacted:true, kind, ruleIds}. Same shape for response.
 	RequestRedactRuleIDs  []string
 	ResponseRedactRuleIDs []string
+	// RequestRedetect / ResponseRedetect carry the per-stage pipeline's
+	// pattern re-scanning closure (CompliancePipelineResult.Redetect) from
+	// hook execution to recordToMessage, where the storage rewrite uses it
+	// to re-locate spans whose hook-time addresses do not resolve on the
+	// storage-time normalized payload. In-process only — never serialized.
+	RequestRedetect  redact.Redetector `json:"-"`
+	ResponseRedetect redact.Redetector `json:"-"`
+
+	// RequestBodyRedacted / ResponseBodyRedacted carry the redacted
+	// wire-shape copy of the body — the adapter Rewrite*Body output the
+	// proxy produced when a hook's redaction was applied inflight. The
+	// writer persists the RAW payload copy under the storage policy:
+	// "keep" stores the captured (pre-hook) bytes, "redact" stores ONLY
+	// this redacted copy (absent → the raw copy is dropped, because
+	// persisting bytes we could not redact would make the audit store
+	// itself the leak; the redacted normalized payload + spans still
+	// carry the content), "drop-content" never stores raw bytes.
+	RequestBodyRedacted  []byte
+	ResponseBodyRedacted []byte
 }
 
 // ApplyVKMeta populates identity fields from virtual key metadata.

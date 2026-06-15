@@ -14,6 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
+	cphttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // Server is the Go runtime API HTTP server.
@@ -91,7 +92,7 @@ func NewServer(addr string, deps config.RuntimeDeps, tokenAuth *auth.TokenAuth) 
 			case http.MethodPut:
 				putH.ServeHTTP(w, r)
 			default:
-				http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+				cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			}
 		}))
 	}

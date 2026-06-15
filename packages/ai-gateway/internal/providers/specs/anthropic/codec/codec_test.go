@@ -3,6 +3,7 @@ package codec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -42,7 +43,11 @@ func TestCodec_EncodeRequest_toolsAndToolChoice(t *testing.T) {
 	}
 }
 
-func TestCodec_EncodeRequest_jsonObjectPrefill(t *testing.T) {
+// TestCodec_EncodeRequest_jsonObjectNoPrefill pins audit F-0224: a
+// json_object request must NOT inject the brace-prefill assistant turn
+// (which produced unparseable mid-object content), and must instead force
+// JSON via a system instruction so Anthropic emits the complete object.
+func TestCodec_EncodeRequest_jsonObjectNoPrefill(t *testing.T) {
 	canon := []byte(`{
 		"model": "claude-3-5-haiku-20240307",
 		"max_tokens": 32,
@@ -51,17 +56,186 @@ func TestCodec_EncodeRequest_jsonObjectPrefill(t *testing.T) {
 	}`)
 	var codec Codec
 	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
-	out := encRes.Body
 	if err != nil {
 		t.Fatal(err)
 	}
+	out := encRes.Body
+
+	// Exactly the one user turn — no spurious assistant prefill ending in "{".
 	arr := gjson.GetBytes(out, "messages")
-	if !arr.IsArray() || len(arr.Array()) < 2 {
-		t.Fatalf("expected json_object prefill assistant message: %s", string(out))
+	if !arr.IsArray() || len(arr.Array()) != 1 {
+		t.Fatalf("expected exactly one message, got: %s", string(out))
 	}
 	last := arr.Array()[len(arr.Array())-1]
-	if last.Get("role").String() != "assistant" {
-		t.Fatal(last.Raw)
+	if last.Get("role").String() != "user" {
+		t.Fatalf("last message must be the user turn, not a prefill: %s", last.Raw)
+	}
+	// No content block anywhere may be a bare "{" prefill.
+	for _, m := range arr.Array() {
+		m.Get("content").ForEach(func(_, block gjson.Result) bool {
+			if block.Get("type").String() == "text" && block.Get("text").String() == "{" {
+				t.Fatalf("found banned brace-prefill block: %s", m.Raw)
+			}
+			return true
+		})
+	}
+
+	// JSON is forced via the system instruction instead.
+	sys := gjson.GetBytes(out, "system").String()
+	if !strings.Contains(sys, "single valid JSON object") {
+		t.Fatalf("expected JSON-forcing system instruction, got system=%q", sys)
+	}
+}
+
+// TestCodec_jsonObjectRoundTripParses exercises the full fix end-to-end:
+// a json_object request is encoded (no prefill), then a COMPLETE Anthropic
+// response (with its leading "{") is decoded — the canonical assistant
+// content must be valid JSON that json.Unmarshal parses, with the opening
+// brace present exactly once. Before F-0224 the decode received mid-object
+// content and the round-trip failed 100% of the time.
+func TestCodec_jsonObjectRoundTripParses(t *testing.T) {
+	canon := []byte(`{
+		"model": "claude-3-5-haiku-20240307",
+		"max_tokens": 32,
+		"messages": [{"role": "user", "content": "emit json"}],
+		"response_format": {"type": "json_object"}
+	}`)
+	var codec Codec
+	if _, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Anthropic returns the complete object because we no longer prefill.
+	native := []byte(`{
+		"id": "msg_1",
+		"model": "claude-3-5-haiku-20240307",
+		"stop_reason": "end_turn",
+		"content": [{"type": "text", "text": "{\"k\": 1, \"nested\": {\"a\": true}}"}],
+		"usage": {"input_tokens": 5, "output_tokens": 9}
+	}`)
+	dec, err := codec.DecodeResponse(typology.WireShapeAnthropicMessages, native, "application/json", provcore.DecodeContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := gjson.GetBytes(dec.CanonicalBody, "choices.0.message.content").String()
+	if strings.Count(content, "{") < 1 || !strings.HasPrefix(strings.TrimSpace(content), "{") {
+		t.Fatalf("decoded content must begin with a single opening brace: %q", content)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(content), &obj); err != nil {
+		t.Fatalf("decoded json_object content must parse, got %q: %v", content, err)
+	}
+	if obj["k"] != float64(1) {
+		t.Fatalf("round-tripped object wrong: %#v", obj)
+	}
+}
+
+// TestCodec_jsonObjectAppendsToExistingSystem verifies the instruction is
+// appended to (not replacing) an existing single system prompt.
+func TestCodec_jsonObjectAppendsToExistingSystem(t *testing.T) {
+	canon := []byte(`{
+		"model": "claude-3-5-haiku-20240307",
+		"max_tokens": 32,
+		"messages": [
+			{"role": "system", "content": "You are a helpful bot."},
+			{"role": "user", "content": "emit json"}
+		],
+		"response_format": {"type": "json_object"}
+	}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := gjson.GetBytes(encRes.Body, "system").String()
+	if !strings.Contains(sys, "You are a helpful bot.") {
+		t.Fatalf("original system prompt must be preserved: %q", sys)
+	}
+	if !strings.Contains(sys, "single valid JSON object") {
+		t.Fatalf("JSON instruction must be appended: %q", sys)
+	}
+}
+
+// TestCodec_jsonObjectAppendsToSystemBlocks verifies the instruction is
+// added as an extra text block when the request carries multiple system
+// turns (Anthropic block form).
+func TestCodec_jsonObjectAppendsToSystemBlocks(t *testing.T) {
+	canon := []byte(`{
+		"model": "claude-3-5-haiku-20240307",
+		"max_tokens": 32,
+		"messages": [
+			{"role": "system", "content": "persona one"},
+			{"role": "system", "content": "persona two"},
+			{"role": "user", "content": "emit json"}
+		],
+		"response_format": {"type": "json_object"}
+	}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := gjson.GetBytes(encRes.Body, "system")
+	if !blocks.IsArray() {
+		t.Fatalf("multiple system turns must serialize as a block array: %s", blocks.Raw)
+	}
+	var foundInstruction, foundPersona bool
+	blocks.ForEach(func(_, b gjson.Result) bool {
+		txt := b.Get("text").String()
+		if strings.Contains(txt, "single valid JSON object") {
+			foundInstruction = true
+		}
+		if txt == "persona one" {
+			foundPersona = true
+		}
+		return true
+	})
+	if !foundPersona {
+		t.Fatalf("original system blocks must be preserved: %s", blocks.Raw)
+	}
+	if !foundInstruction {
+		t.Fatalf("JSON instruction block must be appended: %s", blocks.Raw)
+	}
+}
+
+// TestCodec_nonJSONObjectUnaffected verifies a request without
+// response_format:json_object gets NO JSON instruction and NO prefill.
+func TestCodec_nonJSONObjectUnaffected(t *testing.T) {
+	canon := []byte(`{
+		"model": "claude-3-5-haiku-20240307",
+		"max_tokens": 32,
+		"messages": [
+			{"role": "system", "content": "be terse"},
+			{"role": "user", "content": "hi"}
+		]
+	}`)
+	var codec Codec
+	encRes, err := codec.EncodeRequest(typology.WireShapeAnthropicMessages, canon, provcore.CallTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sys := gjson.GetBytes(encRes.Body, "system").String(); strings.Contains(sys, "single valid JSON object") {
+		t.Fatalf("non-json_object request must not get the JSON instruction: %q", sys)
+	}
+	msgs := gjson.GetBytes(encRes.Body, "messages")
+	if msgs.Array()[len(msgs.Array())-1].Get("role").String() != "user" {
+		t.Fatalf("non-json_object request must not get a prefill turn: %s", msgs.Raw)
+	}
+}
+
+// TestAppendSystemInstruction_fallback covers the defensive default arm of
+// appendSystemInstruction (unexpected `system` value type).
+func TestAppendSystemInstruction_fallback(t *testing.T) {
+	if got := appendSystemInstruction(42, anthropicJSONObjectInstruction); got != anthropicJSONObjectInstruction {
+		t.Fatalf("unexpected system type must fall back to bare instruction, got %#v", got)
+	}
+	// nil system → bare instruction.
+	if got := appendSystemInstruction(nil, anthropicJSONObjectInstruction); got != anthropicJSONObjectInstruction {
+		t.Fatalf("nil system must yield the bare instruction, got %#v", got)
+	}
+	// Empty-string system → bare instruction (no leading blank lines).
+	if got := appendSystemInstruction("", anthropicJSONObjectInstruction); got != anthropicJSONObjectInstruction {
+		t.Fatalf("empty system must yield the bare instruction, got %#v", got)
 	}
 }
 
@@ -763,7 +937,7 @@ func TestDecodeResponse_PromptCacheUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cdc Codec
-	decRes, err := cdc.DecodeResponse(typology.WireShapeAnthropicMessages, native, "")
+	decRes, err := cdc.DecodeResponse(typology.WireShapeAnthropicMessages, native, "", provcore.DecodeContext{})
 	canon := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {

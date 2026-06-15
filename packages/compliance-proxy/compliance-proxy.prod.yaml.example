@@ -54,8 +54,8 @@ redis:
     certFile: ""
     keyFile: ""
     serverName: ""
-  poolSize: 20
-  minIdleConns: 5
+  poolSize: 200
+  minIdleConns: 50
   maxRetries: 3
   dialTimeout: 5s
   readTimeout: 3s

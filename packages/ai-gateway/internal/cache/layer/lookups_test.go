@@ -212,7 +212,7 @@ func TestListCredentialsForProvider_FiltersByEnabledActiveWeight(t *testing.T) {
 	mock, l := newMockLayer(t, Config{})
 	primeSnapshots(t, mock, l)
 
-	// p1: c1 (active, weight>0 ✓) + c2 (retiring, excluded). Result: 1.
+	// p1: c1 (active, weight>0) + c2 (retiring, excluded). Result: 1.
 	out, err := l.ListCredentialsForProvider(context.Background(), "p1")
 	if err != nil {
 		t.Fatalf("err: %v", err)

@@ -8,6 +8,7 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 
@@ -21,10 +22,17 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
-// HubInvalidator is the narrow Hub surface settings/ needs: fire-and-forget
-// per-(thingType, configKey) config invalidation.
+// HubInvalidator is the narrow Hub surface settings/ needs.
+//
+// InvalidateConfig (fire-and-forget) serves the non-security settings fan-outs
+// (observability, payload-capture, streaming-compliance) where a missed push
+// self-heals on the next write. InvalidateConfigE (error-returning) is used by
+// CacheFlush, which fans out to the security keys (credentials / virtual_keys /
+// routing_rules / quota_*) and must fail loud (HTTP 502) so the admin knows the
+// fleet was not actually flushed.
 type HubInvalidator interface {
 	InvalidateConfig(ctx context.Context, thingType, configKey string)
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 }
 
 // payloadCaptureMetadataStore is the narrow view of system_metadata r/w
@@ -97,8 +105,8 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 	g.GET("/setup-state", h.GetSetupState, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
 	g.PUT("/setup-state", h.UpdateSetupState, iamMW(iam.ResourceSettings.Action(iam.VerbUpdate)))
 
-	// Cache management (flush all shadow config + IAM cache)
-	g.GET("/cache/stats", h.CacheStats, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
+	// Cache management — force a re-propagation of all AI-traffic config
+	// shadows to the gateway fleet.
 	g.POST("/cache/flush", h.CacheFlush, iamMW(iam.ResourceSettings.Action(iam.VerbUpdate)))
 
 	// Observability settings: separate resource so granting observability
@@ -124,15 +132,8 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 
 // errJSON builds a canonical JSON error envelope used across admin
 // handlers.
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 // incrementConfigVersion atomically increments the agent config version
 // stored in system_metadata so that agents can detect configuration

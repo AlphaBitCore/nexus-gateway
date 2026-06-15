@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 	"testing"
@@ -46,7 +47,7 @@ func TestOpenAIChatCompletionToMessagesResponse_RoundTripish(t *testing.T) {
 		t.Fatalf("type: %s", string(native))
 	}
 	codec := NewSpec(nil).SchemaCodec
-	decRes, err := codec.DecodeResponse(typology.WireShapeAnthropicMessages, native, "")
+	decRes, err := codec.DecodeResponse(typology.WireShapeAnthropicMessages, native, "", provcore.DecodeContext{})
 	back := decRes.CanonicalBody
 	if err != nil {
 		t.Fatal(err)

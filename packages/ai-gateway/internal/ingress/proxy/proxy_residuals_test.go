@@ -311,7 +311,7 @@ func TestHandleNonStreamWithSubscription_ImmediateEOF_WritesEmpty(t *testing.T) 
 	r = r.WithContext(ctx)
 
 	h.handleNonStreamWithSubscription(r, w, rec, sub, target, nil, 0, 0, nil,
-		"chat", "req-eof-test", time.Now(), slog.Default(), nil, nil)
+		"chat", "req-eof-test", time.Now(), slog.Default(), nil)
 
 	if rec.StatusCode != http.StatusOK {
 		t.Errorf("rec.StatusCode=%d want 200", rec.StatusCode)
@@ -344,7 +344,7 @@ func TestHandleNonStreamWithSubscription_ProviderError_WritesErrorStatus(t *test
 	r = r.WithContext(ctx)
 
 	h.handleNonStreamWithSubscription(r, w, rec, sub, target, nil, 0, 0, nil,
-		"chat", "req-pe-test", time.Now(), slog.Default(), nil, nil)
+		"chat", "req-pe-test", time.Now(), slog.Default(), nil)
 
 	if rec.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("rec.StatusCode=%d want 429", rec.StatusCode)
@@ -371,7 +371,7 @@ func TestHandleNonStreamWithSubscription_GenericError_Writes502(t *testing.T) {
 	r = r.WithContext(ctx)
 
 	h.handleNonStreamWithSubscription(r, w, rec, sub, target, nil, 0, 0, nil,
-		"chat", "req-502-test", time.Now(), slog.Default(), nil, nil)
+		"chat", "req-502-test", time.Now(), slog.Default(), nil)
 
 	if rec.StatusCode != http.StatusBadGateway {
 		t.Errorf("rec.StatusCode=%d want 502", rec.StatusCode)

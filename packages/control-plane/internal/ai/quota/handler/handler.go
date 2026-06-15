@@ -5,6 +5,7 @@ package quota
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -22,16 +23,20 @@ import (
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 )
 
-// HubAPI is the narrow surface quota/ uses.
+// HubAPI is the narrow surface quota/ uses. Quota policies/overrides cap spend
+// per VK/org; a dropped invalidation leaves the gateway enforcing stale caps,
+// so the CUD paths fail loud (HTTP 502) via the error-returning
+// InvalidateConfigE instead of fire-and-forget.
 type HubAPI interface {
 	NotifyConfigChange(ctx context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error)
-	InvalidateConfig(ctx context.Context, thingType, configKey string)
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 }
 
 // quotaDB is the narrow persistence seam for quota policies and overrides.
 // *quotastore.Store satisfies this in production; tests supply an in-memory double.
 type quotaDB interface {
 	ListQuotaPolicies(ctx context.Context, p quotastore.QuotaPolicyListParams) ([]quotastore.QuotaPolicy, int, error)
+	ListEnabledPoliciesForScopes(ctx context.Context, scopes []string) ([]quotastore.QuotaPolicy, error)
 	GetQuotaPolicy(ctx context.Context, id string) (*quotastore.QuotaPolicy, error)
 	CreateQuotaPolicy(ctx context.Context, p quotastore.CreateQuotaPolicyParams) (*quotastore.QuotaPolicy, error)
 	UpdateQuotaPolicy(ctx context.Context, id string, p quotastore.UpdateQuotaPolicyParams) (*quotastore.QuotaPolicy, error)
@@ -54,12 +59,14 @@ type metricsDB interface {
 // *userstore.Store satisfies this in production.
 type usersDB interface {
 	GetNexusUserSafe(ctx context.Context, id string) (*userstore.NexusUserSafe, error)
+	GetNexusUserOrgInfo(ctx context.Context, userID string) (orgID, orgName string, err error)
 }
 
-// orgsDB is the narrow persistence seam for organization lookups.
+// orgsDB is the narrow persistence seam for organization + project lookups.
 // *orgstore.Store satisfies this in production.
 type orgsDB interface {
 	GetOrganization(ctx context.Context, id string) (*orgstore.Organization, error)
+	GetProject(ctx context.Context, id string) (*orgstore.Project, error)
 }
 
 // vksDB is the narrow persistence seam for virtual key lookups.
@@ -102,15 +109,8 @@ func New(d Deps) *Handler {
 	return h
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 type Actor struct {
 	UserID string
@@ -153,4 +153,42 @@ func parsePagination(c echo.Context) pagination {
 
 func internalServerError(c echo.Context, msg string) error {
 	return c.JSON(http.StatusInternalServerError, errJSON(msg, "server_error", ""))
+}
+
+// targetEntityExists confirms targetID references a live entity of the given
+// type (user / vk / organization / project). It exists to stop a typo'd
+// targetId or organizationId from creating a quota override / policy row that
+// matches no chain level and silently enforces nothing. Returns
+// (exists, lookupErr): a non-nil lookupErr signals a DB failure (caller → 500);
+// exists=false signals a missing referent (caller → 400). When the backing
+// store is unavailable (dev mode without a DB) it degrades to exists=true so the
+// path is not blocked — production always wires the stores.
+func (h *Handler) targetEntityExists(ctx context.Context, targetType, targetID string) (bool, error) {
+	switch targetType {
+	case "user":
+		if h.users == nil {
+			return true, nil
+		}
+		u, err := h.users.GetNexusUserSafe(ctx, targetID)
+		return u != nil, err
+	case "vk", "virtual_key":
+		if h.vks == nil {
+			return true, nil
+		}
+		vk, err := h.vks.GetVirtualKey(ctx, targetID)
+		return vk != nil, err
+	case "organization":
+		if h.orgs == nil {
+			return true, nil
+		}
+		o, err := h.orgs.GetOrganization(ctx, targetID)
+		return o != nil, err
+	case "project":
+		if h.orgs == nil {
+			return true, nil
+		}
+		p, err := h.orgs.GetProject(ctx, targetID)
+		return p != nil, err
+	}
+	return true, nil
 }

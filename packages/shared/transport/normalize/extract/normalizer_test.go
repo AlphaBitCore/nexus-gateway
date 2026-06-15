@@ -54,6 +54,8 @@ func TestPatternNormalizer_ChatGPTWebRequest_TierClaim(t *testing.T) {
 func TestPatternNormalizer_ChatGPTWebResponse_TierClaim(t *testing.T) {
 	pn := NewPatternNormalizer()
 	raw := []byte(strings.Join([]string{
+		`data: {"type":"message_marker","conversation_id":"c1","message_id":"m1"}`,
+		"",
 		"event: delta",
 		`data: {"p":"","o":"add","v":{"message":{"author":{"role":"assistant"},"content":{"parts":[""]}},"conversation_id":"c1"}}`,
 		"",
@@ -101,9 +103,10 @@ func TestPatternNormalizer_NonChatJSON_ReturnsErrUnsupported(t *testing.T) {
 	}
 }
 
-func TestPatternNormalizer_UsageExtraction_OpenAINonStream(t *testing.T) {
-	// "Extract as much as feasible": Usage tokens populated when probe
-	// detects them.
+func TestPatternNormalizer_StandardOpenAIResponse_NotClaimed(t *testing.T) {
+	// The Tier-2 probe no longer recognises standard-API response
+	// wires — the Tier-1 codecs decode them. A canonical OpenAI
+	// non-stream response must fall through with ErrUnsupported.
 	pn := NewPatternNormalizer()
 	body := []byte(`{
 		"id": "x",
@@ -111,40 +114,32 @@ func TestPatternNormalizer_UsageExtraction_OpenAINonStream(t *testing.T) {
 		"model": "gpt-4o-mini",
 		"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
 	}`)
-	payload, err := pn.Normalize(context.Background(), body, normalize.Meta{
+	if _, err := pn.Normalize(context.Background(), body, normalize.Meta{
 		Direction:   normalize.DirectionResponse,
 		ContentType: "application/json",
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if payload.Usage == nil {
-		t.Fatal("usage not extracted")
-	}
-	if payload.Usage.PromptTokens == nil || *payload.Usage.PromptTokens != 10 {
-		t.Errorf("prompt tokens: %+v", payload.Usage.PromptTokens)
-	}
-	if payload.Usage.CompletionTokens == nil || *payload.Usage.CompletionTokens != 5 {
-		t.Errorf("completion tokens: %+v", payload.Usage.CompletionTokens)
-	}
-	if payload.FinishReason != "stop" {
-		t.Errorf("finish: %q", payload.FinishReason)
+	}); err == nil {
+		t.Fatal("expected ErrUnsupported — standard OpenAI responses are codec territory")
 	}
 }
 
 func TestPatternNormalizer_DirectionInferred(t *testing.T) {
 	// When Direction is unset, probe both request and response and pick
-	// the higher-confidence detection.
+	// the higher-confidence detection — here a chatgpt-web SSE response
+	// body (the request probe scores zero on SSE bytes).
 	pn := NewPatternNormalizer()
-	body := []byte(`{
-		"id": "x",
-		"choices": [{"message": {"role": "assistant", "content": "auto-detected"}, "finish_reason": "stop"}],
-		"model": "gpt-4o",
-		"usage": {"prompt_tokens": 5}
-	}`)
+	body := []byte(strings.Join([]string{
+		`data: {"type":"message_marker","conversation_id":"c1","message_id":"m1"}`,
+		"",
+		"event: delta",
+		`data: {"p":"","o":"add","v":{"message":{"author":{"role":"assistant"},"content":{"parts":[""]}}}}`,
+		"",
+		"event: delta",
+		`data: {"p":"/message/content/parts/0","o":"append","v":"auto-detected"}`,
+		"",
+	}, "\n"))
 	payload, err := pn.Normalize(context.Background(), body, normalize.Meta{
 		// Direction left unset
-		ContentType: "application/json",
+		ContentType: "text/event-stream",
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -208,5 +203,29 @@ func TestCoordinator_NonChatHTTP_FallsToTier3(t *testing.T) {
 	}
 	if payload.Kind != normalize.KindHTTPForm {
 		t.Fatalf("kind: %v want http-form (Tier 3)", payload.Kind)
+	}
+}
+
+// TestNormalizeForAdapter_DirectionUnsetRequestWins covers the
+// direction-unset arm where the REQUEST probe out-scores the response
+// probe: a chatgpt-web JSON request body scores zero on the SSE-only
+// response probe, so the request detection must win and claim.
+func TestNormalizeForAdapter_DirectionUnsetRequestWins(t *testing.T) {
+	body := []byte(`{
+		"model": "gpt-5-5",
+		"messages": [{"author": {"role": "user"}, "content": {"parts": ["request wins"]}}],
+		"suggestion_type": "autocomplete"
+	}`)
+	out, err := NormalizeForAdapter(body, normalize.Meta{}, AdapterSpecHint{
+		AdapterID:     "chatgpt-web",
+		ReqSpecIDs:    []string{"chatgpt-web"},
+		RespSpecIDs:   []string{"chatgpt-web"},
+		MinConfidence: 0.5,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out.Messages) != 1 || !strings.Contains(out.Messages[0].Content[0].Text, "request wins") {
+		t.Errorf("request-direction detection did not win: %+v", out.Messages)
 	}
 }

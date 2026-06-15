@@ -91,7 +91,7 @@ func emitAudit(logger *slog.Logger, audCtx *requestAuditCtx, respInput *core.Hoo
 	var reqBody []byte
 	if audCtx != nil {
 		reqResult = audCtx.requestPipelineResult
-		reqBody = audCtx.requestBody
+		reqBody = audCtx.requestBodyBytes()
 	}
 	if result == nil {
 		// No response pipeline executed; default decision stays empty

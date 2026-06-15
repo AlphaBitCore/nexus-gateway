@@ -93,6 +93,21 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 		}
 	}
 
+	// F-0365 grant ceiling: an admin API key whose ownerUserId is set
+	// authenticates AS that owner (authn.EffectivePrincipal). Minting a key for
+	// an owner OTHER than the caller would let a narrowly-scoped caller inherit a
+	// more-powerful principal's authority (e.g. mint a super-admin-owned key with
+	// only admin:api-key.create). Require the caller to already cover every
+	// permission the target owner holds before the key is created. When the owner
+	// is unset or is the caller's own user id, the ceiling is skipped (behavior
+	// unchanged — the key confers nothing the caller does not already have).
+	if body.OwnerUserID != nil && *body.OwnerUserID != "" &&
+		(aa == nil || *body.OwnerUserID != aa.KeyID) {
+		if blocked, resp := h.ceilingBlocksOwner(c, "nexus_user", *body.OwnerUserID); blocked {
+			return resp
+		}
+	}
+
 	var expiresAt *time.Time
 	if body.ExpiresAt != "" {
 		t, err := time.Parse(time.RFC3339, body.ExpiresAt)
@@ -104,6 +119,7 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 	k, err := h.users.CreateAdminAPIKey(c.Request().Context(), userstore.CreateAdminAPIKeyParams{
 		Name:        body.Name,
 		KeyHash:     keyHash,
+		KeyVersion:  auth.CurrentKeyVersion(),
 		KeyPrefix:   keyPrefix,
 		CreatedBy:   createdBy,
 		ExpiresAt:   expiresAt,
@@ -190,7 +206,7 @@ func (h *Handler) RegenerateAPIKey(c echo.Context) error {
 	keyHash := auth.HashAPIKey(rawKey)
 	keyPrefix := rawKey[:12]
 
-	if err := h.users.RegenerateAdminAPIKey(c.Request().Context(), id, keyHash, keyPrefix); err != nil {
+	if err := h.users.RegenerateAdminAPIKey(c.Request().Context(), id, keyHash, auth.CurrentKeyVersion(), keyPrefix); err != nil {
 		h.logger.Error("regenerate api key", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to regenerate API key", "server_error", ""))
 	}
@@ -280,6 +296,7 @@ func (h *Handler) RotateAPIKey(c echo.Context) error {
 	res, err := h.users.RotateAdminAPIKey(c.Request().Context(), userstore.RotateAdminAPIKeyParams{
 		PredecessorID: id,
 		NewKeyHash:    keyHash,
+		NewKeyVersion: auth.CurrentKeyVersion(),
 		NewKeyPrefix:  keyPrefix,
 		NewCreatedBy:  createdBy,
 		NewExpiresAt:  newExpiresAt,

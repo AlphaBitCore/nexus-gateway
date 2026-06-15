@@ -6,9 +6,13 @@ import (
 )
 
 // SchemaVersion is the value stored in NormalizedPayload.NormalizeVersion
-// and traffic_event_normalized.normalize_version. Bumped only on a
-// backward-incompatible payload shape change.
-const SchemaVersion = "1"
+// and traffic_event_normalized.normalize_version. Bumping it makes the
+// hub's normalize backfill treat every row stamped with an older version
+// as a re-normalization candidate, so historical rows heal automatically
+// — no data migration. Version 2: decoder-unification payload shape
+// (stream-fold content blocks, http-sse frame projections, frame-coverage
+// confidence, fallback provenance stamps).
+const SchemaVersion = "2"
 
 // ErrUnsupported is returned by a Normalizer when its input does not
 // match the protocol / content-type this normalizer handles. Callers
@@ -83,4 +87,20 @@ type Normalizer interface {
 
 	// Normalize produces a NormalizedPayload from raw bytes.
 	Normalize(ctx context.Context, raw []byte, meta Meta) (NormalizedPayload, error)
+}
+
+// Sniffer is an optional Normalizer capability. A codec that can cheaply
+// recognise its own wire shape from leading bytes implements LooksLike;
+// the Registry offers it traffic whose AdapterType/path keys did not
+// resolve (capture-side events routinely carry a host or tool name in
+// AdapterType rather than a wire-format identifier). Must be O(prefix):
+// inspect a bounded number of leading bytes, never a full parse.
+//
+// A false positive is recoverable — the claim still goes through the
+// codec's Normalize and the registry's confidence threshold — but it
+// costs a wasted parse and can steal traffic from the Tier-2 pattern
+// probe, so probes should match protocol-distinctive markers, not
+// merely plausible framing (a bare SSE "data:" prefix is NOT enough).
+type Sniffer interface {
+	LooksLike(raw []byte, meta Meta) bool
 }

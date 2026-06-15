@@ -111,6 +111,7 @@ func MountRoutes(e *echo.Echo, ec EchoConfig) *enroll.EnrollmentAPI {
 		Enrollment:          ec.EnrollSvc,
 		MQProducer:          ec.MQProducer,
 		ServiceToken:        ec.Cfg.Auth.InternalServiceToken,
+		HubConfigToken:      ec.Cfg.Auth.HubConfigToken,
 		Store:               ec.Store,
 		AgentCA:             ec.AgentCA,
 		JWKSCache:           ec.JWKSCache,

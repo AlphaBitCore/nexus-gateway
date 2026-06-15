@@ -2,6 +2,7 @@ package oauth_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -92,7 +93,6 @@ func webConsoleClient() *store.OAuthClient {
 		Name:         "Web Console",
 		Type:         "public",
 		RedirectURIs: []string{"https://cp.nexus.ai/callback"},
-		RequirePKCE:  true,
 	}
 }
 
@@ -102,7 +102,6 @@ func agentDesktopClient() *store.OAuthClient {
 		Name:         "Agent Desktop",
 		Type:         "public",
 		RedirectURIs: []string{"http://127.0.0.1:*/callback"},
-		RequirePKCE:  true,
 	}
 }
 
@@ -288,6 +287,24 @@ func TestAuthorize_ValidationErrors(t *testing.T) {
 			wantDescSubs: "code_challenge required",
 		},
 		{
+			// F-0073: PKCE is mandatory for every client — there is no
+			// per-client opt-out flag. Omitting code_challenge must 400 for an
+			// ordinary registered public client.
+			name:    "missing_code_challenge_rejected_no_per_client_opt_out",
+			clients: fakeClients{publicClientID: webConsoleClient()},
+			params: func() url.Values {
+				return url.Values{
+					"response_type": {"code"},
+					"client_id":     {publicClientID},
+					"redirect_uri":  {"https://cp.nexus.ai/callback"},
+					"state":         {"s"},
+				}
+			},
+			wantStatus:   http.StatusBadRequest,
+			wantCode:     "invalid_request",
+			wantDescSubs: "code_challenge required",
+		},
+		{
 			name:    "code_challenge_method_plain_rejected",
 			clients: fakeClients{publicClientID: webConsoleClient()},
 			params: func() url.Values {
@@ -424,5 +441,62 @@ func TestAuthorize_AgentDesktop_BindingChallengeMismatch(t *testing.T) {
 	// On mismatch the binding must NOT be consumed so the client can retry.
 	if _, ok := f.bindings.Get(bindingID); !ok {
 		t.Fatalf("binding should survive a mismatch; got deleted")
+	}
+}
+
+// TestAuthorize_AuthctxIsUnguessableCSRFState is the F-0083 regression: the
+// authctx minted by /oauth/authorize is the value carried back as the OIDC
+// `state` parameter (login/start.go sets state=authctx) and is the CSRF binding
+// the callback enforces via Pending.Take. It must therefore be an unguessable,
+// high-entropy, per-login-unique token — never a sequential or predictable id.
+// Here we mint two authctx values from independent authorize requests and assert
+// (a) they differ and (b) each decodes to at least 256 bits of entropy. A
+// regression to a counter/timestamp/derived value would collapse one or both.
+func TestAuthorize_AuthctxIsUnguessableCSRFState(t *testing.T) {
+	clients := fakeClients{publicClientID: webConsoleClient()}
+	f := newFixture(t, clients)
+
+	mint := func() string {
+		t.Helper()
+		params := url.Values{
+			"response_type":         {"code"},
+			"client_id":             {publicClientID},
+			"redirect_uri":          {"https://cp.nexus.ai/callback"},
+			"scope":                 {"openid profile"},
+			"state":                 {"s1"},
+			"nonce":                 {"n1"},
+			"code_challenge":        {s256Challenge},
+			"code_challenge_method": {"S256"},
+		}
+		rec := f.do(params)
+		if rec.Code != http.StatusFound {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		loc, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatalf("parse Location: %v", err)
+		}
+		authctx := loc.Query().Get("authctx")
+		if authctx == "" {
+			t.Fatalf("authctx (→ OIDC state) missing from Location: %q", rec.Header().Get("Location"))
+		}
+		return authctx
+	}
+
+	a := mint()
+	b := mint()
+	if a == b {
+		t.Fatalf("two logins minted the SAME authctx/state %q — state must be unique per login (predictable/sequential value is a CSRF weakness)", a)
+	}
+	// base64url RawURLEncoding: decoded byte length is the entropy. 32 bytes =
+	// 256 bits, the floor required for an unguessable CSRF/state token.
+	for _, s := range []string{a, b} {
+		raw, err := base64.RawURLEncoding.DecodeString(s)
+		if err != nil {
+			t.Fatalf("authctx/state %q is not base64url — cannot confirm it carries raw entropy: %v", s, err)
+		}
+		if len(raw) < 32 {
+			t.Fatalf("authctx/state %q decodes to %d bytes; want >= 32 (256-bit) of crypto entropy", s, len(raw))
+		}
 	}
 }

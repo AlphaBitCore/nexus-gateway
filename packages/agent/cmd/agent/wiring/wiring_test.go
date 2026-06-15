@@ -1074,12 +1074,7 @@ func TestInitThingClient_EmptyDeviceToken(t *testing.T) {
 	}
 }
 
-// sync.go — WireThingClientCallbacks (nil tc is no-op)
-
-func TestWireThingClientCallbacks_NilTC(t *testing.T) {
-	// Should not panic when tc is nil.
-	WireThingClientCallbacks(nil, registry.StaticInfo{}, nil, nil)
-}
+// WireThingClientCallbacks tests live in runwiring_seams_test.go.
 
 // helpers.go — UserQuitFlagPath and GuiSocketPath
 
@@ -1962,18 +1957,7 @@ func TestInitThingClient_ComposeVersionFnNilOk(t *testing.T) {
 	_ = err
 }
 
-// sync.go — InitHubClient and InitEnrollment (network-bound)
-// InitHubClient creates an mTLS HTTP client with cert files on disk.
-// Calling it with empty strings would fail cert parsing — network-bound.
-// InitEnrollment calls enrollment.NewHubEnrollClient which parses a CA cert.
-// Empty CA file → error. Test the error path:
-
-func TestInitEnrollment_EmptyCAFileError(t *testing.T) {
-	_, _, err := InitEnrollment("http://hub.example.com", "", t.TempDir())
-	// Empty CA file means no cert validation — this might succeed or fail
-	// depending on implementation. Just verify no panic.
-	_ = err
-}
+// InitEnrollment tests live in runwiring_seams_test.go.
 
 // observability.go — InitDiag (Queue-bound; allowlist category C)
 // InitDiag calls diag.MigratePendingDiagEvent(q.DB()) + creates several components.
@@ -2019,3 +2003,29 @@ func TestInitDiag_Smoke(t *testing.T) {
 // sync.go — InitHubClient (network-bound; allowlist category E)
 
 // sync.go — InitEnrollment (network-bound; allowlist category E)
+
+// TestAuditEventToMap_RedactionSpans — the upload envelope must carry the
+// governed normalized copies' redaction spans (Hub forwards them onto
+// traffic_event_normalized.*_redaction_spans) and omit the keys entirely
+// for unredacted rows so the wire stays byte-identical for them.
+func TestAuditEventToMap_RedactionSpans(t *testing.T) {
+	reqSpans := json.RawMessage(`[{"start":0,"end":16,"replacement":"[EMAIL-REDACTED]"}]`)
+	m := AuditEventToMap(auditevent.Event{
+		ID:                    "flow-spans",
+		Timestamp:             time.Now(),
+		NormalizedRequest:     json.RawMessage(`{"kind":"ai-chat"}`),
+		RequestRedactionSpans: reqSpans,
+	})
+	got, ok := m["requestRedactionSpans"].(json.RawMessage)
+	if !ok || string(got) != string(reqSpans) {
+		t.Errorf("requestRedactionSpans = %v, want %s", m["requestRedactionSpans"], reqSpans)
+	}
+	if _, present := m["responseRedactionSpans"]; present {
+		t.Error("responseRedactionSpans key must be omitted when nil")
+	}
+
+	plain := AuditEventToMap(auditevent.Event{ID: "flow-plain", Timestamp: time.Now()})
+	if _, present := plain["requestRedactionSpans"]; present {
+		t.Error("unredacted row must not carry a requestRedactionSpans key")
+	}
+}

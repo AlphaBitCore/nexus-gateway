@@ -22,18 +22,23 @@ func mustLoadSeedRulesJSONForBench(tb testing.TB) []Rule {
 		tb.Fatal("runtime.Caller failed")
 	}
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "..")
-	path := filepath.Join(repoRoot, "tools", "db-migrate", "seed", "data", "time-sensitive-rules.json")
+	path := filepath.Join(repoRoot, "tools", "db-migrate", "seed", "fixtures", "semantic_cache_config.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		tb.Fatalf("read seed rules JSON %s: %v", path, err)
+		tb.Fatalf("read semantic_cache_config fixture %s: %v", path, err)
 	}
-	var blob struct {
-		Rules []Rule `json:"rules"`
+	var fixture []struct {
+		TimeSensitiveOverrides struct {
+			Rules []Rule `json:"rules"`
+		} `json:"time_sensitive_overrides"`
 	}
-	if err := json.Unmarshal(raw, &blob); err != nil {
-		tb.Fatalf("unmarshal seed rules JSON: %v", err)
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		tb.Fatalf("unmarshal semantic_cache_config fixture: %v", err)
 	}
-	return blob.Rules
+	if len(fixture) == 0 {
+		tb.Fatalf("semantic_cache_config fixture %s is empty", path)
+	}
+	return fixture[0].TimeSensitiveOverrides.Rules
 }
 
 // buildBenchmarkDetector builds a Detector with exactly n rules for use in

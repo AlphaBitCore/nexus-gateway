@@ -56,11 +56,10 @@ func ChatResponseSpecByID(id string) *ChatResponseSpec {
 	return nil
 }
 
-// AdapterSpecHint bundles the spec choices for one per-host adapter.
-// Multiple response specs are listed because the same adapter may
-// receive both SSE and non-stream responses (Anthropic Messages API,
-// OpenAI, Gemini all expose both shapes). ScoreResponseSpec auto-
-// filters incompatible framings so passing both is safe.
+// AdapterSpecHint bundles the spec choices for one consumer-web
+// per-host adapter (chatgpt-web, claude-web, character-web, plus the
+// generic-jsonpath fallback). Adapters whose wire is a standard API
+// delegate straight to the shared codecs instead of probing here.
 //
 // minConfidence below 0.7 (the Tier-2 threshold) is normal: the
 // adapter caller has already routed based on host knowledge, so even
@@ -104,7 +103,11 @@ func NormalizeForAdapter(raw []byte, meta normalize.Meta, hint AdapterSpecHint) 
 		var best ChatDetection
 		for _, id := range hint.RespSpecIDs {
 			if spec := ChatResponseSpecByID(id); spec != nil {
-				if d := ScoreResponseSpec(raw, *spec); d.Confidence > best.Confidence {
+				// Adapter-keyed scoring: the caller resolved this adapter
+				// by host evidence, which satisfies the response spec's
+				// signature gate — stream variants that carry no signature
+				// key in any frame still score on patch coverage.
+				if d := ScoreResponseSpecAdapterKeyed(raw, *spec); d.Confidence > best.Confidence {
 					best = d
 				}
 			}
@@ -137,32 +140,20 @@ func NormalizeForAdapter(raw []byte, meta normalize.Meta, hint AdapterSpecHint) 
 	}
 	// Adapter caller — stamp adapter ID as the DetectedSpec, no probe prefix.
 	d.SpecID = hint.AdapterID
-	// AdapterCallerConfidenceFloor: when the caller is an adapter
-	// (NormalizeForAdapter is only entered from per-adapter Normalize
-	// methods), the AdapterID itself is already a strong signal —
-	// the agent / cp / gw chose this adapter because the host / URL /
-	// content-type matched. The body-shape score is just confirming
-	// "yes, the bytes look like what we expect for this adapter".
-	// Without this floor, single-prompt specs (claude-web caps at 0.6
-	// via 0.4 ContentPath + 0.2 signature) get rejected by the
-	// Registry's default 0.7 threshold even when the spec matched
-	// every signature field — confirmed against the live agent capture
-	// 2026-05-25 (claude.ai prompt + parent_message_uuid + timezone +
-	// locale + personalized_styles + rendering_mode + sync_sources
-	// all present → 0.6 → Registry rejected → fell to generic-http).
-	if d.Confidence < AdapterCallerConfidenceFloor {
-		d.Confidence = AdapterCallerConfidenceFloor
-	}
-	return BuildPayload(d, raw, ""), nil
+	// Selection-evidence stamp (NOT a confidence floor): the caller is a
+	// per-host adapter, so the AdapterID host match is the source of
+	// truth for "this is adapter X traffic" — the Registry accepts the
+	// payload over its tier threshold on the strength of that evidence,
+	// not the decode coverage. Confidence keeps the HONEST coverage
+	// value (a single-prompt spec like claude-web caps near 0.6: 0.4
+	// ContentPath + 0.2 signature), so the operator sees what the
+	// decoder actually recovered; the UI renders a host-matched label in
+	// place of the numeral so the floored-vs-coverage semantics never
+	// read as one comparable scale.
+	p := BuildPayload(d, raw, "")
+	p.SelectionEvidence = normalize.SelectionEvidenceHost
+	return p, nil
 }
-
-// AdapterCallerConfidenceFloor is the minimum payload.Confidence that
-// NormalizeForAdapter returns once the underlying spec passes the
-// adapter's own MinConfidence gate. Set to 0.95 so the Registry's
-// default 0.7 threshold always claims the result — adapter resolution
-// is the source of truth for "this is adapter X traffic"; body-shape
-// scoring is only confirmation, not the primary signal.
-const AdapterCallerConfidenceFloor = 0.95
 
 // WireTier2 installs the default PatternNormalizer as Tier 2 of the
 // given Registry's Coordinator. Binaries call this once at startup,
@@ -181,8 +172,10 @@ func (p *PatternNormalizer) ID() string { return "pattern-extract" }
 // chains and returns the highest-confidence match:
 //
 //  1. JSON multi-spec probe (DetectChatShape / DetectResponseShape)
-//     against KnownChatSpecs + KnownResponseSpecs — claims OpenAI /
-//     Anthropic / Gemini / claude-web / completions-legacy shapes.
+//     against KnownChatSpecs + KnownResponseSpecs — claims the
+//     consumer-web shapes (chatgpt-web, claude-web) and the
+//     flat-prompt legacy completions shape. Standard-API wires are
+//     decoded by the Tier-1 codecs before this tier runs.
 //  2. NonJSON detector chain — Connect-RPC + protobuf (cursor-like
 //     hosts) and Google batchexecute (gemini-web-like hosts). Tier 2
 //     recognises these formats even when no per-host adapter is
@@ -277,7 +270,6 @@ func buildPayloadInternal(d ChatDetection, raw []byte, specPrefix string) normal
 		Protocol:         protocol,
 		Model:            d.Model,
 		Stream:           d.IsStream,
-		FinishReason:     d.FinishReason,
 		Confidence:       d.Confidence,
 		DetectedSpec:     specPrefix + d.SpecID,
 		// Dual view: preserve the raw body as a text fallback so the
@@ -327,12 +319,6 @@ func buildPayloadInternal(d ChatDetection, raw []byte, specPrefix string) normal
 		}
 	}
 
-	// Usage — try to map common shapes (OpenAI / Anthropic / Gemini)
-	// best-effort. Per text-first memory binding, we don't fabricate
-	// numbers; only fill what's parseable.
-	if len(d.UsageRaw) > 0 {
-		out.Usage = mapUsage(d.UsageRaw)
-	}
 	return out
 }
 
@@ -352,54 +338,4 @@ func mapRole(s string) normalize.Role {
 	default:
 		return normalize.RoleUser
 	}
-}
-
-// mapUsage decodes a usage object into normalize.Usage. Tries OpenAI's
-// `prompt_tokens` / `completion_tokens` keys first, then Anthropic's
-// `input_tokens` / `output_tokens`, then Gemini's
-// `promptTokenCount` / `candidatesTokenCount`. Returns nil when no
-// recognisable keys are present.
-func mapUsage(raw json.RawMessage) *normalize.Usage {
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil
-	}
-	u := &normalize.Usage{}
-	any := false
-	intPtr := func(key string) *int {
-		v, ok := m[key]
-		if !ok {
-			return nil
-		}
-		f, ok := v.(float64)
-		if !ok {
-			return nil
-		}
-		x := int(f)
-		any = true
-		return &x
-	}
-	if p := intPtr("prompt_tokens"); p != nil {
-		u.PromptTokens = p
-	} else if p := intPtr("input_tokens"); p != nil {
-		u.PromptTokens = p
-	} else if p := intPtr("promptTokenCount"); p != nil {
-		u.PromptTokens = p
-	}
-	if p := intPtr("completion_tokens"); p != nil {
-		u.CompletionTokens = p
-	} else if p := intPtr("output_tokens"); p != nil {
-		u.CompletionTokens = p
-	} else if p := intPtr("candidatesTokenCount"); p != nil {
-		u.CompletionTokens = p
-	}
-	if p := intPtr("total_tokens"); p != nil {
-		u.TotalTokens = p
-	} else if p := intPtr("totalTokenCount"); p != nil {
-		u.TotalTokens = p
-	}
-	if !any {
-		return nil
-	}
-	return u
 }

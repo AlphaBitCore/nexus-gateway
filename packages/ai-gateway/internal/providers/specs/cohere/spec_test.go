@@ -85,7 +85,7 @@ func TestCohere_Codec_DecodeResponse_TextAndUsage(t *testing.T) {
 		"finish_reason":"COMPLETE",
 		"usage":{"tokens":{"input_tokens":42,"output_tokens":13}}
 	}`)
-	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeCohereChat, body, "")
+	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeCohereChat, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {
@@ -121,7 +121,7 @@ func TestCohere_Codec_DecodeResponse_ToolPlanAndCalls(t *testing.T) {
 		},
 		"finish_reason":"TOOL_CALL"
 	}`)
-	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeCohereChat, body, "")
+	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeCohereChat, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	if err != nil {
 		t.Fatalf("err=%v", err)

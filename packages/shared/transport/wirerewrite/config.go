@@ -136,7 +136,7 @@ type Result struct {
 	//                          upstream-bound body (L3).
 	//   cache-control-inject — cache_control markers added (L4).
 	//   cache-key-strip      — L0 strips that affect only the cache key.
-	// Spans flow onto traffic_event_normalized.request_redaction_spans
-	// alongside hook-emitted spans for a single audit channel.
+	// Spans are consumed in-process (cache-key derivation, strip metrics);
+	// they are not persisted to traffic_event_normalized.
 	TransformSpans []normalize.TransformSpan
 }

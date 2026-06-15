@@ -28,6 +28,8 @@ type fakeStore struct {
 	packs    map[string]*rulepack.Pack
 	installs map[string]*rulepack.Install
 
+	importHits int
+
 	listErr       error
 	getErr        error
 	importErr     error
@@ -91,6 +93,7 @@ func (f *fakeStore) GetPack(_ context.Context, id string) (*rulepack.Pack, error
 func (f *fakeStore) ImportPack(_ context.Context, p *rulepack.Pack) (*rulepack.Pack, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.importHits++
 	if f.importErr != nil {
 		return nil, f.importErr
 	}
@@ -277,14 +280,17 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	return m
 }
 
+// samplePack is a fully-valid pack: it satisfies the same ValidatePack contract
+// the JSON Create handler now enforces (namespaced name, v-prefixed semver,
+// severity ∈ {hard,soft,warn}, non-empty category, compilable pattern). F-0266.
 func samplePack() rulepack.Pack {
 	return rulepack.Pack{
 		ID:         "pack-1",
-		Name:       "pii-rules",
-		Version:    "1.0.0",
+		Name:       "pii/rules",
+		Version:    "v1.0.0",
 		Maintainer: "security",
 		Rules: []rulepack.Rule{
-			{RuleID: "r1", Pattern: `\bSSN\b`, Severity: "high"},
+			{RuleID: "r1", Category: "pii", Pattern: `\bSSN\b`, Severity: "soft"},
 		},
 	}
 }
@@ -564,6 +570,51 @@ func TestCreate_RuleMissingFields_Returns400(t *testing.T) {
 	}
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d; want 400 (rule missing fields)", rec.Code)
+	}
+}
+
+// F-0266: a JSON-authored pack with an uncompilable regex must be rejected
+// with 400 — never silently stored (the evaluator skips uncompilable patterns,
+// so a stored "PII block" rule with a typo'd regex never fires). ImportPack
+// must NOT be reached.
+func TestCreate_InvalidRegex_Returns400_NotStored(t *testing.T) {
+	store := newFakeStore()
+	h := newTestHandler(store, nil)
+	bad := samplePack()
+	bad.Rules[0].Pattern = `(unbalanced` // does not compile
+	body := mustJSON(t, bad)
+	c, rec := echoCtx(http.MethodPost, "/rule-packs", body)
+	if err := h.Create(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (invalid regex)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid regex") {
+		t.Errorf("expected invalid-regex detail; got %s", rec.Body.String())
+	}
+	if store.importHits != 0 {
+		t.Errorf("ImportPack was called %d times; want 0 (bad pack must not reach the store)", store.importHits)
+	}
+}
+
+// F-0266: a bad severity / missing category authored via JSON Create must also
+// be rejected with 400 — the YAML Import validator's checks now apply here too.
+func TestCreate_BadSeverity_Returns400(t *testing.T) {
+	store := newFakeStore()
+	h := newTestHandler(store, nil)
+	bad := samplePack()
+	bad.Rules[0].Severity = "critical" // not in {hard,soft,warn}
+	body := mustJSON(t, bad)
+	c, rec := echoCtx(http.MethodPost, "/rule-packs", body)
+	if err := h.Create(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (bad severity)", rec.Code)
+	}
+	if store.importHits != 0 {
+		t.Errorf("ImportPack called %d times; want 0", store.importHits)
 	}
 }
 
@@ -1285,7 +1336,7 @@ func TestRulePackAuditSummary_Nil(t *testing.T) {
 func TestRulePackAuditSummary_Valid(t *testing.T) {
 	p := samplePack()
 	m := rulePackAuditSummary(&p)
-	if m["name"] != "pii-rules" {
+	if m["name"] != "pii/rules" {
 		t.Errorf("unexpected summary: %v", m)
 	}
 	if m["ruleCount"].(int) != 1 {

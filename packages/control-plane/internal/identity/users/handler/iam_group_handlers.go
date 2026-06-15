@@ -90,7 +90,9 @@ func (h *Handler) CreateIAMGroup(c echo.Context) error {
 	ae := audit.EntryFor(c, iam.ResourceIamGroup, iam.VerbCreate)
 	ae.EntityID = g.ID
 	ae.AfterState = g
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.JSON(http.StatusCreated, g)
 }
 
@@ -110,7 +112,9 @@ func (h *Handler) UpdateIAMGroup(c echo.Context) error {
 	ae := audit.EntryFor(c, iam.ResourceIamGroup, iam.VerbUpdate)
 	ae.EntityID = id
 	ae.AfterState = g
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.JSON(http.StatusOK, g)
 }
 
@@ -121,7 +125,9 @@ func (h *Handler) DeleteIAMGroup(c echo.Context) error {
 	}
 	ae := audit.EntryFor(c, iam.ResourceIamGroup, iam.VerbDelete)
 	ae.EntityID = id
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -136,7 +142,26 @@ func (h *Handler) AddIAMGroupMember(c echo.Context) error {
 	if body.PrincipalType == "" {
 		body.PrincipalType = "nexus_user"
 	}
-	id, err := h.iam.AddGroupMember(c.Request().Context(), c.Param("id"), body.PrincipalType, body.PrincipalID)
+
+	// Grant ceiling — adding a principal to a group confers ALL of the
+	// group's currently-attached policies to that principal. The caller must
+	// already hold every permission every group policy grants, else joining a
+	// privileged group is privilege escalation. Each group policy is checked
+	// against the caller's own permissions; the first one that exceeds them
+	// blocks the add fail-closed.
+	groupID := c.Param("id")
+	groupPolicies, gpErr := h.iam.ListGroupPolicies(c.Request().Context(), groupID)
+	if gpErr != nil {
+		h.logger.Error("add group member: list group policies", "groupId", groupID, "error", gpErr)
+		return c.JSON(http.StatusInternalServerError, errJSON("Failed to verify permissions", "server_error", ""))
+	}
+	for _, gp := range groupPolicies {
+		if blocked, resp := h.ceilingBlocksPolicyID(c, gp.PolicyID); blocked {
+			return resp
+		}
+	}
+
+	id, err := h.iam.AddGroupMember(c.Request().Context(), groupID, body.PrincipalType, body.PrincipalID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to add member", "server_error", ""))
 	}
@@ -154,7 +179,9 @@ func (h *Handler) AddIAMGroupMember(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamGroup, iam.VerbCreate)
 	ae.EntityID = id
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.JSON(http.StatusCreated, map[string]any{"id": id})
 }
 
@@ -181,7 +208,9 @@ func (h *Handler) RemoveIAMGroupMember(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamGroup, iam.VerbDelete)
 	ae.EntityID = membershipID
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -194,6 +223,14 @@ func (h *Handler) AttachIAMGroupPolicy(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	groupID := c.Param("id")
+
+	// Grant ceiling — attaching a policy to a group expands every
+	// member's effective permissions. The caller must already hold every
+	// permission the policy grants.
+	if blocked, resp := h.ceilingBlocksPolicyID(c, body.PolicyID); blocked {
+		return resp
+	}
+
 	id, err := h.iam.AttachGroupPolicy(ctx, groupID, body.PolicyID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to attach policy", "server_error", ""))
@@ -218,7 +255,9 @@ func (h *Handler) AttachIAMGroupPolicy(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamGroup, iam.VerbCreate)
 	ae.EntityID = id
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.JSON(http.StatusCreated, map[string]any{"id": id})
 }
 
@@ -252,6 +291,8 @@ func (h *Handler) DetachIAMGroupPolicy(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamGroup, iam.VerbDelete)
 	ae.EntityID = attachmentID
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.NoContent(http.StatusNoContent)
 }

@@ -21,7 +21,6 @@ import (
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/darwin/bundles"
-	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/darwin/flow"
 	nepkg "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/darwin/ne"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/darwin/proc"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
@@ -53,13 +52,32 @@ type DarwinPlatform struct {
 	// handleNewFlow short-circuits to passthrough so the agent sheds
 	// load while the audit upload pipeline catches up. Wired from a
 	// backpressure.Store fed by a goroutine polling
-	// audit.Queue.UnsyncedCount() every 2 s. Pure atomic-load on the
-	// hot path; nil store = no throttling.
+	// audit.Queue.UnsyncedCount() every 2 s. Set ONCE at boot
+	// (SetBackpressure, before Start), then only read on the hot path —
+	// the read is intentionally unsynchronized because the write strictly
+	// precedes any flow. nil store = no throttling.
 	backpressure interface{ IsThrottled() bool }
 
-	// Track active flows for audit on close.
-	mu          sync.RWMutex
-	activeFlows map[string]*flow.State
+	// mu guards only the low-frequency config fields below
+	// (backpressure / tlsEngine / bridgeDeps), which are set once at
+	// boot and read off the per-flow hot path. It deliberately does NOT
+	// guard activeFlows — those live in a sync.Map so concurrent flow
+	// decisions never serialize on a shared lock.
+	mu sync.RWMutex
+
+	// activeFlows is keyed by flowID (globally-unique UUIDs), so every
+	// flow touches a disjoint key — sync.Map is lock-free for this
+	// access pattern. Values are *flow.State; the worker publishes its
+	// computed fields via flow.State.Ready (see the State doc).
+	activeFlows    sync.Map
+	activeFlowsLen atomic.Int64 // maintained on Store/Delete for logging/health
+
+	// flowSem bounds how many flow decisions compute concurrently. The
+	// IPC reader registers each flow synchronously then hands the slow
+	// part (process lookup + policy + connection-stage hooks) to a
+	// worker that acquires a slot here, so a slow hook on one flow no
+	// longer stalls every other flow behind the single reader goroutine.
+	flowSem chan struct{}
 
 	// InterceptionHealthReporter state. All written from accept /
 	// flow-handler goroutines; read concurrently by statusapi via
@@ -71,11 +89,18 @@ type DarwinPlatform struct {
 	lastFlowAtNS     atomic.Int64 // unix nanos of last flow_new
 }
 
+// flowDecisionConcurrency caps concurrent flow-decision workers. Sized
+// to absorb a browser's connection burst without unbounded goroutine
+// growth; a saturated pool applies backpressure on the IPC reader, and
+// any flow whose decision is delayed past the NE's 2 s timeout fails
+// open to passthrough — never blocks.
+const flowDecisionConcurrency = 128
+
 // NewPlatform creates a new Darwin platform shim.
 func NewPlatform(_ string) api.Platform {
 	return &DarwinPlatform{
-		done:        make(chan struct{}),
-		activeFlows: make(map[string]*flow.State),
+		done:    make(chan struct{}),
+		flowSem: make(chan struct{}, flowDecisionConcurrency),
 	}
 }
 
@@ -235,10 +260,50 @@ func (p *DarwinPlatform) Stop() error {
 	return nil
 }
 
+// neConn pairs the IPC connection with a single-writer response channel.
+// Decision workers run concurrently but must not write to the socket
+// concurrently (interleaved bytes corrupt the JSON-line framing), so all
+// replies funnel through respCh and exactly one goroutine drains it to
+// the conn — a lock-free single-writer instead of a write mutex.
+type neConn struct {
+	conn    net.Conn
+	respCh  chan []byte
+	workers sync.WaitGroup // in-flight decision workers for this conn
+}
+
+// reply queues a framed response for the single writer. Non-blocking
+// intent: respCh is buffered; if a wedged writer ever fills it, the send
+// blocks the worker (bounded by flowSem), which is acceptable backpressure
+// and still fail-open (the NE times out to passthrough).
+func (nc *neConn) reply(data []byte) {
+	nc.respCh <- data
+}
+
 func (p *DarwinPlatform) handleNEConn(conn net.Conn) {
 	connStart := time.Now()
 	var framesByType = map[string]int{}
+
+	nc := &neConn{conn: conn, respCh: make(chan []byte, 256)}
+	// Single writer goroutine: serialises all socket writes without a
+	// per-write lock. Closed after the reader loop ends and every
+	// in-flight worker has drained.
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for data := range nc.respCh {
+			if _, err := conn.Write(data); err != nil {
+				slog.Warn("NE IPC write failed", "bytes", len(data), "error", err)
+			}
+		}
+	}()
+
 	defer func() {
+		// Drain in-flight decision workers so their replies are sent
+		// before we close the writer; then close respCh to stop the
+		// writer and wait for it.
+		nc.workers.Wait()
+		close(nc.respCh)
+		<-writerDone
 		_ = conn.Close()
 		slog.Info("NE provider disconnected — extension closed IPC socket",
 			"duration_s", int(time.Since(connStart).Seconds()),
@@ -246,6 +311,33 @@ func (p *DarwinPlatform) handleNEConn(conn net.Conn) {
 			"active_sessions_after", p.activeSessions.Load()-1,
 		)
 	}()
+	// Liveness heartbeat: while this NE IPC connection is alive, emit a
+	// periodic line so an operator tailing agent.log can confirm the
+	// extension is still attached (and how many flows it carries) WITHOUT
+	// waiting for the next flow. A gap in this line while traffic flows is
+	// the visible signature of a daemon↔NE split — the zombie state the NE
+	// side self-heals by declining flows. Reads only atomics + immutable
+	// connStart, so it never races the reader loop's framesByType map.
+	hbStop := make(chan struct{})
+	defer close(hbStop)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbStop:
+				return
+			case <-p.done:
+				return
+			case <-ticker.C:
+				slog.Info("NE liveness heartbeat — extension attached to daemon",
+					"active_sessions", p.activeSessions.Load(),
+					"uptime_s", int(time.Since(connStart).Seconds()),
+				)
+			}
+		}
+	}()
+
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 64*1024), nepkg.ScannerMaxBytes)
 
@@ -276,7 +368,7 @@ func (p *DarwinPlatform) handleNEConn(conn net.Conn) {
 		framesByType[msg.Type]++
 		switch msg.Type {
 		case "flow_new":
-			p.handleNewFlow(conn, msg)
+			p.handleNewFlow(nc, msg)
 		case "flow_closed":
 			p.handleFlowClosed(msg)
 		case "flow_update_host":
@@ -296,179 +388,6 @@ func (p *DarwinPlatform) handleNEConn(conn net.Conn) {
 	}
 }
 
-// KillSwitchGater is implemented by handlers that can short-circuit
-// flow tracking when protection is paused or the kill switch is
-// engaged. Without this gate the daemon would still write audit
-// rows for every flow during a user-paused session, which
-// contradicts user expectation that "paused = invisible".
-type KillSwitchGater interface {
-	IsKillSwitchEngaged() bool
-}
-
-func (p *DarwinPlatform) handleNewFlow(conn net.Conn, msg nepkg.FlowMsg) {
-	if p.handler == nil {
-		slog.Warn("NE flow_new dropped — handler not yet wired",
-			"flow_id", msg.FlowID, "remote", msg.RemoteHost,
-		)
-		return
-	}
-
-	p.lastFlowAtNS.Store(time.Now().UnixNano())
-
-	// Pause / kill-switch gate: when protection is off we still need
-	// to send a passthrough decision back to the provider (so the
-	// flow runs natively), but we MUST NOT track the flow in
-	// activeFlows or write an audit row. Otherwise paused state
-	// silently fills the audit DB and leaks user activity that the
-	// user explicitly opted out of recording.
-	if g, ok := p.handler.(KillSwitchGater); ok && g.IsKillSwitchEngaged() {
-		resp := nepkg.DecisionMsg{FlowID: msg.FlowID, Decision: "passthrough"}
-		data, _ := json.Marshal(resp)
-		data = append(data, '\n')
-		if _, err := conn.Write(data); err != nil {
-			slog.Warn("NE IPC write failed (paused passthrough)",
-				"flow_id", msg.FlowID, "error", err,
-			)
-		}
-		return
-	}
-
-	// Backpressure gate: when the local audit queue is over-full, shed
-	// load by passing flows through unmodified — same IPC reply as
-	// kill-switch but for a different reason. Same "do not write to
-	// activeFlows" rationale: an audit row for a flow we deliberately
-	// skipped would just deepen the backlog. Logged separately so the
-	// spike is visible in agent.log.
-	if p.backpressure != nil && p.backpressure.IsThrottled() {
-		slog.Info("NE flow_new shed via backpressure (audit queue over high-water)",
-			"flow_id", msg.FlowID, "remote", msg.RemoteHost,
-		)
-		resp := nepkg.DecisionMsg{FlowID: msg.FlowID, Decision: "passthrough"}
-		data, _ := json.Marshal(resp)
-		data = append(data, '\n')
-		if _, err := conn.Write(data); err != nil {
-			slog.Warn("NE IPC write failed (backpressure passthrough)",
-				"flow_id", msg.FlowID, "error", err,
-			)
-		}
-		return
-	}
-
-	var procMeta api.ProcessMeta
-	var procErr error
-	if msg.PID > 0 {
-		m, err := proc.ProcessInfo(msg.PID)
-		procErr = err
-		if err == nil {
-			procMeta = api.ProcessMeta{
-				PID:      m.PID,
-				Path:     m.Path,
-				Name:     m.Name,
-				BundleID: m.BundleID,
-				User:     m.User,
-			}
-		}
-	}
-	if procErr != nil {
-		slog.Debug("NE flow_new: ProcessInfo failed (non-fatal)",
-			"flow_id", msg.FlowID, "pid", msg.PID, "error", procErr,
-		)
-	}
-
-	intercepted := api.InterceptedConn{
-		FlowID:  msg.FlowID,
-		DstHost: msg.RemoteHost,
-		DstIP:   msg.RemoteIP,
-		DstPort: msg.RemotePort,
-		SrcPort: msg.LocalPort,
-		Process: procMeta,
-	}
-
-	decision := p.handler.HandleConnection(intercepted)
-
-	// Track for audit on flow_closed
-	p.mu.Lock()
-	fs := &flow.State{
-		FlowID:       msg.FlowID,
-		DstHost:      intercepted.DstHost,
-		DstIP:        intercepted.DstIP,
-		DstPort:      intercepted.DstPort,
-		SrcIP:        intercepted.SrcIP,
-		SrcPort:      intercepted.SrcPort,
-		ProcPID:      procMeta.PID,
-		ProcPath:     procMeta.Path,
-		ProcName:     procMeta.Name,
-		ProcBundleID: procMeta.BundleID,
-		ProcUser:     procMeta.User,
-		DecisionInt:  int(decision),
-		StartedAt:    time.Now(),
-	}
-	p.activeFlows[msg.FlowID] = fs
-	activeCount := len(p.activeFlows)
-	p.mu.Unlock()
-
-	decStr := "passthrough"
-	switch decision {
-	case api.DecisionInspect:
-		decStr = "inspect"
-	case api.DecisionDeny:
-		decStr = "deny"
-	}
-
-	// INFO so per-flow decisions are visible without raising the global
-	// log level. Without this, the daemon log shows "connection decision"
-	// from the wiring layer but skips the IPC ingress side — RCA for
-	// "extension claimed flow X, what did daemon do with it?" requires
-	// matching flow_id across both lines.
-	slog.Info("NE flow_new",
-		"flow_id", msg.FlowID,
-		"remote_host", msg.RemoteHost,
-		"remote_ip", msg.RemoteIP,
-		"remote_port", msg.RemotePort,
-		"local_port", msg.LocalPort,
-		"pid", msg.PID,
-		"proc_name", procMeta.Name,
-		"proc_bundle", procMeta.BundleID,
-		"decision", decStr,
-		"active_flows_after", activeCount,
-	)
-
-	resp := nepkg.DecisionMsg{FlowID: msg.FlowID, Decision: decStr}
-	data, _ := json.Marshal(resp)
-	data = append(data, '\n')
-	if _, err := conn.Write(data); err != nil {
-		slog.Warn("NE IPC write failed (decision response)",
-			"flow_id", msg.FlowID,
-			"decision", decStr,
-			"error", err,
-		)
-	}
-}
-
-// handleFlowUpdateHost rewrites the destination hostname of an
-// in-flight flow when the Swift extension has just extracted a
-// real hostname from the TLS ClientHello SNI. This recovers the
-// hostname for browsers / Electron apps / DoH clients that
-// pre-resolve DNS and leave NEAppProxyFlow.remoteHostname nil.
-// No-op when the flow is unknown (race with flow_closed) or the
-// hostname is empty.
-func (p *DarwinPlatform) handleFlowUpdateHost(msg nepkg.FlowMsg) {
-	if msg.Hostname == "" {
-		return
-	}
-	p.mu.Lock()
-	fs, ok := p.activeFlows[msg.FlowID]
-	if ok {
-		fs.DstHost = msg.Hostname
-	}
-	p.mu.Unlock()
-	if ok {
-		slog.Debug("NE flow_update_host applied",
-			"flow_id", msg.FlowID, "hostname", msg.Hostname,
-		)
-	}
-}
-
 // Inspect flows write per-HTTP-request rows directly from
 // tlsbump.AuditEmitter into the agent's SQLite Queue; no flow-level
 // summary row is needed and handleFlowClosed has an early-return
@@ -482,20 +401,25 @@ func (p *DarwinPlatform) handleFlowUpdateHost(msg nepkg.FlowMsg) {
 // the SNI-derived hostname from a flow_update_host IPC. ok=false
 // when flowID is unknown (race / synthetic).
 func (p *DarwinPlatform) LookupFlowDestination(flowID string) (host string, port int, srcIP string, procMeta api.ProcessMeta, ok bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	fs, exists := p.activeFlows[flowID]
+	fs, exists := p.loadFlow(flowID)
 	if !exists {
 		return "", 0, "", api.ProcessMeta{}, false
 	}
-	pm := api.ProcessMeta{
-		PID:      fs.ProcPID,
-		Path:     fs.ProcPath,
-		Name:     fs.ProcName,
-		BundleID: fs.ProcBundleID,
-		User:     fs.ProcUser,
+	// Process metadata is worker-written; only read it once the worker
+	// has published via Ready. Host/port are reader-owned identity
+	// fields, always safe. A not-yet-ready flow returns empty proc meta
+	// (the bridge falls back to the header host) rather than racing.
+	var pm api.ProcessMeta
+	if fs.Ready.Load() {
+		pm = api.ProcessMeta{
+			PID:      fs.ProcPID,
+			Path:     fs.ProcPath,
+			Name:     fs.ProcName,
+			BundleID: fs.ProcBundleID,
+			User:     fs.ProcUser,
+		}
 	}
-	return fs.DstHost, fs.DstPort, fs.SrcIP, pm, true
+	return fs.DstHost(), fs.DstPort, fs.SrcIP, pm, true
 }
 
 // StartBridge starts the macOS NE → Go bridge listener on addr (typically
@@ -618,15 +542,17 @@ func (p *DarwinPlatform) handleBridgeFlow(ctx context.Context, clientConn net.Co
 
 	p.mu.RLock()
 	deps := p.bridgeDeps
+	p.mu.RUnlock()
+	// activeFlows is a separate lock-free map; read the process fields
+	// only once the decision worker has published them via Ready.
 	var fp proxy.FlowProcess
-	if fs, ok := p.activeFlows[flowID]; ok {
+	if fs, ok := p.loadFlow(flowID); ok && fs.Ready.Load() {
 		fp = proxy.FlowProcess{
 			Name:   fs.ProcName,
 			Bundle: fs.ProcBundleID,
 			User:   fs.ProcUser,
 		}
 	}
-	p.mu.RUnlock()
 
 	if deps == nil {
 		slog.Warn("bridge: deps not wired — flow dropped",
@@ -681,79 +607,6 @@ func looksLikeIPLiteral(s string) bool {
 		}
 	}
 	return hasDot
-}
-
-func (p *DarwinPlatform) handleFlowClosed(msg nepkg.FlowMsg) {
-	p.mu.Lock()
-	fs, ok := p.activeFlows[msg.FlowID]
-	delete(p.activeFlows, msg.FlowID)
-	remaining := len(p.activeFlows)
-	p.mu.Unlock()
-
-	if !ok {
-		slog.Warn("NE flow_closed for unknown flow — possible double-close or out-of-order frame",
-			"flow_id", msg.FlowID,
-			"bytes_in", msg.BytesIn,
-			"bytes_out", msg.BytesOut,
-		)
-		return
-	}
-
-	slog.Debug("NE flow_closed",
-		"flow_id", msg.FlowID,
-		"remote_host", fs.DstHost,
-		"decision", fs.DecisionInt,
-		"bytes_in", msg.BytesIn,
-		"bytes_out", msg.BytesOut,
-		"duration_ms", msg.DurationMs,
-		"active_flows_remaining", remaining,
-	)
-
-	// Inspect flows have already been recorded as N per-HTTP-request
-	// rows by tlsbump.AuditEmitter inside BumpFlow. DO NOT write an
-	// additional flow-level row here. The transport-level metrics
-	// (bytes/duration) from Swift's flow_closed message are not
-	// currently merged into the per-request rows.
-	if api.Decision(fs.DecisionInt) == api.DecisionInspect {
-		return
-	}
-
-	// Passthrough/deny flows DID NOT run through the bridge → no
-	// per-request rows exist. Write one transport-level row here so
-	// the agent UI can show "this flow was decided X without
-	// inspection". Fields are limited to what Swift's flow_closed
-	// surfaces (no method/path/hookDecision — Swift can't see
-	// decrypted HTTP for non-bumped flows).
-	if auditor, ok := p.handler.(api.FlowAuditor); ok {
-		var breakdown map[string]int
-		if msg.InterceptMs != nil && *msg.InterceptMs > 0 {
-			breakdown = map[string]int{"intercept_ms": *msg.InterceptMs}
-		}
-		pm := api.ProcessMeta{
-			PID:      fs.ProcPID,
-			Path:     fs.ProcPath,
-			Name:     fs.ProcName,
-			BundleID: fs.ProcBundleID,
-			User:     fs.ProcUser,
-		}
-		auditor.OnFlowComplete(api.FlowResult{
-			FlowID:           msg.FlowID,
-			SrcIP:            fs.SrcIP,
-			DstHost:          fs.DstHost,
-			DstIP:            fs.DstIP,
-			DstPort:          fs.DstPort,
-			Process:          pm,
-			Decision:         api.Decision(fs.DecisionInt),
-			BytesIn:          msg.BytesIn,
-			BytesOut:         msg.BytesOut,
-			DurationMs:       msg.DurationMs,
-			BumpStatus:       msg.BumpStatus,
-			StartedAt:        fs.StartedAt,
-			UpstreamTtfbMs:   msg.UpstreamTtfbMs,
-			UpstreamTotalMs:  msg.UpstreamTotalMs,
-			LatencyBreakdown: breakdown,
-		})
-	}
 }
 
 // ProcessInfo resolves process metadata for a given PID using macOS libproc APIs.

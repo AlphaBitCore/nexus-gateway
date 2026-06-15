@@ -16,11 +16,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
 )
 
@@ -28,9 +27,12 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// writeKey persists a freshly-generated Ed25519 private key in the
-// PKCS8 PEM shape the signer expects. Returns (path, public-key).
-func writeKey(t *testing.T) (string, ed25519.PublicKey) {
+// writeKey generates a fresh Ed25519 private key, stores it (PKCS8 PEM, the
+// shape the signer expects) in an in-memory keystore under
+// keystore.AttestationKeyName, and returns (store, public-key). Tests use
+// the in-memory store so they never touch the real platform Keychain/DPAPI
+// (SEC-M4-02 moved the attestation key off disk into the keystore).
+func writeKey(t *testing.T) (keystore.Store, ed25519.PublicKey) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -40,17 +42,32 @@ func writeKey(t *testing.T) (string, ed25519.PublicKey) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "attestation-key.pem")
-	if err := os.WriteFile(path, pemBytes, 0600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	return path, pub
+	return storeWith(t, pemBytes), pub
 }
 
+// storeWith returns an in-memory keystore holding raw under the attestation
+// key label — used to plant malformed / wrong-algorithm key material.
+func storeWith(t *testing.T, raw []byte) keystore.Store {
+	t.Helper()
+	st := keystore.NewMemoryStore()
+	if err := st.Set(keystore.AttestationKeyName, raw); err != nil {
+		t.Fatalf("store set: %v", err)
+	}
+	return st
+}
+
+// errGetStore is a keystore whose Get always errors — used to drive the
+// signer's keystore-error path (distinct from the not-found path, which
+// returns ErrAttestationNotEnrolled).
+type errGetStore struct{}
+
+func (errGetStore) Get(string) ([]byte, error) { return nil, errors.New("keystore unavailable") }
+func (errGetStore) Set(string, []byte) error   { return nil }
+func (errGetStore) Delete(string) error        { return nil }
+
 func TestSigner_HappyPath_HeaderVerifies(t *testing.T) {
-	path, pub := writeKey(t)
-	s := NewSigner(path, "550e8400-e29b-41d4-a716-446655440000",
+	st, pub := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "550e8400-e29b-41d4-a716-446655440000",
 		func() bool { return true }, newTestLogger())
 
 	hdr, err := s.Sign()
@@ -81,8 +98,8 @@ func TestSigner_HappyPath_HeaderVerifies(t *testing.T) {
 }
 
 func TestSigner_DisabledOmitsHeader(t *testing.T) {
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return false }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return false }, newTestLogger())
 	_, err := s.Sign()
 	if !errors.Is(err, ErrAttestationDisabled) {
 		t.Errorf("err = %v; want ErrAttestationDisabled", err)
@@ -92,8 +109,8 @@ func TestSigner_DisabledOmitsHeader(t *testing.T) {
 func TestSigner_NilEnabledLookupOmits(t *testing.T) {
 	// Defensive guard: passing a nil getter must not panic — it
 	// translates to "attestation disabled" so the request still flows.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", nil, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", nil, newTestLogger())
 	_, err := s.Sign()
 	if !errors.Is(err, ErrAttestationDisabled) {
 		t.Errorf("err = %v; want ErrAttestationDisabled", err)
@@ -101,19 +118,19 @@ func TestSigner_NilEnabledLookupOmits(t *testing.T) {
 }
 
 func TestSigner_EmptyAgentIDRejected(t *testing.T) {
-	path, _ := writeKey(t)
-	s := NewSigner(path, "", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "", func() bool { return true }, newTestLogger())
 	_, err := s.Sign()
 	if err == nil || !strings.Contains(err.Error(), "empty agent_id") {
 		t.Errorf("err = %v; want empty agent_id error", err)
 	}
 }
 
-func TestSigner_MissingKeyFile_FailOpen(t *testing.T) {
-	// Key file absent (agent not yet enrolled for attestation). Must return
-	// ErrAttestationNotEnrolled — the caller maps this to "omit header".
-	dir := t.TempDir()
-	s := NewSigner(filepath.Join(dir, "no-such-file.pem"),
+func TestSigner_MissingKey_FailOpen(t *testing.T) {
+	// Key absent from the keystore (agent not yet enrolled for attestation).
+	// Must return ErrAttestationNotEnrolled — the caller maps this to "omit
+	// header". An empty in-memory store models the not-found contract.
+	s := NewSigner(keystore.NewMemoryStore(), keystore.AttestationKeyName,
 		"x", func() bool { return true }, newTestLogger())
 	_, err := s.Sign()
 	if !errors.Is(err, ErrAttestationNotEnrolled) {
@@ -122,12 +139,8 @@ func TestSigner_MissingKeyFile_FailOpen(t *testing.T) {
 }
 
 func TestSigner_MalformedKeyPEM(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.pem")
-	if err := os.WriteFile(path, []byte("not pem"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	s := NewSigner(storeWith(t, []byte("not pem")), keystore.AttestationKeyName,
+		"x", func() bool { return true }, newTestLogger())
 	_, err := s.Sign()
 	if err == nil {
 		t.Fatal("expected error on malformed PEM")
@@ -148,14 +161,9 @@ func TestSigner_WrongAlgorithm_ECDSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal pkcs8: %v", err)
 	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "ecdsa.pem")
-	if err := os.WriteFile(path,
-		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
-		0600); err != nil {
-		t.Fatal(err)
-	}
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	s := NewSigner(storeWith(t, pemBytes), keystore.AttestationKeyName,
+		"x", func() bool { return true }, newTestLogger())
 	_, err = s.Sign()
 	if err == nil {
 		t.Fatal("expected rejection of non-Ed25519 key")
@@ -169,16 +177,11 @@ func TestSigner_ValidPEMGarbageBytes_PKCS8ParseFails(t *testing.T) {
 	// Hits the x509.ParsePKCS8PrivateKey error branch in loadKey: a
 	// well-formed PEM block whose inner DER bytes are not a valid
 	// PKCS8 structure. Real-world incident this guards: a partially-
-	// written PEM where the BEGIN/END frames are correct but the body
+	// written key where the BEGIN/END frames are correct but the body
 	// is zero-padded — must fail the load, not panic.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "garbage.pem")
-	if err := os.WriteFile(path,
-		[]byte("-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n"),
-		0600); err != nil {
-		t.Fatal(err)
-	}
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	s := NewSigner(
+		storeWith(t, []byte("-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n")),
+		keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 	_, err := s.Sign()
 	if err == nil {
 		t.Fatal("expected PKCS8 parse error on garbage bytes")
@@ -191,8 +194,8 @@ func TestSigner_ValidPEMGarbageBytes_PKCS8ParseFails(t *testing.T) {
 func TestSigner_NonceEntropyFailure_FailOpen(t *testing.T) {
 	// Starve the nonce RNG. Signer must return a wrapped error so the
 	// caller can omit the header (fail-open) — must not panic.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 	orig := signerRandReader
 	signerRandReader = failReader{err: errors.New("entropy starved")}
 	t.Cleanup(func() { signerRandReader = orig })
@@ -220,56 +223,55 @@ func TestSigner_InvalidateCachedKey_NilSafe(t *testing.T) {
 
 func TestSigner_SecondSignHitsCachedKey(t *testing.T) {
 	// First Sign loads + caches the key; second Sign must return from
-	// the cached-key fast path without re-reading the file. We can't
-	// directly observe a file-read avoidance from outside the package,
-	// so we delete the file between calls — if the cache works, Sign
-	// still succeeds; if not, ReadFile fails.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	// the cached-key fast path without re-reading the keystore. We can't
+	// directly observe a keystore-read avoidance from outside the package,
+	// so we delete the key between calls — if the cache works, Sign still
+	// succeeds; if not, the keystore Get returns not-found and Sign fails.
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 	if _, err := s.Sign(); err != nil {
 		t.Fatalf("first Sign: %v", err)
 	}
-	if err := os.Remove(path); err != nil {
+	if err := st.Delete(keystore.AttestationKeyName); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Sign(); err != nil {
-		t.Errorf("second Sign should hit cached key after file removed: %v", err)
+		t.Errorf("second Sign should hit cached key after keystore delete: %v", err)
 	}
 }
 
 func TestSigner_NilLoggerDoesNotPanicOnFailure(t *testing.T) {
 	// A Signer created with nil logger must survive a failure path —
-	// no panic, just a quiet return.
-	dir := t.TempDir()
-	s := NewSigner(filepath.Join(dir, "no-such.pem"), "x",
+	// no panic, just a quiet return. The not-found path is quiet; the
+	// keystore-error path runs logFailure, which must be nil-logger safe.
+	s := NewSigner(keystore.NewMemoryStore(), keystore.AttestationKeyName, "x",
 		func() bool { return true }, nil)
 	if _, err := s.Sign(); err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected ErrAttestationNotEnrolled")
 	}
-	// Force a non-NotExist failure path so logFailure actually runs
-	// with a nil logger; the directory-as-file pattern delivers it.
-	s2 := NewSigner(dir, "x", func() bool { return true }, nil)
+	// Force the non-quiet failure path so logFailure actually runs with a
+	// nil logger.
+	s2 := NewSigner(errGetStore{}, keystore.AttestationKeyName, "x", func() bool { return true }, nil)
 	if _, err := s2.Sign(); err == nil {
-		t.Fatal("expected directory-as-file error")
+		t.Fatal("expected keystore-get error")
 	}
 }
 
 func TestSigner_InvalidateForcesReload(t *testing.T) {
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 
 	if _, err := s.Sign(); err != nil {
 		t.Fatalf("Sign 1: %v", err)
 	}
-	// Mutate the on-disk key to a new Ed25519 key.
+	// Replace the stored key with a new Ed25519 key.
 	_, newPriv, _ := ed25519.GenerateKey(rand.Reader)
 	pem2, _ := MarshalEd25519PrivateKeyPEM(newPriv)
-	if err := os.WriteFile(path, pem2, 0600); err != nil {
+	if err := st.Set(keystore.AttestationKeyName, pem2); err != nil {
 		t.Fatal(err)
 	}
-	// Without Invalidate, signer would still use the cached key — we'd
-	// need to verify by signing twice and comparing. Easier: just
-	// invalidate and confirm the next call succeeds (covers the path).
+	// Without Invalidate, signer would still use the cached key. Invalidate
+	// and confirm the next call reloads + succeeds (covers the path).
 	s.InvalidateCachedKey()
 	if _, err := s.Sign(); err != nil {
 		t.Fatalf("Sign 2 after invalidate: %v", err)
@@ -277,8 +279,8 @@ func TestSigner_InvalidateForcesReload(t *testing.T) {
 }
 
 func TestSignHeader_HappyAndFail(t *testing.T) {
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 	hp, err := s.SignHeader()
 	if err != nil {
 		t.Fatalf("SignHeader: %v", err)
@@ -291,7 +293,7 @@ func TestSignHeader_HappyAndFail(t *testing.T) {
 	}
 
 	// Disabled path returns empty pair + ErrAttestationDisabled.
-	s2 := NewSigner(path, "x", func() bool { return false }, newTestLogger())
+	s2 := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return false }, newTestLogger())
 	hp2, err := s2.SignHeader()
 	if !errors.Is(err, ErrAttestationDisabled) {
 		t.Errorf("err = %v", err)
@@ -302,8 +304,8 @@ func TestSignHeader_HappyAndFail(t *testing.T) {
 }
 
 func TestSigner_GetProxyConnectHeader_HappyPath(t *testing.T) {
-	path, pub := writeKey(t)
-	s := NewSigner(path, "550e8400-e29b-41d4-a716-446655440000",
+	st, pub := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "550e8400-e29b-41d4-a716-446655440000",
 		func() bool { return true }, newTestLogger())
 
 	proxyURL, _ := url.Parse("http://cp.example.com:3128")
@@ -312,7 +314,7 @@ func TestSigner_GetProxyConnectHeader_HappyPath(t *testing.T) {
 		t.Fatalf("GetProxyConnectHeader returned error (fail-open broken): %v", err)
 	}
 	if hdr == nil {
-		t.Fatal("expected non-nil header when signer is enabled + key on disk")
+		t.Fatal("expected non-nil header when signer is enabled + key present")
 	}
 	got := hdr.Get(tlsbump.AttestationHeaderName)
 	if got == "" {
@@ -336,8 +338,8 @@ func TestSigner_GetProxyConnectHeader_DisabledReturnsNilHeaderNilError(t *testin
 	// (nil, nil) so stdlib emits a normal CONNECT with no header.
 	// Returning a non-nil error would abort the request — explicitly
 	// forbidden.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return false }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return false }, newTestLogger())
 	hdr, err := s.GetProxyConnectHeader(context.Background(), nil, "x:443")
 	if err != nil {
 		t.Errorf("disabled signer must NOT return error; got: %v", err)
@@ -348,11 +350,10 @@ func TestSigner_GetProxyConnectHeader_DisabledReturnsNilHeaderNilError(t *testin
 }
 
 func TestSigner_GetProxyConnectHeader_MissingKeyReturnsNilHeaderNilError(t *testing.T) {
-	// Same fail-open contract on the "no Ed25519 key on disk yet"
+	// Same fail-open contract on the "no Ed25519 key in keystore yet"
 	// (older agent without attestation key). Must not abort the request — CP
 	// will MITM normally.
-	dir := t.TempDir()
-	s := NewSigner(filepath.Join(dir, "no-key.pem"), "x",
+	s := NewSigner(keystore.NewMemoryStore(), keystore.AttestationKeyName, "x",
 		func() bool { return true }, newTestLogger())
 	hdr, err := s.GetProxyConnectHeader(context.Background(), nil, "x:443")
 	if err != nil {
@@ -377,8 +378,8 @@ func TestSigner_SignForBody_HashesActualBody(t *testing.T) {
 	// SignForBody should produce a header whose hash field commits
 	// to sha256(body) — not the empty-body placeholder. Verifies the
 	// signature over the canonical pre-image with the real body hash.
-	path, pub := writeKey(t)
-	s := NewSigner(path, "agent-x", func() bool { return true }, newTestLogger())
+	st, pub := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "agent-x", func() bool { return true }, newTestLogger())
 
 	body := []byte(`{"model":"gpt-4","input":"hello"}`)
 	hdr, err := s.SignForBody(body)
@@ -405,8 +406,8 @@ func TestSigner_SignForBody_HashesActualBody(t *testing.T) {
 
 func TestSigner_SignForBody_EmptyBodyUsesPlaceholder(t *testing.T) {
 	// nil + empty body both commit to the well-known empty-body hash.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 
 	for _, body := range [][]byte{nil, {}} {
 		hdr, err := s.SignForBody(body)
@@ -421,8 +422,8 @@ func TestSigner_SignForBody_EmptyBodyUsesPlaceholder(t *testing.T) {
 }
 
 func TestSigner_InjectInto_HappyPath(t *testing.T) {
-	path, pub := writeKey(t)
-	s := NewSigner(path, "agent-1", func() bool { return true }, newTestLogger())
+	st, pub := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "agent-1", func() bool { return true }, newTestLogger())
 
 	body := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
 	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions",
@@ -470,8 +471,8 @@ func TestSigner_InjectInto_HappyPath(t *testing.T) {
 
 func TestSigner_InjectInto_NoBody(t *testing.T) {
 	// GET request — no body. Injector must succeed with empty-body hash.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "agent-1", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "agent-1", func() bool { return true }, newTestLogger())
 
 	req, _ := http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
 	if err := s.InjectInto(req); err != nil {
@@ -486,8 +487,8 @@ func TestSigner_InjectInto_NoBody(t *testing.T) {
 func TestSigner_InjectInto_NoHttpNoBodySentinel(t *testing.T) {
 	// http.NoBody must not be consumed (it's the sentinel for "no body");
 	// header still gets stamped with empty-body hash.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "agent-1", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "agent-1", func() bool { return true }, newTestLogger())
 
 	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/dummy", http.NoBody)
 	if err := s.InjectInto(req); err != nil {
@@ -498,12 +499,57 @@ func TestSigner_InjectInto_NoHttpNoBodySentinel(t *testing.T) {
 	}
 }
 
+// streamReadTracker records whether its body was read or closed, to assert the
+// injector leaves a streaming body untouched.
+type streamReadTracker struct {
+	r          io.Reader
+	readCalled bool
+	closed     bool
+}
+
+func (t *streamReadTracker) Read(p []byte) (int, error) { t.readCalled = true; return t.r.Read(p) }
+func (t *streamReadTracker) Close() error               { t.closed = true; return nil }
+
+func TestSigner_InjectInto_StreamingBodyNotConsumed(t *testing.T) {
+	// An unknown-length (ContentLength < 0) request body is a streaming / bidi
+	// body. InjectInto MUST NOT read it (reading to EOF deadlocks a connect-RPC
+	// bidi call that holds its request stream open) and MUST leave it untouched
+	// for the upstream streaming relay, signing the empty-body hash.
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "agent-1", func() bool { return true }, newTestLogger())
+
+	tracker := &streamReadTracker{r: strings.NewReader("streamed-bidi-request-body")}
+	req, _ := http.NewRequest(http.MethodPost, "https://agentn.example/agent.v1.AgentService/Run", nil)
+	req.Body = tracker
+	req.ContentLength = -1
+
+	if err := s.InjectInto(req); err != nil {
+		t.Fatalf("InjectInto: %v", err)
+	}
+	if tracker.readCalled {
+		t.Fatal("InjectInto consumed the streaming body — unknown-length bodies must be skipped to avoid the bidi deadlock")
+	}
+	if tracker.closed {
+		t.Fatal("InjectInto closed the streaming body — it must stay open for the upstream relay")
+	}
+	if req.Body != io.ReadCloser(tracker) {
+		t.Fatal("InjectInto replaced req.Body — the streaming body must be left untouched")
+	}
+	parsed, err := tlsbump.ParseAttestationHeader(req.Header.Get(tlsbump.AttestationHeaderName))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed.Hash != tlsbump.HashEmptyBody() {
+		t.Errorf("streaming Hash = %q; want HashEmptyBody (body must not be read)", parsed.Hash)
+	}
+}
+
 func TestSigner_InjectInto_DisabledOmitsHeader(t *testing.T) {
 	// When attestation toggle is off, InjectInto returns nil error but
 	// the header MUST NOT be set. Caller forwards the request normally
 	// (no header → CP MITMs as usual).
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return false }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return false }, newTestLogger())
 
 	req, _ := http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
 	if err := s.InjectInto(req); err != nil {
@@ -515,10 +561,10 @@ func TestSigner_InjectInto_DisabledOmitsHeader(t *testing.T) {
 }
 
 func TestSigner_InjectInto_MissingKeyOmitsHeader(t *testing.T) {
-	// Older agent without attestation key (no Ed25519 key on disk yet). Injector must succeed
-	// with nil + omit header (fail-open, never block the request).
-	dir := t.TempDir()
-	s := NewSigner(filepath.Join(dir, "no-key.pem"), "x",
+	// Older agent without attestation key (no Ed25519 key in keystore yet).
+	// Injector must succeed with nil + omit header (fail-open, never block
+	// the request).
+	s := NewSigner(keystore.NewMemoryStore(), keystore.AttestationKeyName, "x",
 		func() bool { return true }, newTestLogger())
 
 	req, _ := http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
@@ -539,8 +585,8 @@ func TestSigner_InjectInto_NilReceiverSafe(t *testing.T) {
 }
 
 func TestSigner_InjectInto_NilRequestSafe(t *testing.T) {
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 	if err := s.InjectInto(nil); err != nil {
 		t.Errorf("nil request must return nil; got: %v", err)
 	}
@@ -551,8 +597,8 @@ func TestSigner_InjectInto_OversizeBodyFallsBackToEmptyHash(t *testing.T) {
 	// + rewraps so the wire send still has the full body. Pinning this
 	// behaviour so a runaway client can't crash the injector or cause
 	// the request to drop.
-	path, _ := writeKey(t)
-	s := NewSigner(path, "x", func() bool { return true }, newTestLogger())
+	st, _ := writeKey(t)
+	s := NewSigner(st, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 
 	bigBody := bytes.Repeat([]byte("A"), 9*1024*1024) // 9 MiB > 8 MiB cap
 	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/dummy",
@@ -587,29 +633,24 @@ func TestEnabledLookupFromString(t *testing.T) {
 // we trigger N consecutive failures and assert the failedWarnAt
 // counter only advances once within the 60-second window. We don't
 // observe the log output directly (slog routes through a test handler)
-// — the atomic counter is the contract.
+// — the atomic counter is the contract. A keystore-get error is used
+// because it is a non-quiet failure (unlike ErrAttestationNotEnrolled,
+// which logFailure filters out by design).
 func TestSigner_RateLimitsFailureLogs(t *testing.T) {
-	dir := t.TempDir()
-	// The ErrAttestationNotEnrolled path is filtered out of logFailure
-	// by design (it's the always-quiet "agent hasn't re-enrolled yet"
-	// state). To hit the rate-limit branch we need a different failure
-	// — a directory passed as a file path yields a non-NotExist error.
-	s2 := NewSigner(dir, "x", func() bool { return true }, newTestLogger())
+	s2 := NewSigner(errGetStore{}, keystore.AttestationKeyName, "x", func() bool { return true }, newTestLogger())
 	if _, err := s2.Sign(); err == nil {
-		t.Fatal("expected read error on directory path")
+		t.Fatal("expected keystore-get error")
 	}
 	first := s2.failedWarnAt.Load()
 	if first == 0 {
 		t.Fatal("first failure did not advance failedWarnAt")
 	}
 	if _, err := s2.Sign(); err == nil {
-		t.Fatal("expected second read error")
+		t.Fatal("expected second keystore-get error")
 	}
 	if got := s2.failedWarnAt.Load(); got != first {
 		t.Errorf("rate-limit broken: failedWarnAt advanced to %d on 2nd call", got)
 	}
-
-	_ = atomic.Int64{} // ensure import not pruned in case the test stub above changes
 }
 
 // failReader is an io.Reader that always returns the configured error.

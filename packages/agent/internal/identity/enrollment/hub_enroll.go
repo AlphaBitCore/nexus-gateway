@@ -18,11 +18,11 @@ import (
 )
 
 // HubEnrollRequest is the body for POST /api/internal/things/enroll on Hub.
+// There is no thing-ID field: the Hub always assigns the thing ID server-side
+// (the agent cannot — and must not be able to — name its own identity).
 type HubEnrollRequest struct {
 	ThingType string `json:"thingType,omitempty"`
-	ThingID   string `json:"thingId,omitempty"`
 	Version   string `json:"version"`
-	CsrPEM    string `json:"csrPem"`
 	Hostname  string `json:"hostname"`
 	OS        string `json:"os"`
 	OSVersion string `json:"osVersion"`
@@ -34,8 +34,8 @@ type HubEnrollRequest struct {
 	// sandboxed runtime that can't read ioreg / machine-id) falls back
 	// to the legacy "always create new thing_id" path.
 	DeviceFingerprint string `json:"deviceFingerprint,omitempty"`
-	// AttestationCsrPem is the Ed25519 CSR the agent generates alongside
-	// the P-256 mTLS CSR for traffic attestation. Hub signs it via
+	// AttestationCsrPem is the Ed25519 CSR the agent generates for traffic
+	// attestation. Hub signs it via
 	// agentca.SignAttestationCSR (Ed25519-only, no ClientAuth EKU) and
 	// stores the public-key bytes in thing_agent.sysinfo so the
 	// compliance-proxy can look them up at verify time. Empty when the
@@ -48,10 +48,12 @@ type HubEnrollRequest struct {
 type HubEnrollResponse struct {
 	ID          string `json:"id"`
 	DeviceToken string `json:"deviceToken"`
-	CertPEM     string `json:"certPem"`
-	CaCertPEM   string `json:"caCertPem"`
-	CertSerial  string `json:"certSerial"`
-	CertExpires string `json:"certExpiresAt"`
+	// DeviceTokenExpiresAt is the RFC3339 expiry Hub stamps on the device
+	// token. Persisted next to the token so the renewal scheduler
+	// can rotate it before it lapses. Empty only when talking to a Hub that
+	// predates token expiry — the agent then treats the token as
+	// "renew now" on the first tick.
+	DeviceTokenExpiresAt string `json:"deviceTokenExpiresAt"`
 	// TrustLevel is the Hub-computed level (0–3) as of the moment
 	// enrollment completed. The agent persists it locally so the menu
 	// bar UI can surface the current level without a Hub round-trip;

@@ -60,7 +60,7 @@ type ProxyConfig struct {
 	// policy Store. Per-host override columns on interception_domain
 	// merge with Store.Get() at request time. Configdispatch handler
 	// re-applies admin updates via Store.ApplyShadowState — no
-	// SetStreamingPolicyGlobal wrapper needed (#115 unified
+	// SetStreamingPolicyGlobal wrapper needed (unified
 	// three-service Store model).
 	StreamingPolicyStore *streampolicy.Store
 
@@ -137,7 +137,7 @@ type ProxyServer struct {
 	streamingConfig streaming.LiveConfig
 	parallelHooks   bool
 	// streamingPolicyStore is the hot-swappable streaming compliance
-	// policy Store (#115). configdispatch's streaming_compliance
+	// policy Store. configdispatch's streaming_compliance
 	// shadow handler calls Store.ApplyShadowState directly — no
 	// per-server wrapper. Hot-path reads use Store.Get(), which is
 	// lock-free via atomic.Pointer internally.
@@ -192,7 +192,7 @@ func NewProxyServer(
 	if idle == 0 {
 		idle = 300 * time.Second
 	}
-	// E87-S3a-1 (2026-05-25): endpoint classification moved inside the
+	// Endpoint classification moved inside the
 	// forward path — it now consults typology.ClassifyPath directly,
 	// removing the per-proxy classifier injection seam.
 	ps := &ProxyServer{
@@ -234,7 +234,7 @@ func NewProxyServer(
 
 // streamingTuningSnapshot is the atomic-pointer payload that captures
 // the hot-swappable streaming-timeout tunables in one coherent value.
-// (The mode field was removed in #115 — admin streaming policy is now
+// (The mode field was removed — admin streaming policy is now
 // the single source of truth, read via streamingPolicyStore.)
 type streamingTuningSnapshot struct {
 	PerHookTimeout time.Duration // per-hook budget; zero falls back to the package default
@@ -441,10 +441,25 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			5*time.Second,
 			30*time.Second,
 			false, // connection-stage pipeline is sequential
+			true,  // strictFailClosed: the compliance-proxy appliance is a DEDICATED forward proxy (already 403s disallowed CONNECTs), NOT the host outbound packet path — an unbuildable fail-closed hook MUST refuse the connection, never forward uninspected. (The agent NE host path stays fail-open via WithStrictFailClosed-unset.)
 			p.logger,
 		)
 		if pipeErr != nil {
-			connLogger.Warn("connection-stage pipeline build failed; failing open", "error", pipeErr)
+			// The connection-stage build above passes strictFailClosed=true,
+			// so an unbuildable fail-closed hook MUST refuse the CONNECT rather than
+			// establish an uninspected tunnel. (The agent NE host-packet path never
+			// runs this appliance connection stage.)
+			// Distinct metric label + non-policy body: this refusal is an
+			// INFRASTRUCTURE failure (a mandatory hook cannot be built — bad
+			// rule config / unknown implementationId), not a policy decision.
+			// Labeling it rejected_policy would send an admin triaging a
+			// CONNECT-403 storm to the policy rules instead of the hook config.
+			if metrics.ConnectionsTotal != nil {
+				metrics.ConnectionsTotal.With("rejected_build_failed").Inc()
+			}
+			connLogger.Warn("connection-stage pipeline build failed; refusing CONNECT (fail-closed)", "error", pipeErr)
+			http.Error(w, "compliance pipeline unavailable", http.StatusForbidden)
+			return
 		} else if pipe != nil {
 			sourceIP, _, _ := net.SplitHostPort(sourceAddr)
 			input := &core.HookInput{
@@ -603,24 +618,7 @@ func (p *ProxyServer) serveUnlistedPassthrough(
 		_ = tunnelConn.Close()
 	}()
 
-	logRelayResult(connLogger, "unlisted passthrough", tlsbump.PassThrough(r.Context(), tunnelConn, targetHost))
-}
-
-// logRelayResult classifies the return of a tlsbump.PassThrough call. Dial failures
-// (DNS, TCP refused, network unreachable) are real problems and stay at WARN.
-// Copy-side errors are routine peer-close events on a transparent TCP relay
-// (EOF, ECONNRESET, EPIPE, net.ErrClosed when one side hangs up) — logging
-// them at ERROR drowns the channel in benign noise, so we drop those to DEBUG.
-func logRelayResult(logger *slog.Logger, label string, err error) {
-	if err == nil {
-		return
-	}
-	var ptErr *tlsbump.PassThroughError
-	if errors.As(err, &ptErr) && ptErr.Op == "dial" {
-		logger.Warn(label+" dial failed", "error", err)
-		return
-	}
-	logger.Debug(label+" relay closed", "error", err)
+	forward.LogRelayResult(connLogger, "unlisted passthrough", tlsbump.PassThrough(r.Context(), tunnelConn, targetHost))
 }
 
 // categorizeAccessError maps access control errors to metric label values.
@@ -668,3 +666,9 @@ func Start(ctx context.Context, addr string, handler http.Handler) error {
 }
 
 const defaultShutdownGrace = 30 * time.Second
+
+// RejectConfig exposes the reject-body verbosity this server was wired with.
+// Read-only; pins the yaml-to-server threading in wiring tests — the zero
+// value silently downgrades every refusal body to the stealth "Forbidden",
+// turning the configured level into a dead knob.
+func (p *ProxyServer) RejectConfig() tlsbump.RejectConfig { return p.rejectConfig }

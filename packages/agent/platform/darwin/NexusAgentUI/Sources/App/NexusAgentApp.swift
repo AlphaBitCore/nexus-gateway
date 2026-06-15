@@ -41,12 +41,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let viewModel = AgentViewModel()
     private var cancellables = Set<AnyCancellable>()
-    private let neLogger = Logger(subsystem: "com.nexus-gateway.agent", category: "AppDelegate")
+    let neLogger = Logger(subsystem: "com.nexus-gateway.agent", category: "AppDelegate")
     private var hasActivatedNE = false
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { self.setUp() }
+        MainActor.assumeIsolated {
+            // Headless uninstall mode: when launched as `--uninstall` (by the
+            // root uninstall.sh via `open -W`), do the SIP-gated app-side
+            // teardown the shell cannot — deactivate the NE system extension and
+            // unregister the SMAppService daemon + login item — then quit. The
+            // shell removes the file residue after we exit. No menu is built.
+            if CommandLine.arguments.contains("--uninstall") {
+                self.runUninstall()
+            } else {
+                self.setUp()
+            }
+        }
     }
+
+    /// Set once the uninstall teardown completes. The `--uninstall` flow itself
+    /// lives in NexusAgentApp+Uninstall.swift.
+    var uninstallDone = false
 
     private func setUp() {
         // 0. Re-arm the daemon if a previous Quit left the user-quit
@@ -86,15 +101,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         .store(in: &cancellables)
 
-        // 3. Network extension activation — only after enrollment is
-        //    complete, so the user doesn't see the "allow Nexus
-        //    Agent to install a system extension" prompt before
-        //    they've finished setup.
+        // 3. Network extension activation + launchd-service registration —
+        //    fires once when pendingEnrollment is false (the default, so on a
+        //    normal launch this is the first runloop tick; on a not-yet-enrolled
+        //    device the first poll flips pendingEnrollment true and the guard
+        //    holds it off until enrollment clears). hasActivatedNE makes it
+        //    one-shot per process. Both the NE approval and the SMAppService
+        //    daemon + Login Item approval thus surface together at one moment.
+        //    SMAppService registration is idempotent, so re-running it on a
+        //    later launch is safe and also refreshes the bundle path after an
+        //    update.
         viewModel.$pendingEnrollment
             .receive(on: RunLoop.main)
             .sink { [weak self] pending in
                 guard let self, !pending, !self.hasActivatedNE else { return }
                 self.hasActivatedNE = true
+                LaunchServiceManager.register()
                 self.activateNetworkExtension()
             }
             .store(in: &cancellables)
@@ -193,6 +215,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(updateItem)
         }
 
+        // Daemon-approval affordance. SMAppService registers the root daemon
+        // from the app bundle, but on an unmanaged device the user must approve
+        // it once in System Settings → Login Items & Extensions — the same pane
+        // that holds the Network Extension approval, so a single row covers
+        // "finish setup". Surfaces only while approval is pending; on a managed
+        // device the com.apple.servicemanagement profile pre-approves it, so
+        // daemonNeedsApproval is false and this row never shows (the approval UI
+        // is unmanaged-only with no MDM-detection code).
+        if LaunchServiceManager.daemonNeedsApproval {
+            let approveItem = makeItem(
+                title: String(localized: "menu.finishSetup", bundle: .module),
+                systemImage: "exclamationmark.shield.fill",
+                action: #selector(handleOpenLoginItems)
+            )
+            let attr = NSAttributedString(
+                string: String(localized: "menu.finishSetup", bundle: .module),
+                attributes: [
+                    .foregroundColor: NSColor.systemOrange,
+                    .font: NSFont.menuFont(ofSize: 0),
+                ])
+            approveItem.attributedTitle = attr
+            menu.addItem(approveItem)
+        }
+
         menu.addItem(.separator())
 
         // 2. Open Dashboard
@@ -214,7 +260,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
             identity.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)?
                 .withSymbolConfiguration(cfg)
-            identity.submenu = buildIdentitySubmenu()
+            // Switch identity / Sign Out drop the device's enrollment — i.e. they
+            // turn protection off — so the submenu is offered only when
+            // quitAllowed. On a locked fleet the email row is informational only
+            // (the daemon also refuses UNENROLL/sign-out over IPC when locked).
+            if viewModel.quitAllowed {
+                identity.submenu = buildIdentitySubmenu()
+            }
             menu.addItem(identity)
         }
 
@@ -223,6 +275,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         //    when known). When active: a submenu offering
         //    15 min / 1 h / 8 h / Indefinite.
         if viewModel.paused {
+            // Resume is ALWAYS offered — turning protection back ON is never
+            // blocked by the quit/always-on policy, even on a locked fleet.
             let title: String
             if let until = viewModel.pausedUntilDisplay {
                 title = String(localized: "menu.resumeProtection", bundle: .module) + " (\(until))"
@@ -234,7 +288,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 systemImage: "play.fill",
                 action: #selector(handleResume)
             ))
-        } else {
+        } else if viewModel.quitAllowed {
+            // Pause turns protection OFF, so it is hidden on a locked
+            // (quitAllowed=false) always-on fleet — same policy + same
+            // menu-honesty rule as Quit. The daemon also refuses PAUSE_PROTECTION
+            // over IPC when locked; hiding the item avoids a show-then-error.
             let pauseItem = makeItem(
                 title: String(localized: "menu.pauseProtection", bundle: .module),
                 systemImage: "pause.fill",
@@ -367,14 +425,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             systemImage: "person.badge.key.fill",
             action: #selector(handleOpenSetup)
         ))
-        menu.addItem(.separator())
-        menu.addItem(makeItem(
-            title: String(localized: "menu.quitAgent", bundle: .module),
-            systemImage: "power",
-            action: #selector(handleQuit),
-            keyEquivalent: "q",
-            keyModifier: .command
-        ))
+        // Quit is gated on quitAllowed here too, for the same
+        // menu-honesty reason as the enrolled menu: the prod build bakes
+        // quitAllowed=false, so the daemon reports it even before
+        // enrollment completes. Hiding the item keeps a locked device
+        // from offering a Quit that quitAgent() would only refuse.
+        if viewModel.quitAllowed {
+            menu.addItem(.separator())
+            menu.addItem(makeItem(
+                title: String(localized: "menu.quitAgent", bundle: .module),
+                systemImage: "power",
+                action: #selector(handleQuit),
+                keyEquivalent: "q",
+                keyModifier: .command
+            ))
+        }
     }
 
     private func statusRow(title: String, dotColor: NSColor) -> NSMenuItem {
@@ -414,10 +479,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func handleSettings() { viewModel.openSettings() }
     @objc private func handleAbout() { viewModel.openAbout() }
     @objc private func handleResume() { viewModel.resumeProtection() }
-    @objc private func handleRestart() { viewModel.restartAgent() }
     @objc private func handleQuit() { viewModel.quitAgent() }
     @objc private func handleReinstallNE() { self.reinstallNetworkExtension() }
-    @objc private func handleRestartApp() { self.restartHostApp() }
+    @objc private func handleOpenLoginItems() { LaunchServiceManager.openLoginItemsSettings() }
     // For now Diagnostics is just an Open-Dashboard alias; once the
     // Dashboard supports a route deep-link (planned in #68 — same
     // task that fleshes out the Diagnostics page with NE reinstall,
@@ -475,13 +539,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // keeps running and the forceReinstall below is what matters.
         SystemExtensionManager.shared.installIfNeeded { [weak self] result in
             guard let self else { return }
+            // Hoisted so the forceReinstall closure below (a sibling of this
+            // switch) can read it when choosing the "done" vs "reboot" toast.
+            var pendingReboot = false
             switch result {
-            case .success:
-                self.neLogger.info("Reinstall: system-extension installIfNeeded succeeded")
+            case .success(let outcome):
+                pendingReboot = outcome == .pendingReboot
+                if pendingReboot {
+                    self.neLogger.error("Reinstall: new system extension staged but NOT active until reboot — the running extension keeps serving")
+                } else {
+                    self.neLogger.info("Reinstall: system-extension installIfNeeded succeeded")
+                }
                 Task { @MainActor in
                     await self.viewModel.reportProxyInstall(
                         stage: "system-extension-install",
-                        outcome: "ok",
+                        outcome: pendingReboot ? "pending-reboot" : "ok",
                         error: nil,
                         appVersion: appVersion
                     )
@@ -523,37 +595,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         error: nil,
                         appVersion: appVersion
                     )
+                    // Tell the user a reboot is needed when macOS deferred the
+                    // system-extension swap — don't claim "done" while the new
+                    // extension is only staged.
                     self.viewModel.showTransientMessage(String(
-                        localized: "menu.reinstallNetworkExtension.done",
+                        localized: pendingReboot
+                            ? "menu.reinstallNetworkExtension.reboot"
+                            : "menu.reinstallNetworkExtension.done",
                         bundle: .module
                     ))
                 }
             }
-        }
-    }
-
-    /// Quit the menu-bar host (and any sibling Dashboard window) and
-    /// relaunch the .app. This is the only way to re-run the first-
-    /// boot NE-activation code on its own, since `activateNetworkExtension`
-    /// is gated by `hasActivatedNE` per host process. The Go daemon is
-    /// untouched — its lifecycle is owned by launchd.
-    private func restartHostApp() {
-        viewModel.showTransientMessage(String(localized: "menu.restartApp.started", bundle: .module))
-        // Schedule the relaunch via /bin/sh so the new process is
-        // not a child of the dying one (macOS will reap it cleanly).
-        let bundlePath = Bundle.main.bundleURL.path
-        let relaunch = Process()
-        relaunch.launchPath = "/bin/sh"
-        relaunch.arguments = ["-c", "sleep 1; /usr/bin/open -n \"\(bundlePath)\""]
-        do {
-            try relaunch.run()
-        } catch {
-            neLogger.error("restartHostApp: failed to schedule relaunch: \(error.localizedDescription)")
-        }
-        // Terminate the suite via the existing AgentViewModel quit
-        // path so an in-flight SSO flow gets the polite-quit hook.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.viewModel.quitAgent()
         }
     }
 
@@ -592,13 +644,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
         SystemExtensionManager.shared.installIfNeeded { [weak self] result in
             guard let self else { return }
+            // Hoisted so the forceReinstall closure below (a sibling of this
+            // switch) can read it when choosing the "done" vs "reboot" toast.
+            var pendingReboot = false
             switch result {
-            case .success:
-                self.neLogger.info("system-extension installIfNeeded succeeded")
+            case .success(let outcome):
+                pendingReboot = outcome == .pendingReboot
+                if pendingReboot {
+                    self.neLogger.error("system extension staged but NOT active until reboot — proxy-save proceeds against the running extension")
+                } else {
+                    self.neLogger.info("system-extension installIfNeeded succeeded")
+                }
                 Task { @MainActor in
                     await self.viewModel.reportProxyInstall(
                         stage: "system-extension-install",
-                        outcome: "ok",
+                        outcome: pendingReboot ? "pending-reboot" : "ok",
                         error: nil,
                         appVersion: appVersion
                     )

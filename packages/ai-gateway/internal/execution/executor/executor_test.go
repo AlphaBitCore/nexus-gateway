@@ -41,6 +41,10 @@ type mockAdapter struct {
 	// with what Phase 5.5 produced.
 	lastBody     []byte
 	lastRewrites []string
+	// lastURLOverride captures the urlOverride argument the executor passed
+	// to ExecuteWithBody, so tests can assert a codec endpoint-selection
+	// suffix (Gemini :batchEmbedContents) reaches the adapter (F-0053).
+	lastURLOverride string
 }
 
 func (m *mockAdapter) Format() provcore.Format { return m.format }
@@ -63,15 +67,16 @@ func (m *mockAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore
 	return &provcore.ProbeResult{OK: true}, nil
 }
 
-func (m *mockAdapter) PrepareBody(req provcore.Request) ([]byte, []string, error) {
+func (m *mockAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
 	m.prepareBodyCalls++
-	return req.Body, nil, nil
+	return req.Body, nil, "", nil
 }
 
-func (m *mockAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, rewrites []string) (*provcore.Response, error) {
+func (m *mockAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, rewrites []string, urlOverride string) (*provcore.Response, error) {
 	m.executeWithBodyCalls++
 	m.lastBody = append([]byte(nil), body...)
 	m.lastRewrites = append([]string(nil), rewrites...)
+	m.lastURLOverride = urlOverride
 	req.Body = body
 	m.lastReq = req
 	m.observedAttempts = append(m.observedAttempts, nexushttp.AttemptFromContext(ctx))
@@ -257,6 +262,7 @@ func TestExecutor_ExecuteWithPreparedBody_SkipsRedundantPrepareBody(t *testing.T
 		configtypes.DefaultRetryPolicy(),
 		preparedBody,
 		preparedRewrites,
+		"",
 	)
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
@@ -296,7 +302,7 @@ func TestExecutor_ExecuteWithPreparedBody_NilFallsBackToExecute(t *testing.T) {
 		[]routingcore.RoutingTarget{target(providerSlug)},
 		baseReq(),
 		configtypes.DefaultRetryPolicy(),
-		nil, nil,
+		nil, nil, "",
 	)
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
@@ -335,7 +341,7 @@ func TestExecutor_ExecuteWithPreparedBody_FailoverFallsBackToExecute(t *testing.
 		[]routingcore.RoutingTarget{target("primary"), target("secondary")},
 		baseReq(),
 		configtypes.DefaultRetryPolicy(),
-		preparedBody, nil,
+		preparedBody, nil, "",
 	)
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)

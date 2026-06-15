@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	cpmetrics "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
@@ -16,7 +17,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// recordTurn increments the per-turn outcome counter (spec §7 / NFR-13). Nil-safe:
+// recordTurn increments the per-turn outcome counter. Nil-safe:
 // the instrument is unbound until cpmetrics.Register runs at startup, so pool-less
 // tests and the early-boot window record nothing rather than panic.
 func recordTurn(result string) {
@@ -31,21 +32,34 @@ func recordTurn(result string) {
 // rejected 409 (turn_in_progress) — the server-side half of the "no new command while
 // one is running" rule (the client also disables input). The session id is a client-
 // supplied path param (a fresh id starts a new conversation; an owned id continues it).
+//
+// Why the id is client-supplied, not server-generated: the
+// command/data-stream split needs the id BEFORE any turn event exists — the
+// client must know it to open GET .../stream and to decide fresh-vs-continue —
+// so a server-minted id returned only in the 202 body would not fit the flow.
+// Crucially this is NOT a cross-session collision/hijack risk: every session is
+// resolved within the caller's OWN userId namespace. The bus key is
+// `userID + ":" + id` (below), and the persistence + CRUD endpoints are
+// userId-scoped (dbStore binds WHERE "userId"; a non-owned id is an
+// indistinguishable 404 — see handler_sessions.go). A client therefore can only
+// ever "collide" with its own prior session (which is the intended "continue"
+// behaviour); it can neither reach nor guess another user's session by picking
+// the same id. validSessionID bounds the value to an input-hygiene charset.
 func (h *Handler) StartChat(c echo.Context) error {
 	id := c.Param("id")
 	if !validSessionID(id) {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "a valid session id is required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "a valid session id is required")
 	}
 	var body struct {
 		Message string `json:"message"`
 		Model   string `json:"model"` // optional: client-chosen model (validated against the allow-list)
 	}
 	if err := c.Bind(&body); err != nil || strings.TrimSpace(body.Message) == "" {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "message is required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "message is required")
 	}
 	if h.cfg.SystemVK == "" {
 		recordTurn("unavailable")
-		return errJSON(c, http.StatusServiceUnavailable, "unavailable", "assistant inference is not configured")
+		return writeErrJSON(c, http.StatusServiceUnavailable, "unavailable", "assistant inference is not configured")
 	}
 	authorization, userID, ok := h.callerBearer(c)
 	if !ok {
@@ -54,13 +68,20 @@ func (h *Handler) StartChat(c echo.Context) error {
 	}
 
 	key := userID + ":" + id
-	// Claim a turn slot. started=false → a turn is already in flight for this session
-	// (serialization guard). The turn ctx is detached (background) + carries the
-	// wall-clock deadline, so it OUTLIVES this POST: the SSE stream can reconnect.
-	_, turnCtx, started := h.bus.startTurn(key, context.Background(), h.turnDeadline)
-	if !started {
-		return errJSON(c, http.StatusConflict, "turn_in_progress",
+	// Claim a turn slot. The turn ctx is detached (background) + carries the wall-clock
+	// deadline, so it OUTLIVES this POST: the SSE stream can reconnect. Two distinct
+	// refusals: a turn already in flight for THIS session is 409 (serialization guard);
+	// the user being at the per-user concurrent-turn cap is 429 (bounds one
+	// user's instantaneous share of the shared system VK so they cannot starve others).
+	_, turnCtx, sr := h.bus.startTurn(key, context.Background(), h.turnDeadline)
+	switch sr {
+	case startTurnInFlight:
+		return writeErrJSON(c, http.StatusConflict, "turn_in_progress",
 			"a turn is already running for this session; wait for it to finish or stop it first")
+	case startUserLimitHit:
+		recordTurn("user_limit")
+		return writeErrJSON(c, http.StatusTooManyRequests, "user_turn_limit_exceeded",
+			"you have too many concurrent sessions; finish or stop existing sessions first")
 	}
 
 	// Claim this instance as the session owner (multi-replica 421 safety net). Detached
@@ -84,7 +105,7 @@ func (h *Handler) StartChat(c echo.Context) error {
 	}
 	go h.runTurn(turnCtx, turn)
 
-	return c.JSON(http.StatusAccepted, map[string]any{"sessionId": id, "seq": 0})
+	return c.JSON(http.StatusAccepted, map[string]any{"sessionId": id})
 }
 
 // turnParams carries the request-scoped inputs a background turn needs (read off the
@@ -114,7 +135,7 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 
 	// Per-caller stores: DB-backed (isolated by the authenticated userId) when a pool
 	// is wired, else in-memory (tests / pool-less dev). userId is the authenticated
-	// principal, never client input (I3).
+	// principal, never client input.
 	var store agent.SessionStore = newMemStore()
 	var mem agent.MemoryStore = newMemMemory()
 	if h.cfg.Pool != nil && p.userID != "" {
@@ -137,7 +158,7 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 	// Populated right after BuildWebAgent; the OnToolEnd closure reads it during the
 	// turn (by then set; an empty map degrades safely to tool="unknown").
 	knownTools := map[string]struct{}{}
-	ag, err := BuildWebAgent(WebAgentDeps{
+	ag := BuildWebAgent(WebAgentDeps{
 		CallerAuthorization: p.authorization,
 		CallerSourceIP:      p.sourceIP, // R3: stamp the human actor's IP on in-process self-calls
 		CallerRequestID:     p.requestID,
@@ -151,7 +172,7 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 		Store:               store,
 		Session:             session,
 		Files:               files,
-		SituationCache:      h.situations, // NFR-11: per-caller situation memoization
+		SituationCache:      h.situations, // per-caller situation memoization
 		SituationKey:        p.userID,
 		OnText:              func(s string) { pub("text", map[string]string{"delta": s}) },
 		OnReasoning:         func(s string) { pub("reasoning", map[string]string{"delta": s}) },
@@ -159,15 +180,13 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 			pub("tool_start", map[string]any{"name": name, "input": json.RawMessage(input)})
 		},
 		OnToolEnd: func(name string, output []byte, isErr bool) {
-			pub("tool_end", map[string]any{"name": name, "isError": isErr})
-			// Structured download signal: when write_file succeeds, surface the file as
-			// its own `file` SSE event sourced from the tool's own output, so the UI's
-			// download button no longer depends on the model echoing the URL into prose.
-			if name == "write_file" && !isErr {
-				if id, ok := fileIDFromToolOutput(string(output)); ok {
-					pub("file", map[string]string{"id": id, "downloadPath": assistantFilesPath + id})
-				}
-			}
+			// The result rides along (capped) so the widget's tool chip can show
+			// the response, not just the request. No new exposure: the same
+			// output is already persisted in the caller's own transcript.
+			pub("tool_end", map[string]any{"name": name, "isError": isErr, "output": clampToolOutput(output)})
+			// Structured artifact lifting (files): the surface renders cards
+			// from tool outputs, never model prose.
+			liftFileArtifact(name, output, isErr, pub)
 			if cpmetrics.AssistantToolInvocationsTotal != nil {
 				result := "ok"
 				if isErr {
@@ -184,6 +203,11 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 			}
 		},
 		OnUsage: func(cs agent.ContextStats) { pub("usage", cs) },
+		OnCompact: func(cs agent.CompactStat) {
+			// The transcript was durably rewritten (older turns condensed); tell
+			// the user in-stream instead of letting history silently change.
+			pub("compact", map[string]any{"kind": cs.Kind, "messagesBefore": cs.MessagesBefore, "messagesAfter": cs.MessagesAfter})
+		},
 		OnNavigate: func(d NavigateDirective) {
 			pub("navigate", d)
 			if cpmetrics.AssistantNavigationsTotal != nil {
@@ -191,15 +215,9 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 			}
 		},
 		Confirm:          h.makeConfirm(p.userID, p.sessionID, pub),
-		Redactor:         h.redactor, // §8: scrub PII from tool output before prompt entry
+		Redactor:         h.redactor, // scrub PII from tool output before prompt entry
 		DisableBodyReads: h.cfg.DisableBodyReads,
 	})
-	if err != nil {
-		pub("error", map[string]string{"code": "agent_build_failed", "message": "could not start the assistant"})
-		recordTurn("error")
-		pub("done", map[string]any{"sessionId": p.sessionID, "seq": 0})
-		return
-	}
 	for _, n := range ag.ToolNames() {
 		knownTools[n] = struct{}{}
 	}
@@ -214,7 +232,7 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 			pub("error", map[string]string{"code": "turn_deadline", "message": "the assistant took too long and was stopped"})
 		case errors.Is(ctx.Err(), context.Canceled):
 			// Interrupt (Stop) or the disconnect-grace cancel — user-initiated, not a
-			// failure. AC-4: an aborted turn emits turn_aborted (no error bubble).
+			// failure. An aborted turn emits turn_aborted (no error bubble).
 			turnResult = "aborted"
 			pub("turn_aborted", map[string]any{"sessionId": p.sessionID})
 		default:
@@ -225,7 +243,8 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 		}
 	}
 	recordTurn(turnResult)
-	pub("done", map[string]any{"sessionId": p.sessionID, "seq": 0})
+
+	pub("done", map[string]any{"sessionId": p.sessionID})
 }
 
 // StreamSession is the long-lived SSE channel for a session's turn. It attaches to the
@@ -236,7 +255,7 @@ func (h *Handler) runTurn(ctx context.Context, p turnParams) {
 func (h *Handler) StreamSession(c echo.Context) error {
 	id := c.Param("id")
 	if !validSessionID(id) {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "a valid session id is required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "a valid session id is required")
 	}
 	_, userID, ok := h.callerBearer(c)
 	if !ok {
@@ -256,7 +275,7 @@ func (h *Handler) StreamSession(c echo.Context) error {
 		// No live session for this key — the turn was never started, or its entry was
 		// reclaimed. 404 tells the client to (re)POST a chat rather than wait on a
 		// stream that will never produce.
-		return errJSON(c, http.StatusNotFound, "not_found", "no active session stream")
+		return writeErrJSON(c, http.StatusNotFound, "not_found", "no active session stream")
 	}
 
 	resp := c.Response()
@@ -316,7 +335,7 @@ func (h *Handler) StreamSession(c echo.Context) error {
 func (h *Handler) InterruptSession(c echo.Context) error {
 	id := c.Param("id")
 	if !validSessionID(id) {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "a valid session id is required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "a valid session id is required")
 	}
 	_, userID, ok := h.callerBearer(c)
 	if !ok {
@@ -325,5 +344,32 @@ func (h *Handler) InterruptSession(c echo.Context) error {
 	if h.bus.interrupt(userID + ":" + id) {
 		return c.NoContent(http.StatusNoContent)
 	}
-	return errJSON(c, http.StatusConflict, "not_running", "no in-flight turn to stop for this session")
+	return writeErrJSON(c, http.StatusConflict, "not_running", "no in-flight turn to stop for this session")
+}
+
+// toolOutputCap bounds the tool_end SSE payload. The chip is a peek, not an
+// export: a full draft read (~11KB) or a long list would bloat every turn's
+// stream and the widget DOM for no reading value. 4 KiB matches the
+// device-event payload cap.
+const toolOutputCap = 4 << 10
+
+// clampToolOutput renders the (already redacted — the loop scrubs before the
+// OnToolEnd peek) tool output for the SSE event, truncated on a rune boundary
+// with an honest marker carrying the full size.
+func clampToolOutput(b []byte) string {
+	if len(b) <= toolOutputCap {
+		return string(b)
+	}
+	// Trim to a rune START boundary (the excerptOf idiom): the byte AT the cap
+	// must begin a rune, so a multi-byte rune the cap would split is dropped
+	// whole. Bounded walk — output that is not UTF-8 at all (a binary read)
+	// loses at most utf8.UTFMax-1 bytes, never the whole peek.
+	cut := toolOutputCap
+	for i := 0; i < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(b[cut]); i++ {
+		cut--
+	}
+	if !utf8.RuneStart(b[cut]) {
+		cut = toolOutputCap // not a split rune — binary data; keep the full prefix
+	}
+	return fmt.Sprintf("%s\n… [truncated — %d bytes total]", b[:cut], len(b))
 }

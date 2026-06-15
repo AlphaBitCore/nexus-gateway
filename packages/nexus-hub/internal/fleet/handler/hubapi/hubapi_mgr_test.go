@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 	"github.com/pashagolub/pgxmock/v4"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/enrollment"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/scheduler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/thingtype"
 )
 
 // pgxmock scaffolding (mirrors manager_pgxmock_test.go helpers)
@@ -55,7 +57,11 @@ func newInternalAPIMock(t *testing.T) (*InternalThingsAPI, pgxmock.PgxPoolIface)
 		t.Fatalf("pgxmock.NewPool: %v", err)
 	}
 	st := store.NewWithPgxPool(mock)
-	mgr := manager.New(st, nil, nil, nil, "hub-test", discardLog())
+	// Wire the mock as the tx pool too (via the txPool seam) so paths that open
+	// their own transaction — e.g. emitBreakGlassDenied's audit write — run
+	// against the mock instead of a nil real pool. Mirrors newPgxmockManager in
+	// the manager package.
+	mgr := manager.NewWithPool(st, mock, nil, nil, nil, "hub-test", discardLog())
 	h := &InternalThingsAPI{Mgr: mgr, CatB: store.NewCatBRegistry()}
 	return h, mock
 }
@@ -242,31 +248,6 @@ func TestHubAPI_ListGlobalOverrides_DBError_Returns500(t *testing.T) {
 	}
 }
 
-// HubAPI.RotateAgentCert — empty id + DB error
-
-func TestHubAPI_RotateAgentCert_EmptyID_Returns400(t *testing.T) {
-	e := newTestEcho()
-	h := &HubAPI{}
-	c, rec := echoCtxJSON(e, http.MethodPost, nil, map[string]string{"id": ""})
-	_ = h.RotateAgentCert(c)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status=%d want 400", rec.Code)
-	}
-}
-
-func TestHubAPI_RotateAgentCert_DBError_Returns500(t *testing.T) {
-	e := newTestEcho()
-	h, mock := newHubAPIMock(t)
-	// ExpireAgentCert calls QueryRow on thing_agent.
-	mock.ExpectQuery(`SELECT`).WillReturnError(errors.New("no rows"))
-	c, rec := echoCtxJSON(e, http.MethodPost, nil, map[string]string{"id": "t-1"})
-	_ = h.RotateAgentCert(c)
-	// DB error surfaces as 500 or 404 depending on error type.
-	if rec.Code != http.StatusInternalServerError && rec.Code != http.StatusNotFound {
-		t.Errorf("status=%d want 500 or 404", rec.Code)
-	}
-}
-
 // HubAPI.ListEnrollmentTokens — success and error paths
 
 func TestHubAPI_ListEnrollmentTokens_DBError_Returns500(t *testing.T) {
@@ -350,6 +331,7 @@ func TestInternalThingsAPI_Register_DBError_Returns500(t *testing.T) {
 	h, mock := newInternalAPIMock(t)
 	mock.ExpectQuery(`SELECT`).WillReturnError(errors.New("db error"))
 	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"id": "t-1", "type": "agent"}, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.Register(c)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status=%d want 500", rec.Code)
@@ -364,6 +346,7 @@ func TestInternalThingsAPI_Heartbeat_DBError_Returns500(t *testing.T) {
 	mock.ExpectQuery(`SELECT`).WillReturnError(errors.New("db error"))
 	body := map[string]any{"id": "t-1", "status": "online"}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.Heartbeat(c)
 	if rec.Code != http.StatusInternalServerError && rec.Code != http.StatusNotFound {
 		t.Errorf("status=%d want 500 or 404", rec.Code)
@@ -378,9 +361,66 @@ func TestInternalThingsAPI_ShadowReport_DBError_Returns500(t *testing.T) {
 	mock.ExpectQuery(`SELECT`).WillReturnError(errors.New("db error"))
 	body := map[string]any{"id": "t-1", "reported": map[string]any{}, "reportedVer": 0}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.ShadowReport(c)
 	if rec.Code != http.StatusInternalServerError && rec.Code != http.StatusNotFound {
 		t.Errorf("status=%d want 500 or 404", rec.Code)
+	}
+}
+
+// InternalThingsAPI.BreakGlassReport — dispatch reaches HandleShadowReport.
+// The break-glass reconciliation itself is non-fatal (GetThing errors here,
+// logged + swallowed), so a well-formed report acks 200 — proving the route is
+// wired to the reconciliation path (F-0143), not a 404.
+func TestInternalThingsAPI_BreakGlassReport_OK(t *testing.T) {
+	e := newTestEcho()
+	h, mock := newInternalAPIMock(t)
+	// UpdateShadowReport UPDATE succeeds.
+	mock.ExpectExec(`UPDATE thing\s+SET reported`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	// A single node may NOT break-glass the fleet killswitch (SEC-C3-02), so the
+	// report is denied and audited: emitBreakGlassDenied looks up the thing type
+	// (best-effort — error tolerated, type falls back to "") then writes a
+	// break_glass_denied config_change_event in its own tx (SEC-M5-05).
+	mock.ExpectQuery(`FROM thing t`).WillReturnError(errors.New("transient"))
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO config_change_event`).
+		WithArgs("", "killswitch", "break_glass_denied", "break-glass:a1b2c3d4", "break-glass",
+			pgxmock.AnyArg(), int64(4), "", false).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+	mock.ExpectCommit()
+	body := map[string]any{
+		"id": "t-1", "reported": map[string]any{"killswitch": map[string]any{"engaged": true}},
+		"reportedVer": 4, "keyVersions": map[string]any{"killswitch": 4}, "actorTokenId": "a1b2c3d4",
+	}
+	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
+	if err := h.BreakGlassReport(c); err != nil {
+		t.Fatalf("BreakGlassReport: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// InternalThingsAPI.BreakGlassReport — the outer HandleShadowReport (shadow
+// persistence) failing surfaces as 5xx via handleErr, not a swallowed 200.
+func TestInternalThingsAPI_BreakGlassReport_DBError(t *testing.T) {
+	e := newTestEcho()
+	h, mock := newInternalAPIMock(t)
+	mock.ExpectExec(`UPDATE thing\s+SET reported`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnError(errors.New("db error"))
+	body := map[string]any{
+		"id": "t-1", "reported": map[string]any{"killswitch": map[string]any{"engaged": true}},
+		"reportedVer": 4, "keyVersions": map[string]any{"killswitch": 4}, "actorTokenId": "a1b2c3d4",
+	}
+	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
+	_ = h.BreakGlassReport(c)
+	if rec.Code < 500 {
+		t.Errorf("status=%d want 5xx for shadow-persist failure", rec.Code)
 	}
 }
 
@@ -461,6 +501,7 @@ func TestInternalThingsAPI_Deregister_DBError_Returns500(t *testing.T) {
 	h, mock := newInternalAPIMock(t)
 	mock.ExpectQuery(`SELECT`).WillReturnError(errors.New("db error"))
 	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"id": "t-1"}, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.Deregister(c)
 	if rec.Code != http.StatusInternalServerError && rec.Code != http.StatusNotFound {
 		t.Errorf("status=%d want 500 or 404", rec.Code)
@@ -509,8 +550,8 @@ func TestUnauthorizedResponse(t *testing.T) {
 		t.Errorf("status=%d want 401", rec.Code)
 	}
 	m := decodeResp(t, rec)
-	if m["code"] != "UNAUTHORIZED" {
-		t.Errorf("code=%v want UNAUTHORIZED", m["code"])
+	if errCode(m) != "UNAUTHORIZED" {
+		t.Errorf("code=%v want UNAUTHORIZED", errCode(m))
 	}
 }
 
@@ -524,8 +565,8 @@ func TestForbiddenResponse(t *testing.T) {
 		t.Errorf("status=%d want 403", rec.Code)
 	}
 	m := decodeResp(t, rec)
-	if m["code"] != "FORBIDDEN" {
-		t.Errorf("code=%v want FORBIDDEN", m["code"])
+	if errCode(m) != "FORBIDDEN" {
+		t.Errorf("code=%v want FORBIDDEN", errCode(m))
 	}
 }
 
@@ -539,8 +580,8 @@ func TestServiceUnavailableResponse(t *testing.T) {
 		t.Errorf("status=%d want 503", rec.Code)
 	}
 	m := decodeResp(t, rec)
-	if m["code"] != "SERVICE_UNAVAILABLE" {
-		t.Errorf("code=%v want SERVICE_UNAVAILABLE", m["code"])
+	if errCode(m) != "SERVICE_UNAVAILABLE" {
+		t.Errorf("code=%v want SERVICE_UNAVAILABLE", errCode(m))
 	}
 }
 
@@ -677,6 +718,7 @@ func TestInternalThingsAPI_Deregister_Success_Returns200(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"id": "t-1"}, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"}) // device-token caller on its own id
 	_ = h.Deregister(c)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status=%d want 200; body=%s", rec.Code, rec.Body.String())
@@ -857,35 +899,6 @@ func TestHubAPI_ListJobRuns_WithScheduler_ReturnsEmpty(t *testing.T) {
 	m := decodeResp(t, rec)
 	if m["total"].(float64) != 0 {
 		t.Errorf("total=%v want 0", m["total"])
-	}
-}
-
-// HubAPI.RotateAgentCert — not-found + success paths
-
-func TestHubAPI_RotateAgentCert_NotFound_Returns404(t *testing.T) {
-	e := newTestEcho()
-	h, mock := newHubAPIMock(t)
-	// ExpireAgentCert uses Exec. With RowsAffected=0 → ErrNotFound → 404.
-	mock.ExpectExec(`UPDATE thing_agent`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-	c, rec := echoCtxJSON(e, http.MethodPost, nil, map[string]string{"id": "missing-agent"})
-	_ = h.RotateAgentCert(c)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status=%d want 404 for missing agent; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHubAPI_RotateAgentCert_Success_Returns200(t *testing.T) {
-	e := newTestEcho()
-	h, mock := newHubAPIMock(t)
-	mock.ExpectExec(`UPDATE thing_agent`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	c, rec := echoCtxJSON(e, http.MethodPost, nil, map[string]string{"id": "agent-1"})
-	_ = h.RotateAgentCert(c)
-	if rec.Code != http.StatusOK {
-		t.Errorf("status=%d want 200; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1139,6 +1152,7 @@ func TestInternalThingsAPI_ExemptionUpload_Success_EnqueuesPayload(t *testing.T)
 		"expiresAt": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 	}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "device-1"}) // device-token caller on its own id
 	_ = h.ExemptionUpload(c)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status=%d want 200; body=%s", rec.Code, rec.Body.String())
@@ -1589,9 +1603,64 @@ func TestInternalThingsAPI_AuditUpload_EnqueueError_Returns503(t *testing.T) {
 		"events":  []any{map[string]any{"id": "e1"}},
 	}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	// Device-token caller on its own id passes the mutation-authority gate
+	// without a DB type lookup, so the enqueue path is reached.
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"})
 	_ = h.AuditUpload(c)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status=%d want 503 for Enqueue error; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// InternalThingsAPI.AuditUpload — F-0374: a device-token caller may not stamp
+// audit rows for a FOREIGN thing_id (the body's thingId must equal the
+// authenticated device's id, exactly like the other six mutation handlers).
+func TestInternalThingsAPI_AuditUpload_DeviceForeignThingID_Returns403(t *testing.T) {
+	e := newTestEcho()
+	mq := &recordingMQProducer{}
+	h := &InternalThingsAPI{MQProducer: mq}
+	body := map[string]any{
+		"thingId": "victim-agent",
+		"events":  []any{map[string]any{"id": "e1"}},
+	}
+	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	// Authenticated as a DIFFERENT device — must not be able to forge rows for
+	// "victim-agent".
+	c.Set(thingContextKey, &store.Thing{ID: "attacker-agent"})
+	_ = h.AuditUpload(c)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status=%d want 403 for foreign thingId; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(mq.payloads) != 0 {
+		t.Errorf("expected no enqueued payload on 403; got %d", len(mq.payloads))
+	}
+}
+
+// InternalThingsAPI.AuditUpload — F-0374: a service-token caller (fleet-shared
+// INTERNAL_SERVICE_TOKEN, no Thing bound) may not stamp audit rows for an AGENT
+// thing_id. requireMutationAuthority looks the target type up by id; an agent
+// (non-backend-service) target is refused with 403, so a leaked service token
+// cannot forge traffic_event rows attributed to an arbitrary node.
+func TestInternalThingsAPI_AuditUpload_ServiceTokenForeignAgent_Returns403(t *testing.T) {
+	e := newTestEcho()
+	h, mock := newInternalAPIMock(t)
+	mq := &recordingMQProducer{}
+	h.MQProducer = mq
+	// requireMutationAuthority resolves the target type via GetThing; return an
+	// "agent" thing → not a backend-service type → refused.
+	mock.ExpectQuery(`SELECT`).WillReturnRows(oneThingRow("victim-agent", "agent"))
+	body := map[string]any{
+		"thingId": "victim-agent",
+		"events":  []any{map[string]any{"id": "e1"}},
+	}
+	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	// No thingContextKey set → service-token caller.
+	_ = h.AuditUpload(c)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status=%d want 403 for service token targeting an agent; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(mq.payloads) != 0 {
+		t.Errorf("expected no enqueued payload on 403; got %d", len(mq.payloads))
 	}
 }
 
@@ -1625,8 +1694,10 @@ func TestHubAPI_ResyncThing_SingleKey_Success_Returns200(t *testing.T) {
 		t.Fatalf("pgxmock.NewPool: %v", err)
 	}
 	st := store.NewWithPgxPool(mock)
-	// Inject a WSPool that always succeeds so rePushConfigKeyForThing returns nil.
-	mgr := manager.New(st, nil, nil, &successWSPool{}, "hub-test", discardLog())
+	// NewWithPool wires the mock as the tx pool so ForceResyncKey's desired_ver
+	// bump (F-0116) runs against pgxmock. A WSPool that always succeeds makes the
+	// post-bump push return nil.
+	mgr := manager.NewWithPool(st, mock, nil, nil, &successWSPool{}, "hub-test", discardLog())
 	h := &HubAPI{Mgr: mgr}
 
 	// Thing with routing in Desired.
@@ -1646,6 +1717,18 @@ func TestHubAPI_ResyncThing_SingleKey_Success_Returns200(t *testing.T) {
 	mock.ExpectQuery(`FROM thing`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(rows)
+	// ForceResyncKey bumps desired_ver (advisory-locked tx) before the push.
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).
+		WithArgs("agent").
+		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	mock.ExpectQuery(`UPDATE thing\s+SET desired\s+= \$2::jsonb`).
+		WithArgs("t-1", pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"desired_ver"}).AddRow(int64(4)))
+	mock.ExpectExec(`pg_notify`).
+		WithArgs(pgxmock.AnyArg(), "t-1").
+		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	mock.ExpectCommit()
 	body := map[string]any{"configKey": "routing"}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, map[string]string{"id": "t-1"})
 	_ = h.ResyncThing(c)
@@ -1804,6 +1887,7 @@ func TestInternalThingsAPI_ExemptionUpload_EnqueueError_Returns503(t *testing.T)
 		"expiresAt": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 	}
 	c, rec := echoCtxJSON(e, http.MethodPost, body, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "device-1"}) // device-token caller on its own id
 	_ = h.ExemptionUpload(c)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status=%d want 503 for Enqueue error; body=%s", rec.Code, rec.Body.String())
@@ -1835,32 +1919,17 @@ func TestInternalThingsAPI_UpdateCheck_MalformedState_Returns500(t *testing.T) {
 	}
 }
 
-// InternalThingsAPI.RenewCert — bind error path (lines 508-510)
+// HubAPI.ResyncThing — all-keys with no live WS receiver still reports success.
 
-func TestInternalThingsAPI_RenewCert_BindError_Returns400(t *testing.T) {
+func TestHubAPI_ResyncThing_AllKeys_NoWSReceiver_StillSucceeds(t *testing.T) {
+	// A thing with one key in Desired + nil ws + nil mq: the immediate push has
+	// no delivery path, but ForceResyncAll bumps desired_ver first so the HTTP
+	// heartbeat pull is guaranteed to deliver it (F-0116). The key is therefore
+	// counted as Pushed (keyCount=1) and the response carries NO "failed" list —
+	// the old behaviour wrongly reported it as a delivery failure.
 	e := newTestEcho()
-	h := &InternalThingsAPI{}
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("{bad json")))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	_ = h.RenewCert(e.NewContext(req, rec))
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 for bind error; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-// HubAPI.ResyncThing — all-keys with failed keys (lines 179-181)
-
-func TestHubAPI_ResyncThing_AllKeys_WithFailedKeys_ReturnsFailedList(t *testing.T) {
-	// A thing with one key in Desired + nil ws + nil mq → delivery fails →
-	// res.Failed has the key → lines 179-181 branch executes.
-	// RePushAllKeys returns (res, nil) even with delivery failures — they go
-	// into res.Failed, not into the error return. So the handler returns 200
-	// with ok=true and a "failed" key in the body.
-	e := newTestEcho()
-	h, mock := newHubAPIMock(t)
+	h, mock := newHubAPIMockWithPool(t)
 	now := time.Now()
-	// Return a thing with routing in Desired so RePushAllKeys tries to push it.
 	rows := pgxmock.NewRows(thingCols).AddRow(
 		"t-1", "agent", "t-1", "1.0", "addr",
 		"sso", "bearer", "http",
@@ -1876,11 +1945,20 @@ func TestHubAPI_ResyncThing_AllKeys_WithFailedKeys_ReturnsFailedList(t *testing.
 	mock.ExpectQuery(`FROM thing`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(rows)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).
+		WithArgs("agent").
+		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	mock.ExpectQuery(`UPDATE thing\s+SET desired\s+= \$2::jsonb`).
+		WithArgs("t-1", pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"desired_ver"}).AddRow(int64(4)))
+	mock.ExpectExec(`pg_notify`).
+		WithArgs(pgxmock.AnyArg(), "t-1").
+		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	mock.ExpectCommit()
 	body := map[string]any{} // empty body → all-keys mode
 	c, rec := echoCtxJSON(e, http.MethodPost, body, map[string]string{"id": "t-1"})
 	_ = h.ResyncThing(c)
-	// RePushAllKeys returns nil error even when delivery fails; the handler
-	// returns 200 with ok=true and "failed" in the body.
 	if rec.Code != http.StatusOK {
 		t.Errorf("status=%d want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -1888,9 +1966,11 @@ func TestHubAPI_ResyncThing_AllKeys_WithFailedKeys_ReturnsFailedList(t *testing.
 	if m["ok"] != true {
 		t.Errorf("ok=%v want true", m["ok"])
 	}
-	// "failed" key should be present because delivery to routing key failed.
-	if _, hasFailed := m["failed"]; !hasFailed {
-		t.Error("expected 'failed' key in response when delivery fails")
+	if m["keyCount"].(float64) != 1 {
+		t.Errorf("keyCount=%v want 1 (delivery guaranteed via heartbeat after bump)", m["keyCount"])
+	}
+	if _, hasFailed := m["failed"]; hasFailed {
+		t.Error("did not expect 'failed' key: the version bump guarantees heartbeat delivery")
 	}
 }
 
@@ -1969,8 +2049,8 @@ func TestHubAPI_SetThingOverride_ErrTemplateMissing_Returns400(t *testing.T) {
 		t.Errorf("status=%d want 400 for ErrTemplateMissing; body=%s", rec.Code, rec.Body.String())
 	}
 	m := decodeResp(t, rec)
-	if m["code"] != "INVALID_REQUEST" {
-		t.Errorf("code=%v want INVALID_REQUEST", m["code"])
+	if errCode(m) != "INVALID_REQUEST" {
+		t.Errorf("code=%v want INVALID_REQUEST", errCode(m))
 	}
 }
 
@@ -2061,5 +2141,102 @@ func TestGetAttestationPubKey_GenericError_Returns500(t *testing.T) {
 	}
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("code=%d; want 500", rec.Code)
+	}
+}
+
+// TestGetAttestationPubKey_Happy_IncludesCertExpiresAt is the SEC-M4-01 wire
+// contract: a 200 response carries the cert NotAfter so CP can enforce expiry.
+func TestGetAttestationPubKey_Happy_IncludesCertExpiresAt(t *testing.T) {
+	h, mock := newInternalAPIMock(t)
+	mock.ExpectQuery(`sysinfo[\s\S]*attestation`).
+		WithArgs("thing-1").
+		WillReturnRows(pgxmock.NewRows([]string{"publicKey", "certExpiresAt"}).
+			AddRow("AQID", "2099-01-02T03:04:05Z"))
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/things/thing-1/attestation-pubkey", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues("thing-1")
+
+	if err := h.GetAttestationPubKey(c); err != nil {
+		t.Fatalf("GetAttestationPubKey: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d; want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"certExpiresAt":"2099-01-02T03:04:05Z"`) {
+		t.Errorf("response missing certExpiresAt: %s", body)
+	}
+	if !strings.Contains(body, `"publicKey":"AQID"`) {
+		t.Errorf("response missing publicKey: %s", body)
+	}
+}
+
+// TestGetAttestationPubKey_RevokedDevice_Returns404 is the SEC-M4-01 revocation
+// wire contract: a revoked (unenrolled) device's attestation is no longer served
+// (the store query's status!='revoked' filter yields no row), so the endpoint
+// 404s — which CP maps to unknown_agent → MITM fallback.
+func TestGetAttestationPubKey_RevokedDevice_Returns404(t *testing.T) {
+	h, mock := newInternalAPIMock(t)
+	mock.ExpectQuery(`sysinfo[\s\S]*attestation`).
+		WithArgs("revoked-thing").
+		WillReturnError(pgx.ErrNoRows) // revoked row excluded by the JOIN+status filter
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/things/revoked-thing/attestation-pubkey", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues("revoked-thing")
+
+	if err := h.GetAttestationPubKey(c); err != nil {
+		t.Fatalf("GetAttestationPubKey: %v", err)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("code=%d; want 404 (revoked device not served)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "ATTESTATION_NOT_ENROLLED") {
+		t.Errorf("body=%s; want ATTESTATION_NOT_ENROLLED", rec.Body.String())
+	}
+}
+
+// TestInternalThingsAPI_ShadowReport_MatchingDevice_PassesGuard proves the
+// F-0060 fix does not block the legitimate break-glass-eligible path: a device
+// token operating on its OWN id passes requireThingMatch and reaches the
+// manager (here the mocked DB errors, so the status is 5xx — the point is it is
+// NOT 403).
+func TestInternalThingsAPI_ShadowReport_MatchingDevice_PassesGuard(t *testing.T) {
+	e := newTestEcho()
+	h, mock := newInternalAPIMock(t)
+	mock.ExpectQuery(`SELECT`).WillReturnError(errors.New("db error"))
+	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"id": "t-1", "reported": map[string]any{}, "reportedVer": 0}, nil)
+	c.Set(thingContextKey, &store.Thing{ID: "t-1"})
+	_ = h.ShadowReport(c)
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("matching device id must pass the guard, got 403; body=%s", rec.Body.String())
+	}
+}
+
+// TestInternalThingsAPI_ShadowReport_ServiceToken_BypassesGuard proves a
+// service-token caller (no Thing in context) is never blocked by the cross-Thing
+// guard regardless of the body id — the trusted CP / Hub-internal path.
+// TestInternalThingsAPI_ShadowReport_ServiceToken_AgentTargetBlocked is the
+// SEC-W2-02 (FIX-5/C C2) closure for the shadow path: a service-token caller may
+// no longer overwrite an arbitrary AGENT's shadow. Before the fix the guard was
+// bypassed for ANY service-token caller (the act-as-any-thing vulnerability); now
+// the operated Thing's type is resolved and an agent target is refused (403). A
+// service-token caller self-operating on its own backend-service Thing is still
+// allowed — covered by TestRequireMutationAuthority.
+func TestInternalThingsAPI_ShadowReport_ServiceToken_AgentTargetBlocked(t *testing.T) {
+	e := newTestEcho()
+	h, mock := newInternalAPIMock(t)
+	mock.ExpectQuery(`SELECT`).WithArgs(pgxmock.AnyArg()).WillReturnRows(oneThingRow("agent-x", thingtype.Agent))
+	c, rec := echoCtxJSON(e, http.MethodPost, map[string]any{"id": "agent-x", "reported": map[string]any{}, "reportedVer": 0}, nil)
+	_ = h.ShadowReport(c)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("service token overwriting an agent shadow must be blocked, got %d; body=%s", rec.Code, rec.Body.String())
 	}
 }

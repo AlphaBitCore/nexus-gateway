@@ -3,6 +3,7 @@ package enrollstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -28,6 +29,12 @@ func New(db PgxPool) *Store { return &Store{db: db} }
 var (
 	ErrNotFound  = hubstore.ErrNotFound
 	ErrAmbiguous = hubstore.ErrAmbiguous
+	// ErrAlreadyUsed is returned by ConsumeEnrollmentToken when the token
+	// does not exist, has expired, or was already consumed (status != pending)
+	// at the moment of the atomic UPDATE. It collapses the validate+mark race:
+	// the row transition pending→used happens in a single statement,
+	// so exactly one concurrent enrollment wins and the rest see ErrAlreadyUsed.
+	ErrAlreadyUsed = errors.New("enrollment token already used, expired, or not found")
 )
 
 func decodeJSONB(raw []byte, target any, column string) error {

@@ -412,8 +412,11 @@ func TestPost_HubErrorReturns502(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode error envelope: %v; body=%s", err, rec.Body.String())
 	}
-	if env.Error.Code != "HUB_UNAVAILABLE" || env.Error.Type != "hub_error" {
-		t.Fatalf("error envelope = %+v, want code=HUB_UNAVAILABLE type=hub_error", env.Error)
+	// Primary-leg push failure now routes through the shared propagation
+	// helper (F-0102), so the kill-switch toggle returns the same unified
+	// propagation envelope as every other security-sensitive handler.
+	if env.Error.Code != "HUB_PROPAGATION_FAILED" || env.Error.Type != "propagation_error" {
+		t.Fatalf("error envelope = %+v, want code=HUB_PROPAGATION_FAILED type=propagation_error", env.Error)
 	}
 	if aud.count() != 0 {
 		t.Fatalf("admin audit should not enqueue on hub error, got %d", aud.count())

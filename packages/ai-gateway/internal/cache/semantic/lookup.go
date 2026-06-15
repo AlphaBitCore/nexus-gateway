@@ -107,7 +107,7 @@ func (c *Client) Lookup(ctx context.Context, indexName string, in *LookupInput) 
 	// the open-source Valkey search module does not. The top-N
 	// ordering is preserved either way because KNN itself sorts.
 	//
-	// origin_wire_shape added for the B2 cross-ingress reshape gate —
+	// origin_wire_shape added for the cross-ingress reshape gate —
 	// the cache HIT reader compares the entry's ingress shape to the
 	// requesting ingress's and calls canonicalbridge.ResponseAcrossFormats
 	// to reshape when they differ. Pre-fix entries return empty strings

@@ -21,11 +21,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 const (
@@ -82,6 +85,11 @@ type Resolver struct {
 	client *http.Client
 	ttl    time.Duration
 	now    func() time.Time
+	// checkHost is the SSRF pre-check applied to an issuer host before fetch.
+	// NewResolver wires validatePublicHost (rejects non-public addresses);
+	// nil disables the pre-check (tests that point at a loopback httptest
+	// server, which already inject a client without the dial-time guard).
+	checkHost func(ctx context.Context, host string) error
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -91,13 +99,81 @@ type Resolver struct {
 // timeout. A single Resolver is safe for concurrent use and is intended to be
 // shared across the SSO-start and OIDC-callback handlers so a document fetched
 // on the start leg is reused on the return leg.
-func NewResolver() *Resolver {
-	return &Resolver{
-		client: &http.Client{Timeout: defaultTimeout},
-		ttl:    DefaultTTL,
-		now:    time.Now,
-		cache:  make(map[string]cacheEntry),
+//
+// SSRF defense: the issuer URL is admin-configured, so a malicious or
+// compromised admin could point it at an internal address to make the Control
+// Plane fetch `http://169.254.169.254/...` (cloud metadata) or an in-cluster
+// service. The HTTP client below installs a dial-time Control hook that rejects
+// any connection to a loopback / private / link-local / unspecified IP, which
+// also defeats DNS-rebinding (the check runs on the actual dialed address, not a
+// pre-resolved one). An OIDC issuer is external by nature — a private/loopback
+// issuer is never legitimate — so the guard comes from the admin-egress
+// chokepoint as ExternalOnly (FIX-4 consistency follow-up; behaviour-identical
+// to the prior BlockPrivateDialControl). fetch() additionally pre-validates via
+// a DNS lookup so the common case fails fast with a clear error before any
+// socket is opened.
+func NewResolver(opts ...Option) *Resolver {
+	dialer := &net.Dialer{Control: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly)}
+	transport := &http.Transport{DialContext: dialer.DialContext}
+	r := &Resolver{
+		client:    &http.Client{Timeout: defaultTimeout, Transport: transport},
+		ttl:       DefaultTTL,
+		now:       time.Now,
+		checkHost: validatePublicHost,
+		cache:     make(map[string]cacheEntry),
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+// Option customizes a Resolver at construction.
+type Option func(*Resolver)
+
+// WithInsecureSkipHostCheck disables the SSRF host guard (both the pre-fetch
+// lookup AND the dial-time private-IP block) so the resolver can reach a
+// loopback / private discovery endpoint. It exists ONLY for tests that run an
+// in-process httptest discovery server on 127.0.0.1; production must never use
+// it. Named "Insecure" so a misuse is obvious in review and greppable.
+func WithInsecureSkipHostCheck() Option {
+	return func(r *Resolver) {
+		r.checkHost = nil
+		r.client = &http.Client{Timeout: defaultTimeout}
+	}
+}
+
+// validatePublicHost resolves host and returns an error if it has no public IP
+// to connect to: every resolved address must be public. A DNS failure (zero
+// addresses) is NOT treated as an SSRF block — it returns nil so fetch proceeds
+// and surfaces the real network error (DNS failure ≠
+// SSRF). The dial-time Control hook remains the authoritative guard against
+// rebinding; this lookup is the fail-fast pre-check.
+func validatePublicHost(ctx context.Context, host string) error {
+	if ip := net.ParseIP(host); ip != nil {
+		if nexushttp.IsDisallowedIP(ip) {
+			return fmt.Errorf("oidcdisco: issuer host %s is a non-public address (SSRF guard)", ip)
+		}
+		return nil
+	}
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		// DNS failure: not an SSRF block — let fetch proceed and fail with the
+		// real network error (F-0270 contract: DNS failure ≠ SSRF). Returning
+		// err here would mis-classify a resolution failure as an SSRF block, so
+		// nilerr's "return the error" suggestion is wrong for this call site.
+		return nil //nolint:nilerr // F-0270: DNS resolution failure must NOT be reported as an SSRF block
+	}
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			continue
+		}
+		if nexushttp.IsDisallowedIP(ip) {
+			return fmt.Errorf("oidcdisco: issuer host %s resolves to a non-public address %s (SSRF guard)", host, ip)
+		}
+	}
+	return nil
 }
 
 // Resolve returns the endpoints for issuer, preserving every value already
@@ -170,8 +246,22 @@ func (r *Resolver) store(issuer string, eps Endpoints) {
 }
 
 func (r *Resolver) fetch(ctx context.Context, issuer string) (Endpoints, error) {
-	if _, err := url.ParseRequestURI(issuer); err != nil {
+	u, err := url.ParseRequestURI(issuer)
+	if err != nil {
 		return Endpoints{}, fmt.Errorf("oidcdisco: issuer is not a valid URL: %w", err)
+	}
+	// Only http(s) issuers are valid OIDC issuers; reject file://, gopher://,
+	// etc. so a non-HTTP scheme can never reach the fetcher (SSRF hardening).
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return Endpoints{}, fmt.Errorf("oidcdisco: issuer scheme %q is not http(s)", u.Scheme)
+	}
+	// SSRF pre-check: refuse an issuer whose host is / resolves to a
+	// non-public address before opening any socket. The dial-time Control hook
+	// is the authoritative guard (catches rebinding); this is the fail-fast path.
+	if r.checkHost != nil {
+		if err := r.checkHost(ctx, u.Hostname()); err != nil {
+			return Endpoints{}, err
+		}
 	}
 	discoveryURL := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)

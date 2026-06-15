@@ -233,7 +233,7 @@ func TestNormalize_RequestAnthropicShape(t *testing.T) {
 }
 
 // TestNormalize_ResponseNonStream pins response-side scoring against
-// the anthropic-messages-nonstream spec.
+// the shared Anthropic Messages codec the adapter delegates to.
 func TestNormalize_ResponseNonStream(t *testing.T) {
 	body := []byte(`{
 		"id":"msg_1",

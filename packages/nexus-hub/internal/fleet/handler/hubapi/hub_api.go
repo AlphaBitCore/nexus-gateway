@@ -170,7 +170,7 @@ func (h *HubAPI) ResyncThing(c echo.Context) error {
 	}
 
 	if req.ConfigKey == "" {
-		res, err := h.Mgr.RePushAllKeys(c.Request().Context(), id)
+		res, err := h.Mgr.ForceResyncAll(c.Request().Context(), id)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return notFound(c, "thing not found")
@@ -192,7 +192,7 @@ func (h *HubAPI) ResyncThing(c echo.Context) error {
 		return c.JSON(http.StatusOK, body)
 	}
 
-	if err := h.Mgr.RePushConfigKey(c.Request().Context(), id, req.ConfigKey); err != nil {
+	if err := h.Mgr.ForceResyncKey(c.Request().Context(), id, req.ConfigKey); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			return notFound(c, "thing not found")
@@ -207,43 +207,6 @@ func (h *HubAPI) ResyncThing(c echo.Context) error {
 		"ok":        true,
 		"thingId":   id,
 		"configKey": req.ConfigKey,
-	})
-}
-
-// RotateAgentCert handles POST /api/hub/things/:id/rotate-cert.
-//
-// Forces an agent's mTLS cert to be rotated out of cycle by advancing
-// thing_agent.cert_expires_at to NOW() + rotateCertWindow. The agent's
-// per-heartbeat renewal check (status.go evaluates "near expiry" against
-// degradedCertDays * 24h) will fire on the next tick and call the
-// existing /api/internal/things/renew-cert flow — no new agent code path.
-//
-// The window is short enough that the agent will renew within one or
-// two heartbeats (typically <30s), but long enough that an agent
-// already mid-rotation isn't preempted.
-//
-// Use case: operator wants a fresh cert without waiting for the
-// auto-renew threshold (e.g. suspected key compromise or a CA root
-// rotation that needs every device to re-bind).
-func (h *HubAPI) RotateAgentCert(c echo.Context) error {
-	id := c.Param("id")
-	if id == "" {
-		return badRequest(c, "thing id is required")
-	}
-	// 5-minute window: agent's renewal check runs once per heartbeat
-	// (default 15s), so the new cert is in place within 1–2 ticks.
-	// Picking a value > 0 also dodges the "expired" cert state which
-	// would block the renew-cert mTLS handshake itself.
-	const rotateCertWindow = 5 * time.Minute
-	if err := h.Mgr.Store().EnrollStore().ExpireAgentCert(c.Request().Context(), id, rotateCertWindow); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return notFound(c, "agent not found")
-		}
-		return internalError(c, "rotate cert failed")
-	}
-	return c.JSON(http.StatusOK, map[string]any{
-		"ok":      true,
-		"thingId": id,
 	})
 }
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -175,13 +176,14 @@ func canonicalToCohereEmbed(canonicalBody []byte, target provcore.CallTarget) (p
 	}
 
 	// v3 models require input_type — observed 400 "input_type is required for
-	// Cohere embed-english-v3.0" (Cohere API docs, observed behavior).
+	// Cohere embed-english-v3.0" (Cohere API docs, observed behavior). Default
+	// to "search_document" when the caller omits nexus.ext.cohere.input_type,
+	// matching the Bedrock-Cohere codec (embed_cohere_codec.go) so the two
+	// Cohere adapters agree on the missing-input_type default instead of one
+	// rejecting where the capability filter (filter.go Rule 4 only checks a
+	// non-empty input_type) already admitted the request.
 	if inputType == "" && model != "" && cohereV3Regex.MatchString(model) {
-		return provcore.EncodeResult{}, &provcore.ProviderError{
-			Status:  http.StatusBadRequest,
-			Code:    provcore.CodeInvalidRequest,
-			Message: fmt.Sprintf("cohere embed: missing_required_extension — nexus.ext.cohere.input_type is required for v3 model %q (one of: search_document, search_query, classification, clustering)", model),
-		}
+		inputType = "search_document"
 	}
 
 	if inputType != "" {
@@ -213,7 +215,7 @@ func canonicalToCohereEmbed(canonicalBody []byte, target provcore.CallTarget) (p
 //
 //	{"object":"list","data":[{"object":"embedding","embedding":[…],"index":0},…],
 //	 "model":"<from response or empty>","usage":{"prompt_tokens":N,"total_tokens":N}}
-func cohereEmbedResponseToCanonical(nativeBody []byte) (provcore.DecodeResult, error) {
+func cohereEmbedResponseToCanonical(nativeBody, reqBody []byte) (provcore.DecodeResult, error) {
 	if len(nativeBody) == 0 {
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil
 	}
@@ -275,6 +277,14 @@ func cohereEmbedResponseToCanonical(nativeBody []byte) (provcore.DecodeResult, e
 				return true
 			})
 		}
+	}
+
+	// Guard against a provider silently dropping or reordering items: a
+	// count mismatch means the position-indexed vectors no longer align
+	// with the request `texts`. Fail the decode (→ 502)
+	// rather than serve misaligned vectors.
+	if err := specutil.ValidateEmbeddingRowCount(int(gjson.GetBytes(reqBody, "texts.#").Int()), len(floatRows)); err != nil {
+		return provcore.DecodeResult{}, fmt.Errorf("cohere embed response: %w", err)
 	}
 
 	// Build canonical data[] array.

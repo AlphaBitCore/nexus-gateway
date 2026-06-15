@@ -59,7 +59,7 @@ type EmbeddingSingleflight struct {
 }
 
 // NewEmbeddingSingleflight constructs a singleflight wrapper. hardTimeout
-// defaults to defaultEmbedTimeout (100ms) when zero.
+// defaults to defaultEmbedTimeout (5s) when zero.
 func NewEmbeddingSingleflight(
 	client *embeddings.Client,
 	cbRegistry *CircuitBreakerRegistry,
@@ -114,12 +114,15 @@ func (sf *EmbeddingSingleflight) Embed(
 	if fl, ok := sf.map_[key]; ok {
 		// Joiner path: another goroutine is already in-flight.
 		sf.mu.Unlock()
-		// The circuit breaker Allow() above counted this as "allowed" — but
-		// a joiner never actually fires an HTTP call. Record the breaker
-		// slot as a success immediately so the failure-window is not
-		// incorrectly widened (joiners share the leader's real outcome via
-		// the fl.err channel).
-		cb.RecordSuccess()
+		// A joiner fires no HTTP call, so it has no independent outcome to
+		// feed the breaker — the in-flight leader is the single source of
+		// truth and will RecordSuccess/RecordFailure once for the real call.
+		// Recording here (success or failure) would double-count a single
+		// upstream outcome across an identical-input burst: the prior
+		// unconditional RecordSuccess() reset the leader's failure window on
+		// every joiner, diluting the failure ratio and delaying breaker
+		// tripping. So joiners touch the breaker exactly zero times and just
+		// share the leader's result via fl.done / fl.err.
 		select {
 		case <-fl.done:
 			if fl.err != nil {

@@ -1,7 +1,7 @@
 // Package ssoenroll orchestrates SSO-based device enrollment for the agent.
 // It drives a PKCE OAuth flow against the Control Plane, exchanges the
-// authorization code for an enrollment JWT, and calls Hub to sign a new
-// device certificate.
+// authorization code for an enrollment JWT, and registers the device with
+// the Hub.
 package enrollment
 
 import (
@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,7 +34,7 @@ import (
 
 // The following package-level variables exist solely as test seams so unit
 // tests can exercise the crypto/rand-failure arms in generateNonce and
-// generateCSR (ecdsa.GenerateKey / x509.CreateCertificateRequest /
+// generateSSODeviceIdentity (ecdsa.GenerateKey / x509.CreateCertificate /
 // MarshalECPrivateKey), the net.Listen-failure arm in newCallbackServer,
 // and the per-OS dispatch + exec.Command.Start arms in openBrowser.
 // Production never reassigns them. Mirrors the established pattern in
@@ -206,10 +207,10 @@ func (f *Flow) Run(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("ssoenroll: sso-enroll: %w", err)
 	}
 
-	// 9. Generate local keypair + CSR.
-	keyPEM, csrPEM, err := generateCSR(f.Hostname)
+	// 9. Generate local keypair + self-signed device identity cert.
+	keyPEM, certPEM, err := generateSSODeviceIdentity(f.Hostname)
 	if err != nil {
-		return nil, fmt.Errorf("ssoenroll: generate CSR: %w", err)
+		return nil, fmt.Errorf("ssoenroll: generate device identity: %w", err)
 	}
 
 	// 10. Call Hub with Bearer JWT to enroll the device. Routed through
@@ -219,7 +220,7 @@ func (f *Flow) Run(ctx context.Context) (*Result, error) {
 	if f.HubEnroller == nil {
 		return nil, fmt.Errorf("ssoenroll: HubEnroller not configured")
 	}
-	// Generate Ed25519 attestation CSR alongside the mTLS P-256 CSR.
+	// Generate Ed25519 attestation CSR for traffic attestation.
 	// Fail-open — empty CSR string when keygen fails; Hub treats absence
 	// as "agent not requesting attestation yet" and enrolls normally.
 	attestCsrPEM, attestKeyPEM := generateAttestationKeyMaterial(f.Hostname)
@@ -230,7 +231,6 @@ func (f *Flow) Run(ctx context.Context) (*Result, error) {
 		// explicitly to be robust against older Hub binaries.
 		ThingType: "agent",
 		Version:   f.AgentVersion,
-		CsrPEM:    string(csrPEM),
 		Hostname:  f.Hostname,
 		OS:        f.OS,
 		OSVersion: f.OSVersion,
@@ -248,7 +248,7 @@ func (f *Flow) Run(ctx context.Context) (*Result, error) {
 	}
 
 	// 11. Persist artifacts to disk (atomic; leaves existing certs unchanged on failure).
-	if err := f.Manager.PersistEnrollment(hubResp, keyPEM, attestKeyPEM); err != nil {
+	if err := f.Manager.PersistEnrollment(hubResp, keyPEM, certPEM, attestKeyPEM); err != nil {
 		return nil, fmt.Errorf("ssoenroll: persist enrollment: %w", err)
 	}
 	// Best-effort: surface the signed-in identity to the menu bar
@@ -334,22 +334,35 @@ func (f *Flow) ssoEnroll(ctx context.Context, code, verifier, redirectURI string
 	return out.EnrollmentJWT, out.UserEmail, nil
 }
 
-// generateCSR creates a new ECDSA P-256 keypair and a CSR for the device.
-// Returns keyPEM (EC PRIVATE KEY) and csrPEM (CERTIFICATE REQUEST).
-func generateCSR(hostname string) (keyPEM, csrPEM []byte, err error) {
+// generateSSODeviceIdentity creates a new ECDSA P-256 keypair and a
+// self-signed device identity certificate. Returns keyPEM (EC PRIVATE KEY)
+// and certPEM (CERTIFICATE). The cert is the agent's local identity
+// artifact; Hub does not verify it (auth is by device bearer token), so it
+// is self-signed rather than CA-signed.
+func generateSSODeviceIdentity(hostname string) (keyPEM, certPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), ssoRandReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate key: %w", err)
 	}
 
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: fmt.Sprintf("device-%s", hostname)},
-	}
-	csrDER, err := x509.CreateCertificateRequest(ssoRandReader, template, key)
+	serial, err := rand.Int(ssoRandReader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, nil, fmt.Errorf("create CSR: %w", err)
+		return nil, nil, fmt.Errorf("generate cert serial: %w", err)
 	}
-	csrPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: fmt.Sprintf("device-%s", hostname)},
+		NotBefore:    now,
+		NotAfter:     now.AddDate(10, 0, 0),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	certDER, err := x509.CreateCertificate(ssoRandReader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create device cert: %w", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 	keyDER, err := ssoMarshalECPrivKey(key)
 	if err != nil {
@@ -357,7 +370,7 @@ func generateCSR(hostname string) (keyPEM, csrPEM []byte, err error) {
 	}
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	return keyPEM, csrPEM, nil
+	return keyPEM, certPEM, nil
 }
 
 func generateNonce() (string, error) {

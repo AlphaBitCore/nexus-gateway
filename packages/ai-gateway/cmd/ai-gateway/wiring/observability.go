@@ -13,16 +13,15 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	epMetrics "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillsweep"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
-	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
+	sharednormalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
 )
 
 // InitOtelConfig builds a telemetry.Config from file config and system_metadata.
@@ -64,6 +63,7 @@ func InitOtelConfig(ctx context.Context, db *store.DB, cfg *config.Config) telem
 func InitAuditWriter(
 	mqProducer mq.Producer,
 	spillCfg spillfactory.FactoryConfig,
+	auditCfg config.AuditConfig,
 	payloadCaptureStore *payloadcapture.Store,
 	opsReg *registry.Registry,
 	logger *slog.Logger,
@@ -84,11 +84,28 @@ func InitAuditWriter(
 		}, logger)
 	}
 
-	normalizeRegistry := normcore.NewRegistry()
-	normcodecs.RegisterDefaultAIBuiltins(normalizeRegistry)
-	adapters.RegisterTier1AdapterNormalizers(normalizeRegistry)
-	extract.WireTier2(normalizeRegistry)
-	normalizeRegistry.Freeze()
+	// Durable NDJSON fallback for whole records when the in-memory buffer
+	// overflows after backpressure. Best-effort: if the spool dir cannot be
+	// created (e.g. a local dev run without /var/lib/nexus), spill is left
+	// disabled and a genuine overflow becomes a loud, counted drop rather
+	// than aborting startup.
+	if auditCfg.SpoolDir != "" {
+		ndjsonSpill, nerr := sharedndjson.New(
+			auditCfg.SpoolDir, "ai-gateway", auditCfg.SpoolMaxFileMB, auditCfg.SpoolMaxTotalMB, nil,
+		)
+		if nerr != nil {
+			logger.Warn("audit NDJSON spill disabled: cannot open spool dir",
+				"dir", auditCfg.SpoolDir, "error", nerr)
+		} else {
+			auditWriter.WithNDJSONSpill(ndjsonSpill)
+			logger.Info("audit NDJSON spill enabled", "dir", auditCfg.SpoolDir)
+		}
+	}
+
+	// Canonical Tier 1+1.5+2+3 assembly shared with nexus-hub, agent and
+	// compliance-proxy — one builder so every data-plane service runs the
+	// identical normalize chain (returned frozen).
+	normalizeRegistry := sharednormalize.BuildRegistry()
 	normalizeMetrics := normcore.NewMetrics(prometheus.DefaultRegisterer, "nexus")
 	auditWriter.WithNormalizer(audit.NormalizeFn(normcore.BuildAuditFn(normalizeRegistry, normalizeMetrics)))
 	slog.Info("normalize registry wired", "adapters", normalizeRegistry.All())

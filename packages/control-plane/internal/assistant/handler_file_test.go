@@ -51,14 +51,14 @@ func TestChatStreamEmitsFileEvent(t *testing.T) {
 	// start fresh), write_file quota check + insert, and the post-turn session save.
 	mock.ExpectQuery(`SELECT name, type, body FROM "AssistantMemory"`).
 		WithArgs("alice").WillReturnRows(pgxmock.NewRows([]string{"name", "type", "body"}))
-	mock.ExpectQuery(`SELECT "spillRef" FROM "AssistantSession"`).WillReturnError(pgx.ErrNoRows)
+	mock.ExpectQuery(`SELECT "spillRef", "origin", "createdAt", "updatedAt" FROM "AssistantSession"`).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`SELECT COALESCE\(SUM\(size\), 0\) FROM "AssistantFile"`).
 		WithArgs("alice").WillReturnRows(pgxmock.NewRows([]string{"sum"}).AddRow(int64(0)))
 	mock.ExpectExec(`INSERT INTO "AssistantFile"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec(`INSERT INTO "AssistantSession"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	_, out := driveTurn(t, h, "alice", `{"message":"make me a report"}`)

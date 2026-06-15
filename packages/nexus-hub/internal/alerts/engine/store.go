@@ -33,7 +33,10 @@ type PgxPool interface {
 // live Postgres. Production code constructs via NewStore which holds a real
 // *pgxpool.Pool. The Raiser still requires a concrete *pgxpool.Pool for
 // pgx.BeginFunc / row-locking transactions and gets it separately.
-type Store struct{ pool PgxPool }
+type Store struct {
+	pool   PgxPool
+	secret *ChannelSecretCipher // nil = passthrough; prod never reaches this (InitAlerts fails closed, FU-1)
+}
 
 // NewStore creates a Store backed by the given connection pool.
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
@@ -42,6 +45,17 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 // production code goes through NewStore. Methods that take a pgx.Tx are
 // unaffected by this seam (they operate on the tx parameter, not the pool).
 func NewStoreWithPgxPool(pool PgxPool) *Store { return &Store{pool: pool} }
+
+// WithChannelSecretCipher attaches the cipher used to encrypt channel config
+// secrets at rest. Returns the same Store for chaining. A nil cipher leaves the
+// Store in passthrough mode (secrets stored as cleartext); production never
+// reaches that state because InitAlerts fails the hub closed when the key is
+// unset (FU-1), so the passthrough mode exists only for unit tests that
+// construct a Store directly.
+func (s *Store) WithChannelSecretCipher(c *ChannelSecretCipher) *Store {
+	s.secret = c
+	return s
+}
 
 // dbSeverity maps our Severity type to the DB enum (uppercase).
 func dbSeverity(s Severity) string { return strings.ToUpper(string(s)) }
@@ -293,6 +307,63 @@ func (s *Store) ResolveByRuleTarget(ctx context.Context, ruleID, targetKey, reas
 		return 0, fmt.Errorf("resolve by rule+target: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// ResolveByRuleTargetIfAcknowledged resolves ONLY the ACKNOWLEDGED alerts for
+// the given rule+target, leaving any FIRING rows untouched. It backs the
+// requiresAck auto-resolve path: when a rule sets requiresAck=true the
+// producer's "condition cleared" signal may auto-clear an alert a human has
+// already triaged (ACKNOWLEDGED), but must NOT silently clear a FIRING alert
+// that no human has seen yet — that one waits for an explicit operator resolve.
+// Returns the number of rows affected (i.e. ACKNOWLEDGED rows resolved).
+func (s *Store) ResolveByRuleTargetIfAcknowledged(ctx context.Context, ruleID, targetKey, reason string) (int, error) {
+	now := time.Now().UTC()
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE "Alert"
+		SET state            = 'RESOLVED'::"AlertState",
+		    "resolvedAt"     = $3,
+		    "resolvedBy"     = 'system',
+		    "resolvedReason" = $4
+		WHERE "ruleId"    = $1
+		  AND "targetKey" = $2
+		  AND state IN ('ACKNOWLEDGED'::"AlertState")`,
+		ruleID, targetKey, now, reason,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("resolve by rule+target (acknowledged only): %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// CountFiringByRuleTarget returns how many FIRING rows exist for the given
+// rule+target. Used by the requiresAck auto-resolve path to log how many
+// FIRING alerts were deliberately skipped (left waiting for a human ack).
+func (s *Store) CountFiringByRuleTarget(ctx context.Context, ruleID, targetKey string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM "Alert"
+		WHERE "ruleId"    = $1
+		  AND "targetKey" = $2
+		  AND state = 'FIRING'::"AlertState"`,
+		ruleID, targetKey,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count firing by rule+target: %w", err)
+	}
+	return n, nil
+}
+
+// CountChannels returns the total number of configured alert channels.
+// Alerting is org-scoped by construction in this codebase (a single tenant per
+// deployment), so a plain table COUNT is the org channel count. The UpdateRule
+// admin handler uses it to warn when a rule is enabled but no channel exists to
+// deliver its notifications.
+func (s *Store) CountChannels(ctx context.Context) (int, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM "AlertChannel"`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count channels: %w", err)
+	}
+	return n, nil
 }
 
 // ListAlerts returns a paginated, filtered list of alerts plus total count.
@@ -599,8 +670,13 @@ func scanRuleRows(rows pgx.Rows) ([]AlertRule, error) {
 }
 
 // InsertChannel inserts a new alert channel and returns its generated UUID.
+// Secret-valued config fields are encrypted at rest before persistence.
 func (s *Store) InsertChannel(ctx context.Context, c Channel) (string, error) {
-	cfg, err := json.Marshal(c.Config)
+	encConfig, err := s.secret.encryptConfig(c.Config)
+	if err != nil {
+		return "", fmt.Errorf("encrypt config: %w", err)
+	}
+	cfg, err := json.Marshal(encConfig)
 	if err != nil {
 		return "", fmt.Errorf("marshal config: %w", err)
 	}
@@ -636,6 +712,9 @@ func (s *Store) GetChannel(ctx context.Context, id string) (*Channel, error) {
 	if len(chs) == 0 {
 		return nil, ErrNotFound
 	}
+	if err := s.decryptChannels(chs); err != nil {
+		return nil, err
+	}
 	return &chs[0], nil
 }
 
@@ -648,7 +727,14 @@ func (s *Store) ListChannels(ctx context.Context) ([]Channel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
 	}
-	return scanChannelRows(rows)
+	chs, err := scanChannelRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.decryptChannels(chs); err != nil {
+		return nil, err
+	}
+	return chs, nil
 }
 
 // ListEnabledChannels returns only enabled channels.
@@ -661,12 +747,38 @@ func (s *Store) ListEnabledChannels(ctx context.Context) ([]Channel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list enabled channels: %w", err)
 	}
-	return scanChannelRows(rows)
+	chs, err := scanChannelRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.decryptChannels(chs); err != nil {
+		return nil, err
+	}
+	return chs, nil
 }
 
-// UpdateChannel updates the mutable fields of a channel.
+// decryptChannels decrypts the secret-valued config fields of each channel in
+// place so callers (the dispatcher's senders, and admin reads before masking)
+// see cleartext. A nil cipher is a no-op.
+func (s *Store) decryptChannels(chs []Channel) error {
+	for i := range chs {
+		dec, err := s.secret.decryptConfig(chs[i].Config)
+		if err != nil {
+			return fmt.Errorf("decrypt channel config: %w", err)
+		}
+		chs[i].Config = dec
+	}
+	return nil
+}
+
+// UpdateChannel updates the mutable fields of a channel. Secret-valued config
+// fields are encrypted at rest before persistence.
 func (s *Store) UpdateChannel(ctx context.Context, c Channel) error {
-	cfg, err := json.Marshal(c.Config)
+	encConfig, err := s.secret.encryptConfig(c.Config)
+	if err != nil {
+		return fmt.Errorf("encrypt config: %w", err)
+	}
+	cfg, err := json.Marshal(encConfig)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}

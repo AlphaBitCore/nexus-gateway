@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"regexp"
 
 	cpmetrics "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/metrics"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -56,10 +57,60 @@ var bodyBearingTools = func() map[string]bool {
 	return m
 }()
 
+// secretPlaceholder replaces any matched secret token. It is intentionally
+// distinct from the PII detector's own redaction mark so an operator can tell a
+// minted credential was scrubbed (vs PII).
+const secretPlaceholder = "[redacted-secret]"
+
+// secretPatterns matches the product's OWN minted credential formats plus the
+// upstream provider key classes the gateway already recognizes. A body-relaying
+// read tool can echo a freshly-minted secret in plaintext exactly once — the
+// mint/rotate/regenerate ops return the raw key in their response body, which is
+// then relayed to the model. The PII detector (email/CC/SSN/phone) does not know
+// these formats, so without this pass a minted secret would reach the LLM prompt
+// unredacted.
+//
+// Each pattern is anchored on the product's literal prefix so it cannot
+// false-match arbitrary text, and bounded with a length floor so a bare prefix
+// fragment ("nvk_") in prose is left alone — only a real key body is scrubbed.
+// Formats (from the minting code, kept in lockstep):
+//   - nvk_<hex>   virtual key            (ai/virtualkeys/handler: vkPrefix + hex)
+//   - nxk_<hex>   personal/admin API key (identity/authn/apikey: apiKeyPrefix + hex)
+//   - nx_cs_<b64> OAuth client secret    (users/handler: oauthClientSecretPrefix + base64url)
+//   - sk-ant- / sk-proj- / sk-<body>     OpenAI/Anthropic provider keys (shared/traffic/detect.go)
+//   - AIza<body>                         Google API key                 (shared/traffic/detect.go)
+var secretPatterns = []*regexp.Regexp{
+	// Product virtual key: nvk_ + at least 16 hex chars.
+	regexp.MustCompile(`\bnvk_[0-9a-fA-F]{16,}\b`),
+	// Product personal / admin API key: nxk_ + at least 16 hex chars.
+	regexp.MustCompile(`\bnxk_[0-9a-fA-F]{16,}\b`),
+	// Product OAuth client secret: nx_cs_ + at least 16 base64url chars.
+	regexp.MustCompile(`\bnx_cs_[A-Za-z0-9_-]{16,}\b`),
+	// Anthropic/OpenAI sk-ant- / sk-proj- prefixes (checked before bare sk-).
+	regexp.MustCompile(`\bsk-(?:ant|proj)-[A-Za-z0-9_-]{16,}\b`),
+	// Bare sk- provider key.
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}\b`),
+	// Google AIza... API key (fixed 35-char body).
+	regexp.MustCompile(`\bAIza[A-Za-z0-9_-]{35}\b`),
+}
+
+// redactSecrets scrubs every product/provider secret token from text, replacing
+// it with secretPlaceholder. It returns the input unchanged when nothing matched.
+func redactSecrets(text string) string {
+	out := text
+	for _, re := range secretPatterns {
+		out = re.ReplaceAllString(out, secretPlaceholder)
+	}
+	return out
+}
+
 // piiRedactor implements agent.Redactor over the product's PiiDetector engine.
-// It is the web assistant's data-governance seam (§8): raw bodies returned by the
+// It is the web assistant's data-governance seam: raw bodies returned by the
 // body-relaying read tools are scrubbed before the tool output enters the prompt.
-// The kernel owns no PII policy — this host-side type supplies it.
+// The kernel owns no PII policy — this host-side type supplies it. In addition to
+// the PiiDetector's PII classes it strips the product's own minted secret formats
+// via redactSecrets, so a freshly-minted key echoed in a mint/rotate
+// response body never reaches the LLM.
 type piiRedactor struct {
 	hook hookcore.Hook
 }
@@ -95,22 +146,25 @@ func (r *piiRedactor) RedactToolOutput(toolName, text string) string {
 	if r == nil || r.hook == nil || text == "" || !bodyBearingTools[toolName] {
 		return text
 	}
+	// Secret redaction runs FIRST and unconditionally: it is independent of the
+	// PiiDetector (which does not know the product's key formats) and must scrub a
+	// minted credential even when the body carries no PII at all.
+	out := redactSecrets(text)
 	input := &hookcore.HookInput{
 		Normalized: &normalize.NormalizedPayload{
 			Kind: normalize.KindAIChat,
 			Messages: []normalize.Message{{
 				Role:    normalize.RoleUser,
-				Content: []normalize.ContentBlock{{Type: normalize.ContentText, Text: text}},
+				Content: []normalize.ContentBlock{{Type: normalize.ContentText, Text: out}},
 			}},
 		},
 	}
 	res, err := r.hook.Execute(context.Background(), input)
-	if err != nil || res == nil || res.Decision != hookcore.Modify || len(res.ModifiedContent) == 0 {
-		return text
+	if err == nil && res != nil && res.Decision == hookcore.Modify && len(res.ModifiedContent) > 0 {
+		out = res.ModifiedContent[0].Text
 	}
-	redacted := res.ModifiedContent[0].Text
-	if redacted != text && cpmetrics.AssistantPiiToPromptTotal != nil {
+	if out != text && cpmetrics.AssistantPiiToPromptTotal != nil {
 		cpmetrics.AssistantPiiToPromptTotal.With().Inc()
 	}
-	return redacted
+	return out
 }

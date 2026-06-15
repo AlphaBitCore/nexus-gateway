@@ -12,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
@@ -44,38 +45,50 @@ func (h *Handler) setupClient() *http.Client {
 }
 
 // resolveManagementURL fetches the proxy's management base URL from Hub.
-// Returns a 404 JSON error if the thing is unknown or has no management URL.
-func (h *Handler) resolveManagementURL(c echo.Context, thingID string) (string, error) {
+// On the unhappy paths (unknown thing → 404, Hub unreachable → 502, no
+// managementURL yet → 404) it writes the error response itself and returns
+// handled=true; the caller MUST `return nil` immediately without inspecting
+// the URL. handled=false means the URL is valid and the caller proceeds.
+//
+// The handled bool is load-bearing: echo's c.JSON returns nil after a
+// successful write, so the previous (string, error) contract could not tell a
+// caller "response already sent" — every caller would silently fall through and
+// double-write or nil-deref a missing meta. Returning the signal explicitly
+// closes that gap.
+func (h *Handler) resolveManagementURL(c echo.Context, thingID string) (url string, handled bool) {
 	meta, err := h.hub.GetThingServiceMeta(c.Request().Context(), thingID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			return "", c.JSON(http.StatusNotFound, map[string]any{
+			_ = c.JSON(http.StatusNotFound, map[string]any{
 				"error":   "thing_not_found",
 				"message": "No compliance proxy Thing with the given ID exists",
 			})
+			return "", true
 		}
 		h.logger.Warn("setup: Hub GetThingServiceMeta failed", "thingId", thingID, "error", err)
-		return "", c.JSON(http.StatusBadGateway, map[string]any{
+		_ = c.JSON(http.StatusBadGateway, map[string]any{
 			"error":   "hub_error",
 			"message": "Could not reach Hub to resolve proxy management URL",
 		})
+		return "", true
 	}
-	if meta.ManagementURL == "" {
-		return "", c.JSON(http.StatusNotFound, map[string]any{
+	if meta == nil || meta.ManagementURL == "" {
+		_ = c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "no_management_url",
 			"message": "The proxy Thing has not yet reported its managementURL",
 		})
+		return "", true
 	}
-	return meta.ManagementURL, nil
+	return meta.ManagementURL, false
 }
 
 // SetupGetCACert handles GET /api/admin/setup/proxy/:thingId/ca-cert.
 // Relays GET {managementURL}/management/ca-cert to the live proxy instance.
 func (h *Handler) SetupGetCACert(c echo.Context) error {
 	thingID := c.Param("thingId")
-	managementBase, err := h.resolveManagementURL(c, thingID)
-	if err != nil {
-		return err
+	managementBase, handled := h.resolveManagementURL(c, thingID)
+	if handled {
+		return nil
 	}
 
 	targetURL := strings.TrimRight(managementBase, "/") + "/management/ca-cert"
@@ -173,9 +186,9 @@ func (h *Handler) SetupGetMDMProfile(c echo.Context) error {
 		organization = "Nexus Gateway"
 	}
 
-	managementBase, err := h.resolveManagementURL(c, thingID)
-	if err != nil {
-		return err
+	managementBase, handled := h.resolveManagementURL(c, thingID)
+	if handled {
+		return nil
 	}
 
 	// Fetch the CA cert PEM from the live proxy.
@@ -301,10 +314,28 @@ func (h *Handler) SetupPatchOnboarding(c echo.Context) error {
 		})
 	}
 
+	// Validate the thingId against Hub before pushing. The onboarding
+	// state is pushed type-wide ("compliance-proxy"), but the operator targets
+	// a specific proxy in the UI — a typo'd / stale thingId must surface as a
+	// 404, not silently push to the whole fleet under a bogus path param.
+	// resolveManagementURL is the same Hub existence check the GET siblings use;
+	// it maps an unknown thing to 404 and a Hub outage to 502, writing the
+	// response itself when handled=true.
+	if _, handled := h.resolveManagementURL(c, thingID); handled {
+		return nil
+	}
+
+	// Stamp the admin actor + source IP on the config push so Hub's
+	// config_change_event row records who toggled onboarding and from where —
+	// the same identity the sibling node-config handlers forward.
+	actor := actorFromContext(c)
 	_, err := h.hub.NotifyConfigChange(c.Request().Context(), hub.ConfigChangeRequest{
 		ThingType: "compliance-proxy",
 		ConfigKey: configkey.Onboarding,
 		State:     map[string]any{"enabled": req.Enabled},
+		ActorID:   actor.UserID,
+		ActorName: actor.Name,
+		SourceIP:  sourceIP(c),
 	})
 	if err != nil {
 		h.logger.Warn("setup: push onboarding shadow failed", "thingId", thingID, "error", err)
@@ -312,6 +343,14 @@ func (h *Handler) SetupPatchOnboarding(c echo.Context) error {
 			"error": "hub_error", "message": "Could not push onboarding state to Hub",
 		})
 	}
+
+	// Audit the successful onboarding toggle, matching the sibling infra
+	// handlers (hub_proxy.go ConfigSyncUpdate / JobsTrigger / EnrollmentCreateToken)
+	// that all LogObserved on 2xx.
+	ae := audit.EntryFor(c, iam.ResourceNode, iam.VerbUpdate)
+	ae.EntityID = thingID
+	ae.AfterState = map[string]any{"configKey": configkey.Onboarding, "enabled": req.Enabled}
+	h.audit.LogObserved(c.Request().Context(), ae)
 
 	return c.JSON(http.StatusOK, map[string]any{
 		"thingId":  thingID,

@@ -163,10 +163,19 @@ func (db *DB) ListEnabledModels(ctx context.Context) ([]Model, error) {
 }
 
 // ModelPricing holds pricing data for a model used by quota downgrade logic.
+//
+// Priced is the unambiguous "this model has a price row" signal — true when at
+// least one of inputPricePerMillion / outputPricePerMillion is set (non-NULL),
+// false when the model has no row in the lookup OR both price columns are NULL.
+// It is distinct from a price of 0: a genuinely free model is Priced=true with
+// zero rates. The float fields collapse NULL and 0 to the same 0.0, so the
+// downgrade selector cannot tell an unpriced candidate (uncountable against a
+// cost cap) from a free one without this flag.
 type ModelPricing struct {
 	ModelID       string
 	InputPricePM  float64
 	OutputPricePM float64
+	Priced        bool
 }
 
 // FetchModelPricing reads model pricing from the database for a list of model IDs.
@@ -194,9 +203,11 @@ func (db *DB) FetchModelPricing(ctx context.Context, modelIDs []string) ([]Model
 		}
 		if f, ok := ParseDecimal(inPrice); ok {
 			mp.InputPricePM = f
+			mp.Priced = true
 		}
 		if f, ok := ParseDecimal(outPrice); ok {
 			mp.OutputPricePM = f
+			mp.Priced = true
 		}
 		priceMap[mp.ModelID] = mp
 	}

@@ -1,12 +1,19 @@
 # Nexus Hub — production config template.
-# Every field in internal/config/config.go.HubConfig appears here.
-# Env var overrides: NEXUS_HUB_PORT, DATABASE_URL, REDIS_* (see
-# packages/shared/storage/redisfactory for the full universal Redis env
-# contract), MQ_DRIVER, NATS_URL, NEXUS_HUB_SCHEDULER_ENABLED,
-# INTERNAL_SERVICE_TOKEN, LOG_LEVEL, LOG_FORMAT, NEXUS_HUB_ID,
-# NEXUS_HUB_ADVERTISE_ADDR, NEXUS_HUB_ALLOWED_ORIGINS,
-# AUTH_SERVER_URL, AUTH_SERVER_JWKS_URL, AUTH_SERVER_ISSUER,
-# AGENT_CA_CERT_FILE, AGENT_CA_KEY_FILE, AGENT_CA_DIR.
+# Covers the COMMON fields of internal/config/config.go.HubConfig; the
+# full field set (incl. scheduler retention horizons and per-job
+# intervals) lives in internal/config/config.go.
+# Env var overrides: NEXUS_HUB_PORT, NEXUS_HUB_PUBLIC_URL, DATABASE_URL,
+# REDIS_* (see packages/shared/storage/redisfactory for the full
+# universal Redis env contract), MQ_DRIVER, NATS_URL,
+# NEXUS_HUB_SCHEDULER_ENABLED, INTERNAL_SERVICE_TOKEN, LOG_LEVEL,
+# LOG_FORMAT, NEXUS_HUB_ID, NEXUS_HUB_ADVERTISE_ADDR,
+# NEXUS_HUB_ALLOWED_ORIGINS, AUTH_SERVER_URL, AUTH_SERVER_JWKS_URL,
+# AUTH_SERVER_ISSUER, AGENT_CA_CERT_FILE, AGENT_CA_KEY_FILE,
+# AGENT_CA_DIR.
+
+# REQUIRED. Externally-reachable base URL for this service; startup
+# validation fails when empty. Env NEXUS_HUB_PUBLIC_URL overrides.
+# publicURL: "https://hub.example.com"
 
 server:
   port: 3060
@@ -16,8 +23,15 @@ server:
 
 database:
   url: "postgres://postgres:postgres@localhost:5432/nexus_gateway?sslmode=disable"
-  maxConns: 20
-  minConns: 5
+  # Connection-pool sizing. The Hub is the traffic_event DRAIN: its MQ
+  # consumer batch-inserts every event the gateway/proxy/agent emit, on
+  # top of shadow/config/IAM/enrollment work — so under high ingest the
+  # pool must keep several parallel consumers + API handlers fed.
+  # Coordinate across services: the SUM of all services' maxConns must
+  # stay below Postgres `max_connections` (appliance default 200; see
+  # docs/operators/ops/ami-build.md). Scale up with event throughput.
+  maxConns: 40
+  minConns: 10
 
 redis:
   # Universal Redis configuration consumed by every Nexus Gateway service.
@@ -54,25 +68,28 @@ redis:
 mq:
   driver: "nats"
   nats:
+    # url is the only per-service knob; NATS server-side limits (max_payload,
+    # max_connections) live in the appliance (nexus-ami/scripts/install-nats.sh)
+    # and docker-compose.yml.
     url: "nats://localhost:4222"
 
-# MQ consumers (traffic-event-writer, admin-audit-writer,
-# metrics-aggregator, optional siem-forwarder).
+# MQ consumers (traffic-event-writer, admin-audit-writer, exemption-consumer).
+# This is the DRAIN for the NEXUS_EVENTS JetStream stream — if it falls
+# behind, the stream fills toward its cap and publishers (gateway/proxy/agent)
+# start failing to enqueue. Sized for high event throughput: a larger batch
+# amortises the per-INSERT round-trip, and a shorter flush interval keeps the
+# stream backlog low. Coordinated with database.maxConns (40) above so the
+# parallel batch INSERTs always have pooled connections.
 consumers:
   enabled: true
-  batchSize: 100
-  flushInterval: 5s
-  siem:
-    enabled: false
-    url: ""
-    headers: {}
-    format: "json"
-    batchSize: 200
-    flushInterval: 5s
-    eventTypes: []
+  batchSize: 200
+  flushInterval: 2s
 
 # Scheduled jobs (drift detector, identity enricher, enrollment
 # cleanup, stale-thing reaper).
+# Retention horizons and per-job intervals also exist with safe defaults;
+# override via env NEXUS_HUB_RETENTION_* / NEXUS_HUB_SCHEDULER_*_INTERVAL
+# (full list in internal/config/config.go).
 scheduler:
   enabled: true
   driftCheckInterval: 60s
@@ -81,9 +98,8 @@ scheduler:
   # locally. Enable only on small or forensics-heavy deployments.
   enableAgentRollup: false
 
-auth:
-  # REQUIRED. Set via env INTERNAL_SERVICE_TOKEN in production.
-  internalServiceToken: ""
+# auth.internalServiceToken is env-only (INTERNAL_SERVICE_TOKEN, REQUIRED);
+# the yaml field is ignored by the loader.
 
 # Shared OAuth/OIDC auth server (mounted by Control Plane). Env
 # overrides: AUTH_SERVER_URL, AUTH_SERVER_JWKS_URL, AUTH_SERVER_ISSUER
@@ -118,7 +134,12 @@ hub:
   id: ""
   # Bind address advertised to other services via self-registration.
   advertiseAddr: ""
-  # Production origin allowlist for the WebSocket endpoint.
-  # Localhost is always allowed; this list is additive for
-  # non-loopback origins.
+  # Production origin allowlist for the WebSocket endpoint. Every accepted
+  # origin (including localhost) must appear here in production. Localhost is
+  # auto-allowed ONLY when devMode is true (below).
   allowedOrigins: []
+  # Relax the WebSocket origin check to also accept localhost origins. MUST be
+  # false in production — a localhost origin plus a leaked bearer token would
+  # otherwise let a page on the operator's machine open a Hub WS. Override via
+  # env NEXUS_HUB_DEV_MODE=true for local development.
+  devMode: false

@@ -208,22 +208,3 @@ func TestErrJSON_EnvelopeShape(t *testing.T) {
 		t.Errorf("envelope inner = %+v", inner)
 	}
 }
-
-func TestHubPropagationErrorJSON_EnvelopeShape(t *testing.T) {
-	err := errAtRest("boom")
-	env := hubPropagationErrorJSON(err)
-	inner, ok := env["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("envelope missing 'error' map: %+v", env)
-	}
-	if inner["type"] != "propagation_error" {
-		t.Errorf("type = %v, want propagation_error", inner["type"])
-	}
-	if inner["detail"] != "boom" {
-		t.Errorf("detail = %v, want boom", inner["detail"])
-	}
-}
-
-type errAtRest string
-
-func (e errAtRest) Error() string { return string(e) }

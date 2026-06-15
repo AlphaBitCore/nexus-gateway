@@ -166,7 +166,17 @@ func (j *ThingRollupMergeJob) runCalendarMonth(ctx context.Context) error {
 	return nil
 }
 
+// mergeOneBucket merges one per-Thing coarse bucket and advances the live
+// watermark. Used by the live catch-up loop.
 func (j *ThingRollupMergeJob) mergeOneBucket(ctx context.Context, bucketStart, bucketEnd time.Time) error {
+	return j.mergeBucket(ctx, bucketStart, bucketEnd, true)
+}
+
+// mergeBucket merges one per-Thing coarse bucket inside a single transaction.
+// When writeWatermark is false (the correction backfill path) the live merge
+// watermark is left untouched so re-merging historical buckets does not rewind
+// the live cursor. Empty buckets are skipped (no-op).
+func (j *ThingRollupMergeJob) mergeBucket(ctx context.Context, bucketStart, bucketEnd time.Time, writeWatermark bool) error {
 	sourceRows, err := rollupstore.QueryThingRollupMergeSource(ctx, j.pool, j.cfg.sourceTable, bucketStart, bucketEnd)
 	if err != nil {
 		return fmt.Errorf("read thing source %s [%v, %v): %w", j.cfg.sourceTable, bucketStart, bucketEnd, err)
@@ -192,8 +202,10 @@ func (j *ThingRollupMergeJob) mergeOneBucket(ctx context.Context, bucketStart, b
 	if err := rollupstore.InsertThingRollupRows(ctx, tx, j.cfg.targetTable, merged); err != nil {
 		return err
 	}
-	if err := rollupstore.SetWatermark(ctx, tx, j.cfg.watermarkName, bucketStart); err != nil {
-		return err
+	if writeWatermark {
+		if err := rollupstore.SetWatermark(ctx, tx, j.cfg.watermarkName, bucketStart); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

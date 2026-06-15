@@ -10,11 +10,13 @@
 // is applied; the simulator is a debugging tool and the gateway-side
 // VK is itself the credential boundary.
 //
-// SSRF mitigations: the target URL must be http(s); the path must be
+// SSRF posture: the upstream host is NOT caller-controlled — every request is
+// forwarded to the server-configured gateway (configuredGatewayURL), so a
+// caller cannot point the proxy at an arbitrary internal host. The path must be
 // one of the OpenAI-compatible surfaces the simulator actually drives
-// (`/v1/models`, `/v1/chat/completions`, `/v1/usage`); the method must
-// be GET or POST. These together stop the proxy from being used as a
-// generic outbound HTTP client.
+// (`/v1/models`, `/v1/chat/completions`, `/v1/messages`, `/v1/usage`, or a
+// Gemini per-model endpoint); the method must be GET or POST. Together these
+// stop the proxy from being used as a generic outbound HTTP client.
 package aigwsim
 
 import (
@@ -33,28 +35,41 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// defaultSimulatorTargetURL is the fallback ai-gateway base URL used
-// when the request body leaves targetUrl empty. The UI no longer asks
-// the operator to type a URL — CP already knows where the gateway is —
-// so this default is the canonical value for "the local stack". Prod
-// deployments override via env (typically the same env that the
-// admin UI reads via /api/admin/me / config endpoints).
-func defaultSimulatorTargetURL() string {
-	if v := strings.TrimSpace(os.Getenv("AI_GATEWAY_URL")); v != "" {
-		return v
+// configuredGatewayURL returns the server-configured AI-gateway base URL
+// (env AI_GATEWAY_URL, or the local default) and validates it is a well-formed
+// http(s) URL with a host. The simulator ALWAYS forwards here: the caller
+// cannot choose the upstream host (otherwise any admin-session
+// principal, including a read-only viewer, could drive an arbitrary
+// internal-network SSRF read). A misconfigured AI_GATEWAY_URL is an operator
+// error, surfaced to the caller as a 500 rather than a 400.
+func configuredGatewayURL() (string, error) {
+	raw := strings.TrimSpace(os.Getenv("AI_GATEWAY_URL"))
+	if raw == "" {
+		raw = "http://localhost:3050"
 	}
-	return "http://localhost:3050"
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("configured AI_GATEWAY_URL %q: %w", raw, err)
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+	default:
+		return "", fmt.Errorf("configured AI_GATEWAY_URL scheme %q is not http/https", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("configured AI_GATEWAY_URL %q has no host", raw)
+	}
+	return strings.TrimRight(raw, "/"), nil
 }
 
-// simulatorForwardRequest is the JSON body the UI posts. body is sent
-// to the gateway as the upstream request body when method is POST; for
-// GET it's ignored.
+// simulatorForwardRequest is the JSON body the UI posts. The upstream host is
+// NOT part of it — see configuredGatewayURL. body is sent to the gateway as the
+// upstream request body when method is POST; for GET it's ignored.
 type simulatorForwardRequest struct {
-	TargetURL string          `json:"targetUrl"`
-	Path      string          `json:"path"`
-	Method    string          `json:"method"`
-	VK        string          `json:"vk"`
-	Body      json.RawMessage `json:"body,omitempty"`
+	Path   string          `json:"path"`
+	Method string          `json:"method"`
+	VK     string          `json:"vk"`
+	Body   json.RawMessage `json:"body,omitempty"`
 }
 
 // allowedSimulatorPaths is the closed set of upstream paths the simulator
@@ -93,30 +108,12 @@ func isAllowedSimulatorPath(p string) bool {
 	return false
 }
 
-// validateForwardRequest enforces the SSRF mitigations described in the
-// file header. Returned errors are written verbatim into the 400 body
-// so a debugging admin can see why the call was rejected.
-//
-// Empty TargetURL is replaced in place with the server-configured
-// default (env AI_GATEWAY_URL or localhost:3050). The UI relies
-// on this so the gateway URL never has to be typed for the common
-// "I just want to test the local stack" case.
+// validateForwardRequest enforces the caller-controlled SSRF mitigations: the
+// path must be in the simulator allowlist and the method must be GET or POST.
+// The upstream host is not caller-controlled (see configuredGatewayURL).
+// Returned errors are written verbatim into the 400 body so a debugging admin
+// can see why the call was rejected.
 func validateForwardRequest(req *simulatorForwardRequest) error {
-	if strings.TrimSpace(req.TargetURL) == "" {
-		req.TargetURL = defaultSimulatorTargetURL()
-	}
-	parsed, err := url.Parse(strings.TrimSpace(req.TargetURL))
-	if err != nil {
-		return fmt.Errorf("targetUrl: %w", err)
-	}
-	switch parsed.Scheme {
-	case "http", "https":
-	default:
-		return fmt.Errorf("targetUrl scheme %q is not allowed (http/https only)", parsed.Scheme)
-	}
-	if parsed.Host == "" {
-		return errors.New("targetUrl has no host")
-	}
 	if !isAllowedSimulatorPath(req.Path) {
 		return fmt.Errorf("path %q is not in the simulator allowlist", req.Path)
 	}
@@ -133,7 +130,7 @@ func validateForwardRequest(req *simulatorForwardRequest) error {
 }
 
 // AIGatewaySimulatorForward proxies an AI-Gateway-Simulator request from
-// the admin UI through to the user-supplied gateway URL. Streaming
+// the admin UI through to the server-configured gateway. Streaming
 // responses (chat completion stream) flush per upstream chunk so the
 // browser sees SSE deltas in real time. Aborting the browser request
 // cancels the upstream call via the request context.
@@ -145,24 +142,15 @@ func (h *Handler) AIGatewaySimulatorForward(c echo.Context) error {
 	if err := validateForwardRequest(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON(err.Error(), "validation_error", ""))
 	}
+	base, err := configuredGatewayURL()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON(err.Error(), "config_error", ""))
+	}
 
 	method := strings.ToUpper(strings.TrimSpace(body.Method))
-	target := strings.TrimRight(strings.TrimSpace(body.TargetURL), "/") + body.Path
+	target := base + body.Path
 
-	// We can't reuse `nexushttp.New` directly because it forces a default
-	// timeout that's too short for streaming chat completions. Instead we
-	// keep `Timeout: 0` (the proxy inherits the request lifetime from the
-	// browser via ctx so cancellation propagates upstream when the
-	// operator hits Stop) AND route the transport through
-	// `nexushttp.WrapTransport` so outbound debug logging + request-id
-	// propagation still apply on this path.
-	client := &http.Client{
-		Timeout: 0,
-		Transport: nexushttp.WrapTransport(http.DefaultTransport, nexushttp.WrapOpts{
-			Caller:         "cp-admin-aiguard-simulator",
-			PropagateReqID: true,
-		}),
-	}
+	client := newSimulatorForwardClient()
 
 	var upstreamBody io.Reader
 	if method == http.MethodPost && len(body.Body) > 0 {
@@ -225,9 +213,36 @@ func (fw *simulatorFlushWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// simulatorForwardTimeout caps the connect/read budget when the UI is
-// not actively streaming. Currently unused; kept here as a knob for a
-// later admin-configurable upper bound on long-running chat tests.
-const simulatorForwardTimeout = 10 * time.Minute
+// simulatorForwardTimeout bounds how long the simulator will wait for the
+// upstream AI Gateway to begin responding (TCP connect + TLS + first
+// response header). It is applied as Transport.ResponseHeaderTimeout, NOT
+// as Client.Timeout: a flat Client.Timeout would also cap the body read and
+// thus truncate a long-running streaming chat completion mid-stream, which
+// is exactly the surface the simulator exists to exercise. 120s is generous
+// enough that a slow-but-alive gateway (cold provider, queued LLM request)
+// still gets through, while a wedged/black-holed upstream that never sends
+// headers can no longer hang the admin request indefinitely.
+const simulatorForwardTimeout = 120 * time.Second
 
-var _ = simulatorForwardTimeout
+// newSimulatorForwardClient builds the HTTP client used to forward simulator
+// requests to the configured AI Gateway.
+//
+// Client.Timeout stays 0 on purpose: the request inherits the browser's
+// lifetime via the request context, so cancellation (operator hits Stop)
+// propagates upstream, and an in-progress SSE stream is allowed to run for
+// as long as the gateway keeps sending bytes. The upper bound that prevents
+// a hung upstream from pinning the connection forever lives on the
+// transport's ResponseHeaderTimeout (= simulatorForwardTimeout). The
+// transport is wrapped via nexushttp.WrapTransport so outbound debug logging
+// and request-id propagation still apply on this path.
+func newSimulatorForwardClient() *http.Client {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.ResponseHeaderTimeout = simulatorForwardTimeout
+	return &http.Client{
+		Timeout: 0,
+		Transport: nexushttp.WrapTransport(base, nexushttp.WrapOpts{
+			Caller:         "cp-admin-aiguard-simulator",
+			PropagateReqID: true,
+		}),
+	}
+}

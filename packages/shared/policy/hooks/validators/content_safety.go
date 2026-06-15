@@ -132,6 +132,12 @@ func (cs *ContentSafety) Execute(_ context.Context, input *core.HookInput) (*cor
 					result.Tags = core.AppendTag(result.Tags, "severity:restricted")
 					result.Tags = core.AppendTag(result.Tags, "detector:content-safety")
 					result.Tags = core.AppendTag(result.Tags, "category:"+cat.name)
+					// Self-stamp the storage policy: the pipeline stamps it
+					// only for non-Approve decisions, so an approve-inflight
+					// match would otherwise persist the matched content.
+					// No spans here, so redact degrades to drop-content at
+					// the audit writer (never store what we cannot redact).
+					result.StorageAction = cs.onMatch.StorageAction
 					result.LatencyMs = int(time.Since(start).Milliseconds())
 					return result, nil
 				}

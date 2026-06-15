@@ -18,6 +18,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 )
 
 func TestParseDateRange(t *testing.T) {
@@ -223,7 +224,10 @@ func (f *fakeVKLookupEnvelope) GetVirtualKeyByHash(_ context.Context, keyHash st
 }
 
 func hmacHashVKEnvelope(raw, secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
+	// SEC-W2-01: the authenticator hashes VKs under the HKDF-derived VK-domain
+	// sub-key, not the raw master — mirror that so the seeded lookup hash matches.
+	sub := keyderive.DeriveSubkey([]byte(secret), keyderive.ClassAPIKeyVirtualKey)
+	mac := hmac.New(sha256.New, sub[:])
 	_, _ = mac.Write([]byte(raw))
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -238,7 +242,7 @@ func TestUsageSummaryHandler_AuthMissing(t *testing.T) {
 	defer mock.Close()
 	db := store.NewWithPgxPool(mock)
 
-	authn := vkauth.NewAuthenticator(&fakeVKLookupEnvelope{}, "test-secret", slog.Default())
+	authn := vkauth.NewAuthenticator(&fakeVKLookupEnvelope{}, vkKeyring("test-secret"), slog.Default())
 	h := UsageSummaryHandler(db, authn, nil, slog.Default())
 
 	w := httptest.NewRecorder()
@@ -262,7 +266,7 @@ func TestUsageDailyHandler_AuthMissing(t *testing.T) {
 	defer mock.Close()
 	db := store.NewWithPgxPool(mock)
 
-	authn := vkauth.NewAuthenticator(&fakeVKLookupEnvelope{}, "test-secret", slog.Default())
+	authn := vkauth.NewAuthenticator(&fakeVKLookupEnvelope{}, vkKeyring("test-secret"), slog.Default())
 	h := UsageDailyHandler(db, authn, slog.Default())
 
 	w := httptest.NewRecorder()
@@ -289,7 +293,7 @@ func TestUsageDailyHandler_InvalidDate(t *testing.T) {
 		keys: map[string]*store.VirtualKey{
 			hmacHashVKEnvelope(vkKey, hmacSecret): {ID: "vk-1", Name: "test-vk", Enabled: true},
 		},
-	}, hmacSecret, slog.Default())
+	}, vkKeyring(hmacSecret), slog.Default())
 
 	h := UsageDailyHandler(db, authn, slog.Default())
 	w := httptest.NewRecorder()
@@ -321,7 +325,7 @@ func TestUsageDailyHandler_DBQueryError(t *testing.T) {
 		keys: map[string]*store.VirtualKey{
 			hmacHashVKEnvelope(vkKey, hmacSecret): {ID: "vk-1", Name: "test-vk", Enabled: true},
 		},
-	}, hmacSecret, slog.Default())
+	}, vkKeyring(hmacSecret), slog.Default())
 
 	h := UsageDailyHandler(db, authn, slog.Default())
 	w := httptest.NewRecorder()
@@ -357,7 +361,7 @@ func TestUsageDailyHandler_HappyPath(t *testing.T) {
 		keys: map[string]*store.VirtualKey{
 			hmacHashVKEnvelope(vkKey, hmacSecret): {ID: "vk-1", Name: "test-vk", Enabled: true},
 		},
-	}, hmacSecret, slog.Default())
+	}, vkKeyring(hmacSecret), slog.Default())
 
 	h := UsageDailyHandler(db, authn, slog.Default())
 	w := httptest.NewRecorder()
@@ -392,7 +396,7 @@ func TestUsageSummaryHandler_DBQueryError(t *testing.T) {
 		keys: map[string]*store.VirtualKey{
 			hmacHashVKEnvelope(vkKey, hmacSecret): {ID: "vk-1", Name: "test-vk", Enabled: true},
 		},
-	}, hmacSecret, slog.Default())
+	}, vkKeyring(hmacSecret), slog.Default())
 
 	h := UsageSummaryHandler(db, authn, nil, slog.Default())
 	w := httptest.NewRecorder()
@@ -425,7 +429,7 @@ func TestUsageSummaryHandler_HappyPath_NoQuota(t *testing.T) {
 		keys: map[string]*store.VirtualKey{
 			hmacHashVKEnvelope(vkKey, hmacSecret): {ID: "vk-1", Name: "test-vk", Enabled: true},
 		},
-	}, hmacSecret, slog.Default())
+	}, vkKeyring(hmacSecret), slog.Default())
 
 	h := UsageSummaryHandler(db, authn, nil, slog.Default())
 	w := httptest.NewRecorder()

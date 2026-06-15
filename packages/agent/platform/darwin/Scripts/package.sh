@@ -35,8 +35,6 @@ LOGS_DIR="Library/Logs/com.nexus-gateway.agent"
 rm -rf "$PKG_ROOT" "$PKG_SCRIPTS"
 mkdir -p \
     "$PKG_ROOT/Applications" \
-    "$PKG_ROOT/Library/LaunchDaemons" \
-    "$PKG_ROOT/Library/LaunchAgents" \
     "$PKG_ROOT/$APP_SUPPORT_DIR" \
     "$PKG_ROOT/$LOGS_DIR" \
     "$PKG_SCRIPTS"
@@ -44,16 +42,14 @@ mkdir -p \
 # Stage the .app
 cp -R "$APP_DIR" "$PKG_ROOT/Applications/"
 
-# Stage the LaunchDaemon plist
-cp "$DARWIN_DIR/installer/LaunchDaemon.plist" "$PKG_ROOT/Library/LaunchDaemons/com.nexus-gateway.agent.plist"
-
-# Stage the LaunchAgent plist (per-user, runs at every Aqua login).
-# Auto-launches NexusAgent.app so the menu-bar app gets a chance to
-# call NETransparentProxyManager.startVPNTunnel after a reboot. Without
-# this the Go daemon comes up at boot but the NE provider stays
-# disconnected until the user manually opens the .app — terrible UX
-# for a security tool that's supposed to be always-on.
-cp "$DARWIN_DIR/installer/LaunchAgent.plist" "$PKG_ROOT/Library/LaunchAgents/com.nexus-gateway.agent.menubar.plist"
+# NOTE: the LaunchDaemon plist is no longer staged to /Library/LaunchDaemons
+# and the LaunchAgent plist is gone entirely. Registration is now bundle-tied:
+# the daemon plist ships INSIDE the .app at Contents/Library/LaunchDaemons/
+# (build.sh) and the menu app registers both the daemon (SMAppService.daemon)
+# and itself as a login item (SMAppService.mainApp) on first launch. Deleting
+# the app deregisters the daemon — no /Library residue. The pkg postinstall no
+# longer bootstraps launchd; it only stages config + CA + dirs (and, on an
+# upgrade from a classic build, removes the stale /Library plists).
 
 # Stage the production config alongside future state files inside
 # /Library/Application Support/<bundle-id>/. Apple's File System Programming
@@ -66,7 +62,7 @@ if [ ! -f "$PROD_CONFIG" ]; then
     echo "  The repo ships only the template at agent.prod.yaml.example." >&2
     echo "  Copy it and fill in your deployment values before building:" >&2
     echo "    cp $PROD_CONFIG.example $PROD_CONFIG" >&2
-    echo "  Then edit Hub URL, CHANGE_ME_* secrets, etc." >&2
+    echo "  Then fill in the real Hub URLs (hubURL/hubHTTPURL) and cpURL for your deployment." >&2
     exit 1
 fi
 cp "$PROD_CONFIG" "$PKG_ROOT/$APP_SUPPORT_DIR/agent.yaml"

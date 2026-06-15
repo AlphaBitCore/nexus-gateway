@@ -147,7 +147,7 @@ func TestPolicyResolver_ConcurrentReadsAndSwaps(t *testing.T) {
 			defer wg.Done()
 			for range readsPerReader {
 				_ = r.HasHooks("request")
-				hooks, err := r.ResolveHooks("request", "COMPLIANCE_PROXY")
+				hooks, err := r.ResolveHooks("request", "COMPLIANCE_PROXY", false)
 				if err != nil {
 					readErrors.Add(1)
 					return

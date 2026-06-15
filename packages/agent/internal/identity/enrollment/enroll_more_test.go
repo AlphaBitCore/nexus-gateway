@@ -16,8 +16,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/hub"
 )
 
 // writeFileAtomic — failure paths
@@ -208,7 +206,7 @@ func TestEnrollWithJWT_SendsBearerAuthorization(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedAuth = r.Header.Get("Authorization")
 		capturedXTok = r.Header.Get("X-Enrollment-Token")
-		_ = json.NewEncoder(w).Encode(HubEnrollResponse{ID: "sso-id", DeviceToken: "tok", CertPEM: "c", CaCertPEM: "ca"})
+		_ = json.NewEncoder(w).Encode(HubEnrollResponse{ID: "sso-id", DeviceToken: "tok"})
 	}))
 	defer srv.Close()
 
@@ -477,8 +475,6 @@ func TestEnroll_PersistsTrustLevelWhenReturned(t *testing.T) {
 	stub := &stubHubEnroller{resp: &HubEnrollResponse{
 		ID:          "t-99",
 		DeviceToken: strings.Repeat("a", 32),
-		CertPEM:     "cert",
-		CaCertPEM:   "ca",
 		TrustLevel:  3,
 	}}
 	dir := t.TempDir()
@@ -499,16 +495,16 @@ func TestEnroll_PersistsTrustLevelWhenReturned(t *testing.T) {
 	}
 }
 
-// persistHubEnrollment skips entries with empty content — caCertPEM is
-// often omitted in re-enroll responses and must not produce an empty
-// gateway-ca.pem on disk.
-func TestEnroll_SkipsEmptyContentArtifacts(t *testing.T) {
+// Enrollment writes the locally-generated device identity (device.pem +
+// device-key.pem) and never a gateway-ca.pem — the Hub CA is an operator
+// pin dropped into StateDir, not an enrollment artifact. persistHubEnrollment
+// also skips empty-content entries (e.g. absent attestation), so trust-level=0
+// still stamps "0" while attestation files stay absent.
+func TestEnroll_WritesLocalIdentityNoGatewayCA(t *testing.T) {
 	stub := &stubHubEnroller{resp: &HubEnrollResponse{
 		ID:          "t-1",
 		DeviceToken: "tok",
-		CertPEM:     "cert",
-		// CaCertPEM intentionally empty.
-		TrustLevel: 0,
+		TrustLevel:  0,
 	}}
 	dir := t.TempDir()
 	mgr := NewManager(dir, WithHubEnroller(stub))
@@ -516,8 +512,16 @@ func TestEnroll_SkipsEmptyContentArtifacts(t *testing.T) {
 	if err := mgr.Enroll(context.Background(), "tok", "host", "darwin", "15", "2.0"); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
+	// Locally self-signed device identity is persisted.
+	if _, err := os.Stat(filepath.Join(dir, "device.pem")); err != nil {
+		t.Errorf("device.pem should exist after enrollment: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "device-key.pem")); err != nil {
+		t.Errorf("device-key.pem should exist after enrollment: %v", err)
+	}
+	// Hub no longer returns its CA in the enroll response, so no gateway-ca.pem.
 	if _, err := os.Stat(filepath.Join(dir, "gateway-ca.pem")); !os.IsNotExist(err) {
-		t.Errorf("gateway-ca.pem should NOT exist when CaCertPEM empty; stat err=%v", err)
+		t.Errorf("gateway-ca.pem should NOT be written by enrollment; stat err=%v", err)
 	}
 	// trust-level=0 stamps "0" (non-empty string), so the file IS created.
 	if _, err := os.Stat(filepath.Join(dir, "trust-level")); err != nil {
@@ -623,120 +627,6 @@ func TestUnenroll_SkipsHubWhenNoThingID(t *testing.T) {
 	}
 }
 
-// Renew — additional branches
-
-// Renew must surface a wrapped error when Hub rejects the renewal,
-// without rotating any local files (the old cert remains usable).
-func TestRenew_HubErrorLeavesExistingFilesUntouched(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "device-id"), []byte("t-1"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "device-key.pem"), []byte("OLDKEY"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "device.pem"), []byte("OLDCERT"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	mgr := NewManager(dir, WithCertRenewer(&stubRenewer{err: errors.New("hub busy")}))
-	err := mgr.Renew(context.Background())
-	if err == nil {
-		t.Fatal("expected renewal error")
-	}
-	if !strings.Contains(err.Error(), "renewal request") {
-		t.Errorf("error should be wrapped: %v", err)
-	}
-
-	// Existing key/cert must be untouched.
-	for f, want := range map[string]string{"device-key.pem": "OLDKEY", "device.pem": "OLDCERT"} {
-		got, err := os.ReadFile(filepath.Join(dir, f))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != want {
-			t.Errorf("%s was modified: got %q want %q", f, string(got), want)
-		}
-	}
-}
-
-// capturingRenewer records the CSR that Renew sends so the wire shape
-// can be asserted (Hub validates the CSR's CommonName).
-type capturingRenewer struct {
-	resp        *hub.RenewCertResponse
-	err         error
-	capturedCSR string
-}
-
-func (c *capturingRenewer) RenewCert(_ context.Context, _ string, csrPEM string) (*hub.RenewCertResponse, error) {
-	c.capturedCSR = csrPEM
-	if c.err != nil {
-		return nil, c.err
-	}
-	return c.resp, nil
-}
-
-// Renew issues a CSR whose CN is "device-<hostname>" — verifies the
-// CSR shape Hub validates against.
-func TestRenew_SendsCSRWithDeviceCN(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "device-id"), []byte("dev-cn"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	stub := &capturingRenewer{
-		resp: &hub.RenewCertResponse{
-			Certificate: "-----BEGIN CERTIFICATE-----\nNEW\n-----END CERTIFICATE-----",
-			GatewayCA:   "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----",
-			ExpiresAt:   "2026-12-31T00:00:00Z",
-			Serial:      "ser",
-		},
-	}
-	mgr := NewManager(dir, WithCertRenewer(stub))
-	if err := mgr.Renew(context.Background()); err != nil {
-		t.Fatalf("Renew: %v", err)
-	}
-	if !strings.HasPrefix(stub.capturedCSR, "-----BEGIN CERTIFICATE REQUEST-----") {
-		head := stub.capturedCSR
-		if len(head) > 40 {
-			head = head[:40]
-		}
-		t.Errorf("CSR doesn't look like a CSR: %q", head)
-	}
-}
-
-// Renew must surface a writeFileAtomic failure as a wrapped error so a
-// disk-full mid-renewal does not silently leave a half-renewed
-// cert/key pair on disk.
-func TestRenew_WriteFailureWrapped(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix-only permission semantics")
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "device-id"), []byte("dev-w"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	// Make the cert dir read-only so writeFileAtomic's CreateTemp fails.
-	if err := os.Chmod(dir, 0500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
-
-	stub := &stubRenewer{resp: &hub.RenewCertResponse{
-		Certificate: "cert",
-		GatewayCA:   "ca",
-		ExpiresAt:   "2026-12-31T00:00:00Z",
-		Serial:      "ser",
-	}}
-	mgr := NewManager(dir, WithCertRenewer(stub))
-	err := mgr.Renew(context.Background())
-	if err == nil {
-		t.Fatal("expected write failure on read-only dir")
-	}
-	if !strings.Contains(err.Error(), "write renewed") {
-		t.Errorf("error should mention 'write renewed': %v", err)
-	}
-}
-
 // persistHubEnrollment must surface a writeFileAtomic failure as a
 // wrapped "write <file>: ..." error. We can't easily mid-flight fail
 // after MkdirAll succeeds, but we can call PersistEnrollment directly
@@ -756,10 +646,8 @@ func TestPersistEnrollment_WriteFailureWrapped(t *testing.T) {
 	resp := &HubEnrollResponse{
 		ID:          "t-rw",
 		DeviceToken: "tok",
-		CertPEM:     "cert",
-		CaCertPEM:   "ca",
 	}
-	err := mgr.PersistEnrollment(resp, []byte("KEY"), nil)
+	err := mgr.PersistEnrollment(resp, []byte("KEY"), []byte("cert"), nil)
 	if err == nil {
 		t.Fatal("expected write failure on read-only dir")
 	}
@@ -840,7 +728,7 @@ func (s *stubHubEnroller) Enroll(_ context.Context, _ string, _ HubEnrollRequest
 	if s.resp != nil {
 		return s.resp, nil
 	}
-	return &HubEnrollResponse{ID: "stub-id", DeviceToken: "stub-tok", CertPEM: "c", CaCertPEM: "ca"}, nil
+	return &HubEnrollResponse{ID: "stub-id", DeviceToken: "stub-tok"}, nil
 }
 
 func (s *stubHubEnroller) EnrollWithJWT(_ context.Context, _ string, _ HubEnrollRequest) (*HubEnrollResponse, error) {
@@ -1006,64 +894,21 @@ func TestEnroll_GenerateKeypairFailsOnRandStarvation(t *testing.T) {
 	}
 }
 
-// Enroll must surface a wrapped "create CSR" error when crypto/rand
-// succeeds for the keypair but starves during CSR signing.
-func TestEnroll_CreateCSRFailsOnRandStarvation(t *testing.T) {
-	// 48-byte budget is enough for P256 GenerateKey (consumes ~32 bytes
-	// for the scalar) but always exhausts before CSR signing completes.
-	// Empirically verified 0/2000 keygen failures + 2000/2000 CSR failures.
+// Enroll must surface a wrapped "create device cert" error when crypto/rand
+// succeeds for the keypair + serial but starves during cert signing.
+func TestEnroll_CreateDeviceCertFailsOnRandStarvation(t *testing.T) {
+	// 60-byte budget is enough for P256 GenerateKey (~33 bytes) plus the
+	// 128-bit serial (~16 bytes) but always exhausts before the self-signed
+	// cert's ECDSA signature completes.
 	defer installRandReader(t, &byteBudget{
 		inner:     rand.Reader,
-		err:       errors.New("entropy starved mid-CSR"),
-		remaining: 48,
+		err:       errors.New("entropy starved mid-cert"),
+		remaining: 60,
 	})()
 
 	mgr := NewManager(t.TempDir(), WithHubEnroller(&stubHubEnroller{}))
 	err := mgr.Enroll(context.Background(), "tok", "host", "darwin", "14", "1.0")
-	if err == nil || !strings.Contains(err.Error(), "create CSR") {
-		t.Fatalf("expected create-CSR error, got %v", err)
-	}
-}
-
-// Renew must surface a wrapped "generate renewal keypair" error when
-// crypto/rand fails on the first read.
-func TestRenew_GenerateRenewalKeypairFailsOnRandStarvation(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "device-id"), []byte("t-r"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	defer installRandReader(t, failReader{err: errors.New("entropy starved")})()
-
-	mgr := NewManager(dir, WithCertRenewer(&stubRenewer{}))
-	err := mgr.Renew(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "generate renewal keypair") {
-		t.Fatalf("expected generate-renewal-keypair error, got %v", err)
-	}
-}
-
-// Renew must surface a wrapped "create renewal CSR" error when
-// crypto/rand starves during CSR signing. Provides a non-nil
-// stubRenewer.resp so the test fails fast on the create-CSR branch
-// rather than nil-deref'ing later if the CSR happened to succeed.
-func TestRenew_CreateRenewalCSRFailsOnRandStarvation(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "device-id"), []byte("t-r2"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	defer installRandReader(t, &byteBudget{
-		inner:     rand.Reader,
-		err:       errors.New("entropy starved mid-CSR"),
-		remaining: 48,
-	})()
-
-	mgr := NewManager(dir, WithCertRenewer(&stubRenewer{
-		resp: &hub.RenewCertResponse{
-			Certificate: "cert", GatewayCA: "ca",
-			ExpiresAt: "2026-12-31T00:00:00Z", Serial: "ser",
-		},
-	}))
-	err := mgr.Renew(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "create renewal CSR") {
-		t.Fatalf("expected create-renewal-CSR error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "create device cert") {
+		t.Fatalf("expected create-device-cert error, got %v", err)
 	}
 }

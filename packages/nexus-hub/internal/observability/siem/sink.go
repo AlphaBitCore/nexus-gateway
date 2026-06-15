@@ -40,6 +40,18 @@ type HTTPSink struct {
 	client    *http.Client
 }
 
+// httpSinkDialControl is the dial-time SSRF guard installed on every HTTPSink
+// client: it refuses to connect to a loopback / private / link-local
+// address, so a maliciously-reconfigured webhook URL cannot exfiltrate the audit
+// stream to an internal host or pivot into the Hub's network. The persistent
+// SIEM egress is external by nature — a private/loopback target is never
+// legitimate — so it obtains its guard from the admin-egress chokepoint as
+// ExternalOnly (FIX-4 consistency follow-up; behaviour-identical to the prior
+// BlockPrivateDialControl). It is a package var ONLY so in-process tests can
+// point a sink at a 127.0.0.1 httptest server; production code never reassigns
+// it. The guard's own behaviour is covered by TestHTTPSink_RejectsPrivateURL.
+var httpSinkDialControl = nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly)
+
 // NewHTTPSink creates a sink that POSTs batches to the given URL using the
 // provided formatter. If formatter is nil, JSONFormatter is used as the default.
 // Headers are set on every request (typically used for auth tokens).
@@ -58,6 +70,13 @@ func NewHTTPSink(url string, headers map[string]string, formatter Formatter) (*H
 			Caller:         "hub-siem",
 			Timeout:        30 * time.Second,
 			PropagateReqID: true,
+			// This is the persistent SIEM egress — the actual channel
+			// an attacker who reconfigured the webhook URL would exfiltrate the
+			// org-wide audit stream over, and an SSRF primitive against the Hub's
+			// own network. Scope the private-IP dial guard to this sink client
+			// only (the Hub dials its own private deps elsewhere). Runs on the
+			// resolved address, so it also defeats DNS-rebinding at delivery time.
+			DialControl: httpSinkDialControl,
 		}),
 	}, nil
 }

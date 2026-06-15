@@ -82,7 +82,10 @@ func NewPrivateIPChecker(exceptionCIDRs []string, opts ...PrivateIPCheckerOption
 	p := &PrivateIPChecker{
 		reservedNets: reserved,
 		exceptions:   exceptions,
-		resolver:     net.DefaultResolver,
+		// Default to a caching resolver so a connection burst to one host
+		// collapses to a single DNS lookup. WithResolver / SetResolverForTest
+		// replace this with a raw (uncached) resolver for hermetic tests.
+		resolver: newCachingResolver(net.DefaultResolver, dnsCacheTTL),
 	}
 	for _, opt := range opts {
 		opt(p)

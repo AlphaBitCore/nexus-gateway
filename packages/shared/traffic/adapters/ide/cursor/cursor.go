@@ -192,17 +192,32 @@ func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (tra
 // text delta (field 1).
 //
 // For JSON chunks (legacy relay path) the OpenAI-compat delta shape is tried.
-func (a *Adapter) ExtractStreamChunk(_ context.Context, chunk []byte, _ string) (traffic.NormalizedContent, error) {
+func (a *Adapter) ExtractStreamChunk(_ context.Context, chunk []byte, path string) (traffic.NormalizedContent, error) {
 	if len(chunk) == 0 {
 		return traffic.NormalizedContent{}, nil
 	}
 	if !looksLikeJSON(chunk) {
-		// Raw protobuf frame payload — parse as StreamChatResponse.
-		text := parseStreamChatResponseText(chunk)
-		if text == "" {
+		// Raw protobuf frame payload. The frame schema differs by service:
+		//   - /aiserver.v1.AiService/Stream* : StreamChatResponse, field 1 = text
+		//     delta (the legacy chat path).
+		//   - /agent.v1.AgentService/*       : the agent service embeds its
+		//     conversation as OpenAI-compat {"role","content":[{type,text}]} JSON
+		//     (and Lexical {"root":...} blocks for the typed message) inside
+		//     protobuf string fields — decode those, not field 1.
+		// On any other protobuf path emit nothing (a StreamChatResponse decode of
+		// a foreign frame yields a coincidental field-1 byte — the stray "j").
+		switch {
+		case isAgentRunPath(path):
+			return extractCursorAgentFrame(chunk), nil
+		case isChatPath(path):
+			text := parseStreamChatResponseText(chunk)
+			if text == "" {
+				return traffic.NormalizedContent{}, nil
+			}
+			return traffic.NormalizedContent{Segments: []string{text}}, nil
+		default:
 			return traffic.NormalizedContent{}, nil
 		}
-		return traffic.NormalizedContent{Segments: []string{text}}, nil
 	}
 	if !gjson.ValidBytes(chunk) {
 		return traffic.NormalizedContent{}, nil

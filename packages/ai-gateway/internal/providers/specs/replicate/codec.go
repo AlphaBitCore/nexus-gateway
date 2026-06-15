@@ -104,7 +104,7 @@ func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 
 // DecodeResponse converts Replicate prediction-result body to canonical
 // OpenAI chat-completions response.
-func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
+func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, _ provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint != typology.WireShapeOpenAIChat {
 		return provcore.DecodeResult{}, fmt.Errorf("replicate: unsupported endpoint %q", endpoint)
 	}

@@ -1,0 +1,24 @@
+{
+  "kind": "http-json",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "json": {
+        "exported_at": "2026-06-12T00:00:00Z",
+        "messages": [
+          {
+            "author": {
+              "id": 7
+            },
+            "body": "hi",
+            "id": 1
+          }
+        ],
+        "model": "thread-export-v2"
+      }
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

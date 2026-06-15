@@ -1,0 +1,58 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "anthropic-messages",
+  "model": "claude-sonnet-4-6",
+  "messages": [
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "You are a concise infrastructure assistant. Answer with verified facts only."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What is the weather in Paris right now?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I will check the current weather in Paris for you."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get current weather for a location",
+      "parametersJsonSchema": {
+        "properties": {
+          "location": {
+            "description": "City name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "type": "object"
+      }
+    }
+  ],
+  "params": {
+    "maxTokens": 1024
+  },
+  "confidence": 0.9750000000000001,
+  "detectedSpec": "anthropic-messages"
+}

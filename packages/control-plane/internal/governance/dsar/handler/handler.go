@@ -4,6 +4,7 @@ package dsar
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -24,6 +25,7 @@ type dsarDB interface {
 	GetDSARRequest(ctx context.Context, id string) (*dsarstore.DSARRequest, error)
 	CreateDSARRequest(ctx context.Context, p dsarstore.CreateDSARRequestParams) (*dsarstore.DSARRequest, error)
 	UpdateDSARRequest(ctx context.Context, id string, p dsarstore.UpdateDSARParams) (*dsarstore.DSARRequest, error)
+	SubjectExists(ctx context.Context, subjectID string) (bool, error)
 	FulfillDSARAccess(ctx context.Context, subjectID string) (*dsarstore.DSARAccessExport, error)
 	FulfillDSARErasure(ctx context.Context, subjectID string) (*dsarstore.DSARErasureResult, error)
 }
@@ -51,15 +53,8 @@ func New(d Deps) *Handler {
 	return &Handler{db: dsarstore.New(d.Pool), audit: d.Audit, logger: logger}
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 type Actor struct{ UserID, Name string }
 

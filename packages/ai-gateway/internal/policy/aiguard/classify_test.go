@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputstaging"
 )
 
@@ -65,6 +66,56 @@ func TestClassifyImpl_HappyPath_WritesTrafficEvent(t *testing.T) {
 	}
 	if len(sink.events) != 1 || sink.events[0].InternalPurpose != "ai-guard" {
 		t.Errorf("sink events: %+v", sink.events)
+	}
+}
+
+func TestClassifyImpl_StampsTraceIDFromContext(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	cache := NewCache(rdb)
+	sink := &stubTrafficSink{}
+	be := &stubBackend{resp: &Response{Decision: "approve"}}
+	cfg := &RuntimeConfig{BackendFingerprint: "fp-trace", PromptTemplate: DefaultPrompt, CacheTTLSeconds: 60, TimeoutMs: 2000}
+	req := Request{DetectorType: "prompt_injection", Content: "hi"}
+
+	// The triggering user request's id rides on ctx via the shared accessor.
+	ctx := nexushttp.WithRequestID(context.Background(), "parent-req-123")
+
+	// Miss path: the success event must carry the parent trace id.
+	if _, err := classifyImpl(ctx, req, cfg, be, cache, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(sink.events))
+	}
+	if sink.events[0].TraceID != "parent-req-123" {
+		t.Errorf("miss-path TraceID = %q, want parent-req-123", sink.events[0].TraceID)
+	}
+
+	// Hit path: same content second time → cache hit event must also carry it.
+	if _, err := classifyImpl(ctx, req, cfg, be, cache, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.events) != 2 || !sink.events[1].CacheHit {
+		t.Fatalf("want second event to be a cache hit: %+v", sink.events)
+	}
+	if sink.events[1].TraceID != "parent-req-123" {
+		t.Errorf("hit-path TraceID = %q, want parent-req-123", sink.events[1].TraceID)
+	}
+}
+
+func TestClassifyImpl_NoTraceID_WhenContextUnset(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	cache := NewCache(rdb)
+	sink := &stubTrafficSink{}
+	be := &stubBackend{err: errors.New("network down")}
+	cfg := &RuntimeConfig{BackendFingerprint: "fp-no-trace", PromptTemplate: DefaultPrompt, CacheTTLSeconds: 60, TimeoutMs: 2000}
+	// No request id on ctx → emitted event carries an empty TraceID.
+	_, _ = classifyImpl(context.Background(), Request{DetectorType: "x", Content: "x"}, cfg, be, cache, sink)
+	if len(sink.events) != 1 {
+		t.Fatalf("want 1 failure event, got %d", len(sink.events))
+	}
+	if sink.events[0].TraceID != "" {
+		t.Errorf("TraceID = %q, want empty when no request id on ctx", sink.events[0].TraceID)
 	}
 }
 

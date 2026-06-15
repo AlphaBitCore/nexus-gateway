@@ -224,6 +224,17 @@ type Response struct {
 	// Used by the gateway handler to emit x-nexus-coerced. Empty when no
 	// rewrite occurred.
 	Coerced []string
+	// Truncated is set when the non-streaming response body could not be
+	// read in full before usage extraction — either the upstream body
+	// exceeded the runtime read cap (LimitedReadAllN / MaxResponseBytes) or a
+	// compressed body exceeded the decompressed-size bound. A truncated body
+	// means any usage block parsed from it is incomplete, so the handler must
+	// stamp usage_extraction_status="truncated" rather than "ok" — billing and
+	// analytics must never treat a partial buffer as a confirmed usage block.
+	// Always false for streaming responses (captured-body
+	// truncation there is tracked separately via Record.ResponseTruncated and
+	// does not affect provider-reported stream usage).
+	Truncated bool
 }
 
 // Usage is the canonical token-accounting envelope.
@@ -271,6 +282,13 @@ type Chunk struct {
 	Done           bool            // terminal chunk (equivalent to provider's "[DONE]" / message_stop)
 	RawBytes       []byte          // provider-native bytes (SSE frame incl. "data: " prefix, or NDJSON line)
 	NativeEvent    string          // optional provider event name (e.g. "message_delta")
+	// Truncated rides on the single terminal chunk that the broker
+	// non-stream leader synthesises from a buffered ExecutionResult: it
+	// propagates Response.Truncated so a leader whose response body was
+	// clamped at the read cap fans out the truncation signal to every
+	// joiner, which then stamp usage_extraction_status="truncated" rather
+	// than "ok". Unused on genuine streaming chunks.
+	Truncated bool
 }
 
 // ToolCallDelta is a partial OpenAI-canonical tool call patch within a
@@ -346,15 +364,28 @@ func LimitedReadAll(r io.Reader) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r, ReadAllLimit))
 }
 
-// LimitedReadAllN is the runtime-cap variant used on the request hot
+// LimitedReadAllN is the runtime-cap variant used on the response hot
 // path. The cap is plumbed from Request.MaxResponseBytes; values <= 0
-// fall back to ReadAllLimit so a malformed or unset
-// payload-capture row never collapses the read to zero.
-func LimitedReadAllN(r io.Reader, max int64) ([]byte, error) {
+// fall back to ReadAllLimit so a malformed or unset payload-capture row
+// never collapses the read to zero.
+//
+// It reads up to max+1 bytes so an oversize body is *detectable*: when the
+// upstream sends more than the cap, the returned slice is clamped to max
+// and truncated=true tells the caller the bytes are incomplete — any usage
+// block parsed from them cannot be trusted. truncated is
+// always false on the error path and whenever the body fit within the cap.
+func LimitedReadAllN(r io.Reader, max int64) (data []byte, truncated bool, err error) {
 	if max <= 0 {
 		max = ReadAllLimit
 	}
-	return io.ReadAll(io.LimitReader(r, max))
+	data, err = io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return data, false, err
+	}
+	if int64(len(data)) > max {
+		return data[:max], true, nil
+	}
+	return data, false, nil
 }
 
 // EmbeddingsInput is the canonical embedding input discriminator.

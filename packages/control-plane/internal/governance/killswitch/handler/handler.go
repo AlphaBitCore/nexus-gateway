@@ -6,6 +6,7 @@ package killswitch
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 
@@ -135,7 +136,7 @@ func (h *Handler) Post(c echo.Context) error {
 				// error and the admin re-tries. The agent leg has not
 				// been attempted yet at this point.
 				h.logger.Error("notify hub killswitch", "thingType", thingType, "error", notifyErr)
-				return c.JSON(http.StatusBadGateway, errJSON("Hub unavailable", "hub_error", "HUB_UNAVAILABLE"))
+				return hub.RespondPropagationFailure(c, notifyErr)
 			}
 			// Secondary leg failure → log + continue. The drift
 			// reconciler will re-push on its next tick.
@@ -166,7 +167,9 @@ func (h *Handler) Post(c echo.Context) error {
 	// "kill-switch.toggle".
 	ae := audit.EntryFor(c, iam.ResourceKillSwitch, iam.VerbToggle)
 	ae.AfterState = map[string]any{"engaged": ks.Engaged, "version": primaryResp.Version, "intent": action}
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", "AUDIT_FAILURE"))
+	}
 
 	return c.JSON(http.StatusOK, map[string]any{
 		"engaged":        ks.Engaged,
@@ -197,13 +200,5 @@ func actorFromContext(c echo.Context) Actor {
 	return Actor{UserID: aa.KeyID, Name: aa.KeyName}
 }
 
-// errJSON shapes the standard error envelope CP returns.
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON

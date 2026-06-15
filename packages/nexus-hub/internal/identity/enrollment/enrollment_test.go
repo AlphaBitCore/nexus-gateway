@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pashagolub/pgxmock/v4"
 
@@ -353,149 +352,9 @@ func TestListTokens_StoreErrorWraps(t *testing.T) {
 	}
 }
 
-// ValidateToken — security-critical gate (only "pending + not expired"
-// counts as valid). Five branches.
-
-// TestValidateToken_ValidPending covers the happy path.
-func TestValidateToken_ValidPending(t *testing.T) {
-	svc, mock := newServiceWithMock(t)
-	created := time.Now().UTC()
-	expires := created.Add(time.Hour)
-	mock.ExpectQuery(`SELECT .*FROM enrollment_token`).
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows(enrollmentTokenCols).AddRow(
-			"id-1", "h", "agent", (*string)(nil), "lab", "pending",
-			expires, (*time.Time)(nil), []byte(`{"x":1}`), strPtr("u"), created,
-		))
-
-	tok, ok := svc.ValidateToken(context.Background(), "enroll-good")
-	if !ok {
-		t.Fatal("expected ok=true for valid pending token")
-	}
-	if tok.ID != "id-1" || tok.Status != "pending" {
-		t.Errorf("token: %+v", tok)
-	}
-	if tok.Metadata["x"] == nil {
-		t.Errorf("metadata not propagated: %+v", tok.Metadata)
-	}
-}
-
-// TestValidateToken_StoreError covers the err-from-store branch
-// (returns nil, false rather than surfacing the error — the caller is
-// a public enrollment endpoint that must not leak DB errors).
-func TestValidateToken_StoreError(t *testing.T) {
-	svc, mock := newServiceWithMock(t)
-	mock.ExpectQuery(`SELECT .*FROM enrollment_token`).
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnError(errors.New("conn reset"))
-
-	tok, ok := svc.ValidateToken(context.Background(), "enroll-bad")
-	if ok {
-		t.Error("DB error must yield ok=false")
-	}
-	if tok != nil {
-		t.Errorf("DB error must yield nil token; got: %+v", tok)
-	}
-}
-
-// TestValidateToken_NotFound covers the "no row" branch (store returns
-// nil, nil for ErrNoRows; service must fail closed).
-func TestValidateToken_NotFound(t *testing.T) {
-	svc, mock := newServiceWithMock(t)
-	mock.ExpectQuery(`SELECT .*FROM enrollment_token`).
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnError(pgx.ErrNoRows) // store flattens to (nil, nil)
-
-	tok, ok := svc.ValidateToken(context.Background(), "enroll-missing")
-	if ok || tok != nil {
-		t.Errorf("missing token must return (nil, false); got (%+v, %v)", tok, ok)
-	}
-}
-
-// TestValidateToken_StatusNotPending covers status='used'/'revoked'/
-// 'expired' — must reject even if expiry is in the future.
-func TestValidateToken_StatusNotPending(t *testing.T) {
-	cases := []string{"used", "revoked", "expired"}
-	for _, status := range cases {
-		t.Run(status, func(t *testing.T) {
-			svc, mock := newServiceWithMock(t)
-			now := time.Now().UTC()
-			mock.ExpectQuery(`SELECT .*FROM enrollment_token`).
-				WithArgs(pgxmock.AnyArg()).
-				WillReturnRows(pgxmock.NewRows(enrollmentTokenCols).AddRow(
-					"id-x", "h", "agent", (*string)(nil), "l", status,
-					now.Add(time.Hour), (*time.Time)(nil), []byte(nil), (*string)(nil), now,
-				))
-
-			tok, ok := svc.ValidateToken(context.Background(), "enroll-x")
-			if ok {
-				t.Errorf("status=%q must yield ok=false", status)
-			}
-			if tok != nil {
-				t.Errorf("status=%q must yield nil token; got: %+v", status, tok)
-			}
-		})
-	}
-}
-
-// TestValidateToken_PendingButExpired covers the time-based rejection
-// — token in DB still says pending but expires_at < now.
-func TestValidateToken_PendingButExpired(t *testing.T) {
-	svc, mock := newServiceWithMock(t)
-	now := time.Now().UTC()
-	mock.ExpectQuery(`SELECT .*FROM enrollment_token`).
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows(enrollmentTokenCols).AddRow(
-			"id-stale", "h", "agent", (*string)(nil), "l", "pending",
-			now.Add(-time.Hour), (*time.Time)(nil), []byte(nil), (*string)(nil), now,
-		))
-
-	tok, ok := svc.ValidateToken(context.Background(), "enroll-stale")
-	if ok {
-		t.Error("expired pending token must yield ok=false")
-	}
-	if tok != nil {
-		t.Errorf("expired pending token must yield nil; got: %+v", tok)
-	}
-}
-
-// MarkUsed + Revoke — thin pass-throughs; verify the error surface.
-
-func TestMarkUsed_Success(t *testing.T) {
-	svc, mock := newServiceWithMock(t)
-	mock.ExpectExec(`UPDATE enrollment_token`).
-		WithArgs("id-1", "thing-7").
-		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
-
-	if err := svc.MarkUsed(context.Background(), "id-1", "thing-7"); err != nil {
-		t.Fatalf("MarkUsed: %v", err)
-	}
-}
-
-func TestMarkUsed_StoreErrorPropagates(t *testing.T) {
-	svc, mock := newServiceWithMock(t)
-	dbErr := errors.New("deadlock")
-	mock.ExpectExec(`UPDATE enrollment_token`).
-		WithArgs("id-1", "thing-7").
-		WillReturnError(dbErr)
-
-	err := svc.MarkUsed(context.Background(), "id-1", "thing-7")
-	if !errors.Is(err, dbErr) {
-		t.Errorf("error must wrap store err; got: %v", err)
-	}
-}
-
-func TestMarkUsed_NotFoundSurfacesErrNotFound(t *testing.T) {
-	svc, mock := newServiceWithMock(t)
-	mock.ExpectExec(`UPDATE enrollment_token`).
-		WithArgs("missing", "t").
-		WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
-
-	err := svc.MarkUsed(context.Background(), "missing", "t")
-	if !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("0-row update must surface ErrNotFound; got: %v", err)
-	}
-}
+// Revoke — thin pass-through; verify the error surface. (The old
+// ValidateToken / MarkUsed two-step was removed in F-0204; its replacement
+// ConsumeToken / LinkThing is covered in enrollment_consume_test.go.)
 
 func TestRevoke_Success(t *testing.T) {
 	svc, mock := newServiceWithMock(t)

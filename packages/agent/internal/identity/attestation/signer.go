@@ -1,6 +1,7 @@
 // Package attestation implements the agent-side traffic attestation signer.
 // The signer holds the per-agent Ed25519 private key (issued by Nexus Hub
-// at enrollment, kept on disk alongside the mTLS P-256 device key) and
+// at enrollment, held in the platform keystore — macOS Keychain / Windows
+// DPAPI / Linux 0600 file — NOT a plaintext PEM on disk) and
 // writes the X-Nexus-Attestation header value on every outbound CONNECT
 // to the compliance-proxy.
 //
@@ -27,12 +28,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
 )
 
@@ -47,16 +48,17 @@ var signerRandReader = rand.Reader
 // One instance is shared across the whole agent process; it is safe
 // for concurrent use.
 //
-// The signer reads the agent's Ed25519 private key from disk lazily
-// the first time Sign is called, then caches the key in memory. The
-// fleet-default "attestationEnabled" toggle is read fresh on every
-// Sign call (the agent's applied-config snapshot may flip the value
+// The signer reads the agent's Ed25519 private key from the platform
+// keystore lazily the first time Sign is called, then caches the key in
+// memory. The fleet-default "attestationEnabled" toggle is read fresh on
+// every Sign call (the agent's applied-config snapshot may flip the value
 // at any time), so disabling attestation in CP UI takes effect on the
 // next outbound request.
 type Signer struct {
-	keyPath       string      // PEM file on disk; e.g. <certDir>/attestation-key.pem
-	agentID       string      // immutable for the agent's lifetime
-	enabledLookup func() bool // returns the current AttestationEnabled toggle
+	store         keystore.Store // platform keystore the key is held in
+	keyName       string         // keystore label, e.g. keystore.AttestationKeyName
+	agentID       string         // immutable for the agent's lifetime
+	enabledLookup func() bool    // returns the current AttestationEnabled toggle
 	logger        *slog.Logger
 	failedWarnAt  atomic.Int64 // unix-second of last fail-open warn (rate limiter)
 
@@ -64,8 +66,10 @@ type Signer struct {
 	cachedKey ed25519.PrivateKey
 }
 
-// NewSigner constructs a Signer. keyPath is the on-disk PEM containing
-// the agent's Ed25519 attestation private key (written by enrollment).
+// NewSigner constructs a Signer. store is the platform keystore holding
+// the agent's Ed25519 attestation private key (written by enrollment under
+// keyName, typically keystore.AttestationKeyName) — the key lives in the
+// OS-protected store, never a plaintext on-disk PEM.
 // agentID is the Hub-assigned Thing UUID; enabledLookup returns the
 // current value of the fleet attestationEnabled flag from
 // AppliedConfig.DeviceDefaults — read on every Sign call so admin
@@ -73,9 +77,10 @@ type Signer struct {
 //
 // A logger is required: signer-failure paths emit structured warns so
 // operators can see attestation regressing without affecting traffic.
-func NewSigner(keyPath, agentID string, enabledLookup func() bool, logger *slog.Logger) *Signer {
+func NewSigner(store keystore.Store, keyName, agentID string, enabledLookup func() bool, logger *slog.Logger) *Signer {
 	return &Signer{
-		keyPath:       keyPath,
+		store:         store,
+		keyName:       keyName,
 		agentID:       agentID,
 		enabledLookup: enabledLookup,
 		logger:        logger,
@@ -88,9 +93,9 @@ func NewSigner(keyPath, agentID string, enabledLookup func() bool, logger *slog.
 var ErrAttestationDisabled = errors.New("attestation: disabled by fleet config")
 
 // ErrAttestationNotEnrolled is returned by Sign when the agent has no
-// Ed25519 key on disk yet. Callers translate to "omit the header"; the
-// next enrollment refresh will issue the key.
-var ErrAttestationNotEnrolled = errors.New("attestation: no Ed25519 key on disk")
+// Ed25519 key in the keystore yet. Callers translate to "omit the header";
+// the next enrollment refresh will issue the key.
+var ErrAttestationNotEnrolled = errors.New("attestation: no Ed25519 key in keystore")
 
 // Sign returns the wire-format X-Nexus-Attestation header value
 // committing to the empty body (sha256("")). Use SignForBody when
@@ -155,9 +160,10 @@ func (s *Signer) signOver(body []byte) (string, error) {
 	return fields.FormatHeader(), nil
 }
 
-// loadKey returns the cached Ed25519 private key, lazily loading from
-// disk on the first call. Disk reads do not happen under any external
-// lock so a slow filesystem cannot wedge the request path.
+// loadKey returns the cached Ed25519 private key, lazily loading from the
+// platform keystore on the first call. The keystore read does not happen
+// under any external lock so a slow keystore backend cannot wedge the
+// request path; the key is cached after the first successful load.
 func (s *Signer) loadKey() (ed25519.PrivateKey, error) {
 	s.mu.RLock()
 	if s.cachedKey != nil {
@@ -167,12 +173,17 @@ func (s *Signer) loadKey() (ed25519.PrivateKey, error) {
 	}
 	s.mu.RUnlock()
 
-	raw, err := os.ReadFile(s.keyPath)
+	if s.store == nil {
+		return nil, ErrAttestationNotEnrolled
+	}
+	raw, err := s.store.Get(s.keyName)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrAttestationNotEnrolled
-		}
-		return nil, fmt.Errorf("attestation: read key file: %w", err)
+		return nil, fmt.Errorf("attestation: keystore get: %w", err)
+	}
+	if raw == nil {
+		// Not-found is the "attestation not available yet" signal —
+		// the keystore Get contract returns nil for a missing key.
+		return nil, ErrAttestationNotEnrolled
 	}
 	block, _ := pem.Decode(raw)
 	if block == nil {
@@ -194,7 +205,7 @@ func (s *Signer) loadKey() (ed25519.PrivateKey, error) {
 }
 
 // InvalidateCachedKey forces the next Sign call to re-read the key
-// from disk. Used by the enrollment refresh path after a cert
+// from the keystore. Used by the enrollment refresh path after a cert
 // rotation — without this the agent would keep signing with the
 // previous key until restart.
 func (s *Signer) InvalidateCachedKey() {
@@ -207,7 +218,7 @@ func (s *Signer) InvalidateCachedKey() {
 }
 
 // logFailure emits a structured warn no more than once every 60 s so
-// a missing key file or a broken filesystem cannot drown the agent
+// a missing key or a broken keystore backend cannot drown the agent
 // log. ErrAttestationDisabled and ErrAttestationNotEnrolled are
 // always-quiet paths handled at the caller; this method covers the
 // genuinely-unexpected branches.
@@ -229,11 +240,12 @@ func (s *Signer) logFailure(msg string, err error) {
 }
 
 // MarshalEd25519PrivateKeyPEM serialises a freshly-generated Ed25519
-// private key for on-disk persistence. Used by the enrollment manager
+// private key for keystore persistence. Used by the enrollment manager
 // after Hub returns a signed Ed25519 cert — we keep the key in the
 // same PKCS8 PEM shape Go's x509 stdlib reads back without custom
-// parsing. Public function so the enrollment path can call it
-// without depending on internals.
+// parsing (the keystore stores these PEM bytes as the secret value).
+// Public function so the enrollment path can call it without depending
+// on internals.
 func MarshalEd25519PrivateKeyPEM(priv ed25519.PrivateKey) ([]byte, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
@@ -300,7 +312,15 @@ func (s *Signer) InjectInto(req *http.Request) error {
 	}
 
 	var bodyBytes []byte
-	if req.Body != nil && req.Body != http.NoBody {
+	// A streaming (unknown-length, ContentLength < 0) request body must NOT be
+	// consumed here. A connect-RPC / gRPC bidi client holds its request stream
+	// open — sending more only after it reads server responses — so reading the
+	// body to EOF to hash it deadlocks exactly like buffering would (and would
+	// hand the upstream a drained body). Sign the empty-body hash and leave
+	// req.Body untouched for the streaming relay. CP v1 default mode does not
+	// verify the hash field, so this degrades cleanly. Known-length bodies are
+	// safe to buffer-and-hash (the client commits to sending exactly N bytes).
+	if req.Body != nil && req.Body != http.NoBody && req.ContentLength >= 0 {
 		// Bound body reads to avoid OOM on a runaway client. AI
 		// traffic bodies are typically <1 MiB; cap at 8 MiB so a
 		// pathological client can't make the injector spike memory.

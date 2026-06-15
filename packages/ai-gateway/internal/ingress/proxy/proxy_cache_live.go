@@ -8,7 +8,7 @@ import (
 
 // runLiveStream wires ai-gateway.LivePipeline (chunked_async) against
 // the SSE handler's deps. Symmetric with runBufferStream — both are
-// dispatched from proxy_cache.go's handleStreamWithSubscription based
+// dispatched from the streaming relay stage (stream_relay.go) based
 // on the admin streaming-policy mode (#115).
 //
 // Live-mode specifics:

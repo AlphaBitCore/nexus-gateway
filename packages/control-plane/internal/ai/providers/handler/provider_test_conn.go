@@ -11,23 +11,35 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterProviderTestRoutes registers provider connectivity test + health routes.
+//
+// IAM: the two routes that decrypt a STORED credential before forwarding it to
+// the gateway (`/providers/:id/test`) are gated on BOTH provider:read AND a
+// credential-scoped verb (credential:probe) — chaining two iamMW middlewares
+// applies AND semantics. This mirrors `/credentials/:id/probe` so a read-only
+// provider viewer cannot trigger a credential decrypt with only provider:read.
+//
+// F-0369: `/providers/test-connection` probes a caller-supplied, not-yet-saved
+// base URL. Pre-fix it was gated on provider:read and reflected the upstream
+// status + raw transport error back to the caller — a blind-SSRF / internal-
+// endpoint fingerprinting oracle available to a read-only viewer. It is now gated
+// on the provider-config-write tier (provider:create), so only a caller who can
+// already configure a provider (and thus set the base URL anyway) can run the
+// probe. This closes the oracle while preserving the full error detail for
+// legitimate provider admins, and matches the UI: the only surfaces that expose
+// the draft test-connection button (the provider create wizard's StepCredential
+// and ProviderForm) are themselves admin:provider.create-gated.
 func (h *Handler) RegisterProviderTestRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
-	g.POST("/providers/test-connection", h.ProviderTestConnection, iamMW(iam.ResourceProvider.Action(iam.VerbRead)))
-	g.POST("/providers/:id/test", h.ProviderTest, iamMW(iam.ResourceProvider.Action(iam.VerbRead)))
+	g.POST("/providers/test-connection", h.ProviderTestConnection, iamMW(iam.ResourceProvider.Action(iam.VerbCreate)))
+	g.POST("/providers/:id/test", h.ProviderTest,
+		iamMW(iam.ResourceProvider.Action(iam.VerbRead)),
+		iamMW(iam.ResourceCredential.Action(iam.VerbProbe)))
 	g.GET("/provider-health", h.ListProviderHealth, iamMW(iam.ResourceProvider.Action(iam.VerbRead)))
-}
-
-// RegisterPricingRoutes registers model pricing CRUD routes.
-func (h *Handler) RegisterPricingRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
-	g.GET("/pricing", h.ListPricing, iamMW(iam.ResourceModelPricing.Action(iam.VerbRead)))
-	g.POST("/pricing", h.CreatePricing, iamMW(iam.ResourceModelPricing.Action(iam.VerbCreate)))
-	g.DELETE("/pricing/:id", h.DeletePricing, iamMW(iam.ResourceModelPricing.Action(iam.VerbDelete)))
 }
 
 // ProviderTestConnection tests connectivity to a new (not-yet-saved) provider.
@@ -84,7 +96,7 @@ func (h *Handler) decryptCredentialByID(ctx context.Context, credID string) stri
 	if cred == nil {
 		return ""
 	}
-	return h.decryptCredential(ctx, cred.EncryptedKey, cred.EncryptionIV, cred.EncryptionTag, cred.EncryptionKeyID)
+	return h.decryptCredential(ctx, cred.ID, cred.ProviderID, cred.EncryptedKey, cred.EncryptionIV, cred.EncryptionTag, cred.EncryptionKeyID)
 }
 
 // getFirstCredentialKey returns the decrypted API key of the first enabled
@@ -104,13 +116,16 @@ func (h *Handler) getFirstCredentialKey(ctx context.Context, providerID string) 
 	if err != nil || enc == nil {
 		return ""
 	}
-	return h.decryptCredential(ctx, enc.EncryptedKey, enc.EncryptionIV, enc.EncryptionTag, enc.EncryptionKeyID)
+	return h.decryptCredential(ctx, enc.ID, enc.ProviderID, enc.EncryptedKey, enc.EncryptionIV, enc.EncryptionTag, enc.EncryptionKeyID)
 }
 
-// decryptCredential decrypts a credential's key using MultiVault or Vault.
-func (h *Handler) decryptCredential(ctx context.Context, encKey, encIV, encTag, encKeyID string) string {
+// decryptCredential decrypts a credential's key using MultiVault or Vault. The
+// credential id + provider id form the AAD that binds the ciphertext
+// to its own row — a blob swapped from another credential fails to decrypt here.
+func (h *Handler) decryptCredential(ctx context.Context, credID, providerID, encKey, encIV, encTag, encKeyID string) string {
+	aad := keyderive.ProviderCredentialAAD(credID, providerID)
 	if h.multiVault != nil {
-		plaintext, err := h.multiVault.Decrypt(encKeyID, encKey, encIV, encTag)
+		plaintext, err := h.multiVault.Decrypt(encKeyID, encKey, encIV, encTag, aad)
 		if err != nil {
 			h.logger.Warn("decryptCredential: multi-vault decrypt failed", "keyId", encKeyID, "error", err)
 			return ""
@@ -118,7 +133,7 @@ func (h *Handler) decryptCredential(ctx context.Context, encKey, encIV, encTag, 
 		return plaintext
 	}
 	if h.vault != nil {
-		plaintext, err := h.vault.Decrypt(encKey, encIV, encTag)
+		plaintext, err := h.vault.Decrypt(encKey, encIV, encTag, aad)
 		if err != nil {
 			h.logger.Warn("decryptCredential: vault decrypt failed", "error", err)
 			return ""
@@ -129,6 +144,16 @@ func (h *Handler) decryptCredential(ctx context.Context, encKey, encIV, encTag, 
 }
 
 // forwardProviderTest delegates provider connectivity testing to the AI Gateway.
+//
+// Confidentiality note: the decrypted provider key is carried in the
+// request body to the gateway's POST /internal/provider-test endpoint. Unlike
+// the credential-probe path (which forwards only the credential ID and lets the
+// gateway decrypt locally), provider-test cannot use ID-forwarding: the
+// not-yet-saved test-connection case has no stored credential to reference, so a
+// plaintext key in the body is structurally required. The /internal/* hop is
+// INTERNAL_SERVICE_TOKEN-gated for authn; in production it MUST additionally run
+// over TLS (service mesh or TLS-terminating ingress) so the key is never sent in
+// cleartext on the wire. Responses carry only a hasAPIKey boolean, never the key.
 func (h *Handler) forwardProviderTest(c echo.Context, providerName, adapterType, baseURL, apiKey string) error {
 	gwURL := strings.TrimRight(h.proxy.AIGatewayURL, "/") + "/internal/provider-test"
 
@@ -149,6 +174,7 @@ func (h *Handler) forwardProviderTest(c echo.Context, providerName, adapterType,
 		return c.JSON(http.StatusOK, map[string]any{"success": false, "error": "Failed to build request: " + err.Error()})
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.proxy.AIGatewayInternalToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -173,52 +199,4 @@ func (h *Handler) ListProviderHealth(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
 	}
 	return c.JSON(http.StatusOK, map[string]any{"data": data})
-}
-
-// ListPricing returns all model pricing entries.
-func (h *Handler) ListPricing(c echo.Context) error {
-	data, err := h.providers.ListModelPricing(c.Request().Context())
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-	return c.JSON(http.StatusOK, map[string]any{"data": data})
-}
-
-// CreatePricing creates a new model pricing entry.
-func (h *Handler) CreatePricing(c echo.Context) error {
-	var body struct {
-		ModelID               string  `json:"modelId"`
-		InputPricePerMillion  float64 `json:"inputPricePerMillion"`
-		OutputPricePerMillion float64 `json:"outputPricePerMillion"`
-	}
-	if err := c.Bind(&body); err != nil || body.ModelID == "" {
-		return c.JSON(http.StatusBadRequest, errJSON("modelId is required", "validation_error", ""))
-	}
-	id, err := h.providers.CreateModelPricing(c.Request().Context(), body.ModelID, body.InputPricePerMillion, body.OutputPricePerMillion)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create pricing", "server_error", ""))
-	}
-	ae := audit.EntryFor(c, iam.ResourceModelPricing, iam.VerbCreate)
-	ae.EntityID = id
-	h.audit.LogObserved(c.Request().Context(), ae)
-
-	return c.JSON(http.StatusCreated, map[string]any{"id": id, "modelId": body.ModelID})
-}
-
-// DeletePricing deletes a model pricing entry by ID.
-func (h *Handler) DeletePricing(c echo.Context) error {
-	id := c.Param("id")
-	affected, err := h.providers.DeleteModelPricing(c.Request().Context(), id)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Failed to delete pricing", "server_error", ""))
-	}
-	if affected == 0 {
-		return c.JSON(http.StatusNotFound, errJSON("Pricing not found", "not_found", ""))
-	}
-
-	ae := audit.EntryFor(c, iam.ResourceModelPricing, iam.VerbDelete)
-	ae.EntityID = id
-	h.audit.LogObserved(c.Request().Context(), ae)
-
-	return c.NoContent(http.StatusNoContent)
 }

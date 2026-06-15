@@ -11,6 +11,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
 )
 
 // TestInitProxyServer_ComplianceEnabledWithResolver exercises the branch
@@ -25,6 +26,26 @@ func TestInitProxyServer_ComplianceEnabledWithResolver(t *testing.T) {
 	srv := InitProxyServer(d)
 	if srv == nil {
 		t.Fatal("expected non-nil ProxyServer with compliance resolver")
+	}
+}
+
+// TestInitProxyServer_ThreadsRejectResponseConfig: the yaml rejectResponse
+// block must reach the proxy server. The zero value silently downgrades every
+// refusal body to the stealth "Forbidden", so a dropped wire here makes the
+// configured verbosity level a dead knob (and the runbook's body claims false).
+func TestInitProxyServer_ThreadsRejectResponseConfig(t *testing.T) {
+	d := buildMinimalListenerDeps(t)
+	d.Cfg.Compliance.RejectResponse.DefaultLevel = 2
+	d.Cfg.Compliance.RejectResponse.ContactInfo = "ops@example.com"
+
+	srv := InitProxyServer(d)
+
+	rc := srv.RejectConfig()
+	if rc.DefaultLevel != tlsbump.RejectLevelDetailed {
+		t.Fatalf("DefaultLevel = %d, want %d (RejectLevelDetailed) threaded from yaml", rc.DefaultLevel, tlsbump.RejectLevelDetailed)
+	}
+	if rc.ContactInfo != "ops@example.com" {
+		t.Fatalf("ContactInfo = %q, want the yaml value threaded through", rc.ContactInfo)
 	}
 }
 

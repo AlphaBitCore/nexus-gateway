@@ -11,6 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/quota/quotastore"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -57,12 +58,21 @@ func currentMonthPeriodKey() string {
 
 // scopeToDimension maps a quota scope name to a rollup DimensionKey prefix.
 // The rollup DimensionKey format is "dimension=value".
+//
+// `project` is intentionally NOT mapped: the rollup pipeline does not emit a
+// per-project dimension yet (the project dim is not backfilled — see the quota
+// architecture doc §9). The previous `"project":"organization"` alias silently
+// returned org-aggregated numbers under a project label AND made
+// GetQuotaOverrideByTarget("project", <orgID>) query a project override against
+// an organization ID, so project overrides never resolved. Until the
+// project dimension is wired, an analytics scope/targetType of `project` is
+// rejected with HTTP 400 rather than returning wrong data.
 func scopeToDimension(scope string) (string, bool) {
 	m := map[string]string{
 		"user":         "user",
 		"vk":           "virtual_key",
 		"virtual_key":  "virtual_key",
-		"project":      "organization", // project maps to org dimension for now
+		"project":      "project",
 		"organization": "organization",
 	}
 	dim, ok := m[scope]
@@ -94,6 +104,11 @@ func alertLevelFromPercent(pct float64) string {
 
 // QuotaAnalyticsOverview returns cost usage per entity for a given scope and period.
 //
+// Cost is read from the BILLED cost metric (billed_cost_usd: success-only,
+// cache-hits excluded), the SAME base the gateway quota engine enforces against
+// — so the displayed usage % matches what triggers throttling. The
+// gross estimated_cost_usd metric is deliberately not used here.
+//
 // Query params:
 //
 //	scope     — user | vk | project | organization
@@ -120,7 +135,7 @@ func (h *Handler) QuotaAnalyticsOverview(c echo.Context) error {
 	}
 
 	rows, err := h.metrics.QueryRollup(c.Request().Context(), metrics.MetricsQuery{
-		Metrics:      []string{metrics.MetricEstimatedCostUSD},
+		Metrics:      []string{metrics.MetricBilledCostUSD},
 		DimensionKey: dimension,
 		StartTime:    start,
 		EndTime:      end,
@@ -141,6 +156,16 @@ func (h *Handler) QuotaAnalyticsOverview(c echo.Context) error {
 		totals[targetID] += r.Value
 	}
 
+	// Load the enabled policies that could govern entities in this scope once, so
+	// the per-entity effective-limit resolution does not re-query for every row.
+	// Failure is non-fatal: usage is still reported, effective limits just fall
+	// back to overrides only (the pre-fix behaviour) rather than aborting the page.
+	policies, pErr := h.quota.ListEnabledPoliciesForScopes(c.Request().Context(), policyScopesForAnalytics(scope))
+	if pErr != nil {
+		h.logger.Warn("quota analytics overview: list policies failed; effective limits reflect overrides only", "error", pErr)
+		policies = nil
+	}
+
 	items := make([]QuotaAnalyticsOverviewItem, 0, len(totals))
 	for targetID, cost := range totals {
 		item := QuotaAnalyticsOverviewItem{
@@ -149,12 +174,13 @@ func (h *Handler) QuotaAnalyticsOverview(c echo.Context) error {
 			EntityType:     scope,
 			CurrentCostUsd: cost,
 		}
-		// Look up override for this target to get explicit limit.
-		override, oErr := h.quota.GetQuotaOverrideByTarget(c.Request().Context(), scope, targetID)
-		if oErr == nil && override != nil && override.CostLimitUsd != nil {
-			item.CostLimitUsd = override.CostLimitUsd
-			if *override.CostLimitUsd > 0 {
-				item.UsagePercent = (cost / *override.CostLimitUsd) * 100
+		// Resolve the effective cost cap through the SAME override→policy
+		// precedence the gateway enforcement engine uses, so a policy-capped
+		// entity (no override) shows its real cap instead of 0%/normal.
+		if limit := h.resolveEffectiveCostLimit(c.Request().Context(), scope, targetID, policies); limit != nil {
+			item.CostLimitUsd = limit
+			if *limit > 0 {
+				item.UsagePercent = (cost / *limit) * 100
 			}
 		}
 		item.AlertLevel = alertLevelFromPercent(item.UsagePercent)
@@ -184,7 +210,7 @@ type QuotaAnalyticsTrendPoint struct {
 //
 // Query params:
 //
-//	targetType — user | vk | organization
+//	targetType — user | vk | project | organization
 //	targetId   — entity ID
 //	periods    — number of past months to include (default 6, max 24)
 func (h *Handler) QuotaAnalyticsTrend(c echo.Context) error {
@@ -218,7 +244,7 @@ func (h *Handler) QuotaAnalyticsTrend(c echo.Context) error {
 		end := start.AddDate(0, 1, 0)
 
 		rows, err := h.metrics.QueryRollup(c.Request().Context(), metrics.MetricsQuery{
-			Metrics:      []string{metrics.MetricEstimatedCostUSD},
+			Metrics:      []string{metrics.MetricBilledCostUSD},
 			DimensionKey: dimension,
 			SubDimension: "", // no sub-dimension filter
 			StartTime:    start,
@@ -258,6 +284,7 @@ type QuotaAnalyticsTopItem struct {
 }
 
 // QuotaAnalyticsTop returns the top-N consumers for a given scope and period.
+// Cost is the BILLED cost metric, matching enforcement (see QuotaAnalyticsOverview).
 //
 // Query params:
 //
@@ -292,7 +319,7 @@ func (h *Handler) QuotaAnalyticsTop(c echo.Context) error {
 	}
 
 	rows, err := h.metrics.QueryRollup(c.Request().Context(), metrics.MetricsQuery{
-		Metrics:      []string{metrics.MetricEstimatedCostUSD},
+		Metrics:      []string{metrics.MetricBilledCostUSD},
 		DimensionKey: dimension,
 		StartTime:    start,
 		EndTime:      end,
@@ -353,10 +380,20 @@ func (h *Handler) resolveEntityName(ctx context.Context, scope, targetID string)
 				return *u.Email
 			}
 		}
-	case "organization", "project":
+	case "organization":
 		org, err := h.orgs.GetOrganization(ctx, targetID)
 		if err == nil && org != nil && org.Name != "" {
 			return org.Name
+		}
+	case "project":
+		proj, err := h.orgs.GetProject(ctx, targetID)
+		if err == nil && proj != nil {
+			if proj.Name != "" {
+				return proj.Name
+			}
+			if proj.Code != "" {
+				return proj.Code
+			}
 		}
 	case "vk", "virtual_key":
 		vk, err := h.vks.GetVirtualKey(ctx, targetID)
@@ -365,4 +402,78 @@ func (h *Handler) resolveEntityName(ctx context.Context, scope, targetID string)
 		}
 	}
 	return targetID
+}
+
+// policyScopesForAnalytics returns the QuotaPolicy.scope values that govern
+// entities of the given analytics scope. The repository uses both "vk" and
+// "virtual_key" as the persisted scope for virtual-key policies (admin-created
+// rows use "vk"; seed/gateway rows use "virtual_key"), so both are matched for
+// the VK dimension. All other scopes map 1:1.
+func policyScopesForAnalytics(scope string) []string {
+	switch scope {
+	case "vk", "virtual_key":
+		return []string{"vk", "virtual_key"}
+	default:
+		return []string{scope}
+	}
+}
+
+// entityScopeAttrs resolves the (organizationID, vkType) pair the gateway's
+// PolicyCache.FindPolicy filters on for an entity of the given scope. Only the
+// attributes a policy can filter by per scope are looked up:
+//   - organization: the entity IS the org, so orgID = targetID.
+//   - user:         the user's organization (user policies may be org-scoped).
+//   - vk:           the VK's type (vk policies are vkType-scoped, never org-scoped).
+//   - project:      project policies carry neither filter — nothing to resolve.
+//
+// Missing lookups degrade to empty strings, which the matcher treats as
+// "matches any policy that does not constrain that attribute".
+func (h *Handler) entityScopeAttrs(ctx context.Context, scope, targetID string) (orgID, vkType string) {
+	switch scope {
+	case "organization":
+		return targetID, ""
+	case "user":
+		if h.users != nil {
+			if oid, _, err := h.users.GetNexusUserOrgInfo(ctx, targetID); err == nil {
+				return oid, ""
+			}
+		}
+	case "vk", "virtual_key":
+		if h.vks != nil {
+			if vk, err := h.vks.GetVirtualKey(ctx, targetID); err == nil && vk != nil && vk.VKType != nil {
+				return "", *vk.VKType
+			}
+		}
+	}
+	return "", ""
+}
+
+// resolveEffectiveCostLimit mirrors the gateway quota engine's override→policy
+// precedence (enforcement.go Check + policy_cache.go FindPolicy):
+//
+//  1. An override on this target with an explicit cost cap wins outright.
+//  2. Otherwise (no override, or an override that leaves the cap nil so it
+//     inherits) the highest-priority policy whose org/vkType filters match the
+//     entity supplies the cap.
+//
+// policies must already be filtered to the relevant scope(s) and ordered by
+// priority DESC (ListEnabledPoliciesForScopes guarantees this). Returns nil when
+// no override and no matching policy define a cap.
+func (h *Handler) resolveEffectiveCostLimit(ctx context.Context, scope, targetID string, policies []quotastore.QuotaPolicy) *float64 {
+	if override, err := h.quota.GetQuotaOverrideByTarget(ctx, scope, targetID); err == nil && override != nil && override.CostLimitUsd != nil {
+		return override.CostLimitUsd
+	}
+
+	orgID, vkType := h.entityScopeAttrs(ctx, scope, targetID)
+	for i := range policies {
+		p := &policies[i]
+		if p.OrganizationID != nil && *p.OrganizationID != "" && *p.OrganizationID != orgID {
+			continue
+		}
+		if p.VKType != nil && *p.VKType != "" && *p.VKType != vkType {
+			continue
+		}
+		return p.CostLimitUsd
+	}
+	return nil
 }

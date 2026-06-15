@@ -2,6 +2,7 @@ package domain
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -55,6 +56,16 @@ func (e *Engine) Swap(domains []InterceptionDomain) error {
 		}
 		matchers = append(matchers, m)
 	}
+	// Sort matchers by Priority DESC so MatchHost's first-match-wins scan
+	// honours the documented "highest priority enabled domain wins" contract
+	// regardless of the order configloader hands the domains in. Stable sort
+	// keeps the relative order of equal-priority domains deterministic (DB
+	// query order), so two domains with the same priority resolve the same
+	// way across reloads. This is defensive: callers SHOULD pre-sort, but the
+	// engine no longer depends on that to be correct.
+	sort.SliceStable(matchers, func(i, j int) bool {
+		return matchers[i].domain.Priority > matchers[j].domain.Priority
+	})
 	e.current.Store(&snapshot{
 		domains:  domains,
 		matchers: matchers,
@@ -86,6 +97,34 @@ func (e *Engine) MatchHost(host string) *InterceptionDomain {
 		}
 	}
 	return nil
+}
+
+// ShouldFailClosed reports whether a flow to host MUST be refused when the
+// proxy/agent cannot inspect it (TLS bump failed, adapter could not
+// normalize the body, etc.).
+//
+// It returns true ONLY when a domain matches host AND that domain's
+// OnAdapterError is FAIL_CLOSED. Every other case returns false, which is
+// the historical fail-open behavior:
+//   - no engine / nil receiver       → false (fail open)
+//   - host matches no domain         → false (fail open — unknown hosts and
+//     system flows like DNS keep working)
+//   - matched domain is FAIL_OPEN    → false (fail open)
+//   - matched domain has unset/blank → false (fail open — FAIL_CLOSED is
+//     never the default; it must be explicitly configured)
+//
+// This is the single runtime consumer of the on_adapter_error column: a
+// domain configured FAIL_CLOSED refuses uninspected traffic instead of
+// silently relaying it past the compliance pipeline.
+func (e *Engine) ShouldFailClosed(host string) bool {
+	if e == nil {
+		return false
+	}
+	d := e.MatchHost(host)
+	if d == nil {
+		return false
+	}
+	return d.OnAdapterError == AdapterErrorFailClosed
 }
 
 func matchHost(host string, m *hostMatcher) bool {

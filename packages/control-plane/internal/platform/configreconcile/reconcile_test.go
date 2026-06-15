@@ -388,3 +388,45 @@ func TestReconciler_NonJSONSourceFallsBackToRawBytes(t *testing.T) {
 		t.Errorf("State bytes: got %q, want %q", string(gotState), string(rawSource))
 	}
 }
+
+// --- F-0345 Category-B pending reconcile arm ---
+
+type fakePending struct {
+	calls  int32
+	healed int
+	err    error
+}
+
+func (f *fakePending) ReconcilePending(_ context.Context) (int, error) {
+	atomic.AddInt32(&f.calls, 1)
+	return f.healed, f.err
+}
+
+// A tick drives the Pending arm exactly once per tick alongside the content
+// Watches.
+func TestTick_DrivesPendingArm(t *testing.T) {
+	r := New(&fakeQuerier{}, &fakeHub{}, testLogger(), time.Hour, nil, nil)
+	p := &fakePending{healed: 2}
+	r.Pending = p
+	r.tick(context.Background())
+	if got := atomic.LoadInt32(&p.calls); got != 1 {
+		t.Fatalf("Pending arm called %d times, want 1", got)
+	}
+}
+
+// A failing Pending arm is logged but never aborts the tick.
+func TestTick_PendingErrorIsNonFatal(t *testing.T) {
+	r := New(&fakeQuerier{}, &fakeHub{}, testLogger(), time.Hour, nil, nil)
+	p := &fakePending{err: errors.New("ledger down")}
+	r.Pending = p
+	r.tick(context.Background()) // must not panic
+	if got := atomic.LoadInt32(&p.calls); got != 1 {
+		t.Fatalf("Pending arm called %d times, want 1", got)
+	}
+}
+
+// A nil Pending arm (no durable backstop wired) is a silent no-op.
+func TestReconcilePending_NilArmNoOp(t *testing.T) {
+	r := New(&fakeQuerier{}, &fakeHub{}, testLogger(), time.Hour, nil, nil)
+	r.reconcilePending(context.Background()) // must not panic
+}

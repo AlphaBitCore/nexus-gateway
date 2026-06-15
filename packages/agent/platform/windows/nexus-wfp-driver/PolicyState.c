@@ -1,22 +1,28 @@
 // PolicyState.c — atomic policy snapshot management.
 //
 // Authoritative design: docs/developers/architecture/agent-windows-wfp-driver.md §7
-// SDD: docs/developers/specs/e59-s1-driver-skeleton.md §T4 + impl
 //
 // One pointer (g_ActivePolicy) holds the current policy. PUSH_POLICY
 // builds a new NEXUS_POLICY, fills it, then InterlockedExchangePointer
-// swaps it in. The previous pointer is queued for free via a WDF
-// work-item at PASSIVE_LEVEL — callouts may still be reading it at
-// DISPATCH when the swap completes.
+// swaps it in. Reclamation of the superseded snapshot is refcount +
+// grace-period: the swapper drops the "being-active" reference only
+// after a per-CPU DPC rendezvous proves no reader can still be inside
+// the unprotected load→CAS window of AcquireSnapshot (see the comment
+// block above NexusPolicyQuiesceDispatchReaders). Whoever drops the
+// count to zero frees — NonPaged pool may be freed at DISPATCH, so the
+// last reader releasing inside a callout is fine.
 //
-// Self-PID bypass (FR-9): NexusPolicySetSelfPid is called from HELLO
-// once per agent process; the PID is stored in a separate global and
-// survives any number of PUSH_POLICY generations.
+// Self-PID bypass: NexusPolicySetSelfPid is called from HELLO once per
+// agent process; the PID is stored in a separate global and survives
+// any number of PUSH_POLICY generations.
 
 #include "Common.h"
 
 static volatile PNEXUS_POLICY g_ActivePolicy = NULL;
 static volatile LONG          g_SelfPid      = 0;
+
+_IRQL_requires_(PASSIVE_LEVEL)
+static BOOLEAN NexusPolicyQuiesceDispatchReaders(VOID);
 
 static VOID FreePolicy(_In_ PNEXUS_POLICY Policy)
 {
@@ -125,15 +131,21 @@ NTSTATUS NexusPolicyApply(
         RtlCopyMemory(newPolicy->destBypass, cBase, byteCount);
     }
 
-    // Atomic swap. The returned pointer is the previous policy;
-    // decrement its refcount — if no callout is currently holding
-    // a reference, this frees it immediately. If callouts are
-    // active, the last reader to release will free.
+    // Atomic swap. The returned pointer is the previous policy. Its
+    // "being-active" reference may only be dropped after the grace
+    // period: a reader that loaded the old pointer but has not yet
+    // CAS'd its refcount is invisible to the count, and decrementing
+    // to zero here would free pool that reader is about to touch.
+    // When the rendezvous cannot run (DPC array allocation failed),
+    // the superseded snapshot is deliberately kept alive — leaking a
+    // few hundred bytes under memory pressure is bounded and strictly
+    // safer than freed-pool access on the connect path.
     PNEXUS_POLICY old = (PNEXUS_POLICY)InterlockedExchangePointer(
         (PVOID volatile*)&g_ActivePolicy, newPolicy);
 
     if (old != NULL) {
-        if (InterlockedDecrement(&old->refCount) == 0) {
+        if (NexusPolicyQuiesceDispatchReaders()
+            && InterlockedDecrement(&old->refCount) == 0) {
             FreePolicy(old);
         }
     }
@@ -141,43 +153,141 @@ NTSTATUS NexusPolicyApply(
     return STATUS_SUCCESS;
 }
 
-// Acquire a refcounted snapshot. Callers MUST call ReleaseSnapshot
-// after they're done reading. The refcount strategy:
+// --- DISPATCH-reader grace period -----------------------------------
 //
-//   - Apply does InterlockedIncrement(refCount) at allocation (start
-//     at 1 = "being-active").
-//   - When a new policy is swapped in, the old one's refCount is
-//     decremented; if it drops to 0 (no readers), it's freed
-//     immediately. If readers are still holding it, the last one to
-//     release will see refCount drop to 0 and free.
-//   - Readers (callouts) InterlockedIncrement BEFORE deref and
-//     InterlockedDecrement AFTER. The increment-then-deref is safe
-//     against the swap because the policy pointer at the time of
-//     the increment was the live one — even if a swap races in,
-//     the just-incremented reader is counted.
+// AcquireSnapshot's two steps — load g_ActivePolicy, then CAS its
+// refCount — cannot be made atomic together, and the count lives
+// inside the very object it protects, so the count alone can never
+// close the window between them: a swapper that frees as soon as its
+// own reference drops could free the policy while a reader sits
+// between the load and the CAS, and that reader would then touch
+// freed NonPaged pool.
 //
-// Closes the race window the previous "just hope ExFreePool is
-// delayed enough" model had.
-static PNEXUS_POLICY AcquireSnapshot(VOID)
+// Two pieces close the window for every caller IRQL:
+//
+//   1. AcquireSnapshot raises to DISPATCH_LEVEL across the load→CAS
+//      window, making it non-preemptible on its CPU.
+//   2. The swapper, after the pointer swap and BEFORE dropping the
+//      "being-active" reference, queues one DPC on every active
+//      processor and waits for all of them. A DPC queued to a CPU
+//      runs only after that CPU leaves its current DISPATCH-level
+//      execution — so when every DPC has run, every reader that
+//      could have loaded the OLD pointer has either finished the CAS
+//      (and is counted) or finished entirely. Readers arriving later
+//      can only load the new pointer. The decrement that follows is
+//      therefore safe: zero really means no reader.
+
+typedef struct _NEXUS_QUIESCE {
+    volatile LONG remaining;
+    KEVENT        done;
+} NEXUS_QUIESCE;
+
+_Function_class_(KDEFERRED_ROUTINE)
+static VOID NexusQuiesceDpc(
+    _In_ PKDPC Dpc,
+    _In_opt_ PVOID DeferredContext,
+    _In_opt_ PVOID SystemArgument1,
+    _In_opt_ PVOID SystemArgument2)
 {
-    PNEXUS_POLICY p;
-    for (;;) {
-        p = (PNEXUS_POLICY)g_ActivePolicy;
-        if (p == NULL) return NULL;
-        // Try to bump refcount. If the policy has already been
-        // marked for free (refCount == 0), retry — a newer policy
-        // is being installed by the swapper.
-        LONG cur = p->refCount;
-        if (cur <= 0) continue;
-        if (InterlockedCompareExchange(&p->refCount, cur + 1, cur) == cur) {
-            return p;
+    NEXUS_QUIESCE* q = (NEXUS_QUIESCE*)DeferredContext;
+    UNREFERENCED_PARAMETER(Dpc);
+    UNREFERENCED_PARAMETER(SystemArgument1);
+    UNREFERENCED_PARAMETER(SystemArgument2);
+    if (q != NULL && InterlockedDecrement(&q->remaining) == 0) {
+        KeSetEvent(&q->done, IO_NO_INCREMENT, FALSE);
+    }
+}
+
+// Runs the per-CPU rendezvous. Returns FALSE when it could not run
+// (allocation or processor-number lookup failed) — the caller must
+// then keep the superseded policy alive instead of freeing it.
+_IRQL_requires_(PASSIVE_LEVEL)
+static BOOLEAN NexusPolicyQuiesceDispatchReaders(VOID)
+{
+    ULONG cpuCount = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+    if (cpuCount == 0) {
+        return FALSE;
+    }
+
+    // Resolve every processor number BEFORE queueing anything: once a
+    // DPC is queued it cannot be taken back, so a mid-loop failure
+    // would leave an incomplete rendezvous that still signals done.
+    PROCESSOR_NUMBER* procNums = (PROCESSOR_NUMBER*)ExAllocatePool2(
+        POOL_FLAG_NON_PAGED, cpuCount * sizeof(PROCESSOR_NUMBER), NEXUS_WFP_POOL_TAG);
+    if (procNums == NULL) {
+        return FALSE;
+    }
+    PKDPC dpcs = (PKDPC)ExAllocatePool2(
+        POOL_FLAG_NON_PAGED, cpuCount * sizeof(KDPC), NEXUS_WFP_POOL_TAG);
+    if (dpcs == NULL) {
+        ExFreePoolWithTag(procNums, NEXUS_WFP_POOL_TAG);
+        return FALSE;
+    }
+    for (ULONG i = 0; i < cpuCount; i++) {
+        if (!NT_SUCCESS(KeGetProcessorNumberFromIndex(i, &procNums[i]))) {
+            ExFreePoolWithTag(dpcs, NEXUS_WFP_POOL_TAG);
+            ExFreePoolWithTag(procNums, NEXUS_WFP_POOL_TAG);
+            return FALSE;
         }
     }
+
+    NEXUS_QUIESCE q;
+    q.remaining = (LONG)cpuCount;
+    KeInitializeEvent(&q.done, NotificationEvent, FALSE);
+
+    for (ULONG i = 0; i < cpuCount; i++) {
+        KeInitializeDpc(&dpcs[i], NexusQuiesceDpc, &q);
+        KeSetTargetProcessorDpcEx(&dpcs[i], &procNums[i]);
+        KeInsertQueueDpc(&dpcs[i], NULL, NULL);
+    }
+    KeWaitForSingleObject(&q.done, Executive, KernelMode, FALSE, NULL);
+
+    ExFreePoolWithTag(dpcs, NEXUS_WFP_POOL_TAG);
+    ExFreePoolWithTag(procNums, NEXUS_WFP_POOL_TAG);
+    return TRUE;
+}
+
+// Acquire a refcounted snapshot. Callers MUST call ReleaseSnapshot
+// after they're done reading.
+//
+// The raise to DISPATCH makes the load→CAS window non-preemptible so
+// the swapper's rendezvous (above) is guaranteed to run after it —
+// callouts may classify at PASSIVE/APC level, where a preemption
+// inside the window would otherwise let the grace period complete
+// around a still-suspended reader.
+static PNEXUS_POLICY AcquireSnapshot(VOID)
+{
+    PNEXUS_POLICY result = NULL;
+    KIRQL oldIrql;
+    KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
+    for (;;) {
+        PNEXUS_POLICY p = (PNEXUS_POLICY)g_ActivePolicy;
+        if (p == NULL) {
+            break;
+        }
+        LONG cur = p->refCount;
+        if (cur <= 0) {
+            // Unreachable under the grace-period model: a policy's
+            // count can only reach 0 after no reader can load its
+            // pointer anymore. Fail open (no snapshot → default
+            // verdicts) rather than spin on a count this reader has
+            // no claim on.
+            break;
+        }
+        if (InterlockedCompareExchange(&p->refCount, cur + 1, cur) == cur) {
+            result = p;
+            break;
+        }
+    }
+    KeLowerIrql(oldIrql);
+    return result;
 }
 
 static VOID ReleaseSnapshot(_In_opt_ PNEXUS_POLICY Policy)
 {
     if (Policy == NULL) return;
+    // The last release may run inside a DISPATCH-level callout;
+    // freeing NonPaged pool is legal up to DISPATCH_LEVEL.
     if (InterlockedDecrement(&Policy->refCount) == 0) {
         FreePolicy(Policy);
     }

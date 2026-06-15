@@ -124,31 +124,57 @@ func TestRenameThingsList_WrapsAndRenamesEach(t *testing.T) {
 }
 
 func TestRenameDriftResponse(t *testing.T) {
-	in := []byte(`{"drifted":[{"id":"x","type":"agent","desiredVer":2,"reportedVer":1,"lastSeenAt":"2026-04-21T15:00:00Z"}],"total":1}`)
-	out, err := RenameDriftResponse(in)
-	if err != nil {
-		t.Fatalf("rename: %v", err)
-	}
-	var got map[string]any
-	_ = json.Unmarshal(out, &got)
+	t.Run("Hub provides outOfSyncKeys: passed through unchanged", func(t *testing.T) {
+		in := []byte(`{"drifted":[{"id":"x","type":"agent","desiredVer":2,"reportedVer":1,"lastSeenAt":"2026-04-21T15:00:00Z","outOfSyncKeys":["hooks","routing_rules"]}],"total":1}`)
+		out, err := RenameDriftResponse(in)
+		if err != nil {
+			t.Fatalf("rename: %v", err)
+		}
+		var got map[string]any
+		_ = json.Unmarshal(out, &got)
 
-	if _, bad := got["drifted"]; bad {
-		t.Error("'drifted' leaked")
-	}
-	arr, ok := got["outOfSync"].([]any)
-	if !ok || len(arr) != 1 {
-		t.Fatalf("outOfSync wrapper = %v", got["outOfSync"])
-	}
-	item := arr[0].(map[string]any)
-	if item["nodeId"] != "x" || item["nodeType"] != "agent" {
-		t.Errorf("id/type rename failed: %+v", item)
-	}
-	if item["lastSeen"] != "2026-04-21T15:00:00Z" {
-		t.Errorf("lastSeenAt → lastSeen rename failed: %v", item["lastSeen"])
-	}
-	if _, ok := item["outOfSyncKeys"]; !ok {
-		t.Error("outOfSyncKeys should be synthesized as empty array when Hub omits it")
-	}
+		if _, bad := got["drifted"]; bad {
+			t.Error("'drifted' leaked")
+		}
+		arr, ok := got["outOfSync"].([]any)
+		if !ok || len(arr) != 1 {
+			t.Fatalf("outOfSync wrapper = %v", got["outOfSync"])
+		}
+		item := arr[0].(map[string]any)
+		if item["nodeId"] != "x" || item["nodeType"] != "agent" {
+			t.Errorf("id/type rename failed: %+v", item)
+		}
+		if item["lastSeen"] != "2026-04-21T15:00:00Z" {
+			t.Errorf("lastSeenAt → lastSeen rename failed: %v", item["lastSeen"])
+		}
+		keys, ok := item["outOfSyncKeys"].([]any)
+		if !ok {
+			t.Fatalf("outOfSyncKeys not an array; got %T %v", item["outOfSyncKeys"], item["outOfSyncKeys"])
+		}
+		if len(keys) != 2 || keys[0] != "hooks" || keys[1] != "routing_rules" {
+			t.Errorf("outOfSyncKeys = %v, want [hooks routing_rules]", keys)
+		}
+	})
+
+	t.Run("Hub omits outOfSyncKeys: synthesized as empty array", func(t *testing.T) {
+		in := []byte(`{"drifted":[{"id":"x","type":"agent","desiredVer":2,"reportedVer":1,"lastSeenAt":"2026-04-21T15:00:00Z"}],"total":1}`)
+		out, err := RenameDriftResponse(in)
+		if err != nil {
+			t.Fatalf("rename: %v", err)
+		}
+		var got map[string]any
+		_ = json.Unmarshal(out, &got)
+		arr := got["outOfSync"].([]any)
+		item := arr[0].(map[string]any)
+		keys, ok := item["outOfSyncKeys"].([]any)
+		if !ok {
+			// json.Unmarshal of "[]" produces []any{} not nil.
+			t.Fatalf("outOfSyncKeys should be [] when Hub omits it; got %T %v", item["outOfSyncKeys"], item["outOfSyncKeys"])
+		}
+		if len(keys) != 0 {
+			t.Errorf("outOfSyncKeys should be empty; got %v", keys)
+		}
+	})
 }
 
 // TestRenameConfigUpdateResponse pins the contract for POST

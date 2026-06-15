@@ -3,9 +3,12 @@
 //
 // Mirrors the pattern proven in compliance-proxy / control-plane /
 // ai-gateway (configdispatch.go in each), but adds the Cat B HTTP-pull
-// path the Agent uniquely needs — Hub sends `{needsPull:true}` stubs
-// for Cat B keys and the Agent must HTTP-pull the live bytes from
-// Hub before applying.
+// path the Agent uniquely needs. For Cat B keys the Hub pushes only
+// minimal state bytes over WebSocket; the client side drives a real
+// HTTP pull (GET /api/internal/things/config/<key>) to fetch the full
+// payload before applying. The pull is triggered by the configloader's
+// RegisterRawPull handler flag — `needsPull` is a client-side concept
+// in configloader, NOT a wire field the Hub stamps into the payload.
 //
 // Each shadow key is registered as a `rawApply` closure. Main.go
 // assembles the closures (so they retain access to the goroutine-
@@ -50,8 +53,9 @@ type configDispatchDeps struct {
 	AgentSettings rawApply // agent_settings
 	DiagMode      rawApply // diag_mode (per-thing override carrying {until})
 
-	// Cat B — Hub pushes `{needsPull:true}` stub; Loader pulls bytes
-	// via the HTTP Puller before invoking apply.
+	// Cat B — Hub pushes minimal state over WS; the client's
+	// RegisterRawPull handler flag triggers an HTTP pull from Hub
+	// (GET /api/internal/things/config/<key>) before invoking apply.
 	Exemptions          rawApply // exemptions
 	InterceptionDomains rawApply // interception_domains
 	HookConfig          rawApply // hooks

@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -19,21 +20,158 @@ func seqsOf(evs []busEvent) []int {
 // the same session while one is running is refused; after finishTurn it succeeds again.
 func TestBus_StartTurnSerializes(t *testing.T) {
 	b := newSessionBus()
-	_, _, ok := b.startTurn("u:s", context.Background(), time.Minute)
-	if !ok {
-		t.Fatal("first startTurn must succeed")
+	if _, _, sr := b.startTurn("u:s", context.Background(), time.Minute); sr != startOK {
+		t.Fatalf("first startTurn must succeed, got %v", sr)
 	}
-	if _, _, ok := b.startTurn("u:s", context.Background(), time.Minute); ok {
-		t.Fatal("a second concurrent startTurn for the same session must be refused")
+	if _, _, sr := b.startTurn("u:s", context.Background(), time.Minute); sr != startTurnInFlight {
+		t.Fatalf("a second concurrent startTurn for the same session must report startTurnInFlight, got %v", sr)
 	}
-	// A different session is independent.
-	if _, _, ok := b.startTurn("u:other", context.Background(), time.Minute); !ok {
-		t.Fatal("a different session must start independently")
+	// A different session (same user) is independent — distinct sessionID, well under the cap.
+	if _, _, sr := b.startTurn("u:other", context.Background(), time.Minute); sr != startOK {
+		t.Fatalf("a different session must start independently, got %v", sr)
 	}
 	b.finishTurn("u:s")
-	if _, _, ok := b.startTurn("u:s", context.Background(), time.Minute); !ok {
-		t.Fatal("after finishTurn the session must accept a new turn")
+	if _, _, sr := b.startTurn("u:s", context.Background(), time.Minute); sr != startOK {
+		t.Fatalf("after finishTurn the session must accept a new turn, got %v", sr)
 	}
+}
+
+// TestBus_UserConcurrentTurnCap is the F-0267 per-user gate: a single user may have at
+// most maxConcurrentTurnsPerUser turns in flight across DISTINCT sessions; the next is
+// refused with startUserLimitHit (distinct from the per-session startTurnInFlight). All
+// turns share one system VK, so this bounds one user's instantaneous draw on the budget.
+func TestBus_UserConcurrentTurnCap(t *testing.T) {
+	b := newSessionBus()
+	// Open exactly the cap's worth of distinct sessions for one user.
+	for i := range maxConcurrentTurnsPerUser {
+		key := "u:s" + strconv.Itoa(i)
+		if _, _, sr := b.startTurn(key, context.Background(), time.Minute); sr != startOK {
+			t.Fatalf("session %d within the cap must start, got %v", i, sr)
+		}
+	}
+	// The (cap+1)th DISTINCT session for the same user is refused with the user-limit code,
+	// NOT the per-session in-flight code (it is a brand-new session).
+	if _, _, sr := b.startTurn("u:over", context.Background(), time.Minute); sr != startUserLimitHit {
+		t.Fatalf("the (cap+1)th session for a user must report startUserLimitHit, got %v", sr)
+	}
+}
+
+// TestBus_UserCapIsPerUser proves the cap is namespaced per user: a second user gets a
+// fresh full allotment even while the first is saturated.
+func TestBus_UserCapIsPerUser(t *testing.T) {
+	b := newSessionBus()
+	for i := range maxConcurrentTurnsPerUser {
+		if _, _, sr := b.startTurn("alice:s"+strconv.Itoa(i), context.Background(), time.Minute); sr != startOK {
+			t.Fatalf("alice session %d must start, got %v", i, sr)
+		}
+	}
+	// Alice is saturated.
+	if _, _, sr := b.startTurn("alice:more", context.Background(), time.Minute); sr != startUserLimitHit {
+		t.Fatalf("alice must be at her cap, got %v", sr)
+	}
+	// Bob still gets his own full allotment.
+	for i := range maxConcurrentTurnsPerUser {
+		if _, _, sr := b.startTurn("bob:s"+strconv.Itoa(i), context.Background(), time.Minute); sr != startOK {
+			t.Fatalf("bob session %d must start independently of alice, got %v", i, sr)
+		}
+	}
+	if _, _, sr := b.startTurn("bob:more", context.Background(), time.Minute); sr != startUserLimitHit {
+		t.Fatalf("bob must also have his own cap, got %v", sr)
+	}
+}
+
+// TestBus_UserSlotFreedOnFinish proves a completed turn frees the user's slot so a new
+// session is admitted: saturate, finish one, then a new session succeeds.
+func TestBus_UserSlotFreedOnFinish(t *testing.T) {
+	b := newSessionBus()
+	for i := range maxConcurrentTurnsPerUser {
+		b.startTurn("u:s"+strconv.Itoa(i), context.Background(), time.Minute)
+	}
+	if _, _, sr := b.startTurn("u:blocked", context.Background(), time.Minute); sr != startUserLimitHit {
+		t.Fatalf("user must start saturated, got %v", sr)
+	}
+	b.finishTurn("u:s0") // free one slot
+	if _, _, sr := b.startTurn("u:fresh", context.Background(), time.Minute); sr != startOK {
+		t.Fatalf("after a turn finishes the freed slot must admit a new session, got %v", sr)
+	}
+}
+
+// TestBus_UserSlotFreedOnDrop proves drop (session deletion) also frees the user's slot.
+func TestBus_UserSlotFreedOnDrop(t *testing.T) {
+	b := newSessionBus()
+	for i := range maxConcurrentTurnsPerUser {
+		b.startTurn("u:s"+strconv.Itoa(i), context.Background(), time.Minute)
+	}
+	b.drop("u:s0") // reclaim one session → frees its slot
+	if _, _, sr := b.startTurn("u:fresh", context.Background(), time.Minute); sr != startOK {
+		t.Fatalf("dropping a session must free its slot, got %v", sr)
+	}
+}
+
+// TestBus_UserSlotNotDoubleReleased pins the exactly-once release invariant: finishTurn
+// THEN drop on the same session must release the slot only once, so the user counter
+// cannot under-flow and silently raise the effective cap. After the single release the
+// user should be able to run exactly the cap again, no more.
+func TestBus_UserSlotNotDoubleReleased(t *testing.T) {
+	b := newSessionBus()
+	b.startTurn("u:s0", context.Background(), time.Minute)
+	b.finishTurn("u:s0") // release once
+	b.drop("u:s0")       // must NOT release again (slot already freed)
+
+	// The counter is back to 0 — confirm by saturating and then being blocked at exactly
+	// the cap (a double-release would have driven the counter negative, admitting cap+1).
+	for i := range maxConcurrentTurnsPerUser {
+		if _, _, sr := b.startTurn("u:n"+strconv.Itoa(i), context.Background(), time.Minute); sr != startOK {
+			t.Fatalf("session %d must start, got %v", i, sr)
+		}
+	}
+	if _, _, sr := b.startTurn("u:extra", context.Background(), time.Minute); sr != startUserLimitHit {
+		t.Fatalf("the cap must hold exactly (no under-flow from double release), got %v", sr)
+	}
+}
+
+// TestBus_RestartedSessionRebalancesSlot proves a session that finishes and starts a new
+// turn re-claims a slot: the slot accounting follows running turns, not session lifetime.
+func TestBus_RestartedSessionRebalancesSlot(t *testing.T) {
+	b := newSessionBus()
+	// One session runs, finishes, runs again — net one slot held, never two.
+	b.startTurn("u:s", context.Background(), time.Minute)
+	b.finishTurn("u:s")
+	b.startTurn("u:s", context.Background(), time.Minute) // re-claims a slot
+	// Fill the rest of the cap with other sessions.
+	for i := 1; i < maxConcurrentTurnsPerUser; i++ {
+		if _, _, sr := b.startTurn("u:o"+strconv.Itoa(i), context.Background(), time.Minute); sr != startOK {
+			t.Fatalf("session o%d within the cap must start, got %v", i, sr)
+		}
+	}
+	if _, _, sr := b.startTurn("u:over", context.Background(), time.Minute); sr != startUserLimitHit {
+		t.Fatalf("a restarted session must hold exactly one slot; the cap must hold, got %v", sr)
+	}
+}
+
+// TestBus_EmptyUserNotRateLimited covers the pool-less / unauthenticated path: an empty
+// userID has no per-user budget to protect and is never capped.
+func TestBus_EmptyUserNotRateLimited(t *testing.T) {
+	b := newSessionBus()
+	// Keys with an empty userID prefix (":sessionID"). Far more than the cap.
+	for i := range maxConcurrentTurnsPerUser + 3 {
+		if _, _, sr := b.startTurn(":s"+strconv.Itoa(i), context.Background(), time.Minute); sr != startOK {
+			t.Fatalf("an empty-userID session %d must never be rate-limited, got %v", i, sr)
+		}
+	}
+}
+
+// TestBus_ReleaseUserSlotNoUnderflow directly exercises the under-flow guard on the
+// raw counter helper: releasing a never-claimed user is a safe no-op and the next claim
+// still succeeds (the counter never went negative).
+func TestBus_ReleaseUserSlotNoUnderflow(t *testing.T) {
+	b := newSessionBus()
+	b.releaseUserSlot("ghost") // never claimed
+	if !b.claimUserSlot("ghost") {
+		t.Fatal("a claim after a no-op release must succeed (counter must not be negative)")
+	}
+	b.releaseUserSlot("ghost")
+	b.releaseUserSlot("") // empty userID release is a no-op
 }
 
 // TestBus_ReplayFromLastSeq covers reconnect: attaching with ?lastSeq=N replays only

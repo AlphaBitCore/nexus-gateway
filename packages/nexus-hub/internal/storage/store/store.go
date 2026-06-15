@@ -138,6 +138,7 @@ type (
 	ListThingsParams       = fleetstore.ListThingsParams
 	ListThingsResult       = fleetstore.ListThingsResult
 	DriftedThing           = fleetstore.DriftedThing
+	ContentCheckCandidate  = fleetstore.ContentCheckCandidate
 	UpsertThingParams      = fleetstore.UpsertThingParams
 	UpsertThingAgentParams = fleetstore.UpsertThingAgentParams
 	ThingWithOverrideAgg   = fleetstore.ThingWithOverrideAgg

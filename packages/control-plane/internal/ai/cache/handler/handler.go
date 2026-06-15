@@ -5,6 +5,7 @@ package cache
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 
@@ -88,16 +89,8 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 	g.GET("/cache/overrides", h.CacheListOverrides, iamMW(iam.ResourcePromptCache.Action(iam.VerbRead)))
 }
 
-// errJSON builds a canonical JSON error envelope used across admin handlers.
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 // actor is the per-request identity.
 type actor struct {
@@ -115,9 +108,9 @@ func actorFromContext(c echo.Context) actor {
 	return actor{UserID: aa.KeyID, Name: aa.KeyName}
 }
 
-// propagateCacheConfig assembles the full 3-tier blob and pushes it to
-// Hub via NotifyConfigChange under the shadow key `cache`.
-// On Hub failure the caller should respond 502 with a structured propagation_error.
+// propagateCacheConfig assembles the full 3-tier blob and pushes it to Hub
+// under the shadow key `cache` via the shared hub.PushTypeA path. On Hub
+// failure the caller responds 502 via hub.RespondPropagationFailure.
 func (h *Handler) propagateCacheConfig(ctx context.Context, actorID, actorName string) error {
 	if h.hub == nil {
 		return nil // Hub not wired (test/dev mode); silent no-op
@@ -126,27 +119,8 @@ func (h *Handler) propagateCacheConfig(ctx context.Context, actorID, actorName s
 	if err != nil {
 		return wrapErr("assemble cache blob", err)
 	}
-	_, err = h.hub.NotifyConfigChange(ctx, hub.ConfigChangeRequest{
-		ThingType: "ai-gateway",
-		ConfigKey: configkey.Cache,
-		State:     blob,
-		ActorID:   actorID,
-		ActorName: actorName,
-	})
+	_, err = hub.PushTypeA(ctx, h.hub, "ai-gateway", configkey.Cache, blob, hub.Actor{ID: actorID, Name: actorName})
 	return err
-}
-
-// hubPropagationErrorJSON is the structured body returned on HTTP 502
-// when the DB write succeeded but Hub propagation failed (per ADR-4).
-func hubPropagationErrorJSON(detail error) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": "Config saved locally but propagation to gateway failed; verify Hub health and retry, or wait up to 60s for the reconcile job to recover.",
-			"type":    "propagation_error",
-			"code":    "",
-			"detail":  detail.Error(),
-		},
-	}
 }
 
 // internalServerError is the canonical 500 used across this domain.

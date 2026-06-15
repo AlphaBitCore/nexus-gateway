@@ -18,6 +18,9 @@ import (
 // ProxyConfig holds the AI Gateway URL needed for hook test forwarding.
 type ProxyConfig struct {
 	AIGatewayURL string
+	// AIGatewayInternalToken is the shared internal-service bearer token
+	// presented on the CP→ai-gateway /internal/hooks-test call.
+	AIGatewayInternalToken string
 }
 
 // RegisterHookExtrasRoutes registers read-only hook metadata + test endpoints.
@@ -382,6 +385,7 @@ func (h *Handler) forwardHookTest(c echo.Context, hc *hookstore.HookConfig) erro
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": "Failed to build request: " + err.Error()})
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.proxy.AIGatewayInternalToken)
 
 	resp, err := client.Do(req)
 	if err != nil {

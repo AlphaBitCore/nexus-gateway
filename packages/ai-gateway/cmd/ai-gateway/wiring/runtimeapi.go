@@ -5,7 +5,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"os"
 
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
@@ -155,7 +154,7 @@ func InitIntrospectRegistry(deps IntrospectDeps, mux *http.ServeMux) *runtimeint
 				return map[string]any{
 					"id": cfg.ID, "backendMode": cfg.BackendMode,
 					"providerId": cfg.ProviderID, "modelId": cfg.ModelID,
-					"externalUrl": cfg.ExternalURL, "externalCredentialId": cfg.ExternalCredentialID,
+					"externalUrl":      cfg.ExternalURL,
 					"customHeaderKeys": headerKeys, "promptTemplate": cfg.PromptTemplate,
 					"timeoutMs": cfg.TimeoutMs, "cacheTtlSeconds": cfg.CacheTTLSeconds,
 					"backendFingerprint": cfg.BackendFingerprint,
@@ -179,17 +178,21 @@ func InitIntrospectRegistry(deps IntrospectDeps, mux *http.ServeMux) *runtimeint
 	return introspectReg
 }
 
-// MountRuntimeAPI mounts the /runtime/* API surface when thingClient is available.
-func MountRuntimeAPI(thingClient *thingclient.Client, mux *http.ServeMux) {
+// MountRuntimeAPI mounts the /runtime/* API surface when thingClient is
+// available. The surface is gated on the same INTERNAL_SERVICE_TOKEN that
+// guards /debug/runtime and the Hub WS/HTTP transport. Previously it
+// read a separate AI_GATEWAY_API_TOKEN env var that config.validate never
+// enforced — a 4th introspection token with no boot check. Folding /runtime/*
+// onto InternalServiceToken removes that unvalidated config surface; the token
+// is already required at boot (config.validate), so /runtime/* is always
+// gated on a real, validated secret rather than silently rejecting every
+// request when an extra env var was forgotten.
+func MountRuntimeAPI(thingClient *thingclient.Client, serviceToken string, mux *http.ServeMux) {
 	if thingClient == nil {
 		return
 	}
-	apiToken := os.Getenv("AI_GATEWAY_API_TOKEN")
-	if apiToken == "" {
-		slog.Warn("AI_GATEWAY_API_TOKEN not set; /runtime/* will reject all requests")
-	}
 	rtServer := runtimeapi.New(runtimeapi.Config{
-		APIToken: apiToken,
+		APIToken: serviceToken,
 		Thing:    thingClient,
 		Logger:   slog.Default(),
 	})

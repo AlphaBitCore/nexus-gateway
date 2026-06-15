@@ -88,12 +88,27 @@ actor StatusClient {
         return try await sendCommand("REPORT_PROXY_INSTALL?\(json)")
     }
 
+    /// Upper bound on a single statusapi response. The protocol is one
+    /// JSON line per command; the largest real payload (UpdateCheck with
+    /// release notes) is a few KB. The cap exists so a wedged or hostile
+    /// daemon cannot make the menu-bar app buffer unbounded memory.
+    private static let maxResponseBytes = 1 << 20
+
+    /// Socket send/recv deadline. Without it, a daemon that accepts the
+    /// connection but never answers parks this actor's command forever
+    /// and the menu goes permanently stale.
+    private static let ioTimeoutSeconds = 5
+
     private func sendCommand<T: Decodable>(_ command: String) async throws -> T {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
             throw IPCError.socketCreationFailed
         }
         defer { close(fd) }
+
+        var tv = timeval(tv_sec: Self.ioTimeoutSeconds, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -132,6 +147,9 @@ actor StatusClient {
             if bytesRead <= 0 { break }
             data.append(buffer, count: bytesRead)
             if data.last == UInt8(ascii: "\n") { break }
+            if data.count > Self.maxResponseBytes {
+                throw IPCError.responseTooLarge
+            }
         }
 
         guard !data.isEmpty else {
@@ -146,6 +164,7 @@ enum IPCError: LocalizedError {
     case socketCreationFailed
     case connectionFailed(errno: Int32)
     case emptyResponse
+    case responseTooLarge
 
     var errorDescription: String? {
         switch self {
@@ -155,6 +174,8 @@ enum IPCError: LocalizedError {
             return "Connection failed (errno: \(errno)). Is the agent running?"
         case .emptyResponse:
             return "Empty response from agent"
+        case .responseTooLarge:
+            return "Agent response exceeded the size limit"
         }
     }
 }

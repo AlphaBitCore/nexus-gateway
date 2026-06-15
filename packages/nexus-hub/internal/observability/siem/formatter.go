@@ -99,36 +99,39 @@ func appendCEFExt(sb *strings.Builder, key, value string) {
 	sb.WriteString(cefEscapeValue(value))
 }
 
-// cefEscape escapes pipes and backslashes in CEF header fields.
+// sanitizeControl neutralises characters that would let an attacker-controlled
+// field forge a second SIEM record: CR and LF are rendered as the literal
+// two-character sequences \r and \n, and every other control character (NUL,
+// ESC, TAB, DEL, …) is dropped. It runs AFTER the format-specific backslash
+// escaping so the backslashes it introduces are interpreted by the SIEM as
+// escape sequences, not re-doubled. Without this an actor label such as
+// "x@y\nCEF:0|…forged…" (the email on an unauthenticated admin.login.failed)
+// would inject a forged line into the security audit stream.
+func sanitizeControl(s string) string {
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1 // drop remaining control characters
+		}
+		return r
+	}, s)
+}
+
+// cefEscape escapes pipes and backslashes in CEF header fields, then strips
+// control characters so a header field cannot break the line.
 func cefEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `|`, `\|`)
-	return s
+	return sanitizeControl(s)
 }
 
-// cefEscapeValue escapes backslashes and equals signs in CEF extension values.
+// cefEscapeValue escapes backslashes and equals signs in CEF extension values,
+// then strips control characters (CR/LF injection guard).
 func cefEscapeValue(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `=`, `\=`)
-	return s
-}
-
-// cefSeverity maps eventType prefixes to a CEF severity integer (0–10).
-func cefSeverity(eventType string) int {
-	switch {
-	case eventType == "auth.login_failure":
-		return 7
-	case strings.HasPrefix(eventType, "iam."):
-		return 6
-	case strings.HasPrefix(eventType, "credential."):
-		return 6
-	case strings.HasPrefix(eventType, "proxy."):
-		return 5
-	case strings.HasPrefix(eventType, "config."):
-		return 4
-	default:
-		return 3
-	}
+	return sanitizeControl(s)
 }
 
 // SyslogFormatter serialises a batch as newline-separated RFC-5424 syslog
@@ -179,40 +182,26 @@ func syslogLine(evt Event) string {
 		syslogEscape(actor),
 	)
 
-	// RFC-5424: <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
+	// RFC-5424: <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG.
+	// timestamp, eventType (MSGID) and message are inserted outside any SD-PARAM
+	// quoting, so they are control-sanitised here to prevent a newline in any of
+	// them from forging a new syslog line. eventType keeps its raw form for the
+	// severity classification above.
 	return fmt.Sprintf("<%d>1 %s nexus-gateway control-plane - %s %s %s",
 		pri,
-		timestamp,
-		eventType,
+		sanitizeControl(timestamp),
+		sanitizeControl(eventType),
 		sd,
-		message,
+		sanitizeControl(message),
 	)
 }
 
-// syslogEscape escapes double-quotes and backslashes inside SD-PARAM values.
+// syslogEscape escapes double-quotes and backslashes inside SD-PARAM values,
+// then strips control characters (CR/LF injection guard).
 func syslogEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
-	return s
-}
-
-// syslogSeverity maps eventType prefixes to RFC-5424 severity codes.
-// facility = local0 (16); valid severities 0–7.
-func syslogSeverity(eventType string) int {
-	switch {
-	case eventType == "auth.login_failure":
-		return 4 // warning
-	case strings.HasPrefix(eventType, "iam."):
-		return 5 // notice
-	case strings.HasPrefix(eventType, "credential."):
-		return 5 // notice
-	case strings.HasPrefix(eventType, "config."):
-		return 5 // notice
-	case strings.HasPrefix(eventType, "proxy."):
-		return 4 // warning
-	default:
-		return 6 // info
-	}
+	return sanitizeControl(s)
 }
 
 // strField safely extracts a string value from an Event map.

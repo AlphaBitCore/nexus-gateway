@@ -68,16 +68,24 @@ func (a *auditSpy) last() map[string]any {
 	return m
 }
 
-// hubSpy records every InvalidateConfig fan-out for assertion.
+// hubSpy records every invalidation fan-out (both the fire-and-forget and the
+// error-returning variants) for assertion. invalidateErr drives the
+// push-failure → HTTP 502 branch of the security-sensitive CUD paths.
 type hubSpy struct {
-	mu    sync.Mutex
-	calls []string // "thingType/configKey"
+	mu            sync.Mutex
+	calls         []string // "thingType/configKey"
+	invalidateErr error
 }
 
-func (h *hubSpy) InvalidateConfig(_ context.Context, thingType, configKey string) {
+func (h *hubSpy) InvalidateConfigE(_ context.Context, thingType, configKey string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.calls = append(h.calls, thingType+"/"+configKey)
+	return h.invalidateErr
+}
+
+func (h *hubSpy) InvalidateConfig(ctx context.Context, thingType, configKey string) {
+	_ = h.InvalidateConfigE(ctx, thingType, configKey)
 }
 
 func (h *hubSpy) seen() []string {

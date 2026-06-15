@@ -122,7 +122,7 @@ func EmbedRequestToCanonical(body []byte, providerModelID string) ([]byte, error
 			return nil, fmt.Errorf("voyage embed: stamp output_dimension: %w", err)
 		}
 	}
-	if tr := gjson.GetBytes(body, "truncation"); tr.Exists() && tr.Type == gjson.True || tr.Type == gjson.False {
+	if tr := gjson.GetBytes(body, "truncation"); tr.Type == gjson.True || tr.Type == gjson.False {
 		canonical, err = canonicalext.Set(canonical, "voyage", "truncation", tr.Bool())
 		if err != nil {
 			return nil, fmt.Errorf("voyage embed: stamp truncation: %w", err)

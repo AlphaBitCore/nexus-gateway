@@ -40,11 +40,16 @@ func (c *SmartConfig) maxTokens() int {
 	return 1024
 }
 
+// timeoutMs is the router-LLM call budget. The built-in default is 3000ms:
+// smart routing sits on the request hot path, so a slow router provider must
+// not stall every routed request for long before smartFallback kicks in.
+// Operators override per-rule via SmartConfig.TimeoutMs when a slower router
+// model genuinely needs more headroom.
 func (c *SmartConfig) timeoutMs() int {
 	if c.TimeoutMs > 0 {
 		return c.TimeoutMs
 	}
-	return 10000
+	return 3000
 }
 
 // smartCatalogProvider is one provider group in the router system prompt JSON.

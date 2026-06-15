@@ -647,3 +647,54 @@ func TestCompareVersion_LongerB(t *testing.T) {
 		t.Error("1.5.0 should equal 1.5")
 	}
 }
+
+// --- F-0282d: regex op compiles once per pattern (compile cache) ------------
+
+func TestCompileRegex_CachesSamePointer(t *testing.T) {
+	const pat = `^cache-test-[0-9]+$`
+	regexCache.Delete(pat) // isolate from any prior test run
+
+	re1, err := compileRegex(pat)
+	if err != nil {
+		t.Fatalf("first compile: %v", err)
+	}
+	re2, err := compileRegex(pat)
+	if err != nil {
+		t.Fatalf("second compile: %v", err)
+	}
+	if re1 != re2 {
+		t.Errorf("same pattern must reuse the cached *regexp.Regexp; got distinct pointers")
+	}
+}
+
+func TestCompileRegex_BadPatternNotCached(t *testing.T) {
+	const bad = `(unterminated`
+	regexCache.Delete(bad)
+	if _, err := compileRegex(bad); err == nil {
+		t.Fatal("expected compile error for bad pattern")
+	}
+	// An uncompilable pattern must NOT be cached, so a later valid edit of the
+	// same string still recompiles and the error surfaces each time.
+	if _, ok := regexCache.Load(bad); ok {
+		t.Error("bad pattern must not be stored in the cache")
+	}
+	if _, err := compileRegex(bad); err == nil {
+		t.Error("bad pattern should still error on a second call")
+	}
+}
+
+func TestEvaluate_RegexOp_RepeatedCallsConsistent(t *testing.T) {
+	// The regex op is exercised through Evaluate twice with the same pattern;
+	// the cached compile must yield identical results (no stale/garbled state).
+	d := mkDev()
+	leaf := Leaf{Field: "hostname", Op: "regex", Value: `^mac-.*\.local$`}
+	for i := range 3 {
+		ok, err := Evaluate(Predicate{All: []Leaf{leaf}}, d, 0)
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if !ok {
+			t.Fatalf("call %d: expected match for %q", i, d.Hostname)
+		}
+	}
+}

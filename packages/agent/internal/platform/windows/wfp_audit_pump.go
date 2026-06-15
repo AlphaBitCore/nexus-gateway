@@ -10,10 +10,10 @@
 //   2. Post NEXUS_AUDIT_IRP_DEPTH (=8) overlapped IOCTLs, each carrying
 //      a 4 KB output buffer.
 //   3. A goroutine loops on GetQueuedCompletionStatus, parses the
-//      completed buffer into FlowAuditEvent records, pushes them
-//      into the FlowTable (so subsequent GetOriginalDestination
-//      hits the in-memory cache) and into the auditCh channel
-//      (non-blocking — drop with counter if the channel is full).
+//      completed buffer into FlowAuditEvent records, and pushes the
+//      redirect ones into the FlowTable (so subsequent
+//      GetOriginalDestination hits the in-memory cache). The events
+//      carry no other consumed telemetry, so nothing else is emitted.
 //   4. Re-post the same slot immediately. Sustained at 8 outstanding.
 //   5. On Stop: CancelIoEx cancels every IRP; the loop drains them
 //      and exits; we Close the IOCP handle.
@@ -25,7 +25,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
-	"sync/atomic"
 
 	"golang.org/x/sys/windows"
 )
@@ -43,21 +42,18 @@ type auditPump struct {
 	handle windows.Handle
 	iocp   windows.Handle
 
-	auditCh chan<- FlowAuditEvent
 	flowTbl *wfpFlowTable
 
 	slots [auditIRPDepth]auditPumpSlot
 
-	droppedCount atomic.Uint64
-	stopCh       chan struct{}
-	stopped      chan struct{}
+	stopCh  chan struct{}
+	stopped chan struct{}
 }
 
-func newAuditPump(log *slog.Logger, handle windows.Handle, auditCh chan<- FlowAuditEvent, flowTbl *wfpFlowTable) *auditPump {
+func newAuditPump(log *slog.Logger, handle windows.Handle, flowTbl *wfpFlowTable) *auditPump {
 	return &auditPump{
 		log:     log,
 		handle:  handle,
-		auditCh: auditCh,
 		flowTbl: flowTbl,
 		stopCh:  make(chan struct{}),
 		stopped: make(chan struct{}),
@@ -176,7 +172,12 @@ func (p *auditPump) loop() {
 			continue
 		}
 
-		// Parse the records.
+		// Parse the records. The only consumer of a parsed event is the
+		// flow table, which maps a redirected flow's source port back to
+		// its original destination for the user-mode GET_ORIG_DST lookup.
+		// The events carry no other telemetry any product surface reads,
+		// so nothing is pushed to a channel here (a former auditCh had no
+		// consumer and silently dropped every event past its buffer).
 		if bytes > 0 {
 			events := parseFlowAuditEntries(p.slots[slot].buf[:bytes])
 			for _, evt := range events {
@@ -186,11 +187,6 @@ func (p *auditPump) loop() {
 						evt.Protocol == protoUDP,
 						evt.OrigDstAddr,
 						evt.ProcessID)
-				}
-				select {
-				case p.auditCh <- evt:
-				default:
-					p.droppedCount.Add(1)
 				}
 			}
 		}
@@ -221,10 +217,6 @@ func (p *auditPump) isStopping() bool {
 	default:
 		return false
 	}
-}
-
-func (p *auditPump) DroppedCount() uint64 {
-	return p.droppedCount.Load()
 }
 
 const (

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pashagolub/pgxmock/v4"
 )
 
@@ -40,9 +39,8 @@ func TestPassthroughExpiry_Run_AllTiersClean(t *testing.T) {
 	}
 	defer mock.Close()
 
-	// Global: simulate pgx.ErrNoRows from RETURNING.
-	mock.ExpectQuery(`UPDATE gateway_passthrough_config_global`).
-		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec(`UPDATE gateway_passthrough_config_global`).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 	mock.ExpectExec(`UPDATE gateway_passthrough_config_adapter`).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 	mock.ExpectExec(`UPDATE gateway_passthrough_config_provider`).
@@ -57,6 +55,9 @@ func TestPassthroughExpiry_Run_AllTiersClean(t *testing.T) {
 	}
 }
 
+// TestPassthroughExpiry_Run_GlobalReturnsCount asserts the global tier reports
+// rows-reverted-this-tick via RowsAffected (F-0134) — not a count of all
+// currently-disabled rows.
 func TestPassthroughExpiry_Run_GlobalReturnsCount(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {
@@ -64,8 +65,8 @@ func TestPassthroughExpiry_Run_GlobalReturnsCount(t *testing.T) {
 	}
 	defer mock.Close()
 
-	mock.ExpectQuery(`UPDATE gateway_passthrough_config_global`).
-		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(3)))
+	mock.ExpectExec(`UPDATE gateway_passthrough_config_global`).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 3))
 	mock.ExpectExec(`UPDATE gateway_passthrough_config_adapter`).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 2))
 	mock.ExpectExec(`UPDATE gateway_passthrough_config_provider`).
@@ -74,6 +75,32 @@ func TestPassthroughExpiry_Run_GlobalReturnsCount(t *testing.T) {
 	j := &PassthroughExpiryJob{pool: mock, logger: testLogger()}
 	if err := j.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock: %v", err)
+	}
+}
+
+// TestPassthroughExpiry_Run_GlobalFails asserts a global-tier DB error is
+// returned, not swallowed (F-0134 — the old code set gCount=0 "as no-op" and
+// hid the failure).
+func TestPassthroughExpiry_Run_GlobalFails(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	sentinel := errors.New("global boom")
+	mock.ExpectExec(`UPDATE gateway_passthrough_config_global`).
+		WillReturnError(sentinel)
+
+	j := &PassthroughExpiryJob{pool: mock, logger: testLogger()}
+	if err := j.Run(context.Background()); !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want sentinel", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock: %v", err)
 	}
 }
 
@@ -85,8 +112,8 @@ func TestPassthroughExpiry_Run_AdapterFails(t *testing.T) {
 	defer mock.Close()
 
 	sentinel := errors.New("adapter boom")
-	mock.ExpectQuery(`UPDATE gateway_passthrough_config_global`).
-		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec(`UPDATE gateway_passthrough_config_global`).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 	mock.ExpectExec(`UPDATE gateway_passthrough_config_adapter`).
 		WillReturnError(sentinel)
 
@@ -104,8 +131,8 @@ func TestPassthroughExpiry_Run_ProviderFails(t *testing.T) {
 	defer mock.Close()
 
 	sentinel := errors.New("provider boom")
-	mock.ExpectQuery(`UPDATE gateway_passthrough_config_global`).
-		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec(`UPDATE gateway_passthrough_config_global`).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 	mock.ExpectExec(`UPDATE gateway_passthrough_config_adapter`).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 	mock.ExpectExec(`UPDATE gateway_passthrough_config_provider`).

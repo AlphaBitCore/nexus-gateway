@@ -304,11 +304,12 @@ func TestPasswordHandler_Mock_UserMissingMapsToInvalidCreds(t *testing.T) {
 	}
 }
 
-// TestPasswordHandler_Mock_UserDisabledMapsToUserDisabled distinguishes a
-// disabled-account response from invalid_credentials so support staff
-// can triage failures, but only AFTER the user already passed the
-// timing-uniform path inside idp.Local.
-func TestPasswordHandler_Mock_UserDisabledMapsToUserDisabled(t *testing.T) {
+// TestPasswordHandler_Mock_DisabledAccountReturnsGenericError asserts the
+// F-0078 anti-enumeration fix at the HTTP layer: a disabled local account that
+// presents the correct password returns 401 with the generic
+// invalid_credentials code (NOT a distinct user_disabled), so an anonymous
+// caller cannot enumerate disabled accounts.
+func TestPasswordHandler_Mock_DisabledAccountReturnsGenericError(t *testing.T) {
 	hash := hashOrFail(t, "hunter2")
 	disabled := time.Now().Add(-time.Hour)
 	lookup := &fakeUserLookup{userID: "user-disabled", pwdHash: hash, disabledAt: &disabled}
@@ -327,8 +328,8 @@ func TestPasswordHandler_Mock_UserDisabledMapsToUserDisabled(t *testing.T) {
 	}
 	var body map[string]string
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["error"] != "user_disabled" {
-		t.Fatalf("error: got %q, want user_disabled", body["error"])
+	if body["error"] != "invalid_credentials" {
+		t.Fatalf("error: got %q, want invalid_credentials (no disabled-account enumeration)", body["error"])
 	}
 }
 

@@ -899,7 +899,7 @@ func TestOIDCCallbackHandler_DiscoversEndpointsFromIssuer(t *testing.T) {
 		Federated: store.NewFederatedStoreWithPool(mock),
 		Pending:   pending,
 		AuthCodes: codes,
-		Resolver:  oidcdisco.NewResolver(),
+		Resolver:  oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck()),
 	}
 
 	expectGetByID(mock, idpID, cfgJSON, false)
@@ -1019,7 +1019,7 @@ func TestOIDCCallbackHandler_AudienceDefaultsToClientID(t *testing.T) {
 		Federated: store.NewFederatedStoreWithPool(mock),
 		Pending:   pending,
 		AuthCodes: codes,
-		Resolver:  oidcdisco.NewResolver(),
+		Resolver:  oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck()),
 	}
 
 	expectGetByID(mock, idpID, cfgJSON, false)
@@ -1094,7 +1094,7 @@ func nonceCallbackDeps(t *testing.T, expectNonce, tokenNonce string, federatedEx
 		Federated: store.NewFederatedStoreWithPool(mock),
 		Pending:   pending,
 		AuthCodes: codes,
-		Resolver:  oidcdisco.NewResolver(),
+		Resolver:  oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck()),
 	}
 	expectGetByID(mock, idpID, cfgJSON, false)
 	if federatedExpected {

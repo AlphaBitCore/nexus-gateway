@@ -124,7 +124,7 @@ func TestStartHandler_OIDCDiscovery(t *testing.T) {
 		mock.ExpectQuery(idpRowQuery).WithArgs("idp-disco").
 			WillReturnRows(startIdPRow("idp-disco", "oidc", "Auth0", true, true, cfg))
 		d, pending, _ := newStartDeps(t, mock)
-		d.Resolver = oidcdisco.NewResolver()
+		d.Resolver = oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck())
 		pending.Put("ctxd", liveEntry())
 
 		c, rec := newStartCtx("idp-disco", "ctxd")
@@ -151,7 +151,7 @@ func TestStartHandler_OIDCDiscovery(t *testing.T) {
 		mock.ExpectQuery(idpRowQuery).WithArgs("idp-dead").
 			WillReturnRows(startIdPRow("idp-dead", "oidc", "Dead", true, true, cfg))
 		d, pending, _ := newStartDeps(t, mock)
-		d.Resolver = oidcdisco.NewResolver()
+		d.Resolver = oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck())
 		pending.Put("ctxdead", liveEntry())
 
 		c, rec := newStartCtx("idp-dead", "ctxdead")
@@ -201,6 +201,81 @@ func TestStartHandler_OIDCSendsNonce(t *testing.T) {
 	e, ok := pending.Take("ctxn")
 	if !ok || e.IdPNonce != nonce {
 		t.Fatalf("pending IdPNonce = %q (ok=%v), want %q stamped", e.IdPNonce, ok, nonce)
+	}
+}
+
+// TestStartHandler_OIDCSetsStateCookie asserts the SSO-start leg sets the
+// HMAC-signed oidc_state HttpOnly cookie that binds the callback to this
+// browser (login-CSRF defense-in-depth): the cookie value must verify back to
+// the authctx, and the attributes (HttpOnly, Secure, Lax, callback-scoped path,
+// 5-min max-age) must match the design so the browser only replays it on the
+// return leg over TLS.
+func TestStartHandler_OIDCSetsStateCookie(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	t.Cleanup(mock.Close)
+	cfg := startOIDCCfg("https://idp.example.com/authorize", "cid", "https://app/cb")
+	mock.ExpectQuery(idpRowQuery).WithArgs("idp-cookie").
+		WillReturnRows(startIdPRow("idp-cookie", "oidc", "Okta", true, true, cfg))
+	d, pending, _ := newStartDeps(t, mock)
+	signer := newStateSigner([]byte("0123456789abcdef0123456789abcdef"))
+	d.StateSigner = signer
+	pending.Put("ctxck", liveEntry())
+
+	c, rec := newStartCtx("idp-cookie", "ctxck")
+	if err := StartHandler(d)(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var got *http.Cookie
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == oidcStateCookieName {
+			got = ck
+		}
+	}
+	if got == nil {
+		t.Fatal("oidc_state cookie not set on the start leg")
+	}
+	if !got.HttpOnly || !got.Secure || got.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("cookie attributes wrong: HttpOnly=%v Secure=%v SameSite=%v",
+			got.HttpOnly, got.Secure, got.SameSite)
+	}
+	if got.Path != oidcStateCookiePath {
+		t.Fatalf("cookie path = %q, want %q", got.Path, oidcStateCookiePath)
+	}
+	if got.MaxAge != oidcStateCookieMaxAge {
+		t.Fatalf("cookie max-age = %d, want %d", got.MaxAge, oidcStateCookieMaxAge)
+	}
+	bound, err := signer.verify(got.Value)
+	if err != nil {
+		t.Fatalf("cookie value does not verify: %v", err)
+	}
+	if bound != "ctxck" {
+		t.Fatalf("cookie binds authctx %q, want ctxck", bound)
+	}
+}
+
+// TestStartHandler_OIDCNilSignerNoCookie — when no signer is wired (test
+// harness / CSPRNG-failure fallback) the start leg still redirects but sets no
+// state cookie, rather than panicking.
+func TestStartHandler_OIDCNilSignerNoCookie(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	t.Cleanup(mock.Close)
+	cfg := startOIDCCfg("https://idp.example.com/authorize", "cid", "https://app/cb")
+	mock.ExpectQuery(idpRowQuery).WithArgs("idp-nosig").
+		WillReturnRows(startIdPRow("idp-nosig", "oidc", "Okta", true, true, cfg))
+	d, pending, _ := newStartDeps(t, mock) // StateSigner left nil
+	pending.Put("ctxns", liveEntry())
+
+	c, rec := newStartCtx("idp-nosig", "ctxns")
+	if err := StartHandler(d)(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("got %d, want 302", rec.Code)
+	}
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == oidcStateCookieName {
+			t.Fatal("nil signer must not set a state cookie")
+		}
 	}
 }
 

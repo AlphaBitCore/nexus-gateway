@@ -106,7 +106,6 @@ type oauthClientCreateBody struct {
 	Type              string   `json:"type"`
 	RedirectURIs      []string `json:"redirectUris"`
 	AllowedScopes     []string `json:"allowedScopes"`
-	RequirePKCE       *bool    `json:"requirePkce"`
 	AccessTTLSeconds  *int     `json:"accessTtlSeconds"`
 	RefreshTTLSeconds *int     `json:"refreshTtlSeconds"`
 }
@@ -131,7 +130,6 @@ func (h *Handler) CreateOAuthClient(c echo.Context) error {
 		Type:              body.Type,
 		RedirectURIs:      body.RedirectURIs,
 		AllowedScopes:     body.AllowedScopes,
-		RequirePKCE:       *body.RequirePKCE,
 		AccessTTLSeconds:  *body.AccessTTLSeconds,
 		RefreshTTLSeconds: *body.RefreshTTLSeconds,
 	}
@@ -166,7 +164,6 @@ func (h *Handler) CreateOAuthClient(c echo.Context) error {
 		"type":          row.Type,
 		"redirectUris":  row.RedirectURIs,
 		"allowedScopes": row.AllowedScopes,
-		"requirePkce":   row.RequirePKCE,
 	}
 	h.audit.LogObserved(ctx, ae)
 
@@ -184,7 +181,6 @@ type oauthClientUpdateBody struct {
 	Name              *string   `json:"name"`
 	RedirectURIs      *[]string `json:"redirectUris"`
 	AllowedScopes     *[]string `json:"allowedScopes"`
-	RequirePKCE       *bool     `json:"requirePkce"`
 	AccessTTLSeconds  *int      `json:"accessTtlSeconds"`
 	RefreshTTLSeconds *int      `json:"refreshTtlSeconds"`
 }
@@ -207,7 +203,6 @@ func (h *Handler) UpdateOAuthClient(c echo.Context) error {
 		Name:              body.Name,
 		RedirectURIs:      body.RedirectURIs,
 		AllowedScopes:     body.AllowedScopes,
-		RequirePKCE:       body.RequirePKCE,
 		AccessTTLSeconds:  body.AccessTTLSeconds,
 		RefreshTTLSeconds: body.RefreshTTLSeconds,
 	}
@@ -227,7 +222,6 @@ func (h *Handler) UpdateOAuthClient(c echo.Context) error {
 		"name":          row.Name,
 		"redirectUris":  row.RedirectURIs,
 		"allowedScopes": row.AllowedScopes,
-		"requirePkce":   row.RequirePKCE,
 	}
 	h.audit.LogObserved(ctx, ae)
 
@@ -338,7 +332,6 @@ func oauthClientPublic(r *authstore.OAuthClient) map[string]any {
 		"type":              r.Type,
 		"redirectUris":      r.RedirectURIs,
 		"allowedScopes":     r.AllowedScopes,
-		"requirePkce":       r.RequirePKCE,
 		"accessTtlSeconds":  r.AccessTTLSeconds,
 		"refreshTtlSeconds": r.RefreshTTLSeconds,
 		"createdAt":         r.CreatedAt,
@@ -361,10 +354,6 @@ func (b *oauthClientCreateBody) applyDefaults() {
 	if b.AllowedScopes == nil {
 		b.AllowedScopes = []string{"openid", "profile", "email"}
 	}
-	if b.RequirePKCE == nil {
-		t := true
-		b.RequirePKCE = &t
-	}
 	if b.AccessTTLSeconds == nil {
 		n := 3600
 		b.AccessTTLSeconds = &n
@@ -372,12 +361,6 @@ func (b *oauthClientCreateBody) applyDefaults() {
 	if b.RefreshTTLSeconds == nil {
 		n := 86400
 		b.RefreshTTLSeconds = &n
-	}
-	// Public clients are required to use PKCE — overrides any caller value
-	// of false to avoid silently accepting a misconfigured registration.
-	if b.Type == "public" {
-		t := true
-		b.RequirePKCE = &t
 	}
 }
 

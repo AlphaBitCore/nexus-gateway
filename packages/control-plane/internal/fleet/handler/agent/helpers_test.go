@@ -97,11 +97,6 @@ type fakeHub struct {
 	forceResyncReq  string
 	forceResyncResp map[string]any
 	forceResyncErr  error
-
-	rotateCertHits int
-	rotateCertReq  string
-	rotateCertResp map[string]any
-	rotateCertErr  error
 }
 
 func (f *fakeHub) NotifyConfigChange(_ context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error) {
@@ -132,14 +127,6 @@ func (f *fakeHub) ForceResyncAll(_ context.Context, thingID string) (map[string]
 	f.forceResyncHits++
 	f.forceResyncReq = thingID
 	return f.forceResyncResp, f.forceResyncErr
-}
-
-func (f *fakeHub) RotateAgentCert(_ context.Context, thingID string) (map[string]any, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rotateCertHits++
-	f.rotateCertReq = thingID
-	return f.rotateCertResp, f.rotateCertErr
 }
 
 // newMockPool returns a pgxmock pool for use in handler tests.

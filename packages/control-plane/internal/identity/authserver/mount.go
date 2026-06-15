@@ -254,17 +254,17 @@ func mountCore(e *echo.Echo, d Deps, f StoreFactory) *Mounted {
 		Local:     idp.NewLocal(users, localIdP.ID),
 		Pending:   pending,
 		AuthCodes: authcodes,
-		Limiter:   login.NewLimiter(),
+		Limiter:   login.NewLimiterWithRedis(d.RedisClient),
 		Audit:     d.Audit,
 	}))
 
 	// /authserver/approve completes a pending OAuth authorize request using the
 	// caller's existing bearer session — the path the SPA takes when the
-	// operator hits the auth dance already signed in (e.g. nexus-cli's PKCE flow
-	// hitting /oauth/authorize while a CP-UI tab is open in the same browser).
-	// Without this, the SPA navigates the operator away to "/" the moment its
-	// status flips to authenticated and the loopback listener on the CLI side
-	// hangs until its 3-minute timeout.
+	// operator hits the auth dance already signed in (e.g. a loopback PKCE
+	// client hitting /oauth/authorize while a CP-UI tab is open in the same
+	// browser). Without this, the SPA navigates the operator away to "/" the
+	// moment its status flips to authenticated and the client's loopback
+	// listener hangs until it times out.
 	if d.JWTVerifier != nil {
 		e.POST("/authserver/approve",
 			login.ApproveHandler(login.ApproveDeps{
@@ -294,16 +294,32 @@ func mountCore(e *echo.Echo, d Deps, f StoreFactory) *Mounted {
 	// the callback leg.
 	oidcResolver := oidcdisco.NewResolver()
 
+	// Per-process HMAC signer that binds the OIDC `state` to the initiating
+	// browser via a signed HttpOnly cookie (login-CSRF defense-in-depth). The
+	// key is in-memory only and regenerated on restart; a restart mid-login
+	// merely invalidates the in-flight cookie and the user re-initiates — an
+	// acceptable failure mode that avoids any DB/Redis dependency. On the
+	// (effectively impossible) CSPRNG failure we leave the signer nil so the
+	// SSO legs skip the cookie rather than crash startup; the single-use,
+	// 256-bit authctx + PKCE still gate the flow.
+	stateSigner, signerErr := login.NewRandomStateSigner()
+	if signerErr != nil {
+		logger.Error("authserver: failed to mint OIDC state-cookie signer; "+
+			"login-CSRF cookie binding disabled", slog.Any("err", signerErr))
+		stateSigner = nil
+	}
+
 	// Unified SSO entry. The SPA login picker navigates the browser here for any
 	// external IdP, regardless of protocol; StartHandler owns the OIDC-vs-SAML
 	// divergence (302 to the IdP for OIDC, auto-submitting AuthnRequest POST form
 	// for SAML) so the front end stays protocol-agnostic.
 	startDeps := login.StartDeps{
-		IdPs:     idps,
-		Pending:  pending,
-		Requests: samlRequests,
-		Issuer:   d.Issuer,
-		Resolver: oidcResolver,
+		IdPs:        idps,
+		Pending:     pending,
+		Requests:    samlRequests,
+		Issuer:      d.Issuer,
+		Resolver:    oidcResolver,
+		StateSigner: stateSigner,
 	}
 	e.GET("/authserver/idp/:idpId/start", login.StartHandler(startDeps))
 	// RP-initiated logout — the browser navigates here after the SPA drops its
@@ -314,12 +330,13 @@ func mountCore(e *echo.Echo, d Deps, f StoreFactory) *Mounted {
 	// Return-leg handlers the external IdP redirects (OIDC) or POSTs (SAML) back
 	// to once it has authenticated the user.
 	oidcDeps := login.OIDCDeps{
-		IdPs:      idps,
-		Federated: federated,
-		Pending:   pending,
-		AuthCodes: authcodes,
-		Resolver:  oidcResolver,
-		Audit:     d.Audit,
+		IdPs:        idps,
+		Federated:   federated,
+		Pending:     pending,
+		AuthCodes:   authcodes,
+		Resolver:    oidcResolver,
+		StateSigner: stateSigner,
+		Audit:       d.Audit,
 	}
 	e.GET("/authserver/oidc/callback", login.OIDCCallbackHandler(oidcDeps))
 

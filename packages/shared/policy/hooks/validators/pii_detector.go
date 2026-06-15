@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -161,11 +162,35 @@ func (pd *PiiDetector) Execute(_ context.Context, input *core.HookInput) (*core.
 	if pd.onMatch.InflightAction == core.InflightRedact {
 		return pd.executeRedact(input, result, start)
 	}
-	return pd.executeReject(input, result, start)
+	return pd.executeScan(input, result, start)
 }
 
-// executeReject implements the block / warn path: short-circuit on first PII match.
-func (pd *PiiDetector) executeReject(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
+// executeScan implements the non-rewriting inflight paths (approve /
+// block-hard / block-soft). The inflight body is never modified, but a match
+// still stamps the hook's own storageAction onto the result — the pipeline
+// only stamps it for non-Approve decisions, so without the self-stamp an
+// "approve inflight, redact/drop storage" policy would silently persist the
+// matched content. When storageAction is redact the scan additionally
+// collects the full TransformSpan set (the same collector the inflight
+// redact path uses): the storage rewrite is span-driven, and with no spans
+// it would have nothing to apply.
+func (pd *PiiDetector) executeScan(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
+	if pd.onMatch.StorageAction == core.StorageRedact {
+		_, spans := pd.collectRedactions(input)
+		if len(spans) > 0 {
+			result.Decision = core.DecisionForInflight(pd.onMatch.InflightAction)
+			result.Reason = fmt.Sprintf("PII detected: %s", spans[0].SourceID)
+			result.ReasonCode = "PII_DETECTED"
+			result.Tags = core.AppendTag(result.Tags, "compliance:pii")
+			result.Tags = core.AppendTag(result.Tags, "severity:confidential")
+			result.TransformSpans = spans
+			result.StorageAction = pd.onMatch.StorageAction
+		}
+		result.LatencyMs = int(time.Since(start).Milliseconds())
+		return result, nil
+	}
+
+	// keep / drop-content storage needs no spans — short-circuit on first match.
 	for _, text := range input.TextSegmentsWith(pd.cfg.ProjectionOptions()) {
 		for idx := range pd.patterns {
 			p := &pd.patterns[idx]
@@ -179,6 +204,7 @@ func (pd *PiiDetector) executeReject(input *core.HookInput, result *core.HookRes
 				result.ReasonCode = "PII_DETECTED"
 				result.Tags = core.AppendTag(result.Tags, "compliance:pii")
 				result.Tags = core.AppendTag(result.Tags, "severity:confidential")
+				result.StorageAction = pd.onMatch.StorageAction
 				result.LatencyMs = int(time.Since(start).Milliseconds())
 				return result, nil
 			}
@@ -197,22 +223,81 @@ func (pd *PiiDetector) executeReject(input *core.HookInput, result *core.HookRes
 // ModifiedContent stays for ai-gateway's existing RewriteRequestBody
 // path until cp/agent fully adopt the span-driven rewrite.
 func (pd *PiiDetector) executeRedact(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
-	if input.Normalized == nil {
-		result.LatencyMs = int(time.Since(start).Milliseconds())
-		return result, nil
+	modified, spans := pd.collectRedactions(input)
+
+	if len(spans) > 0 {
+		result.Decision = core.Modify
+		result.Reason = "PII redacted"
+		result.ReasonCode = "PII_REDACTED"
+		result.Tags = core.AppendTag(result.Tags, "compliance:pii")
+		result.Tags = core.AppendTag(result.Tags, "severity:confidential")
+		result.ModifiedContent = modified
+		result.TransformSpans = spans
 	}
-	segments := input.TextSegmentsWith(pd.cfg.ProjectionOptions())
+
+	result.LatencyMs = int(time.Since(start).Milliseconds())
+	return result, nil
+}
+
+// RedetectText re-locates this detector's matches within one text block of
+// a storage-bound payload, restricted to the requested rule IDs. It backs
+// the storage-time redaction retry: hook-time span addresses can fail to
+// resolve on the storage-time normalized payload (cross-format requests
+// project the same content at different addresses), and the audit writer
+// has no access to the compiled patterns — the pipeline exports them
+// through this method as a redact.Redetector closure on its result.
+// Matches carry offsets, rule attribution, and the replacement marker
+// only — never the matched content.
+func (pd *PiiDetector) RedetectText(text string, ruleIDs []string) []redact.Match {
+	if text == "" || len(ruleIDs) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(ruleIDs))
+	for _, id := range ruleIDs {
+		want[id] = struct{}{}
+	}
+	var out []redact.Match
+	for i := range pd.patterns {
+		p := &pd.patterns[i]
+		if _, ok := want[p.id]; !ok {
+			continue
+		}
+		for _, loc := range p.re.FindAllStringIndex(text, -1) {
+			if p.luhn && !luhnValid(text[loc[0]:loc[1]]) {
+				continue
+			}
+			out = append(out, redact.Match{RuleID: p.id, Start: loc[0], End: loc[1], Replacement: p.replacement})
+		}
+	}
+	return out
+}
+
+// addressedSegment pairs a projection text segment with its span content
+// address inside the Normalized payload.
+type addressedSegment struct {
+	address string
+	text    string
+}
+
+// collectRedactions walks the Normalized payload in projection order and
+// returns the redacted content blocks plus the TransformSpans addressing
+// every match (Source=hook, SourceID=pattern.id, Action=redact, offsets in
+// the original text). Empty spans means no match (or no normalized input).
+// Shared by the inflight-redact path and the storage-only-redact scan.
+func (pd *PiiDetector) collectRedactions(input *core.HookInput) ([]core.ContentBlock, []normalize.TransformSpan) {
+	if input.Normalized == nil {
+		return nil, nil
+	}
+	projOpts := pd.cfg.ProjectionOptions()
+	segments := input.TextSegmentsWith(projOpts)
 	if len(segments) == 0 {
-		result.LatencyMs = int(time.Since(start).Milliseconds())
-		return result, nil
+		return nil, nil
 	}
 
 	// Walk the Normalized payload in projection order so spans get the
-	// right content addresses.
-	type addressedSegment struct {
-		address string
-		text    string
-	}
+	// right content addresses. The walk mirrors the projection: reasoning
+	// blocks join only when the hook's scope opted in (IncludeReasoning),
+	// matching what TextSegmentsWith exposed above.
 	addressed := make([]addressedSegment, 0, len(segments))
 	// KindAIEmbedding payloads carry text in Inputs (not Messages).
 	// Address each input as "inputs.<index>" so span tracking is accurate.
@@ -234,6 +319,13 @@ func (pd *PiiDetector) executeRedact(input *core.HookInput, result *core.HookRes
 						address: fmt.Sprintf("messages.%d.content.%d", mi, ci),
 						text:    b.Text,
 					})
+				case normalize.ContentReasoning:
+					if projOpts.IncludeReasoning && b.Text != "" {
+						addressed = append(addressed, addressedSegment{
+							address: fmt.Sprintf("messages.%d.content.%d", mi, ci),
+							text:    b.Text,
+						})
+					}
 				case normalize.ContentToolResult:
 					if b.ToolResult != nil {
 						addressed = append(addressed, addressedSegment{
@@ -248,7 +340,6 @@ func (pd *PiiDetector) executeRedact(input *core.HookInput, result *core.HookRes
 
 	modified := make([]core.ContentBlock, len(addressed))
 	spans := make([]normalize.TransformSpan, 0)
-	anyMatch := false
 
 	for i, seg := range addressed {
 		text := seg.text
@@ -292,23 +383,14 @@ func (pd *PiiDetector) executeRedact(input *core.HookInput, result *core.HookRes
 				End:            m.end,
 				Replacement:    m.replacement,
 			})
-			anyMatch = true
 		}
 		modified[i] = core.ContentBlock{Role: "user", Type: "text", Text: text}
 	}
 
-	if anyMatch {
-		result.Decision = core.Modify
-		result.Reason = "PII redacted"
-		result.ReasonCode = "PII_REDACTED"
-		result.Tags = core.AppendTag(result.Tags, "compliance:pii")
-		result.Tags = core.AppendTag(result.Tags, "severity:confidential")
-		result.ModifiedContent = modified
-		result.TransformSpans = spans
+	if len(spans) == 0 {
+		return nil, nil
 	}
-
-	result.LatencyMs = int(time.Since(start).Milliseconds())
-	return result, nil
+	return modified, spans
 }
 
 // luhnValid checks a numeric string (ignoring spaces and hyphens) with the Luhn algorithm.

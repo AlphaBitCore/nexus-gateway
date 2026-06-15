@@ -7,6 +7,8 @@
 //   http-json      → pretty-printed JSON tree.
 //   http-text      → decoded text with monospace font and line wrapping.
 //   http-form      → key=value table.
+//   http-sse       → structured frame list (event chip + per-frame data),
+//                    collapsed beyond 50 frames, truncation note.
 //   http-binary    → metadata card (size · content-type · sha256).
 //   unsupported    → muted placeholder with link-to-raw hint.
 //
@@ -21,6 +23,14 @@ import type {
   NormalizedContentBlock,
   TransformSpan,
 } from './types';
+import {
+  renderHttpJson,
+  renderHttpText,
+  renderHttpForm,
+  renderHttpBinary,
+  HttpSseView,
+  formatBytesShort,
+} from './NormalizedHttpViews';
 import css from './NormalizedPayloadView.module.css';
 
 interface Props {
@@ -69,12 +79,46 @@ export function NormalizedPayloadView(props: Props) {
   }
 
   if (payload.redacted) {
+    // Three distinct stories share the placeholder shape.
+    // "operator-drop": dropping the content is the configured policy —
+    // assert it. "redact-degraded": the operator asked for redact, but the
+    // stored copy could not be redacted precisely, so it was dropped
+    // instead — blame the degradation, not the operator. No reason
+    // recorded (rows written before the reason was stamped): stay
+    // neutral — the row cannot tell which of the two happened.
+    const degraded = payload.redactedReason === 'redact-degraded';
+    const operatorDrop = payload.redactedReason === 'operator-drop';
+    const failedAddresses = payload.redactedDetail?.failedAddresses ?? [];
+    // The degradation cause arrives as a machine token; render the
+    // localized phrase when one exists, the raw token otherwise.
+    const causeToken = payload.redactedDetail?.cause ?? 'unknown';
+    const causeLabel = t(`normalized.dropped.cause.${causeToken}`, {
+      defaultValue: causeToken,
+    });
     return (
       <div className={css.wrap}>
         {banner}
         <div className={css.banner}>
-          <strong>{t('normalized.dropped.title')}</strong>
-          <div style={{ marginTop: 'var(--g-space-1)' }}>{t('normalized.dropped.hint')}</div>
+          <strong>
+            {degraded ? t('normalized.dropped.degradedTitle') : t('normalized.dropped.title')}
+          </strong>
+          <div style={{ marginTop: 'var(--g-space-1)' }}>
+            {degraded
+              ? t('normalized.dropped.degradedHint', { cause: causeLabel })
+              : operatorDrop
+                ? t('normalized.dropped.hint')
+                : t('normalized.dropped.neutralHint')}
+          </div>
+          {degraded && failedAddresses.length > 0 ? (
+            <div style={{ marginTop: 'var(--g-space-1-5)' }}>
+              {t('normalized.dropped.degradedAddresses')}:
+              <ul style={{ margin: 'var(--g-space-0-5) 0 0', paddingLeft: 'var(--g-space-4)', fontFamily: 'var(--g-font-mono)' }}>
+                {failedAddresses.map((addr) => (
+                  <li key={addr}>{addr}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {payload.ruleIds && payload.ruleIds.length > 0 ? (
             <div style={{ marginTop: 'var(--g-space-1-5)', fontFamily: 'var(--g-font-mono)' }}>
               {t('normalized.dropped.ruleIds')}: {payload.ruleIds.join(', ')}
@@ -91,9 +135,16 @@ export function NormalizedPayloadView(props: Props) {
       {renderTierBadge(payload, t)}
       {payload.kind === 'ai-embedding' ? renderAiEmbedding(payload, t) : null}
       {payload.kind !== 'ai-embedding' && payload.kind.startsWith('ai-') ? renderAi(payload, spans, props.direction, t) : null}
-      {payload.kind === 'http-json' ? renderHttpJson(payload) : null}
+      {payload.kind === 'http-json' ? renderHttpJson(payload, t) : null}
       {payload.kind === 'http-text' ? renderHttpText(payload) : null}
-      {payload.kind === 'http-form' ? renderHttpForm(payload) : null}
+      {payload.kind === 'http-form' ? renderHttpForm(payload, t) : null}
+      {payload.kind === 'http-sse' ? (
+        <HttpSseView
+          frames={payload.http?.bodyView?.sseFrames ?? []}
+          truncated={payload.http?.bodyView?.sseTruncated === true}
+          t={t}
+        />
+      ) : null}
       {payload.kind === 'http-multipart' || payload.kind === 'http-binary' ? renderHttpBinary(payload, t) : null}
       {payload.kind === 'unsupported' ? (
         <div className={css.placeholder}>
@@ -104,29 +155,40 @@ export function NormalizedPayloadView(props: Props) {
   );
 }
 
-// renderTierBadge surfaces the normalizer-reported DetectedSpec +
-// Confidence so operators can tell whether a row was parsed by a
-// precise Tier-1 per-host normalizer ("chatgpt-web" confidence 0.95),
-// the Tier-2 multi-spec pattern probe ("pattern:chatgpt-web"
-// confidence 0.78), or fell through to Tier 3 verbatim (no badge).
-// The tier is inferred from the detectedSpec prefix:
-// "pattern:" = Tier 2, anything else = Tier 1.
+// renderTierBadge surfaces the normalizer-reported DetectedSpec + Confidence
+// so operators can tell whether a row was parsed by a precise Tier-1
+// protocol decoder ("anthropic-messages" confidence 0.95), the Tier-2
+// multi-spec pattern probe ("pattern:chatgpt-web" confidence 0.78), or the
+// structural fallback projection ("generic-http" — a typed view of the raw
+// HTTP body with no protocol decode; its confidence speaks only for the
+// projection, never for AI semantics). Legacy verbatim rows carry no
+// detectedSpec and render no badge.
 function renderTierBadge(
   payload: NormalizedPayload,
   t: ReturnType<typeof useTranslation>['t'],
 ): React.ReactNode {
   if (!payload.detectedSpec) return null;
-  const isTier2 = payload.detectedSpec.startsWith('pattern:');
+  const isStructural = payload.detectedSpec === 'generic-http';
+  const isTier2 = !isStructural && payload.detectedSpec.startsWith('pattern:');
   const specLabel = isTier2
     ? payload.detectedSpec.slice('pattern:'.length)
     : payload.detectedSpec;
-  const tierKey = isTier2 ? 'tier2' : 'tier1';
+  const tierKey = isStructural ? 'structural' : isTier2 ? 'tier2' : 'tier1';
   const tierLabel = t(`normalized.tier.${tierKey}`);
   // Confidence may be undefined on older rows → omit. Two decimals.
+  // Two semantics suppress the numeral: Structural projections (1.0 =
+  // faithful projection, not a trust score) and host-matched rows
+  // (selectionEvidence='host' — adapter chosen by host, the coverage
+  // is honest but not comparable to a sniffed decode; show a
+  // "host-matched" label instead).
+  const isHostMatched = payload.selectionEvidence === 'host';
   const confLabel =
-    typeof payload.confidence === 'number' && payload.confidence > 0
+    !isStructural && !isHostMatched && typeof payload.confidence === 'number' && payload.confidence > 0
       ? ` · ${payload.confidence.toFixed(2)}`
       : '';
+  const evidenceLabel = isHostMatched
+    ? ` · ${t('normalized.tier.hostMatched')}`
+    : '';
   const styles: React.CSSProperties = {
     display: 'inline-flex',
     alignItems: 'center',
@@ -136,16 +198,24 @@ function renderTierBadge(
     borderRadius: 'var(--radius-sm)',
     fontSize: 'var(--g-font-size-xs)',
     fontFamily: 'var(--g-font-mono)',
-    background: isTier2 ? 'var(--color-warning-soft)' : 'var(--color-success-soft)',
-    color: isTier2 ? 'var(--color-warning-text)' : 'var(--color-text-primary)',
+    // Structural projection is deliberately neutral — the green Tier-1
+    // styling would overclaim an AI decode that never happened.
+    background: isStructural
+      ? 'color-mix(in srgb, var(--color-text-muted) 10%, transparent)'
+      : isTier2 ? 'var(--color-warning-soft)' : 'var(--color-success-soft)',
+    color: isStructural
+      ? 'var(--color-text-muted)'
+      : isTier2 ? 'var(--color-warning-text)' : 'var(--color-text-primary)',
     border: '1px solid',
-    borderColor: isTier2 ? 'var(--color-warning-border)' : 'var(--color-border-subtle)',
+    borderColor: isStructural
+      ? 'var(--color-border)'
+      : isTier2 ? 'var(--color-warning-border)' : 'var(--color-border-subtle)',
   };
   return (
     <div style={styles} title={t('normalized.tier.hint')}>
       <span>{tierLabel}</span>
       <span>·</span>
-      <span>{specLabel}{confLabel}</span>
+      <span>{specLabel}{confLabel}{evidenceLabel}</span>
     </div>
   );
 }
@@ -187,6 +257,11 @@ function renderAi(
           {usage.completionTokens != null ? (
             <span className={css.usageItem}>
               <strong>{t('normalized.usage.completion')}:</strong>{usage.completionTokens}
+            </span>
+          ) : null}
+          {typeof usage.reasoningTokens === 'number' ? (
+            <span className={css.usageItem}>
+              <strong>{t('normalized.usage.reasoning')}:</strong>{usage.reasoningTokens}
             </span>
           ) : null}
           {usage.totalTokens != null ? (
@@ -429,72 +504,3 @@ function renderTextWithSpans(
   return out;
 }
 
-function renderHttpJson(payload: NormalizedPayload) {
-  const json = payload.http?.bodyView?.json;
-  if (json != null) {
-    return <pre className={css.jsonTree}>{JSON.stringify(json, null, 2)}</pre>;
-  }
-  // Defence-in-depth for rows that carry Kind=http-json but only
-  // have BodyView.text (normalizer wrote raw bytes into text).
-  // Show the raw text so the operator still sees content instead
-  // of "(empty)". Correctly-routed rows use http-text and never
-  // reach this branch.
-  const text = payload.http?.bodyView?.text;
-  if (text) {
-    return <pre className={css.jsonTree}>{text}</pre>;
-  }
-  return <div className={css.placeholder}>(empty)</div>;
-}
-
-function renderHttpText(payload: NormalizedPayload) {
-  const text = payload.http?.bodyView?.text ?? '';
-  return <pre className={css.jsonTree}>{text}</pre>;
-}
-
-function renderHttpForm(payload: NormalizedPayload) {
-  const form = payload.http?.bodyView?.form ?? {};
-  const rows = Object.entries(form);
-  if (rows.length === 0) {
-    return <div className={css.placeholder}>(empty)</div>;
-  }
-  return (
-    <pre className={css.jsonTree}>
-      {rows.map(([k, v]) => `${k}=${v}`).join('\n')}
-    </pre>
-  );
-}
-
-function renderHttpBinary(
-  payload: NormalizedPayload,
-  t: ReturnType<typeof useTranslation>['t'],
-) {
-  const ref = payload.http?.bodyView?.binaryRef;
-  return (
-    <div className={css.binaryCard}>
-      <strong>{t('normalized.binary.title')}</strong>
-      {ref ? (
-        <>
-          <span>
-            {t('normalized.binary.size')}: <code>{formatBytesShort(ref.size)}</code>
-          </span>
-          <span>
-            {t('normalized.binary.contentType')}: <code>{ref.contentType || '(unknown)'}</code>
-          </span>
-          {ref.sha256 ? (
-            <span>
-              sha256: <code>{ref.sha256}</code>
-            </span>
-          ) : null}
-        </>
-      ) : (
-        <span>{t('normalized.binary.metadataOnly')}</span>
-      )}
-    </div>
-  );
-}
-
-function formatBytesShort(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
-}

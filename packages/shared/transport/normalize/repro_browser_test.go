@@ -27,6 +27,9 @@ type reproEvent struct {
 	respFile        string
 	wantReqAdapter  string // expected adapter ID in request normalized
 	wantRespAdapter string // expected adapter ID in response normalized
+	// wantProtocol overrides the Protocol assertion when the adapter
+	// delegates to a shared codec (empty = same as the adapter ID).
+	wantProtocol string
 }
 
 // TestRepro_BrowserCaptures replays four captured payloads (chatgpt + claude.ai
@@ -76,6 +79,11 @@ func TestRepro_BrowserCaptures(t *testing.T) {
 			adapterType:     "claude-web",
 			respFile:        "claudeweb-resp.sse",
 			wantRespAdapter: "claude-web",
+			// The response wire is standard Anthropic Messages SSE: the
+			// claude-web adapter delegates to the shared codec, which
+			// keeps its own Protocol while DetectedSpec carries the
+			// per-host provenance.
+			wantProtocol: "anthropic-messages",
 		},
 	}
 
@@ -119,9 +127,17 @@ func TestRepro_BrowserCaptures(t *testing.T) {
 			if direction == core.DirectionResponse {
 				wantAdapter = c.wantRespAdapter
 			}
-			if payload.Protocol != wantAdapter {
+			if payload.DetectedSpec != wantAdapter {
+				t.Errorf("DetectedSpec = %q, want %q (kind=%s confidence=%v)",
+					payload.DetectedSpec, wantAdapter, payload.Kind, payload.Confidence)
+			}
+			wantProtocol := c.wantProtocol
+			if wantProtocol == "" {
+				wantProtocol = wantAdapter
+			}
+			if payload.Protocol != wantProtocol {
 				t.Errorf("Protocol = %q, want %q (kind=%s confidence=%v)",
-					payload.Protocol, wantAdapter, payload.Kind, payload.Confidence)
+					payload.Protocol, wantProtocol, payload.Kind, payload.Confidence)
 			}
 		})
 	}

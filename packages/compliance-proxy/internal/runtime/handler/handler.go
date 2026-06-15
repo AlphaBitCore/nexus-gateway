@@ -6,6 +6,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/conn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/config"
+	cphttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // RuntimeDeps is a type alias to config.RuntimeDeps so call sites that
@@ -23,7 +24,7 @@ type ConnectionsResponse = config.ConnectionsResponse
 func HandleHealthz(deps RuntimeDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
 
@@ -57,7 +58,7 @@ func HandleHealthz(deps RuntimeDeps) http.HandlerFunc {
 func HandleConnections(deps RuntimeDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			cphttperr.WriteError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
 

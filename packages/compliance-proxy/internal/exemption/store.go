@@ -108,6 +108,15 @@ func (s *Store) Rebuild(entries []identity.ActiveExemption) {
 			dropped++
 			continue
 		}
+		if isOverBroadExemption(e.SourceIP, e.TargetHost) {
+			dropped++
+			s.logger.Warn("exemption dropped: over-broad grant (blank/'*' source AND host) would bypass all compliance",
+				"id", e.ID,
+				"sourceIp", e.SourceIP,
+				"targetHost", e.TargetHost,
+			)
+			continue
+		}
 		next[e.ID] = &Exemption{
 			ID:            e.ID,
 			SourceIP:      e.SourceIP,
@@ -213,6 +222,11 @@ func (s *Store) IsExempt(sourceIP, targetHost string) (bool, *Exemption) {
 		if e.Disabled {
 			continue
 		}
+		// Module-local floor: never honour an all-matching grant, even if one
+		// slipped past Rebuild.
+		if isOverBroadExemption(e.SourceIP, e.TargetHost) {
+			continue
+		}
 		if !matchSourceIP(e.SourceIP, sourceIP) {
 			continue
 		}
@@ -258,6 +272,33 @@ func (s *Store) purgeExpired() {
 	if removed > 0 {
 		s.logger.Debug("expired exemptions purged", "count", removed)
 	}
+}
+
+// isOverBroadExemption reports whether an exemption would match EVERY flow —
+// BOTH its source-IP and target-host selectors are blank or the catch-all "*".
+// Such a grant sets hookExempted=true for all traffic and skips the entire
+// compliance pipeline. The store refuses it at Rebuild (logged +
+// counted as dropped) AND the IsExempt hot path treats it as a never-match
+// floor even if one somehow entered the map, mirroring the access layer's
+// NewDomainAllowlist, which rejects an open wildcard at construction. A grant
+// must scope at least one dimension (a source IP/CIDR or a target host).
+//
+// Zero-prefix CIDRs (0.0.0.0/0, ::/0) match every IPv4/IPv6 address and are
+// therefore also treated as blank on the source dimension.
+func isOverBroadExemption(sourceIP, targetHost string) bool {
+	blank := func(s string) bool { return s == "" || s == "*" }
+	catchAllCIDR := func(s string) bool {
+		if !strings.Contains(s, "/") {
+			return false
+		}
+		_, cidr, err := net.ParseCIDR(s)
+		if err != nil {
+			return false
+		}
+		ones, _ := cidr.Mask.Size()
+		return ones == 0
+	}
+	return (blank(sourceIP) || catchAllCIDR(sourceIP)) && blank(targetHost)
 }
 
 // matchSourceIP checks if clientIP matches the exemption's source specification.

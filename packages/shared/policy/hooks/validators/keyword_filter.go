@@ -109,6 +109,13 @@ func (kf *KeywordFilter) Execute(_ context.Context, input *core.HookInput) (*cor
 				result.Decision = core.DecisionForInflight(kf.onMatch.InflightAction)
 				result.Reason = fmt.Sprintf("keyword matched: %s", p.category)
 				result.ReasonCode = "KEYWORD_BLOCKED"
+				// Self-stamp the storage policy: the pipeline stamps it only
+				// for non-Approve decisions, so an "approve inflight,
+				// redact/drop storage" match would otherwise persist the
+				// matched content. Keyword matches carry no spans, so a
+				// redact storage policy degrades to drop-content at the
+				// audit writer (fail-safe: never store what we cannot redact).
+				result.StorageAction = kf.onMatch.StorageAction
 				result.LatencyMs = int(time.Since(start).Milliseconds())
 				return result, nil
 			}

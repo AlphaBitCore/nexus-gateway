@@ -1,0 +1,1 @@
+{"content":[{"id":"toolu_01SN9FDptdboKktku1zSQJ4E","input":{"location":"Paris"},"name":"get_weather","type":"tool_use"}],"id":"msg_01WUv6Mz5YFdNdaaTZGMYzYY","model":"claude-haiku-4-5-20251001","role":"assistant","stop_reason":"tool_use","type":"message","usage":{"input_tokens":575,"output_tokens":54}}

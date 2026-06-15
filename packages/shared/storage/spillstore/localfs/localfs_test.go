@@ -256,6 +256,181 @@ func TestStore_SweepTotalCap(t *testing.T) {
 	}
 }
 
+// stubFilter is a spillstore.SweepFilter whose result the test controls. It
+// records the candidate keys it was handed so tests can assert the sweep
+// presents the right batch.
+type stubFilter struct {
+	referenced map[string]bool
+	err        error
+	gotKeys    []string
+}
+
+func (s *stubFilter) KeepReferenced(_ context.Context, candidateKeys []string) (map[string]bool, error) {
+	s.gotKeys = append([]string(nil), candidateKeys...)
+	return s.referenced, s.err
+}
+
+// seedAged writes n spill objects, backdates their mtimes past retention, and
+// returns their storage keys in put order.
+func seedAged(t *testing.T, s *localfs.Store, root string, n int) []string {
+	t.Helper()
+	ctx := context.Background()
+	keys := make([]string, 0, n)
+	for i := range n {
+		ref, err := s.Put(ctx, strings.NewReader("payload-data"), 12, spillstore.PutOptions{
+			EventID:   filepathSafe("evt", i),
+			Direction: "r",
+		})
+		if err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		keys = append(keys, ref.Key)
+	}
+	past := time.Now().Add(-48 * time.Hour)
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil //nolint:nilerr // test fixture — best-effort backdating
+		}
+		_ = os.Chtimes(path, past, past)
+		return nil
+	})
+	return keys
+}
+
+// TestSweepFiltered_AllReferenced — every aged blob is still referenced, so
+// the reference-checked sweep deletes nothing (F-0187: never orphan a live
+// spill).
+func TestSweepFiltered_AllReferenced(t *testing.T) {
+	s, root := newStore(t)
+	keys := seedAged(t, s, root, 3)
+	ref := map[string]bool{}
+	for _, k := range keys {
+		ref[k] = true
+	}
+	f := &stubFilter{referenced: ref}
+
+	deleted, err := s.SweepFiltered(context.Background(), time.Now().Add(-time.Hour), f)
+	if err != nil {
+		t.Fatalf("SweepFiltered: %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 (all referenced)", deleted)
+	}
+	stat, _ := s.Stat(context.Background())
+	if stat.ObjectCount != 3 {
+		t.Errorf("ObjectCount = %d, want 3 (nothing deleted)", stat.ObjectCount)
+	}
+}
+
+// TestSweepFiltered_NoneReferenced — no aged blob is referenced, so the sweep
+// deletes them all (the age-based behaviour, now reference-confirmed safe).
+func TestSweepFiltered_NoneReferenced(t *testing.T) {
+	s, root := newStore(t)
+	keys := seedAged(t, s, root, 3)
+	f := &stubFilter{referenced: map[string]bool{}}
+
+	deleted, err := s.SweepFiltered(context.Background(), time.Now().Add(-time.Hour), f)
+	if err != nil {
+		t.Fatalf("SweepFiltered: %v", err)
+	}
+	if deleted != 3 {
+		t.Errorf("deleted = %d, want 3 (none referenced)", deleted)
+	}
+	// The filter must have been handed exactly the three aged keys.
+	if len(f.gotKeys) != len(keys) {
+		t.Errorf("filter saw %d candidate keys, want %d", len(f.gotKeys), len(keys))
+	}
+	stat, _ := s.Stat(context.Background())
+	if stat.ObjectCount != 0 {
+		t.Errorf("ObjectCount = %d, want 0 (all deleted)", stat.ObjectCount)
+	}
+}
+
+// TestSweepFiltered_Mixed — only the unreferenced subset is deleted; the
+// referenced blob survives the age sweep.
+func TestSweepFiltered_Mixed(t *testing.T) {
+	s, root := newStore(t)
+	keys := seedAged(t, s, root, 3)
+	keep := keys[1] // mark the middle one as still referenced
+	f := &stubFilter{referenced: map[string]bool{keep: true}}
+
+	deleted, err := s.SweepFiltered(context.Background(), time.Now().Add(-time.Hour), f)
+	if err != nil {
+		t.Fatalf("SweepFiltered: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2 (one referenced)", deleted)
+	}
+	// The referenced object must still be readable.
+	rc, err := s.Get(context.Background(), audit.SpillRef{Backend: "localfs", Key: keep})
+	if err != nil {
+		t.Fatalf("referenced blob was deleted: %v", err)
+	}
+	_ = rc.Close()
+}
+
+// TestSweepFiltered_DBError — a reference-check failure aborts the sweep with
+// zero deletions (fail-safe: a DB hiccup must never be read as "unreferenced").
+func TestSweepFiltered_DBError(t *testing.T) {
+	s, root := newStore(t)
+	seedAged(t, s, root, 3)
+	f := &stubFilter{err: errors.New("db unreachable")}
+
+	deleted, err := s.SweepFiltered(context.Background(), time.Now().Add(-time.Hour), f)
+	if err == nil {
+		t.Fatal("expected reference-check error to abort the sweep")
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 on reference-check failure", deleted)
+	}
+	if !strings.Contains(err.Error(), "reference check") {
+		t.Errorf("error %q does not mention the reference check", err.Error())
+	}
+	stat, _ := s.Stat(context.Background())
+	if stat.ObjectCount != 3 {
+		t.Errorf("ObjectCount = %d, want 3 (nothing deleted on error)", stat.ObjectCount)
+	}
+}
+
+// TestSweepFiltered_CapSkipsReferenced — the total-size cap pass must also
+// skip a still-referenced blob even when evicting oldest-first to fit the cap.
+func TestSweepFiltered_CapSkipsReferenced(t *testing.T) {
+	root := t.TempDir()
+	// Cap of 12 bytes (one object); each object is 8 bytes. Long retention so
+	// only the cap pass — not the age pass — does the eviction.
+	s, err := localfs.New(localfs.Options{Root: root, TotalSizeCap: 12, Retention: 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	var keys []string
+	for i := range 3 {
+		payload := bytes.Repeat([]byte("A"), 8)
+		ref, perr := s.Put(ctx, bytes.NewReader(payload), int64(len(payload)), spillstore.PutOptions{
+			EventID:   filepathSafe("cap", i),
+			Direction: "x",
+		})
+		if perr != nil {
+			t.Fatalf("Put: %v", perr)
+		}
+		keys = append(keys, ref.Key)
+		time.Sleep(2 * time.Millisecond) // stagger mtimes for oldest-first
+	}
+	// Reference the OLDEST object — the one the cap pass would evict first.
+	f := &stubFilter{referenced: map[string]bool{keys[0]: true}}
+
+	if _, err := s.SweepFiltered(ctx, time.Now().Add(-time.Hour), f); err != nil {
+		t.Fatalf("SweepFiltered: %v", err)
+	}
+	// The referenced oldest blob must survive even though the cap forced
+	// eviction of others.
+	rc, err := s.Get(ctx, audit.SpillRef{Backend: "localfs", Key: keys[0]})
+	if err != nil {
+		t.Fatalf("referenced oldest blob was cap-evicted: %v", err)
+	}
+	_ = rc.Close()
+}
+
 // TestNew_EmptyRoot rejects construction without a Root — the only required
 // option. We assert both the error and a nil Store (never partial init).
 func TestNew_EmptyRoot(t *testing.T) {
@@ -763,3 +938,34 @@ func TestStore_Sweep_EvictionRemoveFails(t *testing.T) {
 type failingReader struct{ err error }
 
 func (f *failingReader) Read(_ []byte) (int, error) { return 0, f.err }
+
+// TestStore_Put_HonorsExplicitKey is the SEC-M5-01 mechanism test: when
+// PutOptions.Key is set (the Hub spill-blob handler passes the node-namespaced,
+// token-signed key), Put writes to exactly that key instead of re-deriving the
+// shared <day>/<eventId>-<dir>.bin key — so two nodes minting for the same
+// eventId land on different objects and cannot overwrite each other.
+func TestStore_Put_HonorsExplicitKey(t *testing.T) {
+	s, root := newStore(t)
+	payload := []byte("forensic body")
+	explicit := "node-A/2026-01-02/evt-xyz-response.bin"
+	ref, err := s.Put(context.Background(), bytes.NewReader(payload), int64(len(payload)), spillstore.PutOptions{
+		EventID:   "evt-xyz",
+		Direction: "response",
+		Key:       explicit,
+	})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if ref.Key != explicit {
+		t.Fatalf("ref.Key = %q; want the explicit node-namespaced key %q", ref.Key, explicit)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, explicit)); statErr != nil {
+		t.Fatalf("blob not written at the explicit key: %v", statErr)
+	}
+	// The re-derived (shared) key must NOT exist — proving Put did not fall back.
+	if _, statErr := os.Stat(filepath.Join(root, s.KeyFor(timeFixed(), "evt-xyz", "response"))); statErr == nil {
+		t.Errorf("a blob was written at the re-derived shared key — overwrite vector still open")
+	}
+}
+
+func timeFixed() time.Time { return time.Now().UTC() }

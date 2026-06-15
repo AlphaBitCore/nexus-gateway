@@ -116,3 +116,35 @@ func TestRoutingSimulate_UpstreamUnreachable(t *testing.T) {
 		t.Errorf("expected 'AI Gateway unreachable' in body; got %s", rec.Body.String())
 	}
 }
+
+// TestRoutingSimulate_AttachesBearer verifies the routing-simulate forwarder
+// carries Authorization: Bearer <token> on the CP→ai-gateway call (F-0001).
+func TestRoutingSimulate_AttachesBearer(t *testing.T) {
+	const tok = "cp-internal-token"
+	var gotAuth string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"request":{},"originalModelId":"x","substituted":false,"stages":[],"trace":[],"targets":[],"recoveryTargets":[]}`))
+	}))
+	defer stub.Close()
+
+	h := New(Deps{
+		Proxy:  ProxyConfig{AIGatewayURL: stub.URL, AIGatewayInternalToken: tok},
+		Logger: slog.Default(),
+	})
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/routing-rules/simulate",
+		strings.NewReader(`{"modelId":"x","endpointType":"chat"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := h.RoutingSimulate(c); err != nil {
+		t.Fatalf("RoutingSimulate: %v", err)
+	}
+	if want := "Bearer " + tok; gotAuth != want {
+		t.Errorf("Authorization = %q; want %q", gotAuth, want)
+	}
+}

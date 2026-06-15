@@ -2,22 +2,21 @@ package wiring
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	creddecrypt "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/decrypt"
-	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
 // TestWriterBackedTrafficSink_nilSinkIsNoOp verifies nil sink does not panic.
@@ -66,6 +65,60 @@ func TestWriterBackedTrafficSink_Emit_cacheMiss(t *testing.T) {
 		CostUsd:          0.001,
 		BackendMode:      "configured_provider",
 	})
+}
+
+// capturingProducer records every Enqueue payload so a test can decode the
+// wire TrafficEventMessage the Writer flushed.
+type capturingProducer struct{ payloads [][]byte }
+
+func (p *capturingProducer) Publish(_ context.Context, _ string, data []byte) error {
+	p.payloads = append(p.payloads, append([]byte(nil), data...))
+	return nil
+}
+func (p *capturingProducer) Enqueue(_ context.Context, _ string, data []byte) error {
+	p.payloads = append(p.payloads, append([]byte(nil), data...))
+	return nil
+}
+func (p *capturingProducer) Close() error { return nil }
+
+// TestWriterBackedTrafficSink_StampsTraceIDAndCost asserts the producer-side
+// of the ai-guard correlation fix: the emitted TrafficEvent's TraceID lands on
+// the published traffic_event row's trace_id (so the ai-guard cost row is
+// joinable to the triggering user request), the ai-guard cost lands on the
+// same row, and internal_purpose='ai-guard' is preserved (so the row is still
+// excluded from billable totals on the read side).
+func TestWriterBackedTrafficSink_StampsTraceIDAndCost(t *testing.T) {
+	prod := &capturingProducer{}
+	opsReg := registry.NewRegistry(prometheus.NewRegistry())
+	w := audit.NewWriter(prod, "test.queue", opsReg, discardLogger())
+
+	sink := &WriterBackedTrafficSink{Writer: w}
+	sink.Emit(context.Background(), aiguard.TrafficEvent{
+		Decision:        "approve",
+		DetectorType:    "prompt_injection",
+		BackendMode:     "configured_provider",
+		InternalPurpose: "ai-guard",
+		CostUsd:         0.0042,
+		TraceID:         "parent-req-xyz",
+	})
+	w.Close() // synchronous drain → prod.payloads populated
+
+	if len(prod.payloads) != 1 {
+		t.Fatalf("want 1 published message, got %d", len(prod.payloads))
+	}
+	var msg mq.TrafficEventMessage
+	if err := json.Unmarshal(prod.payloads[0], &msg); err != nil {
+		t.Fatalf("unmarshal published message: %v", err)
+	}
+	if msg.TraceID != "parent-req-xyz" {
+		t.Errorf("trace_id = %q, want parent-req-xyz (ai-guard row must be joinable to parent)", msg.TraceID)
+	}
+	if msg.InternalPurpose == nil || *msg.InternalPurpose != "ai-guard" {
+		t.Errorf("internal_purpose = %v, want ai-guard (must stay excluded from billable)", msg.InternalPurpose)
+	}
+	if msg.AIGuardCostUsd == nil || *msg.AIGuardCostUsd != 0.0042 {
+		t.Errorf("ai_guard_cost_usd = %v, want 0.0042", msg.AIGuardCostUsd)
+	}
 }
 
 // TestLiveClassifier_buildBackend_unknownMode returns error.
@@ -198,26 +251,6 @@ func (s *stubResolverForAIGuard) Resolve(_ context.Context, _, _ string, _ provt
 	return provcore.CallTarget{}, nil
 }
 
-// stubEncryptedCredSource is a credential Source that returns a single
-// AES-GCM-encrypted credential for GetCredentialByID calls.
-// Used by TestLiveClassifier_buildBackend_externalURL_withRealCredSuccess.
-type stubEncryptedCredSource struct {
-	cred *store.Credential
-}
-
-func (s *stubEncryptedCredSource) GetCredentialByID(_ context.Context, _ string) (*store.Credential, error) {
-	return s.cred, nil
-}
-func (s *stubEncryptedCredSource) GetCredentialForProvider(_ context.Context, _ string) (*store.Credential, error) {
-	return s.cred, nil
-}
-func (s *stubEncryptedCredSource) ListCredentialsForProvider(_ context.Context, _ string) ([]store.Credential, error) {
-	if s.cred != nil {
-		return []store.Credential{*s.cred}, nil
-	}
-	return nil, nil
-}
-
 // stubAIGuardLoader is a stub Loader for aiguard.ConfigCache in tests.
 type stubAIGuardLoader struct {
 	cfg *configstore.AIGuardConfig
@@ -298,52 +331,34 @@ func TestLiveClassifier_Classify_withConfiguredProviderBackend(t *testing.T) {
 	_, _ = lc.Classify(context.Background(), aiguard.Request{})
 }
 
-// buildBackend — external_url with valid credential (line 136 coverage)
-
-// TestLiveClassifier_buildBackend_externalURL_withRealCredSuccess verifies the
-// `apiKey = key` assignment at line 136 of aiguard.go when ExternalCredentialID
-// is non-empty AND GetDecrypted succeeds (real AES-GCM encrypted credential).
-func TestLiveClassifier_buildBackend_externalURL_withRealCredSuccess(t *testing.T) {
-	const testKeyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-	// Reuse testEncryptForCred helper from coverage_gap2_test.go (same package).
-	ctHex, ivHex, tagHex := testEncryptForCred(t, testKeyHex, "sk-external-key")
-
-	cred := &store.Credential{
-		ID:              "ext-cred-1",
-		Name:            "ExternalCred",
-		ProviderID:      "prov-ext",
-		EncryptedKey:    ctHex,
-		EncryptionIv:    ivHex,
-		EncryptionTag:   tagHex,
-		EncryptionKeyID: "v1",
-		Enabled:         true,
-		Status:          "active",
-	}
-	d, err := creddecrypt.NewDecryptor(testKeyHex)
-	if err != nil {
-		t.Fatalf("NewDecryptor: %v", err)
-	}
-	src := &stubEncryptedCredSource{cred: cred}
-	mgr := credmanager.NewManager(src, d, discardLogger())
-
+// buildBackend — external_url builds an ExternalBackend that carries NO
+// provider credential (SEC-M2-01). The external judge is the operator's own
+// service and authenticates only through CustomHeaders; buildBackend resolves
+// no stored Credential on this path, so a provider key can never be forwarded
+// to an operator-chosen URL.
+func TestLiveClassifier_buildBackend_externalURL_noProviderCredential(t *testing.T) {
 	url := "https://external-classifier.example.com"
-	credID := "ext-cred-1"
 	cfg := &configstore.AIGuardConfig{
-		BackendMode:          "external_url",
-		ExternalURL:          &url,
-		ExternalCredentialID: &credID,
+		BackendMode:   "external_url",
+		ExternalURL:   &url,
+		CustomHeaders: map[string]any{"Authorization": "Bearer judge-token", "X-Tenant": "nexus"},
 	}
 
-	lc := &LiveClassifier{
-		CredentialMgr: mgr,
-		Logger:        discardLogger(),
-	}
+	// No CredentialMgr is wired — external_url must not need one.
+	lc := &LiveClassifier{Logger: discardLogger()}
 	backend, err := lc.buildBackend(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if backend == nil {
-		t.Fatal("expected non-nil ExternalBackend with real credential")
+	eb, ok := backend.(*aiguard.ExternalBackend)
+	if !ok {
+		t.Fatalf("expected *aiguard.ExternalBackend, got %T", backend)
+	}
+	// Operator-supplied auth flows through CustomHeaders — the only auth channel.
+	if eb.CustomHeaders["Authorization"] != "Bearer judge-token" {
+		t.Errorf("operator auth header not forwarded: %+v", eb.CustomHeaders)
+	}
+	if eb.URL != url {
+		t.Errorf("URL: got %q want %q", eb.URL, url)
 	}
 }

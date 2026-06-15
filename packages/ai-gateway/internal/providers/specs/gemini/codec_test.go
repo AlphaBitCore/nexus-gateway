@@ -167,7 +167,7 @@ func TestDecodeResponse_ContextCacheUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decRes, err := codec{}.DecodeResponse(typology.WireShapeGeminiGenerateContent, native, "")
+	decRes, err := codec{}.DecodeResponse(typology.WireShapeGeminiGenerateContent, native, "", provcore.DecodeContext{})
 	canon := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {
@@ -258,7 +258,7 @@ func TestDecodeResponse_ThoughtPartsBecomeReasoningContent(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			decRes, err := codec{}.DecodeResponse(typology.WireShapeGeminiGenerateContent, []byte(tc.native), "")
+			decRes, err := codec{}.DecodeResponse(typology.WireShapeGeminiGenerateContent, []byte(tc.native), "", provcore.DecodeContext{})
 			canon := decRes.CanonicalBody
 			if err != nil {
 				t.Fatalf("DecodeResponse: %v", err)

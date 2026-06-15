@@ -36,7 +36,7 @@ type API interface {
 	// shape to another via canonical chat.completion. Used by the
 	// cache HIT path when the cached entry's origin ingress shape
 	// differs from the requesting ingress shape (cross-ingress shape
-	// contamination fix, Option B2).
+	// contamination fix).
 	ResponseAcrossFormats(from typology.WireShape, to typology.WireShape, body []byte) ([]byte, error)
 	// NewStreamTranscoder returns a StreamTranscoder for the given
 	// ingress→target pair, or nil when the pair is a passthrough

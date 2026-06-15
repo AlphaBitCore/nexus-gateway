@@ -72,6 +72,7 @@ func TestSharedGoHooksPipeline(t *testing.T) {
 		5*time.Second,
 		15*time.Second,
 		false,
+		false,
 		logger,
 	)
 	if err != nil {
@@ -129,7 +130,7 @@ func TestSharedGoApprove(t *testing.T) {
 		Normalized:  core.PayloadFromTextSegments([]string{"this is perfectly fine content"}),
 	}
 
-	pipeline, err := resolver.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 15*time.Second, false, logger)
+	pipeline, err := resolver.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 15*time.Second, false, false, logger)
 	if err != nil {
 		t.Fatalf("BuildPipeline: %v", err)
 	}

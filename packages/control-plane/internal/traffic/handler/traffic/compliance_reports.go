@@ -189,21 +189,26 @@ func (h *Handler) ComplianceOverviewExport(c echo.Context) error {
 		return nil
 	}
 	for _, r := range data {
+		// Every attacker-influenceable cell (host/path/method/hook
+		// fields/tags/sourceIp all originate from proxied or caller-controlled
+		// input) passes through csvSafeCell so a leading =/+/-/@/TAB/CR cannot
+		// detonate as a formula in the auditor's spreadsheet. Server-formatted
+		// numeric/timestamp/id/enum cells need no neutralization.
 		row := []string{
 			formatCSVTimestamp(r.Timestamp),
 			r.ID,
 			r.TransactionID,
 			r.Source,
-			r.SourceIP,
-			r.TargetHost,
-			derefStrPtr(r.Method),
-			derefStrPtr(r.Path),
+			csvSafeCell(r.SourceIP),
+			csvSafeCell(r.TargetHost),
+			csvSafeCell(derefStrPtr(r.Method)),
+			csvSafeCell(derefStrPtr(r.Path)),
 			formatOptIntPtr(r.StatusCode),
-			derefStrPtr(r.HookDecision),
-			derefStrPtr(r.HookReasonCode),
-			derefStrPtr(r.BumpStatus),
+			csvSafeCell(derefStrPtr(r.HookDecision)),
+			csvSafeCell(derefStrPtr(r.HookReasonCode)),
+			csvSafeCell(derefStrPtr(r.BumpStatus)),
 			formatOptIntPtr(r.LatencyMs),
-			strings.Join(r.ComplianceTags, ","),
+			csvSafeCell(strings.Join(r.ComplianceTags, ",")),
 		}
 		if err := w.Write(row); err != nil {
 			h.logger.Error("csv write row", "error", err, "id", r.ID)
@@ -211,6 +216,25 @@ func (h *Handler) ComplianceOverviewExport(c echo.Context) error {
 		}
 	}
 	return nil
+}
+
+// csvSafeCell neutralizes CSV / spreadsheet-formula injection. A
+// cell whose first character is one of = + - @ TAB CR is prefixed with a single
+// apostrophe so Excel / LibreOffice Calc / Google Sheets render it as literal
+// text instead of evaluating it as a formula (the OWASP-recommended
+// neutralization). encoding/csv only quotes cells containing , " or newline, so
+// it does NOT cover this — the spreadsheet app, not the CSV parser, is the sink.
+// Applied to every attacker-influenceable cell in the compliance exports.
+func csvSafeCell(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	default:
+		return s
+	}
 }
 
 func derefStrPtr(p *string) string {

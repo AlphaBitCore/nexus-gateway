@@ -16,11 +16,11 @@ func TestTouchThingSession(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		defer mock.Close()
 		mock.ExpectExec(`UPDATE thing SET`).
-			WithArgs("thing-1", "1.2.3", "addr", "host", "phys-1").
+			WithArgs("thing-1", "1.2.3", "addr", "host").
 			WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 		s := New(mock)
 		err := s.TouchThingSession(context.Background(), TouchSessionParams{
-			ID: "thing-1", Version: "1.2.3", Address: "addr", Name: "host", PhysicalID: "phys-1",
+			ID: "thing-1", Version: "1.2.3", Address: "addr", Name: "host",
 		})
 		if err != nil {
 			t.Fatalf("TouchThingSession: %v", err)
@@ -30,7 +30,7 @@ func TestTouchThingSession(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		defer mock.Close()
 		mock.ExpectExec(`UPDATE thing SET`).
-			WithArgs("missing", "", "", "", "").
+			WithArgs("missing", "", "", "").
 			WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
 		s := New(mock)
 		err := s.TouchThingSession(context.Background(), TouchSessionParams{ID: "missing"})
@@ -43,7 +43,7 @@ func TestTouchThingSession(t *testing.T) {
 		defer mock.Close()
 		want := errors.New("planner err")
 		mock.ExpectExec(`UPDATE thing SET`).
-			WithArgs("x", "", "", "", "").
+			WithArgs("x", "", "", "").
 			WillReturnError(want)
 		s := New(mock)
 		err := s.TouchThingSession(context.Background(), TouchSessionParams{ID: "x"})

@@ -124,11 +124,12 @@ type bumpOptions struct {
 	// matched domain so DetectRequestMeta / ExtractRequest / DetectResponseUsage
 	// / ExtractResponse are called with the correct per-provider logic.
 	adapterRegistry *traffic.AdapterRegistry
-	// normalizeRegistry is the Tier 1+2+3 normalize chain. When set,
-	// runtimeNormalize prefers reg.Normalize over the legacy per-adapter
-	// direct call so non-standard wire formats (chatgpt-web SSE
-	// delta_encoding, etc.) fall through to Tier 2 pattern probe and
-	// Tier 3 verbatim http-text. Nil keeps legacy adapter-direct path.
+	// normalizeRegistry is the Tier 1+2+3 normalize chain —
+	// runtimeNormalize's only wire-format decode route. Non-standard
+	// wire formats (chatgpt-web SSE delta_encoding, etc.) fall through
+	// to the Tier 2 pattern probe and Tier 3 verbatim http-text. Nil
+	// skips structured decoding entirely; only the adapter's segment
+	// extraction runs.
 	normalizeRegistry *normalize.Registry
 	// streamingPolicyStore is the hot-swappable streaming compliance
 	// policy Store, populated at startup (shared streampolicy.BootStore
@@ -183,6 +184,19 @@ type bumpOptions struct {
 	procName   string
 	procBundle string
 	procUser   string
+
+	// strictFailClosed selects the BUILD-time treatment of an unbuildable
+	// fail-closed compliance hook. When false (default — the agent
+	// NE proxy, which sits in the host outbound packet path), a fail-closed hook
+	// that cannot be built is silently skipped so refusing never bricks host
+	// networking (DNS/DHCP/etc). When true (the compliance-proxy appliance, a
+	// dedicated forward proxy that already 403s disallowed CONNECTs and can
+	// safely refuse), BuildPipeline errors on an unbuildable fail-closed hook so
+	// the request is REFUSED rather than forwarded uninspected — honouring the
+	// admin's "this scanner is mandatory" intent on build errors, not just
+	// runtime errors. Set via WithStrictFailClosed; threaded to
+	// PolicyResolver.BuildPipeline.
+	strictFailClosed bool
 }
 
 // AttestationVerifierFunc verifies an inbound X-Nexus-Attestation
@@ -263,6 +277,17 @@ func WithIdentity(name string) BumpOption {
 	return func(o *bumpOptions) { o.identity = name }
 }
 
+// WithStrictFailClosed makes the bumped flow treat an UNBUILDABLE fail-closed
+// compliance hook as a hard refusal at pipeline-build time instead
+// of silently skipping it. Only callers that can safely refuse traffic should
+// set this — the compliance-proxy appliance (a dedicated forward proxy that
+// already returns 403 for disallowed CONNECTs). The agent NE proxy MUST leave
+// it unset: it is in the host outbound packet path where refusing would brick
+// host networking.
+func WithStrictFailClosed() BumpOption {
+	return func(o *bumpOptions) { o.strictFailClosed = true }
+}
+
 // WithProcessInfo records the originating process attribution for the
 // bumped flow. Stamped onto every emitted compliance.AuditInfo so the
 // admin Traffic UI can show the source app's name + bundle ID even on
@@ -306,11 +331,9 @@ func WithPayloadCapture(store *payloadcapture.Store) BumpOption {
 
 // WithNormalizeRegistry injects the Tier 1+2+3 normalize chain so
 // runtimeNormalize uses reg.Normalize (same code path Hub agent_audit
-// BuildAuditFn uses) instead of calling adapter.Normalize directly.
-// Without this, Tier 1 spec-match misses (e.g. chatgpt-web SSE
-// delta_encoding) return nil and the consumer sees no normalized
-// payload — defeats the whole 3-tier fallback design. cp callers
-// that haven't wired this yet keep the legacy adapter-direct path.
+// BuildAuditFn uses). Every production consumer wires this; without
+// it, no structured normalized payload is produced and only the
+// adapter's segment extraction feeds the hook pipeline.
 func WithNormalizeRegistry(reg *normalize.Registry) BumpOption {
 	return func(o *bumpOptions) {
 		o.normalizeRegistry = reg

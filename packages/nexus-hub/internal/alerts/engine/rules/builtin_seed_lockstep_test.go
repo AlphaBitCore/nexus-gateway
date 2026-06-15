@@ -1,9 +1,9 @@
 package rules
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"testing"
@@ -12,7 +12,7 @@ import (
 )
 
 // TestBuiltinRulesAppearInSeed enforces a minimal lockstep between the Go
-// BuiltinRules registry (compile-time invariants) and the seed-baseline.sql
+// BuiltinRules registry (compile-time invariants) and the seed/fixtures/AlertRule.json
 // AlertRule snapshot (admin-tunable runtime defaults).
 //
 // The architectural intent (alerting-architecture.md §1) is:
@@ -27,7 +27,7 @@ import (
 func TestBuiltinRulesAppearInSeed(t *testing.T) {
 	seedIDs := loadSeedAlertRuleIDs(t)
 	if len(seedIDs) == 0 {
-		t.Fatal("loaded zero AlertRule rows from seed-baseline.sql; locator may be wrong")
+		t.Fatal("loaded zero AlertRule rows from seed/fixtures/AlertRule.json; locator may be wrong")
 	}
 
 	var missing []string
@@ -39,14 +39,14 @@ func TestBuiltinRulesAppearInSeed(t *testing.T) {
 	if len(missing) > 0 {
 		t.Errorf(
 			"%d builtin rule(s) defined in Go but not in seed (fresh installs will lack them):\n  %v\n"+
-				"Fix: add an INSERT INTO public.\"AlertRule\" row for each in tools/db-migrate/seed/data/seed-baseline.sql.",
+				"Fix: add an AlertRule object for each in tools/db-migrate/seed/fixtures/AlertRule.json.",
 			len(missing), missing,
 		)
 	}
 }
 
 // TestSeedRulesAppearInBuiltin enforces the reverse direction of the
-// lockstep: every AlertRule row in seed-baseline.sql must have a matching
+// lockstep: every AlertRule row in seed/fixtures/AlertRule.json must have a matching
 // RuleDef in BuiltinRules. Drift here means the admin UI's "Reset Rule"
 // button silently no-ops for that rule (the reset handler looks up the
 // canonical default by ID, and a missing entry leaves the operator-edited
@@ -56,7 +56,7 @@ func TestBuiltinRulesAppearInSeed(t *testing.T) {
 func TestSeedRulesAppearInBuiltin(t *testing.T) {
 	seedIDs := loadSeedAlertRuleIDs(t)
 	if len(seedIDs) == 0 {
-		t.Fatal("loaded zero AlertRule rows from seed-baseline.sql; locator may be wrong")
+		t.Fatal("loaded zero AlertRule rows from seed/fixtures/AlertRule.json; locator may be wrong")
 	}
 
 	builtinIDs := make(map[string]struct{}, len(BuiltinRules))
@@ -108,34 +108,41 @@ func TestBuiltinRuleSourceTypesAreCanonical(t *testing.T) {
 		t.Errorf(
 			"%d builtin rule SourceType value(s) not in alerting.AllSourceTypes: %v\n"+
 				"Fix: add the value to AllSourceTypes in packages/nexus-hub/internal/alerts/engine/types.go "+
-				"AND update the AlertRule.sourceType doc-comment in tools/db-migrate/schema.prisma.",
+				"AND update the AlertRule.sourceType doc-comment in tools/db-migrate/schema/observability.prisma.",
 			len(sortedTypes), offenders,
 		)
 	}
 }
-
-var alertRuleIDRe = regexp.MustCompile(`INSERT INTO public\."AlertRule"[^V]*VALUES\s*\(\s*'([^']+)'`)
 
 func loadSeedAlertRuleIDs(t *testing.T) map[string]struct{} {
 	t.Helper()
 
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatal("runtime.Caller failed; cannot locate seed file")
+		t.Fatal("runtime.Caller failed; cannot locate seed fixture")
 	}
 	// thisFile = .../packages/nexus-hub/internal/alerts/engine/rules/builtin_seed_lockstep_test.go
 	// 6 levels up from rules/ reaches the repo root (rules → engine → alerts → internal → nexus-hub → packages → repo).
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "..", "..")
-	seedPath := filepath.Join(repoRoot, "tools", "db-migrate", "seed", "data", "seed-baseline.sql")
+	fixturePath := filepath.Join(repoRoot, "tools", "db-migrate", "seed", "fixtures", "AlertRule.json")
 
-	data, err := os.ReadFile(seedPath)
+	data, err := os.ReadFile(fixturePath)
 	if err != nil {
-		t.Fatalf("read seed file %s: %v", seedPath, err)
+		t.Fatalf("read AlertRule fixture %s: %v", fixturePath, err)
+	}
+
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatalf("parse AlertRule fixture %s: %v", fixturePath, err)
 	}
 
 	ids := map[string]struct{}{}
-	for _, m := range alertRuleIDRe.FindAllSubmatch(data, -1) {
-		ids[string(m[1])] = struct{}{}
+	for _, r := range rows {
+		if r.ID != "" {
+			ids[r.ID] = struct{}{}
+		}
 	}
 	return ids
 }

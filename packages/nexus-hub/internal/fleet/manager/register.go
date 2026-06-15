@@ -59,13 +59,12 @@ func (m *Manager) RegisterThing(ctx context.Context, req RegisterRequest) (*Regi
 	// Prefer a session touch; fall back to first-time enrollment if the row
 	// does not yet exist. Only the enrollment path writes auth_type and
 	// conn_protocol, preventing reconnects from resetting mTLS-enrolled agents
-	// back to the "bearer" default (bug C2).
+	// back to the "bearer" default.
 	touchErr := m.store.AuthStore().TouchThingSession(ctx, store.TouchSessionParams{
-		ID:         req.ID,
-		Name:       req.Name,
-		Version:    req.Version,
-		Address:    req.Address,
-		PhysicalID: req.PhysicalID,
+		ID:      req.ID,
+		Name:    req.Name,
+		Version: req.Version,
+		Address: req.Address,
 	})
 	switch {
 	case touchErr == nil:

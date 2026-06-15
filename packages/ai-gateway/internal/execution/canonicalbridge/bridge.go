@@ -313,7 +313,12 @@ func (b *Bridge) DecodeViaShared(format provcore.Format, endpoint typology.WireS
 	if !ok || codec == nil {
 		return body, provcore.ExtractUsage(body, format), nil
 	}
-	decodeRes, err := codec.DecodeResponse(endpoint, body, "")
+	// Post-hoc shared decode (cache HIT replay reshape / estimate compare /
+	// audit Recorder) re-decodes an already-captured response body without
+	// the originating request, so the request-relative codec checks (embedding
+	// count guard, usage estimate) are not applicable here — pass a zero
+	// DecodeContext to fail them open.
+	decodeRes, err := codec.DecodeResponse(endpoint, body, "", provcore.DecodeContext{})
 	if err != nil {
 		return body, provcore.Usage{}, err
 	}
@@ -518,20 +523,34 @@ func (b *Bridge) IngressEmbeddingsToCanonical(ingress provcore.Format, body []by
 // IngressEmbeddingsToWire mirrors [Bridge.IngressChatToWire] for embeddings.
 // Same-format ingress=target → passthrough; cross-format goes through
 // canonical → target codec.
-func (b *Bridge) IngressEmbeddingsToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) ([]byte, error) {
+//
+// Unlike the chat counterpart, the embeddings codec can emit an
+// EncodeResult.URLOverride to select between distinct upstream endpoints for
+// the SAME wire shape — Gemini's :embedContent (single input) vs
+// :batchEmbedContents (array input). That action suffix is encoded only by the
+// codec (it inspects the canonical `input` cardinality), so it MUST be returned
+// to the caller and threaded onto the dispatched URL; dropping it sends the
+// batch body ({"requests":[…]}) to the single-embed URL, which Gemini rejects
+// with `Unknown name "requests": Cannot find field` (audit F-0053).
+// urlOverride is "" on the same-format passthrough and for codecs that do not
+// switch endpoints (OpenAI/Cohere embeddings).
+func (b *Bridge) IngressEmbeddingsToWire(ingress, target provcore.Format, body []byte, ct provcore.CallTarget) (wireBody []byte, urlOverride string, err error) {
 	if ingress == target {
-		return body, nil
+		return body, "", nil
 	}
 	canon, err := b.IngressEmbeddingsToCanonical(ingress, body, ct)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	codec, ok := b.codecs[target]
 	if !ok || codec == nil {
-		return nil, fmt.Errorf("canonicalbridge: no codec for format %q", target)
+		return nil, "", fmt.Errorf("canonicalbridge: no codec for format %q", target)
 	}
 	encRes, err := codec.EncodeRequest(embeddingsWireShapeForFormat(target), canon, ct)
-	return encRes.Body, err
+	if err != nil {
+		return nil, "", err
+	}
+	return encRes.Body, encRes.URLOverride, nil
 }
 
 // ResponseCanonicalToIngressEmbeddings converts canonical OpenAI
@@ -628,7 +647,10 @@ func (b *Bridge) responseToCanonical(from typology.WireShape, body []byte) ([]by
 	if !ok || codec == nil {
 		return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: no codec for from-format %q", fromFormat)
 	}
-	decodeRes, err := codec.DecodeResponse(fromEndpoint, body, "")
+	// Cross-format reshape decodes a previously-served response without the
+	// originating request — request-relative codec checks fail open via a
+	// zero DecodeContext.
+	decodeRes, err := codec.DecodeResponse(fromEndpoint, body, "", provcore.DecodeContext{})
 	if err != nil {
 		return nil, fmt.Errorf("canonicalbridge: ResponseAcrossFormats: decode %s→canonical: %w", fromFormat, err)
 	}
@@ -640,22 +662,60 @@ func (b *Bridge) responseToCanonical(from typology.WireShape, body []byte) ([]by
 
 // wireShapeToFormatEndpoint reverses a canonical typology.WireShape to
 // the (provcore.Format, typology.WireShape) pair that the codec registry
-// is keyed on. Returns ok=false for shapes the bridge does not handle
-// (e.g. audio/image/batches surfaces; non-OpenAI/non-Anthropic chat
-// shapes whose codec lookup hits b.codecs by Format only — those callers
-// supply their own mapping).
+// (b.codecs) is keyed on and that the resolved codec's DecodeResponse
+// dispatches on. The returned WireShape is the endpoint value the target
+// codec expects to recognise the body as a decodable response (e.g. the
+// Gemini codec rejects anything that is not gemini-generate-content /
+// vertex-generate-content; the Cohere codec requires cohere-chat).
+//
+// Coverage is the reverse of the forward egress map [ResponseCanonicalToIngress]
+// (chat) and [ResponseCanonicalToIngressEmbeddings] (embeddings) plus every
+// origin wire shape a cache entry may be persisted under — so the cross-shape
+// cache-HIT reshape path ([ResponseAcrossFormats]) can decode any stored
+// response back to canonical regardless of which upstream produced it.
+// TestWireShapeToFormatEndpoint_CoversForwardEgressMap asserts this parity.
+//
+// Returns ok=false only for surfaces the bridge has no chat/embeddings
+// canonical pipeline for (audio / image / batches; the bedrock-invoke raw
+// passthrough shape).
 func wireShapeToFormatEndpoint(w typology.WireShape) (provcore.Format, typology.WireShape, bool) {
 	switch w {
+	// --- Chat wire shapes ---
 	case typology.WireShapeOpenAIChat:
 		return provcore.FormatOpenAI, typology.WireShapeOpenAIChat, true
 	case typology.WireShapeOpenAIResponses:
 		return provcore.FormatOpenAIResponses, typology.WireShapeOpenAIResponses, true
 	case typology.WireShapeOpenAICompletionsLegacy:
 		return provcore.FormatOpenAI, typology.WireShapeOpenAICompletionsLegacy, true
+	case typology.WireShapeAnthropicMessages:
+		// Anthropic codec's DecodeResponse requires the anthropic-messages
+		// endpoint; passing any other shape makes it passthrough the native
+		// body uncanonicalised.
+		return provcore.FormatAnthropic, typology.WireShapeAnthropicMessages, true
+	case typology.WireShapeGeminiGenerateContent:
+		return provcore.FormatGemini, typology.WireShapeGeminiGenerateContent, true
+	case typology.WireShapeVertexGenerateContent:
+		return provcore.FormatVertex, typology.WireShapeVertexGenerateContent, true
+	case typology.WireShapeCohereChat:
+		return provcore.FormatCohere, typology.WireShapeCohereChat, true
+	case typology.WireShapeBedrockConverse:
+		// Bedrock's codec ignores the endpoint for non-embed shapes and
+		// delegates to the Anthropic codec internally; the converse endpoint
+		// is the canonical chat shape for the Bedrock format.
+		return provcore.FormatBedrock, typology.WireShapeBedrockConverse, true
+	// --- Embeddings wire shapes ---
 	case typology.WireShapeOpenAIEmbeddings:
 		return provcore.FormatOpenAI, typology.WireShapeOpenAIEmbeddings, true
-	case typology.WireShapeAnthropicMessages:
-		return provcore.FormatAnthropic, typology.WireShapeOpenAIChat, true
+	case typology.WireShapeGeminiEmbedContent:
+		return provcore.FormatGemini, typology.WireShapeGeminiEmbedContent, true
+	case typology.WireShapeVertexEmbedContent:
+		return provcore.FormatVertex, typology.WireShapeVertexEmbedContent, true
+	case typology.WireShapeCohereEmbed:
+		return provcore.FormatCohere, typology.WireShapeCohereEmbed, true
+	case typology.WireShapeBedrockEmbeddings:
+		return provcore.FormatBedrock, typology.WireShapeBedrockEmbeddings, true
+	case typology.WireShapeVoyageEmbeddings:
+		return provcore.FormatVoyage, typology.WireShapeVoyageEmbeddings, true
 	}
 	return "", "", false
 }

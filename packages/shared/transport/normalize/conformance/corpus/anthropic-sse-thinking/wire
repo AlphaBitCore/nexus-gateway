@@ -1,0 +1,48 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01CZ9UPx8FiQamWgAcpaR8qT","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":48,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}          }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"27"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" * 43\n\n= 27 * 40 + 27 * 3\n= 1080 + 81\n= 1161"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EvUBCmUIDhgCKkC8wEoOtoK9u0dl/D0vn8TEXaYvY6xJTscnJNj2y6dcLHF+lAajkuvSaEPsI721jdgjTz2yBZgZbJ9857yP6aGsMhFjbGF1ZGUtc29ubmV0LTQtNjgAQgh0aGlua2luZxIM79nUYRd3Gg3XvLCBGgzeBrvdAWzbhmP7O1giMAWqem634mniSqZ86nsTpxB9qI7VAmPrpXi4PzPBwKAQ7ELVdK80/zZW66OV4rZ5OSo+K6PIVcPw6SptXZUEOOlxkrf2MldOuNZ041uML+YJ1sAmh37tEWJ4+wRY8HOeAdLLiRh61mRscPZWQ2Cr85oYAQ=="}            }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0        }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"## Solving 27 × 43 Step by Step\n\n**Break apart one of"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the numbers:**\n\nI'll split 43 into 40 + 3"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**Multiply each part by 27:**\n\n*"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 27 × 40 = 1,080\n* 27 × 3 = 81\n\n**Add the results:**\n\n* 1,080 + 81 = **1,161"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n\n**Answer: 27 × 43 = 1,161**"}      }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1        }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":48,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":158,"output_tokens_details":{"thinking_tokens":41}}            }
+
+event: message_stop
+data: {"type":"message_stop"           }
+

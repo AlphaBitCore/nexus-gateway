@@ -134,6 +134,11 @@ func (s *Store) GetProvider(ctx context.Context, id string) (*Provider, error) {
 
 // CreateParams holds fields for creating a provider.
 type CreateParams struct {
+	// ID, when set, is used as the provider's primary key instead of a
+	// DB-generated uuid. The create-provider-with-inline-credential
+	// path generates the provider id app-side so the credential's ciphertext can
+	// be AAD-bound to (credentialID, providerID) before the atomic insert.
+	ID          string
 	Name        string
 	DisplayName string
 	Description *string
@@ -177,12 +182,16 @@ func (s *Store) CreateProviderWithChildren(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	providerID := provider.ID
+	if providerID == "" {
+		providerID = uuid.New().String()
+	}
 	var pr Provider
 	err = tx.QueryRow(ctx, `
 		INSERT INTO "Provider" (id, name, "displayName", description, "baseUrl", "pathPrefix", adapter_type, "apiVersion", region, enabled, headers, "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
 		RETURNING id, name, "displayName", description, adapter_type, "baseUrl", "pathPrefix", "apiVersion", region, enabled, headers, "createdAt", "updatedAt"
-	`, provider.Name, provider.DisplayName, provider.Description, provider.BaseURL, provider.PathPrefix, provider.AdapterType, provider.APIVersion, provider.Region, provider.Enabled, provider.Headers,
+	`, providerID, provider.Name, provider.DisplayName, provider.Description, provider.BaseURL, provider.PathPrefix, provider.AdapterType, provider.APIVersion, provider.Region, provider.Enabled, provider.Headers,
 	).Scan(&pr.ID, &pr.Name, &pr.DisplayName, &pr.Description, &pr.AdapterType, &pr.BaseURL,
 		&pr.PathPrefix, &pr.APIVersion, &pr.Region, &pr.Enabled, &pr.Headers, &pr.CreatedAt, &pr.UpdatedAt)
 	if err != nil {
@@ -259,13 +268,17 @@ func (s *Store) CreateProviderWithChildren(
 		// Scan list here silently drifted to 14 destinations as columns were
 		// added (circuit-breaker + health fields), making every credential
 		// insert fail at scan and roll the whole provider create back.
+		credID := credential.ID
+		if credID == "" {
+			credID = uuid.New().String()
+		}
 		insertedCred, err = credstore.ScanCredentialRow(tx.QueryRow(ctx, fmt.Sprintf(`
 			INSERT INTO "Credential" (id, name, "providerId", "encryptedKey", "encryptionIv", "encryptionTag",
 				"encryption_key_id", enabled, "rotationState", "createdAt", "updatedAt")
-			VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
 			RETURNING %s
 		`, credstore.CredMetadataColumns),
-			credential.Name, pr.ID, credential.EncryptedKey, credential.EncryptionIV, credential.EncryptionTag,
+			credID, credential.Name, pr.ID, credential.EncryptedKey, credential.EncryptionIV, credential.EncryptionTag,
 			keyID, credential.Enabled, credential.RotationState,
 		))
 		if err != nil {
@@ -388,56 +401,4 @@ func (s *Store) ListProviderHealth(ctx context.Context) ([]ProviderHealthRow, er
 		result = append(result, r)
 	}
 	return result, rows.Err()
-}
-
-// ModelPricingRow holds a model pricing record.
-type ModelPricingRow struct {
-	ID                    string  `json:"id"`
-	ModelID               string  `json:"modelId"`
-	InputPricePerMillion  float64 `json:"inputPricePerMillion"`
-	OutputPricePerMillion float64 `json:"outputPricePerMillion"`
-	EffectiveDate         any     `json:"effectiveDate"`
-}
-
-// ListModelPricing returns all model pricing records.
-func (s *Store) ListModelPricing(ctx context.Context) ([]ModelPricingRow, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, "modelId", "inputPricePerMillion", "outputPricePerMillion", "effectiveDate"
-		FROM "ModelPricing" ORDER BY "effectiveDate" DESC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := []ModelPricingRow{}
-	for rows.Next() {
-		var r ModelPricingRow
-		if err := rows.Scan(&r.ID, &r.ModelID, &r.InputPricePerMillion, &r.OutputPricePerMillion, &r.EffectiveDate); err != nil {
-			return nil, err
-		}
-		result = append(result, r)
-	}
-	return result, rows.Err()
-}
-
-// CreateModelPricing upserts a model pricing record.
-func (s *Store) CreateModelPricing(ctx context.Context, modelID string, inputPrice, outputPrice float64) (string, error) {
-	var id string
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO "ModelPricing" (id, "modelId", "inputPricePerMillion", "outputPricePerMillion", "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
-		ON CONFLICT ("modelId") DO UPDATE SET "inputPricePerMillion" = $2, "outputPricePerMillion" = $3, "updatedAt" = NOW()
-		RETURNING id
-	`, modelID, inputPrice, outputPrice).Scan(&id)
-	return id, err
-}
-
-// DeleteModelPricing deletes a pricing record by ID.
-func (s *Store) DeleteModelPricing(ctx context.Context, id string) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM "ModelPricing" WHERE id = $1`, id)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
 }

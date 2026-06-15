@@ -237,8 +237,9 @@ func TestIsProviderConfigEmpty(t *testing.T) {
 	}
 }
 
-// Misc package-private helpers (errJSON / wrappedErr / hubPropagationErrorJSON
-// / internalServerError / actorFromContext)
+// Misc package-private helpers (errJSON / wrappedErr / internalServerError /
+// actorFromContext). The propagation-failure envelope now lives in the shared
+// hub package (hub.PropagationErrorJSON) and is tested there.
 
 func TestErrJSONShape(t *testing.T) {
 	out := errJSON("hi", "validation_error", "X")
@@ -259,20 +260,6 @@ func TestWrappedErr(t *testing.T) {
 	}
 	if !errors.Is(w, root) {
 		t.Errorf("Unwrap path broken")
-	}
-}
-
-func TestHubPropagationErrorJSONShape(t *testing.T) {
-	out := hubPropagationErrorJSON(errors.New("down"))
-	inner, ok := out["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing envelope: %v", out)
-	}
-	if inner["type"] != "propagation_error" {
-		t.Errorf("type = %v", inner["type"])
-	}
-	if inner["detail"] != "down" {
-		t.Errorf("detail = %v", inner["detail"])
 	}
 }
 

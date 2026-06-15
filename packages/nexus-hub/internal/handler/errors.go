@@ -10,36 +10,31 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
-// ErrorResponse matches the OpenAPI ErrorResponse schema.
-type ErrorResponse struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
-}
-
 func badRequest(c echo.Context, msg string) error {
-	return c.JSON(http.StatusBadRequest, ErrorResponse{Error: msg, Code: "INVALID_REQUEST"})
+	return c.JSON(http.StatusBadRequest, nexushttperr.ErrJSON(msg, "validation_error", "INVALID_REQUEST"))
 }
 
 func unauthorized(c echo.Context, msg string) error {
-	return c.JSON(http.StatusUnauthorized, ErrorResponse{Error: msg, Code: "UNAUTHORIZED"})
+	return c.JSON(http.StatusUnauthorized, nexushttperr.ErrJSON(msg, "auth_error", "UNAUTHORIZED"))
 }
 
 func forbidden(c echo.Context, msg string) error {
-	return c.JSON(http.StatusForbidden, ErrorResponse{Error: msg, Code: "FORBIDDEN"})
+	return c.JSON(http.StatusForbidden, nexushttperr.ErrJSON(msg, "auth_error", "FORBIDDEN"))
 }
 
 func notFound(c echo.Context, msg string) error {
-	return c.JSON(http.StatusNotFound, ErrorResponse{Error: msg, Code: "NOT_FOUND"})
+	return c.JSON(http.StatusNotFound, nexushttperr.ErrJSON(msg, "not_found", "NOT_FOUND"))
 }
 
 func internalError(c echo.Context, msg string) error {
-	return c.JSON(http.StatusInternalServerError, ErrorResponse{Error: msg, Code: "INTERNAL_ERROR"})
+	return c.JSON(http.StatusInternalServerError, nexushttperr.ErrJSON(msg, "internal_error", "INTERNAL_ERROR"))
 }
 
 func serviceUnavailable(c echo.Context, msg string) error {
-	return c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: msg, Code: "SERVICE_UNAVAILABLE"})
+	return c.JSON(http.StatusServiceUnavailable, nexushttperr.ErrJSON(msg, "service_unavailable", "SERVICE_UNAVAILABLE"))
 }
 
 func handleErr(c echo.Context, err error) error {

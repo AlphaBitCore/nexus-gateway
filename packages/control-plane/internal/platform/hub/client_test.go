@@ -205,6 +205,77 @@ func TestNotifyConfigChange_exhaustsRetries(t *testing.T) {
 	}
 }
 
+// F-0108: a 4xx response (e.g. 422 on a malformed body) is deterministic — the
+// identical retry will fail identically — so NotifyConfigChange must NOT retry
+// it. Exactly one attempt is expected, and the error is returned immediately.
+func TestNotifyConfigChange_noRetryOn422(t *testing.T) {
+	var attempts atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":"thingType and configKey are required"}`))
+	}))
+	defer ts.Close()
+
+	c := New(ts.URL, "tok", ts.Client(), nil)
+	_, err := c.NotifyConfigChange(context.Background(), ConfigChangeRequest{
+		ThingType: "agent",
+		ConfigKey: "hooks",
+	})
+	if err == nil {
+		t.Fatal("expected error on 422")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 attempt on 422 (no retry); got %d", got)
+	}
+}
+
+// F-0108: a 400 Bad Request is likewise non-retryable.
+func TestNotifyConfigChange_noRetryOn400(t *testing.T) {
+	var attempts atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad request"}`))
+	}))
+	defer ts.Close()
+
+	c := New(ts.URL, "tok", ts.Client(), nil)
+	if _, err := c.NotifyConfigChange(context.Background(), ConfigChangeRequest{
+		ThingType: "agent", ConfigKey: "hooks",
+	}); err == nil {
+		t.Fatal("expected error on 400")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 attempt on 400 (no retry); got %d", got)
+	}
+}
+
+// F-0108: isRetryable classifies transport errors and 5xx as retryable, 4xx as
+// not. Unit-level guard so the policy is pinned independent of the HTTP harness.
+func TestIsRetryable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"network error", errors.New("connection refused"), true},
+		{"500", &httpStatusError{status: 500}, true},
+		{"503", &httpStatusError{status: 503}, true},
+		{"400", &httpStatusError{status: 400}, false},
+		{"409", &httpStatusError{status: 409}, false},
+		{"422", &httpStatusError{status: 422}, false},
+		{"499", &httpStatusError{status: 499}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryable(tc.err); got != tc.want {
+				t.Errorf("isRetryable(%v) = %v; want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestInvalidateConfig_fireAndForget(t *testing.T) {
 	var called atomic.Bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +305,51 @@ func TestInvalidateConfig_fireAndForget(t *testing.T) {
 func TestInvalidateConfig_notConfigured_noPanic(t *testing.T) {
 	c := New("", "tok", nil, nil)
 	c.InvalidateConfig(context.Background(), "agent", "hooks")
+}
+
+// TestInvalidateConfigE_success verifies the error-returning variant returns
+// nil and reaches Hub on a successful push (F-0099 fail-loud path).
+func TestInvalidateConfigE_success(t *testing.T) {
+	var called atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called.Store(true)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": 3, "thingsNotified": 1, "thingsOnline": 1})
+	}))
+	defer ts.Close()
+
+	c := New(ts.URL, "tok", ts.Client(), nil)
+	if err := c.InvalidateConfigE(context.Background(), "ai-gateway", "credentials"); err != nil {
+		t.Fatalf("InvalidateConfigE: unexpected error %v", err)
+	}
+	if !called.Load() {
+		t.Fatal("expected Hub to be called")
+	}
+}
+
+// TestInvalidateConfigE_serverError_returnsErr is the core F-0099 guarantee:
+// a failed push surfaces a non-nil error so the security-sensitive handler can
+// return HTTP 502 instead of a false 2xx.
+func TestInvalidateConfigE_serverError_returnsErr(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("hub crashed"))
+	}))
+	defer ts.Close()
+
+	c := New(ts.URL, "tok", ts.Client(), nil)
+	if err := c.InvalidateConfigE(context.Background(), "ai-gateway", "virtual_keys"); err == nil {
+		t.Fatal("InvalidateConfigE returned nil on Hub 500; want propagated error")
+	}
+}
+
+// TestInvalidateConfigE_notConfigured_nil treats an unwired Hub (dev/local) as
+// a no-op so a write does not 502 merely because Hub coordination is absent.
+func TestInvalidateConfigE_notConfigured_nil(t *testing.T) {
+	c := New("", "tok", nil, nil)
+	if err := c.InvalidateConfigE(context.Background(), "ai-gateway", "providers"); err != nil {
+		t.Fatalf("InvalidateConfigE on unconfigured Hub = %v; want nil (no-op)", err)
+	}
 }
 
 // Extended tests
@@ -618,9 +734,9 @@ func TestGetThingRuntime_emptyToken(t *testing.T) {
 	c := New(ts.URL, "", ts.Client(), nil)
 	_, _, err := c.GetThingRuntime(context.Background(), "thing-1")
 	if err == nil {
-		t.Fatal("expected error for empty service token")
+		t.Fatal("expected error for empty hub config token")
 	}
-	if !strings.Contains(err.Error(), "INTERNAL_SERVICE_TOKEN") {
+	if !strings.Contains(err.Error(), "HUB_CONFIG_TOKEN") {
 		t.Fatalf("error should mention the missing env var, got: %v", err)
 	}
 }
@@ -974,156 +1090,6 @@ func TestForceResyncAll_bodyReadError(t *testing.T) {
 		t.Fatal("expected body-read error")
 	}
 	if !strings.Contains(err.Error(), "read force-resync body") {
-		t.Fatalf("error should wrap with read-body context, got: %v", err)
-	}
-}
-
-func TestRotateAgentCert_success(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/hub/things/agent-5/rotate-cert" || r.Method != http.MethodPost {
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer rot-tok" {
-			t.Fatalf("bad auth: %q", r.Header.Get("Authorization"))
-		}
-		if r.Header.Get("Content-Type") != "application/json" {
-			t.Fatalf("bad content-type: %q", r.Header.Get("Content-Type"))
-		}
-		body, _ := io.ReadAll(r.Body)
-		if strings.TrimSpace(string(body)) != "{}" {
-			t.Fatalf("body = %q, want %q", body, "{}")
-		}
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":            true,
-			"certExpiresAt": "2026-05-16T12:00:00Z",
-		})
-	}))
-	defer ts.Close()
-
-	c := New(ts.URL, "rot-tok", ts.Client(), nil)
-	out, err := c.RotateAgentCert(context.Background(), "agent-5")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out["ok"] != true {
-		t.Fatalf("ok = %v, want true", out["ok"])
-	}
-	if out["certExpiresAt"] != "2026-05-16T12:00:00Z" {
-		t.Fatalf("certExpiresAt unexpected: %v", out["certExpiresAt"])
-	}
-}
-
-func TestRotateAgentCert_notFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte("missing"))
-	}))
-	defer ts.Close()
-
-	c := New(ts.URL, "tok", ts.Client(), nil)
-	_, err := c.RotateAgentCert(context.Background(), "ghost")
-	if err == nil {
-		t.Fatal("expected error for 404")
-	}
-	if !strings.Contains(err.Error(), "ghost") || !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("error should name the missing thing, got: %v", err)
-	}
-}
-
-func TestRotateAgentCert_serverError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte("already rotating"))
-	}))
-	defer ts.Close()
-
-	c := New(ts.URL, "tok", ts.Client(), nil)
-	_, err := c.RotateAgentCert(context.Background(), "thing-1")
-	if err == nil {
-		t.Fatal("expected error for 409")
-	}
-	if !strings.Contains(err.Error(), "status 409") || !strings.Contains(err.Error(), "already rotating") {
-		t.Fatalf("error should include status + body, got: %v", err)
-	}
-}
-
-func TestRotateAgentCert_badJSON(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<<not json>>`))
-	}))
-	defer ts.Close()
-
-	c := New(ts.URL, "tok", ts.Client(), nil)
-	_, err := c.RotateAgentCert(context.Background(), "thing-1")
-	if err == nil {
-		t.Fatal("expected decode error")
-	}
-	if !strings.Contains(err.Error(), "decode rotate-cert") {
-		t.Fatalf("error should mention decode-rotate-cert, got: %v", err)
-	}
-}
-
-func TestRotateAgentCert_notConfigured(t *testing.T) {
-	c := New("", "tok", nil, nil)
-	_, err := c.RotateAgentCert(context.Background(), "thing-1")
-	if !errors.Is(err, ErrNotConfigured) {
-		t.Fatalf("want ErrNotConfigured, got %v", err)
-	}
-}
-
-func TestRotateAgentCert_emptyToken(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("server should not be called when token is empty")
-	}))
-	defer ts.Close()
-
-	c := New(ts.URL, "", ts.Client(), nil)
-	_, err := c.RotateAgentCert(context.Background(), "thing-1")
-	if err == nil {
-		t.Fatal("expected error for empty token")
-	}
-}
-
-func TestRotateAgentCert_networkError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := ts.URL
-	ts.Close()
-
-	c := New(url, "tok", &http.Client{Timeout: 200 * time.Millisecond}, nil)
-	_, err := c.RotateAgentCert(context.Background(), "thing-1")
-	if err == nil {
-		t.Fatal("expected network error")
-	}
-	if !strings.Contains(err.Error(), "rotate-cert request") {
-		t.Fatalf("error should wrap with rotate-cert context, got: %v", err)
-	}
-}
-
-func TestRotateAgentCert_badRequestURL(t *testing.T) {
-	c := New("http://[::1", "tok", &http.Client{Timeout: 200 * time.Millisecond}, nil)
-	_, err := c.RotateAgentCert(context.Background(), "thing-1")
-	if err == nil {
-		t.Fatal("expected error for malformed baseURL")
-	}
-}
-
-func TestRotateAgentCert_bodyReadError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hj := w.(http.Hijacker)
-		conn, _, _ := hj.Hijack()
-		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"))
-		_ = conn.Close()
-	}))
-	defer ts.Close()
-
-	c := New(ts.URL, "tok", &http.Client{Timeout: 500 * time.Millisecond}, nil)
-	_, err := c.RotateAgentCert(context.Background(), "thing-1")
-	if err == nil {
-		t.Fatal("expected body-read error")
-	}
-	if !strings.Contains(err.Error(), "read rotate-cert body") {
 		t.Fatalf("error should wrap with read-body context, got: %v", err)
 	}
 }

@@ -62,6 +62,31 @@ func TestDetectResponseUsageNoUsage(t *testing.T) {
 	}
 }
 
+// TestDetectResponseUsage_EmptyBody pins the no-body failure mode:
+// an empty response body (connection cut, HEAD-like response) must
+// classify as no_body — not parse_failed — so analytics can distinguish
+// "provider sent nothing" from "provider sent something we cannot read".
+func TestDetectResponseUsage_EmptyBody(t *testing.T) {
+	a := &Adapter{}
+	um := a.DetectResponseUsage(nil, nil)
+	if um.Status != traffic.UsageStatusNoBody {
+		t.Errorf("status = %q, want no_body", um.Status)
+	}
+	if um.PromptTokens != nil || um.CompletionTokens != nil {
+		t.Errorf("token counts must stay nil on empty body: %v/%v", um.PromptTokens, um.CompletionTokens)
+	}
+}
+
+// TestDetectResponseUsage_MalformedBody pins the parse-failed failure
+// mode for a non-JSON body (HTML error page, truncated payload).
+func TestDetectResponseUsage_MalformedBody(t *testing.T) {
+	a := &Adapter{}
+	um := a.DetectResponseUsage(nil, []byte(`<html>502 Bad Gateway</html>`))
+	if um.Status != traffic.UsageStatusParseFailed {
+		t.Errorf("status = %q, want parse_failed", um.Status)
+	}
+}
+
 // TestDetectResponseUsage_PromptCacheTokens pins that prompt-cache hits
 // surface on the typed UsageMeta envelope (mirrors what spec_anthropic
 // codec writes to providers.Usage). Cost analytics reads CacheReadTokens

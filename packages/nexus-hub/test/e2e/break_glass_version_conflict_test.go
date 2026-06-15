@@ -10,12 +10,12 @@ import (
 
 // TestBreakGlassVersionConflict_HTTP exercises the Hub's break-glass
 // reconciliation rule over the real HTTP surface — POST
-// /api/internal/things/shadow with reason="break_glass". The existing
-// internal unit (break_glass_test.go) calls Manager.HandleShadowReport
-// directly; this test verifies the ShadowReport handler validates the
-// break-glass payload, forwards it to the Manager, and the Manager upserts
-// the template at the reported version and emits an emergency_override audit
-// event.
+// /api/internal/things/shadow/break-glass (the dedicated break-glass route the
+// production thingclient HTTP fallback posts to). The existing internal unit
+// (break_glass_test.go) calls Manager.HandleShadowReport directly; this test
+// verifies the BreakGlassReport handler validates the payload, forwards it to
+// the Manager, and the Manager upserts the killswitch template at the reported
+// version and emits an emergency_override audit event.
 //
 // Scenario:
 //  1. The template for (compliance-proxy, killswitch) is bumped to version N
@@ -48,7 +48,7 @@ func TestBreakGlassVersionConflict_HTTP(t *testing.T) {
 
 	// Seed the template at a known baseline via the regular notify path.
 	h.notifyConfigChange(t, thingType, configKey,
-		map[string]any{"enabled": false}, "update")
+		map[string]any{"engaged": false}, "update")
 
 	waitUntil(t, 5*time.Second, "template seeded", func() bool {
 		_, ok := h.queryTemplateVersion(t, thingType, configKey)
@@ -64,12 +64,11 @@ func TestBreakGlassVersionConflict_HTTP(t *testing.T) {
 	// Fire a break-glass shadow report over HTTP. The shadow payload
 	// reports the flipped killswitch and a key_versions map claiming the
 	// new version for the killswitch key.
-	h.sendShadowReportHTTP(t, map[string]any{
+	h.sendBreakGlassReportHTTP(t, map[string]any{
 		"id":           thingID,
-		"reported":     map[string]any{configKey: map[string]any{"enabled": true}},
+		"reported":     map[string]any{configKey: map[string]any{"engaged": true}},
 		"reportedVer":  target,
 		"keyVersions":  map[string]int64{configKey: target},
-		"reason":       "break_glass",
 		"sourceIp":     "10.0.0.9",
 		"actorTokenId": tokenID,
 	})

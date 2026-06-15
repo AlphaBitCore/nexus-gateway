@@ -189,7 +189,16 @@ func (s *Store) Put(ctx context.Context, content io.Reader, size int64, opts spi
 	if direction == "" {
 		direction = "body"
 	}
-	key := s.keyFor(opts.EventID, direction)
+	// When the caller passes an explicit (token-signed) Key, write to
+	// exactly that key rather than re-deriving from EventID+direction+today. The
+	// Hub spill-blob handler uses this to honour the node-namespaced key the mint
+	// signed, so one node cannot overwrite another node's object and there is no
+	// midnight day-drift between mint and PUT. Direct in-process callers leave
+	// Key empty and keep the legacy deterministic derivation.
+	key := opts.Key
+	if key == "" {
+		key = s.keyFor(opts.EventID, direction)
+	}
 	abs := s.absFor(key)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return audit.SpillRef{}, fmt.Errorf("localfs.Put: mkdir: %w", err)
@@ -315,15 +324,29 @@ type fileEntry struct {
 	size int64
 }
 
-// Sweep implements SpillStore.
+// Sweep implements SpillStore. It is the age-only sweep — equivalent to
+// SweepFiltered with a nil filter (no reference check). Callers that can
+// supply a traffic_event reference check should use SweepFiltered so a
+// blob whose spill_ref is still live is never deleted.
+func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
+	return s.SweepFiltered(ctx, olderThan, nil)
+}
+
+// SweepFiltered implements spillstore.RefAwareSweeper.
 //
-// Two-pass policy:
-//  1. Delete every object whose mtime is before `olderThan`.
-//  2. If the post-deletion total size still exceeds the configured cap,
-//     evict the oldest remaining objects until the total fits.
+// Three-pass policy:
+//  1. Collect every `.bin` object and split into age-eligible candidates
+//     (mtime before olderThan) and the rest.
+//  2. Ask the filter which candidate keys are still referenced; delete only
+//     the unreferenced ones. A nil filter keeps nothing on reference grounds
+//     (pure age-based behaviour). On filter error nothing is deleted and the
+//     error is returned (fail-safe — a DB hiccup must not orphan live spills).
+//  3. If the post-deletion total size still exceeds the configured cap, evict
+//     the oldest remaining objects until the total fits, skipping any blob the
+//     filter marked as still referenced (same orphan hazard as the age pass).
 //
 // Empty day-directories are removed at the end so `find` / `du` stay tidy.
-func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
+func (s *Store) SweepFiltered(ctx context.Context, olderThan time.Time, filter spillstore.SweepFilter) (int, error) {
 	s.sweepMu.Lock()
 	defer s.sweepMu.Unlock()
 
@@ -342,11 +365,36 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
 		return 0, fmt.Errorf("localfs.Sweep: walk: %w", walkErr)
 	}
 
+	// Resolve the storage key (relative to root) for every entry so we can
+	// match against traffic_event.spill_ref, which stores the key — not the
+	// absolute on-disk path.
+	keyOf := func(path string) string {
+		rel, err := filepath.Rel(s.root, path)
+		if err != nil {
+			return path
+		}
+		return filepath.ToSlash(rel)
+	}
+
+	// Reference-check every resident key in one batch: BOTH the age pass and
+	// the total-size cap pass below can delete a blob, so both must honour the
+	// reference set (checking only age-eligible keys would let the cap pass
+	// evict a still-referenced blob — the same orphan hazard).
+	candidateKeys := make([]string, len(entries))
+	for i, e := range entries {
+		candidateKeys[i] = keyOf(e.path)
+	}
+
+	referenced, err := spillstore.ResolveReferenced(ctx, filter, candidateKeys)
+	if err != nil {
+		return 0, fmt.Errorf("localfs.Sweep: reference check: %w", err)
+	}
+
 	deleted := 0
 	var keep []fileEntry
 	for _, e := range entries {
-		if e.mod.Before(olderThan) {
-			if err := os.Remove(e.path); err == nil {
+		if e.mod.Before(olderThan) && !referenced[keyOf(e.path)] {
+			if rmErr := os.Remove(e.path); rmErr == nil {
 				deleted++
 			}
 			continue
@@ -354,21 +402,22 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
 		keep = append(keep, e)
 	}
 
-	// total-size cap: oldest first
+	// total-size cap: oldest first, but never evict a still-referenced blob.
 	sort.Slice(keep, func(i, j int) bool { return keep[i].mod.Before(keep[j].mod) })
 	var total int64
 	for _, e := range keep {
 		total += e.size
 	}
-	for total > s.totalCap && len(keep) > 0 {
-		evict := keep[0]
-		keep = keep[1:]
-		if err := os.Remove(evict.path); err == nil {
+	for i := 0; total > s.totalCap && i < len(keep); i++ {
+		if referenced[keyOf(keep[i].path)] {
+			continue
+		}
+		if rmErr := os.Remove(keep[i].path); rmErr == nil {
 			deleted++
-			total -= evict.size
+			total -= keep[i].size
 		} else {
-			// can't delete — give up rather than loop forever
-			break
+			// can't delete — skip rather than loop forever
+			continue
 		}
 	}
 
@@ -379,8 +428,8 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
 			continue
 		}
 		full := filepath.Join(s.root, d.Name())
-		inner, err := os.ReadDir(full)
-		if err == nil && len(inner) == 0 {
+		inner, rdErr := os.ReadDir(full)
+		if rdErr == nil && len(inner) == 0 {
 			_ = os.Remove(full)
 		}
 	}

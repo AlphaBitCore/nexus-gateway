@@ -40,6 +40,12 @@ type AdminAuditWriter struct {
 	flushTotal    *opsmetrics.Counter
 	batchSizeHist *opsmetrics.Histogram
 	errorsTotal   *opsmetrics.Counter
+	diskDLQTotal  *opsmetrics.Counter
+
+	// diskDLQ durably captures messages that cannot be deserialized so the
+	// admin-audit ledger never silently loses a row to an ack-drop.
+	// Never nil after construction.
+	diskDLQ *diskDLQ
 }
 
 // NewAdminAuditWriter creates a new admin audit writer. Call Start(ctx) to begin.
@@ -84,16 +90,18 @@ func newAdminAuditWriter(
 	}
 
 	w := &AdminAuditWriter{
-		pool:   pool,
-		mqc:    mqc,
-		cfg:    cfg,
-		logger: logger.With("component", "admin-audit-writer"),
+		pool:    pool,
+		mqc:     mqc,
+		cfg:     cfg,
+		logger:  logger.With("component", "admin-audit-writer"),
+		diskDLQ: newDiskDLQNamed("", adminAuditDLQFileName),
 	}
 	if reg != nil {
 		w.consumedTotal = reg.NewCounter("mq.admin_consumed_total", nil)
 		w.flushTotal = reg.NewCounter("mq.admin_batch_flush_total", []string{"result"})
 		w.batchSizeHist = reg.NewHistogram("mq.admin_batch_size", nil)
 		w.errorsTotal = reg.NewCounter("mq.admin_errors_total", []string{"error_type"})
+		w.diskDLQTotal = reg.NewCounter("mq.admin_disk_dlq_inserted_total", nil)
 	}
 	return w
 }
@@ -114,11 +122,10 @@ func (w *AdminAuditWriter) Start(ctx context.Context) error {
 
 			var evt mq.AdminAuditMessage
 			if err := json.Unmarshal(msg.Data, &evt); err != nil {
-				w.logger.Error("deserialize failed, dropping admin audit message", "error", err)
 				if w.errorsTotal != nil {
 					w.errorsTotal.With("deserialize").Inc()
 				}
-				return msg.Ack()
+				return w.deadLetterMalformed(msg, err)
 			}
 
 			if err := batch.Add(pendingAdminMessage{event: evt, msg: msg}); err != nil {
@@ -137,6 +144,37 @@ func (w *AdminAuditWriter) Start(ctx context.Context) error {
 
 	<-ctx.Done()
 	return nil
+}
+
+// deadLetterMalformed persists a message that cannot be deserialized to the
+// on-disk DLQ and then Acks it, so a corrupt admin-audit message is never
+// silently dropped from the ledger. The CP is the sole producer, so a
+// deserialize failure is permanent — redelivery cannot fix it — which is why the
+// message is captured + acked rather than nak'd into a redelivery loop. If the
+// on-disk write itself fails (e.g. disk full), the message is Nak'd so the
+// broker retries and the disk sink gets another chance instead of losing it.
+func (w *AdminAuditWriter) deadLetterMalformed(msg *mq.Message, cause error) error {
+	rec := diskDLQRecord{
+		Subject:       msg.Subject,
+		Payload:       msg.Data,
+		DeliveryCount: int(msg.NumDelivered),
+		LastError:     "deserialize: " + errString(cause),
+		WrittenAt:     time.Now().UTC(),
+	}
+	if err := w.diskDLQ.append(rec); err != nil {
+		w.logger.Error("admin audit: deserialize failed and on-disk dlq write failed; naking for retry",
+			"error", cause, "dlqError", err)
+		if w.errorsTotal != nil {
+			w.errorsTotal.With("disk_dlq").Inc()
+		}
+		return msg.Nak()
+	}
+	w.logger.Warn("admin audit: undeserializable message moved to on-disk dlq (replay required)",
+		"error", cause, "subject", msg.Subject, "file", w.diskDLQ.path())
+	if w.diskDLQTotal != nil {
+		w.diskDLQTotal.With().Inc()
+	}
+	return msg.Ack()
 }
 
 func (w *AdminAuditWriter) flush(ctx context.Context, items []pendingAdminMessage) error {

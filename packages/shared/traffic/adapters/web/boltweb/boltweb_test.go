@@ -629,7 +629,7 @@ func TestRewriteResponseBody_Unsupported(t *testing.T) {
 // Normalize (Tier-1 spec dispatch)
 
 // TestNormalize_RequestChatShape pins that an openai-chat-shaped
-// request body claims Tier 1 via the openai-chat spec and stamps
+// request body claims Tier 1 via the shared OpenAI Chat codec and stamps
 // DetectedSpec = "bolt-web".
 func TestNormalize_RequestChatShape(t *testing.T) {
 	body := []byte(`{
@@ -667,7 +667,7 @@ func TestNormalize_RequestChatShape(t *testing.T) {
 }
 
 // TestNormalize_ResponseNonStream pins response-side scoring against
-// the openai-chat-nonstream spec listed in the adapter's spec hint.
+// the shared OpenAI Chat codec the adapter delegates to.
 func TestNormalize_ResponseNonStream(t *testing.T) {
 	body := []byte(`{
 		"id": "chatcmpl-bolt",

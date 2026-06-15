@@ -35,7 +35,8 @@
 // # Rule provisioning
 //
 // This package owns no default rule list. The canonical defaults live in
-// tools/db-migrate/seed/data/time-sensitive-rules.json, are written into the
+// tools/db-migrate/seed/fixtures/semantic_cache_config.json (the single row's
+// time_sensitive_overrides field), are written into the
 // DB by seed.ts on a fresh install, and reach the AI Gateway via the Hub
 // shadow push (configKey response_cache.time_sensitive_patterns). Callers
 // construct Detector with nil or an empty list at boot; Detector.Reload

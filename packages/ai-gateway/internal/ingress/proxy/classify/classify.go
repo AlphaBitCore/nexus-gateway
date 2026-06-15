@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,12 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
 )
+
+// classifyInternalErrorDetail is the generic message returned to the caller
+// on an unclassified 500. The real error is logged server-side; echoing
+// err.Error() back would leak internal error strings to an authenticated
+// caller.
+const classifyInternalErrorDetail = "internal error"
 
 // Classifier is the minimal interface the classify handler depends on.
 // The live wiring in main.go adapts aiguard.Classify + config cache +
@@ -105,9 +112,10 @@ func (h *ClassifyHandler) ServeClassify(c echo.Context) error {
 				Detail: backendErr.Detail,
 			})
 		}
+		slog.Error("classify: internal error", "error", err, "detector_type", req.DetectorType)
 		return c.JSON(http.StatusInternalServerError, aiguard.ErrorBody{
 			Error:  "internal",
-			Detail: err.Error(),
+			Detail: classifyInternalErrorDetail,
 		})
 	}
 	return c.JSON(http.StatusOK, resp)
@@ -118,6 +126,9 @@ func (h *ClassifyHandler) ServeClassify(c echo.Context) error {
 // the same decoding + error mapping as ServeClassify without standing up
 // an Echo instance per request.
 func (h *ClassifyHandler) ServeClassifyHTTP(w http.ResponseWriter, r *http.Request) {
+	// Cap the request body: classify payloads are small, so 1 MiB rejects an
+	// oversized/abusive body before it is buffered into memory.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req aiguard.Request
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -146,9 +157,10 @@ func (h *ClassifyHandler) ServeClassifyHTTP(w http.ResponseWriter, r *http.Reque
 			})
 			return
 		}
+		slog.Error("classify: internal error", "error", err, "detector_type", req.DetectorType)
 		writeClassifyJSON(w, http.StatusInternalServerError, aiguard.ErrorBody{
 			Error:  "internal",
-			Detail: err.Error(),
+			Detail: classifyInternalErrorDetail,
 		})
 		return
 	}
@@ -158,6 +170,12 @@ func (h *ClassifyHandler) ServeClassifyHTTP(w http.ResponseWriter, r *http.Reque
 // ServeComplianceWebhookHTTP accepts webhook-forward payloads and returns a
 // webhook-compatible decision response.
 func (h *ClassifyHandler) ServeComplianceWebhookHTTP(w http.ResponseWriter, r *http.Request) {
+	// Cap the request body so a malformed or abusive webhook payload is bounded
+	// before it is buffered into memory. The payload is decoded into a
+	// map[string]any (a flexible passthrough shape), so DisallowUnknownFields
+	// would be a no-op here — it only rejects unknown keys against a struct —
+	// hence it is intentionally omitted on this handler.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var payload map[string]any
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&payload); err != nil {

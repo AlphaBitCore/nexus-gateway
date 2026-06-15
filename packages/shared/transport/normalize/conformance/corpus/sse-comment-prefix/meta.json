@@ -1,0 +1,7 @@
+{
+  "adapterType": "",
+  "direction": "response",
+  "contentType": "",
+  "endpointPath": "/v2/stream/recentchange",
+  "stream": false
+}

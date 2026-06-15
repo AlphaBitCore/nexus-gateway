@@ -17,19 +17,15 @@ import (
 //   - macOS: 0666. The daemon runs as a root LaunchDaemon and the
 //     Wails Dashboard runs in the user's session — they MUST be able
 //     to communicate across UIDs, and the socket lives in /var/run
-//     where both processes can reach it. World-connectable is
-//     acceptable for v1 single-user desktop installs because:
-//     (a) the IPC protocol exposes only status queries +
-//     enroll/pause operations, no shell/code-exec,
-//     (b) any local user could DoS the daemon many other ways
-//     (e.g. fill the audit DB volume).
-//     Multi-user enterprise hardening (LOCAL_PEERCRED UID check or
-//     group-based ACL) is tracked as future work.
+//     where both processes can reach it. World-connectable is the
+//     required transport mode for cross-UID root↔user communication;
+//     handleConn enforces a LOCAL_PEERCRED UID check (see
+//     statusapi_peercred_darwin.go) before processing any command,
+//     so only a process running as the same UID as the daemon can
+//     issue IPC requests.
 //
-//   - Linux: 0600 today (single-user dev/prod), tightened to 0660
-//     with a nexus-agent group + the user added at install time
-//     for cross-UID flows (daemon as nexus-agent, tray/dashboard
-//     as the desktop user).
+//   - Linux: 0600 (owner-only). The daemon and the desktop GUI run
+//     as the same user, so the filesystem permission alone gates access.
 func platformListen(path string) (net.Listener, error) {
 	_ = os.Remove(path) // remove stale socket
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)

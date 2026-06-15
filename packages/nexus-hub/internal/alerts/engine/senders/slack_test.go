@@ -26,7 +26,9 @@ func TestSlackSender_WebhookPath(t *testing.T) {
 	alert := alerting.Alert{
 		Severity: alerting.SeverityCritical, TargetLabel: "Org X", Message: "quota 95%",
 	}
-	sc, err := senders.NewSlack(nil).Send(context.Background(), ch, alert)
+	// Unguarded client so the 127.0.0.1 httptest webhook is reachable; the SSRF
+	// guard that NewSlack(nil) installs is covered by TestSlackSender_BlocksMetadata.
+	sc, err := senders.NewSlack(http.DefaultClient).Send(context.Background(), ch, alert)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -85,6 +87,50 @@ func TestSlackSender_MissingConfigIsError(t *testing.T) {
 	_, err := senders.NewSlack(nil).Send(context.Background(), ch, alerting.Alert{})
 	if err == nil {
 		t.Fatal("expected error for missing config")
+	}
+}
+
+// TestSlackSender_WebhookErrorCollapsesOracle verifies F-0247 + F-0370: when the
+// webhook POST fails with a non-2xx status, the returned error (persisted on the
+// AlertDispatch row and shown in the admin UI) must NOT contain the secret webhook
+// URL AND must NOT reveal the upstream status code — both are fingerprinting
+// signals. The status code collapses to 0 and the error is the single generic
+// string, byte-identical across distinct upstream statuses.
+func TestSlackSender_WebhookErrorCollapsesOracle(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		}))
+		ch := alerting.Channel{Type: "slack", Config: map[string]any{"webhookUrl": srv.URL}}
+		sc, err := senders.NewSlack(http.DefaultClient).Send(context.Background(), ch,
+			alerting.Alert{Severity: alerting.SeverityHigh, Message: "x"})
+		leaked := srv.URL
+		srv.Close()
+		if err == nil {
+			t.Fatalf("status %d: expected error on non-2xx", status)
+		}
+		if sc != 0 {
+			t.Errorf("status %d: sc=%d, want 0 (collapsed)", status, sc)
+		}
+		if strings.Contains(err.Error(), leaked) || strings.Contains(err.Error(), "http://") {
+			t.Errorf("status %d: error leaks the webhook URL: %q", status, err.Error())
+		}
+		if err.Error() != "alert delivery failed" {
+			t.Errorf("status %d: err=%q, want generic 'alert delivery failed'", status, err.Error())
+		}
+	}
+}
+
+// TestSlackSender_BlocksMetadata proves the default guarded client (NewSlack(nil))
+// refuses a metadata / private webhook target.
+func TestSlackSender_BlocksMetadata(t *testing.T) {
+	ch := alerting.Channel{Type: "slack", Config: map[string]any{
+		"webhookUrl": "http://169.254.169.254/hook",
+	}}
+	_, err := senders.NewSlack(nil).Send(context.Background(), ch,
+		alerting.Alert{Severity: alerting.SeverityHigh, Message: "x"})
+	if err == nil {
+		t.Fatal("slack webhook to 169.254.169.254 must be blocked")
 	}
 }
 

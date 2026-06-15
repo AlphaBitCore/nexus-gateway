@@ -1,7 +1,7 @@
 // Package perplexity implements the perplexity traffic adapter for
 // Perplexity Sonar's OpenAI-compatible API at api.perplexity.ai.
 //
-// Per session policy: every vendor / surface gets its own adapter ID
+// Convention: every vendor / surface gets its own adapter ID
 // even when the wire is shared. The adapter delegates to openai-compat
 // for parsing while attributing traffic to "perplexity" for audit.
 package perplexity

@@ -43,7 +43,6 @@ type WFPClient interface {
 	Stop(ctx context.Context) error
 	PushPolicy(ctx context.Context, p Policy) error
 	GetOriginalDestination(ctx context.Context, localPort uint16, isUDP bool) (netip.AddrPort, uint32, bool)
-	AuditEvents() <-chan FlowAuditEvent
 }
 
 type StartOptions struct {
@@ -71,14 +70,11 @@ func NewClient(log *slog.Logger) WFPClient {
 		log = slog.Default()
 	}
 	return &wfpClient{
-		log:     log,
-		auditCh: make(chan FlowAuditEvent, auditChannelCapacity),
+		log: log,
 	}
 }
 
 // ─── Implementation ──────────────────────────────────────────────────
-
-const auditChannelCapacity = 1024
 
 type wfpClient struct {
 	log *slog.Logger
@@ -88,7 +84,6 @@ type wfpClient struct {
 	handle  windows.Handle
 	flowTbl *wfpFlowTable
 	pump    *auditPump
-	auditCh chan FlowAuditEvent
 }
 
 func (c *wfpClient) Start(ctx context.Context, opts StartOptions) error {
@@ -131,7 +126,7 @@ func (c *wfpClient) Start(ctx context.Context, opts StartOptions) error {
 
 	c.handle = handle
 	c.flowTbl = newWfpFlowTable()
-	c.pump = newAuditPump(c.log, handle, c.auditCh, c.flowTbl)
+	c.pump = newAuditPump(c.log, handle, c.flowTbl)
 
 	if err := c.pump.Start(); err != nil {
 		windows.CloseHandle(handle)
@@ -166,10 +161,6 @@ func (c *wfpClient) Stop(ctx context.Context) error {
 	if c.handle != 0 {
 		windows.CloseHandle(c.handle)
 		c.handle = 0
-	}
-	if c.auditCh != nil {
-		close(c.auditCh)
-		c.auditCh = nil
 	}
 	c.flowTbl = nil
 	c.started = false
@@ -235,10 +226,4 @@ func (c *wfpClient) GetOriginalDestination(ctx context.Context, localPort uint16
 		tbl.Insert(localPort, isUDP, addr, resp.ProcessID)
 	}
 	return addr, resp.ProcessID, true
-}
-
-func (c *wfpClient) AuditEvents() <-chan FlowAuditEvent {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.auditCh
 }

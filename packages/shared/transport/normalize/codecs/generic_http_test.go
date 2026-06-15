@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"strings"
 	"testing"
@@ -399,12 +401,12 @@ func TestGenericHTTP_AllBranchesProduceValidJSONPayload(t *testing.T) {
 
 // SSE + NDJSON byte-sniff robustness
 
-// TestGenericHTTP_SSE_Detected exercises the canonical case that
-// regressed baa07c15: a chatgpt.com SSE response stamped with
-// `application/json` by the audit envelope. With the byte-sniff in
-// place, the body routes to http-text + a verbatim dump that the UI
-// can render — instead of the previous half-populated http-json with
-// an empty BodyView.JSON.
+// TestGenericHTTP_SSE_Detected exercises the canonical mis-stamp case:
+// a consumer SSE response stamped with `application/json` (or nothing)
+// by the audit envelope. The byte-sniff routes it to http-sse with one
+// structured frame per data line — event name preserved, JSON data
+// decoded into a tree, non-JSON data kept verbatim — instead of a JSON
+// decode error or a flat text dump.
 func TestGenericHTTP_SSE_Detected(t *testing.T) {
 	// Truncated but representative slice of the chatgpt.com SSE that
 	// produced traffic_event baa07c15. The leading "event:" frame is
@@ -438,8 +440,8 @@ data: [DONE]
 			if err != nil {
 				t.Fatalf("unexpected err for %s: %v", tc.name, err)
 			}
-			if got.Kind != core.KindHTTPText {
-				t.Fatalf("Kind: %v want http-text", got.Kind)
+			if got.Kind != core.KindHTTPSSE {
+				t.Fatalf("Kind: %v want http-sse", got.Kind)
 			}
 			if got.Protocol != "generic-http" {
 				t.Fatalf("Protocol: %q", got.Protocol)
@@ -447,17 +449,39 @@ data: [DONE]
 			if got.HTTP == nil || got.HTTP.BodyView == nil {
 				t.Fatalf("BodyView missing: %+v", got.HTTP)
 			}
-			if got.HTTP.BodyView.JSON != nil {
-				t.Fatalf("BodyView.JSON populated on SSE — should be nil: %+v", got.HTTP.BodyView.JSON)
+			fr := got.HTTP.BodyView.SSEFrames
+			if len(fr) != 4 {
+				t.Fatalf("frames: %d want 4: %+v", len(fr), fr)
 			}
-			// The user-visible chat content must survive the projection.
-			// Either the user's prompt or the assistant's partial reply
-			// is enough to prove the dump round-tripped.
-			if !strings.Contains(got.HTTP.BodyView.Text, "hello") {
-				t.Fatalf("Text lost user prompt: %q", got.HTTP.BodyView.Text)
+			// Frame 0: named event, JSON string data → decoded scalar.
+			if fr[0].Event != "delta_encoding" || fr[0].Data != "v1" {
+				t.Fatalf("frame 0 wrong: %+v", fr[0])
 			}
-			if !strings.Contains(got.HTTP.BodyView.Text, "A few that stand out") {
-				t.Fatalf("Text lost assistant delta: %q", got.HTTP.BodyView.Text)
+			// Frame 1: named event, JSON object data → decoded tree
+			// preserving the user-visible chat content.
+			if fr[1].Event != "delta" || fr[1].Data == nil {
+				t.Fatalf("frame 1 wrong: %+v", fr[1])
+			}
+			tree, _ := json.Marshal(fr[1].Data)
+			if !strings.Contains(string(tree), "hello") {
+				t.Fatalf("frame 1 lost user prompt: %s", tree)
+			}
+			tree2, _ := json.Marshal(fr[2].Data)
+			if !strings.Contains(string(tree2), "A few that stand out") {
+				t.Fatalf("frame 2 lost assistant delta: %s", tree2)
+			}
+			// Frame 3: event name reset by the blank dispatch separator;
+			// [DONE] is not JSON → verbatim DataText.
+			if fr[3].Event != "" || fr[3].DataText != "[DONE]" || fr[3].Data != nil {
+				t.Fatalf("frame 3 wrong: %+v", fr[3])
+			}
+			// Raw text is NOT duplicated into the payload (the Raw view
+			// shows the original bytes); the frame list is bounded.
+			if got.HTTP.BodyView.Text != "" || got.HTTP.BodyView.JSON != nil {
+				t.Fatalf("http-sse must not duplicate text/JSON views: %+v", got.HTTP.BodyView)
+			}
+			if got.HTTP.BodyView.SSETruncated {
+				t.Fatalf("4-frame stream must not be marked truncated")
 			}
 		})
 	}
@@ -578,5 +602,231 @@ func TestGenericHTTP_NeverReturnsErrUnsupported(t *testing.T) {
 		if err != nil && errors.Is(err, core.ErrUnsupported) {
 			t.Fatalf("ct=%q: must not return core.ErrUnsupported", c.ct)
 		}
+	}
+}
+
+// Fallback product surface: JSON byte-sniff, structured SSE bounds,
+// provenance stamping.
+
+// TestGenericHTTP_SniffsJSONWithoutContentType pins the prod
+// JSON-as-text class: a valid JSON body with NO Content-Type must
+// project as http-json with the decoded tree, not as a flat text dump.
+func TestGenericHTTP_SniffsJSONWithoutContentType(t *testing.T) {
+	raw := []byte(`{"paymentId": "cus_x", "isTeamMember": false}`) // real prod shape
+	got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), raw, core.Meta{ContentType: ""})
+	if err != nil || got.Kind != core.KindHTTPJSON {
+		t.Fatalf("kind=%s err=%v, want http-json", got.Kind, err)
+	}
+	if got.HTTP.BodyView.JSON == nil {
+		t.Fatal("JSON tree not populated")
+	}
+	m, ok := got.HTTP.BodyView.JSON.(map[string]any)
+	if !ok || m["paymentId"] != "cus_x" {
+		t.Fatalf("JSON shape wrong: %+v", got.HTTP.BodyView.JSON)
+	}
+}
+
+// TestGenericHTTP_JSONSniffVsDeclaredCT pins the sniff/declared-CT
+// interplay: the sniff claims VALID JSON regardless of declared type
+// (text/plain, none, even a form CT), arrays included; invalid JSON
+// never enters the sniff and keeps the declared-CT routing (text body
+// stays text, declared-JSON garbage keeps the decode-error path).
+func TestGenericHTTP_JSONSniffVsDeclaredCT(t *testing.T) {
+	cases := []struct {
+		name     string
+		ct       string
+		body     string
+		wantKind core.Kind
+	}{
+		{"valid object, text/plain CT", "text/plain", `{"a":1}`, core.KindHTTPJSON},
+		{"valid array, no CT", "", `[1,2,3]`, core.KindHTTPJSON},
+		{"valid object, leading whitespace", "", "  \n\t{\"a\":1}", core.KindHTTPJSON},
+		{"valid object, form CT", "application/x-www-form-urlencoded", `{"a":1}`, core.KindHTTPJSON},
+		{"brace-leading invalid JSON, text CT", "text/plain", `{not json`, core.KindHTTPText},
+		{"prose, no CT", "", "hello world", core.KindHTTPText},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), []byte(tc.body), core.Meta{ContentType: tc.ct})
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got.Kind != tc.wantKind {
+				t.Fatalf("Kind = %v, want %v", got.Kind, tc.wantKind)
+			}
+		})
+	}
+}
+
+// TestGenericHTTP_SSE_FrameCap pins the row-size bound: a stream with
+// more data lines than maxSSEFrames keeps exactly maxSSEFrames frames
+// and marks the payload truncated.
+func TestGenericHTTP_SSE_FrameCap(t *testing.T) {
+	var b bytes.Buffer
+	total := maxSSEFrames + 5
+	for i := range total {
+		fmt.Fprintf(&b, "data: {\"i\":%d}\n\n", i)
+	}
+	got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), b.Bytes(), core.Meta{})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Kind != core.KindHTTPSSE {
+		t.Fatalf("Kind: %v", got.Kind)
+	}
+	fr := got.HTTP.BodyView.SSEFrames
+	if len(fr) != maxSSEFrames {
+		t.Fatalf("frames: %d want %d", len(fr), maxSSEFrames)
+	}
+	if !got.HTTP.BodyView.SSETruncated {
+		t.Fatal("SSETruncated must be true beyond the cap")
+	}
+	// The kept prefix is the stream's own order: last kept frame is
+	// index maxSSEFrames-1.
+	last, _ := json.Marshal(fr[maxSSEFrames-1].Data)
+	if string(last) != fmt.Sprintf(`{"i":%d}`, maxSSEFrames-1) {
+		t.Fatalf("last kept frame wrong: %s", last)
+	}
+}
+
+// TestGenericHTTP_SSE_CommentPrefix pins the real-world keep-alive
+// preamble: a stream opening with SSE comment lines (`:ok` —
+// stream.wikimedia.org's first bytes) still routes to the frame
+// projection. Found live in Phase 3 validation: the old first-line-only
+// probe dumped the whole stream into http-text.
+func TestGenericHTTP_SSE_CommentPrefix(t *testing.T) {
+	body := []byte(":ok\n\nevent: message\ndata: {\"wiki\":\"enwiki\"}\n\n")
+	got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), body, core.Meta{})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Kind != core.KindHTTPSSE {
+		t.Fatalf("kind = %v, want http-sse (comment lines must not defeat the sniff)", got.Kind)
+	}
+	if len(got.HTTP.BodyView.SSEFrames) != 1 || got.HTTP.BodyView.SSEFrames[0].Event != "message" {
+		t.Fatalf("frames = %+v", got.HTTP.BodyView.SSEFrames)
+	}
+}
+
+// A comment line with no trailing newline inside the probe window is
+// not enough evidence — the probe declines rather than claiming on a
+// comment alone.
+func TestGenericHTTP_SSE_CommentOnlyDeclines(t *testing.T) {
+	got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), []byte(":just a comment"), core.Meta{})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Kind == core.KindHTTPSSE {
+		t.Fatal("a lone comment line must not claim the SSE projection")
+	}
+}
+
+// TestGenericHTTP_DeclaredEventStreamRoutesSSE pins the declared-CT arm:
+// text/event-stream routes to the frame projection even when the
+// leading bytes defeat the sniff (comment preamble longer than the
+// probe window) — never the flat text projection.
+func TestGenericHTTP_DeclaredEventStreamRoutesSSE(t *testing.T) {
+	preamble := ":" + strings.Repeat("x", 300) + "\n" // pushes frames past the probe window
+	body := []byte(preamble + "event: tick\ndata: {\"n\":1}\n\n")
+	got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), body, core.Meta{ContentType: "text/event-stream"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Kind != core.KindHTTPSSE {
+		t.Fatalf("kind = %v, want http-sse for declared text/event-stream", got.Kind)
+	}
+}
+
+// TestGenericHTTP_SSE_ByteBudget pins the second half of the row-size
+// bound: the frame-count cap alone cannot bound the row (one frame can
+// carry megabytes), so cumulative frame-data bytes beyond
+// maxSSEFrameBytes drop the remainder and mark the payload truncated.
+func TestGenericHTTP_SSE_ByteBudget(t *testing.T) {
+	// A declared text/event-stream body bypasses the oversize binary
+	// guard (looksLikeText is true), which is exactly the path where the
+	// frame-count cap alone could not bound the row.
+	big := strings.Repeat("x", maxSSEFrameBytes) // first frame exhausts the budget
+	body := []byte("data: " + big + "\n\ndata: after-budget\n\n")
+	got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), body, core.Meta{ContentType: "text/event-stream"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	fr := got.HTTP.BodyView.SSEFrames
+	if len(fr) != 1 {
+		t.Fatalf("frames: %d want 1 (budget exhausted after first)", len(fr))
+	}
+	if fr[0].DataText != big {
+		t.Fatal("first frame must keep its verbatim data")
+	}
+	if !got.HTTP.BodyView.SSETruncated {
+		t.Fatal("SSETruncated must be true beyond the byte budget")
+	}
+}
+
+// TestGenericHTTP_SSE_EmptyAndNullData pins the degenerate data lines:
+// a bare `data:` line and a JSON `null` both keep the verbatim string
+// form (DataText) so the frame stays self-describing, and a stream
+// with no decodable content still yields an http-sse payload.
+func TestGenericHTTP_SSE_EmptyAndNullData(t *testing.T) {
+	body := []byte("event: ping\ndata:\n\ndata: null\n\n")
+	got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), body, core.Meta{})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	fr := got.HTTP.BodyView.SSEFrames
+	if len(fr) != 2 {
+		t.Fatalf("frames: %+v", fr)
+	}
+	if fr[0].Event != "ping" || fr[0].Data != nil || fr[0].DataText != "" {
+		t.Fatalf("empty data frame wrong: %+v", fr[0])
+	}
+	if fr[1].Data != nil || fr[1].DataText != "null" {
+		t.Fatalf("null data frame must keep verbatim text: %+v", fr[1])
+	}
+	if got.HTTP.BodyView.SSETruncated {
+		t.Fatal("two-frame stream must not be truncated")
+	}
+}
+
+// TestGenericHTTP_ProvenanceStampedOnEveryBranch pins the fallback
+// provenance contract: every payload this normalizer emits — every
+// routing branch AND the decode-error partials — carries
+// DetectedSpec="generic-http" and an explicit Confidence of 1.0. The 1.0 asserts full confidence in the
+// structural projection itself; "no AI spec identified" is what the
+// DetectedSpec value says, never a lowered score.
+func TestGenericHTTP_ProvenanceStampedOnEveryBranch(t *testing.T) {
+	cases := []struct {
+		name     string
+		ct       string
+		body     []byte
+		wantKind core.Kind
+		wantErr  bool
+	}{
+		{"empty body", "", nil, core.KindHTTPText, false},
+		{"json declared", "application/json", []byte(`{"a":1}`), core.KindHTTPJSON, false},
+		{"json sniffed", "", []byte(`{"a":1}`), core.KindHTTPJSON, false},
+		{"sse", "text/event-stream", []byte("data: x\n\n"), core.KindHTTPSSE, false},
+		{"ndjson", "", []byte("{\"a\":1}\n{\"b\":2}\n"), core.KindHTTPJSON, false},
+		{"form", "application/x-www-form-urlencoded", []byte("a=b"), core.KindHTTPForm, false},
+		{"text", "text/plain", []byte("hi"), core.KindHTTPText, false},
+		{"binary", "image/png", []byte{0x89, 0x50, 0x00}, core.KindHTTPBinary, false},
+		{"json decode error partial", "application/json", []byte{0x00, 0x01}, core.KindHTTPBinary, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NewGenericHTTPNormalizer().Normalize(context.Background(), tc.body, core.Meta{ContentType: tc.ct})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tc.wantErr)
+			}
+			if got.Kind != tc.wantKind {
+				t.Fatalf("Kind = %v, want %v", got.Kind, tc.wantKind)
+			}
+			if got.DetectedSpec != "generic-http" {
+				t.Fatalf("DetectedSpec = %q, want generic-http", got.DetectedSpec)
+			}
+			if got.Confidence != 1.0 {
+				t.Fatalf("Confidence = %v, want explicit 1.0", got.Confidence)
+			}
+		})
 	}
 }

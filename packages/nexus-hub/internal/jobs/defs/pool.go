@@ -24,7 +24,7 @@
 //     by exposing the field unexported within the same package.
 //
 // Mirrors the PgxPool convention in:
-//   - packages/nexus-hub/internal/observability/siem/bridge.go (d09a373f8)
+//   - packages/nexus-hub/internal/observability/siem/bridge.go
 //   - packages/nexus-hub/internal/storage/store/store.go
 //   - packages/control-plane/internal/store/store.go
 package defs

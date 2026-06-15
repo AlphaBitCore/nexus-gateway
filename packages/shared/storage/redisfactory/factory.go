@@ -1,6 +1,7 @@
 package redisfactory
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -75,7 +76,23 @@ type Config struct {
 	// PoolTimeout caps how long a caller waits for a free pooled
 	// connection before the operation fails with ErrPoolTimeout.
 	PoolTimeout time.Duration `yaml:"poolTimeout"`
+
+	// NoPing skips the startup readiness PING. By default New issues a PING
+	// after building the client and returns an error if the endpoint is
+	// unreachable, so a misconfigured / down Redis fails loudly at startup
+	// rather than on the first cache call. Set true only where no real Redis
+	// is reachable at construction time (unit tests that exercise config
+	// shaping without a live endpoint). Not a yaml field — test-only.
+	NoPing bool `yaml:"-"`
+
+	// PingTimeout bounds the startup PING. Zero defers to DefaultPingTimeout.
+	PingTimeout time.Duration `yaml:"pingTimeout"`
 }
+
+// DefaultPingTimeout bounds the startup readiness PING when Config.PingTimeout
+// is unset, so a black-holed endpoint fails startup in bounded time instead of
+// hanging on the dial.
+const DefaultPingTimeout = 5 * time.Second
 
 // SentinelConfig holds the knobs specific to sentinel-managed failover.
 type SentinelConfig struct {
@@ -125,10 +142,16 @@ type TLSConfig struct {
 
 // New builds a [redis.UniversalClient] from yamlCfg + env, applying env-wins
 // precedence (L3 > L2). The returned client must be closed by the caller.
-// New does NOT ping; callers ping when they need a startup readiness check.
+//
+// New issues a startup readiness PING by default (bounded by
+// Config.PingTimeout / DefaultPingTimeout) and returns an error if the
+// endpoint is unreachable — a down or misconfigured Redis then fails loudly at
+// service startup instead of surfacing as a confusing error on the first cache
+// call. Set Config.NoPing to skip the PING (unit tests with no live endpoint).
 //
 // Returns an error when the merged Config is invalid (unknown mode, missing
-// sentinel master name in sentinel mode, missing addrs, or malformed mTLS).
+// sentinel master name in sentinel mode, missing addrs, or malformed mTLS), or
+// when the startup PING fails.
 func New(yamlCfg Config, env Env, logger *slog.Logger) (redis.UniversalClient, error) {
 	cfg := mergeEnv(yamlCfg, env)
 	if cfg.Mode == "" {
@@ -142,6 +165,31 @@ func New(yamlCfg Config, env Env, logger *slog.Logger) (redis.UniversalClient, e
 		return nil, fmt.Errorf("redis tls: %w", err)
 	}
 
+	client, err := buildClient(cfg, tlsCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if !yamlCfg.NoPing {
+		pingTimeout := yamlCfg.PingTimeout
+		if pingTimeout <= 0 {
+			pingTimeout = DefaultPingTimeout
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+		defer cancel()
+		if perr := client.Ping(ctx).Err(); perr != nil {
+			// Close the pool we just opened so a failed startup doesn't leak
+			// the dialer goroutines / sockets.
+			_ = client.Close()
+			return nil, fmt.Errorf("redis: startup ping failed (mode=%s addrs=%v): %w", cfg.Mode, cfg.Addrs, perr)
+		}
+	}
+	return client, nil
+}
+
+// buildClient constructs the mode-specific UniversalClient. It does not ping;
+// New handles the startup readiness check.
+func buildClient(cfg Config, tlsCfg *tls.Config) (redis.UniversalClient, error) {
 	switch cfg.Mode {
 	case ModeStandalone:
 		return redis.NewClient(&redis.Options{

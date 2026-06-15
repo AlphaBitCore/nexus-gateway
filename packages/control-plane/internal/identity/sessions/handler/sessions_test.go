@@ -94,7 +94,7 @@ func (s *stubMeUserStore) GetAdminAPIKey(_ context.Context, _ string) (*userstor
 func (s *stubMeUserStore) DeleteAdminAPIKey(_ context.Context, _ string) error {
 	return s.deleteKeyErr
 }
-func (s *stubMeUserStore) RegenerateAdminAPIKey(_ context.Context, _, _, _ string) error {
+func (s *stubMeUserStore) RegenerateAdminAPIKey(_ context.Context, _, _, _, _ string) error {
 	return s.regenKeyErr
 }
 

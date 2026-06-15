@@ -13,9 +13,20 @@ import (
 const (
 	scryptSaltLen = 32
 	scryptKeyLen  = 64
-	scryptN       = 16384
-	scryptR       = 8
-	scryptP       = 1
+	// scryptN is the CPU/memory cost parameter. Set to 2^17 per OWASP Password
+	// Storage guidance (scrypt N=2^17, r=8, p=1). MUST stay in lockstep with
+	// the seed hasher (tools/db-migrate/seed/lib.ts SCRYPT_OPTIONS.N): the
+	// stored "salt:hash" format does not encode N, so a verifier using a
+	// different N than the producer can never match.
+	scryptN = 1 << 17
+	scryptR = 8
+	scryptP = 1
+	// legacyScryptN is the pre-2026-06 cost parameter. The stored "salt:hash"
+	// format does NOT encode N, so a hash produced before the 2^17 bump only
+	// verifies under the old N. VerifyPassword falls back to this so a cost
+	// increase can never lock out pre-existing password users; HashPassword
+	// always writes the current scryptN, so new/changed passwords upgrade.
+	legacyScryptN = 1 << 14 // 16384
 )
 
 // randRead and scryptKey are indirected through package-level vars so unit
@@ -55,12 +66,20 @@ func VerifyPassword(password, stored string) bool {
 	if err != nil {
 		return false
 	}
-	derived, err := pwScryptKey([]byte(password), salt, scryptN, scryptR, scryptP, scryptKeyLen)
-	if err != nil {
-		return false
+	// Try the current cost first, then the legacy cost. The stored hash omits
+	// N, so after a cost bump (16384 -> 2^17, 2026-06) a pre-bump hash only
+	// verifies under the old N; the fallback prevents the parameter change from
+	// locking out every existing password user. Both branches run on a wrong
+	// password, so the timing profile stays uniform for the dummy-hash burns in
+	// the login path (idp/local.go).
+	for _, n := range [2]int{scryptN, legacyScryptN} {
+		derived, err := pwScryptKey([]byte(password), salt, n, scryptR, scryptP, scryptKeyLen)
+		if err != nil {
+			continue
+		}
+		if len(derived) == len(storedHash) && subtle.ConstantTimeCompare(derived, storedHash) == 1 {
+			return true
+		}
 	}
-	if len(derived) != len(storedHash) {
-		return false
-	}
-	return subtle.ConstantTimeCompare(derived, storedHash) == 1
+	return false
 }

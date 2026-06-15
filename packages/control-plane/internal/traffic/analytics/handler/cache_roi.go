@@ -196,6 +196,24 @@ func (h *Handler) rollupCacheROIDaily(ctx context.Context, since, until time.Tim
 
 // AnalyticsCacheROI returns cache ROI metrics aggregated over the requested time range.
 // GET /api/admin/analytics/cache-roi?start=<RFC3339>&end=<RFC3339>
+//
+// Aggregation contract: the top-level totals (TotalEstimatedCostUSD,
+// TotalCacheWriteCostUSD, TotalCacheNetSavingsUSD, …) are FLEET-WIDE combined
+// sums across every provider/adapter — they deliberately have NO provider join
+// or GROUP BY. This is correct for an ROI *summary*: it answers "what did the
+// cache save the whole deployment", a single combined figure the dashboard shows
+// at the top. Per-provider attribution is NOT lost — it is the explicit job of
+// the ByAdapterType breakdown below, which groups by routed_provider →
+// adapter_type. A tenant on OpenAI + Gemini sees one combined total AND a
+// per-adapter split; the two serve different questions and must not be conflated.
+//
+// Derived ratios: this endpoint returns only raw component sums; it
+// does NOT compute the "ROI multiplier" (net savings ÷ write cost). That ratio
+// is derived once at the single rendering site (control-plane-ui
+// CacheROIDashboard), which guards the zero-denominator case
+// (totalCacheWriteCostUsd == 0 → render "—") so a new tenant with no cache
+// writes yet never sees an Inf/NaN. Keeping the division at one UI site avoids
+// duplicating the guard across backend + frontend.
 func (h *Handler) AnalyticsCacheROI(c echo.Context) error {
 	if h.pool == nil {
 		return c.JSON(http.StatusInternalServerError, errJSON("database not available", "db_unavailable", ""))
@@ -334,9 +352,13 @@ func (h *Handler) AnalyticsCacheROI(c echo.Context) error {
 		})
 	} else {
 		// Fallback: direct traffic_event query with Provider JOIN.
+		// LEFT JOIN (not INNER) so rows with NULL provider_id (compliance-proxy,
+		// agent, or traffic errored before routing) are included rather than
+		// silently dropped; COALESCE maps them to the "unknown" bucket so that
+		// Σ(byAdapter) == fleet-wide totals.
 		adapterRows, err := h.pool.Query(ctx, `
 			SELECT
-				p.adapter_type,
+				COALESCE(p.adapter_type, 'unknown') AS adapter_type,
 				COALESCE(SUM(te.estimated_cost_usd),        0),
 				COALESCE(SUM(te.gateway_cache_savings_usd), 0),
 				COUNT(*) FILTER (WHERE te.gateway_cache_status IN ('hit', 'hit_inflight')),
@@ -349,9 +371,9 @@ func (h *Handler) AnalyticsCacheROI(c echo.Context) error {
 				COALESCE(SUM(te.cache_read_tokens),         0),
 				COUNT(*) FILTER (WHERE te.cache_read_tokens IS NOT NULL AND te.cache_read_tokens > 0)
 			FROM traffic_event te
-			INNER JOIN "Provider" p ON p.id = te.provider_id
+			LEFT JOIN "Provider" p ON p.id = COALESCE(te.routed_provider_id, te.provider_id)
 			WHERE te.timestamp >= $1 AND te.timestamp < $2
-			GROUP BY p.adapter_type
+			GROUP BY COALESCE(p.adapter_type, 'unknown')
 			ORDER BY (COALESCE(SUM(te.gateway_cache_savings_usd), 0) + COALESCE(SUM(te.cache_net_savings_usd), 0)) DESC
 		`, since, until)
 		if err != nil {

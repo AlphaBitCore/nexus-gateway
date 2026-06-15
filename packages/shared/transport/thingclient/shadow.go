@@ -35,63 +35,9 @@ func (c *Client) OnConfigChanged(fn OnConfigChangedFunc) {
 
 // applyConfig checks versions, calls the OnConfigChanged callback, and sends
 // a shadow report. Called from connectWS (initial), readPump (config_changed),
-// and httpHeartbeat (version mismatch).
+// and httpHeartbeat (version mismatch). Thin wrapper over dispatchConfig.
 func (c *Client) applyConfig(desired map[string]ConfigState, desiredVer int64) {
-	c.mu.RLock()
-	cb := c.onConfigChanged
-	c.mu.RUnlock()
-	if cb == nil {
-		c.logger.Warn("Config changed but no OnConfigChanged callback registered",
-			slog.String("event", "config_no_callback"),
-			slog.Int64("desired_ver", desiredVer),
-		)
-		return
-	}
-
-	currentReported := c.reportedVer.Load()
-	if desiredVer <= currentReported {
-		c.logger.Info("Config already applied, skipping",
-			slog.String("event", "config_already_applied"),
-			slog.Int64("desired_ver", desiredVer),
-			slog.Int64("reported_ver", currentReported),
-		)
-		return
-	}
-
-	c.logger.Info("Applying config",
-		slog.String("event", "config_applying"),
-		slog.Int64("desired_ver", desiredVer),
-		slog.Int64("reported_ver", currentReported),
-		slog.Int("config_keys", len(desired)),
-	)
-
-	reported, err := cb(desired)
-	if err != nil {
-		c.logger.Error("Config apply callback failed",
-			slog.String("event", "config_apply_failed"),
-			slog.Int64("desired_ver", desiredVer),
-			slog.String("error", err.Error()),
-		)
-		c.promMetrics.configApplies.WithLabelValues("failure").Inc()
-		return
-	}
-
-	c.promMetrics.configApplies.WithLabelValues("success").Inc()
-
-	if err := c.sendShadowReport(reported, desiredVer); err != nil {
-		c.logger.Error("Shadow report after config apply failed",
-			slog.String("event", "shadow_report_after_apply_failed"),
-			slog.Int64("desired_ver", desiredVer),
-			slog.String("error", err.Error()),
-		)
-		return
-	}
-	c.reportedVer.Store(desiredVer)
-
-	c.logger.Info("Config applied successfully",
-		slog.String("event", "config_applied"),
-		slog.Int64("reported_ver", desiredVer),
-	)
+	c.dispatchConfig(desired, desiredVer, false)
 }
 
 // applyConfigForce is applyConfig's twin for admin-triggered re-sync replays.
@@ -107,56 +53,124 @@ func (c *Client) applyConfig(desired map[string]ConfigState, desiredVer int64) {
 // re-sync does not invent a success. If the callback is not registered we
 // log and return without touching state, mirroring applyConfig.
 func (c *Client) applyConfigForce(desired map[string]ConfigState, desiredVer int64) {
+	c.dispatchConfig(desired, desiredVer, true)
+}
+
+// dispatchConfig runs one config-apply round: it calls the OnConfigChanged
+// callback for `desired`, reconciles the per-key failure registry (driving the
+// proactive retry timer), and sends the resulting shadow_report —
+// advancing the global reportedVer ONLY when this round applied cleanly AND no
+// key is still outstanding-failed.
+//
+// `desired` is the subset to apply: a single key for a per-key delta,
+// or the full map for the connect snapshot / HTTP register /
+// retry re-apply. `desiredVer` is the global version this round converges
+// toward. force=true bypasses the version gate (admin "Re-sync this key" and
+// the retry timer).
+//
+// reportedVer semantics:
+//   - Clean round + no outstanding failures → advance reportedVer to
+//     max(desiredVer, current). The node is fully converged.
+//   - Otherwise → hold reportedVer; report the partial `reported` map (the keys
+//     that DID apply) plus the per-key outcomes ledger at the CURRENT
+//     reportedVer. The node stays in drift, and the Hub per-key jsonb
+//     merge folds the succeeded keys' content in without clobbering siblings.
+//
+// All calls are serialized by dispatchMu so the callback keeps its
+// single-goroutine contract across live deltas and retry-timer fires.
+func (c *Client) dispatchConfig(desired map[string]ConfigState, desiredVer int64, force bool) {
+	c.dispatchMu.Lock()
+	defer c.dispatchMu.Unlock()
+
 	c.mu.RLock()
 	cb := c.onConfigChanged
 	c.mu.RUnlock()
 	if cb == nil {
-		c.logger.Warn("Forced re-sync received but no OnConfigChanged callback registered",
+		c.logger.Warn("Config changed but no OnConfigChanged callback registered",
 			slog.String("event", "config_no_callback"),
+			slog.Bool("forced", force),
 			slog.Int64("desired_ver", desiredVer),
 		)
 		return
 	}
 
 	currentReported := c.reportedVer.Load()
-	c.logger.Info("Applying config (forced re-sync)",
+	if !force && desiredVer <= currentReported {
+		c.logger.Info("Config already applied, skipping",
+			slog.String("event", "config_already_applied"),
+			slog.Int64("desired_ver", desiredVer),
+			slog.Int64("reported_ver", currentReported),
+		)
+		return
+	}
+
+	c.logger.Info("Applying config",
 		slog.String("event", "config_applying"),
-		slog.Bool("forced", true),
+		slog.Bool("forced", force),
 		slog.Int64("desired_ver", desiredVer),
 		slog.Int64("reported_ver", currentReported),
 		slog.Int("config_keys", len(desired)),
 	)
 
 	reported, err := cb(desired)
-	if err != nil {
-		c.logger.Error("Forced re-sync callback failed",
+
+	// Update the failure registry from this round + arm/cancel the retry timer.
+	// Must run before the reportedVer decision so outstandingFailures reflects
+	// this round.
+	c.reconcileFailures(desired, reported)
+	outstanding := c.outstandingFailures()
+
+	if err == nil {
+		c.promMetrics.configApplies.WithLabelValues("success").Inc()
+	} else {
+		c.logger.Error("Config apply callback failed",
 			slog.String("event", "config_apply_failed"),
-			slog.Bool("forced", true),
+			slog.Bool("forced", force),
 			slog.Int64("desired_ver", desiredVer),
+			slog.Int("applied_keys", len(reported)),
 			slog.String("error", err.Error()),
 		)
 		c.promMetrics.configApplies.WithLabelValues("failure").Inc()
-		return
 	}
 
-	c.promMetrics.configApplies.WithLabelValues("success").Inc()
-
-	if err := c.sendShadowReport(reported, desiredVer); err != nil {
-		c.logger.Error("Shadow report after forced re-sync failed",
-			slog.String("event", "shadow_report_after_apply_failed"),
-			slog.Bool("forced", true),
-			slog.Int64("desired_ver", desiredVer),
-			slog.String("error", err.Error()),
+	if err == nil && outstanding == 0 {
+		target := desiredVer
+		if currentReported > target {
+			target = currentReported
+		}
+		if sErr := c.sendShadowReport(reported, target); sErr != nil {
+			c.logger.Error("Shadow report after config apply failed",
+				slog.String("event", "shadow_report_after_apply_failed"),
+				slog.Bool("forced", force),
+				slog.Int64("desired_ver", desiredVer),
+				slog.String("error", sErr.Error()),
+			)
+			return
+		}
+		c.reportedVer.Store(target)
+		c.logger.Info("Config applied successfully",
+			slog.String("event", "config_applied"),
+			slog.Bool("forced", force),
+			slog.Int64("reported_ver", target),
 		)
 		return
 	}
-	c.reportedVer.Store(desiredVer)
 
-	c.logger.Info("Config applied (forced re-sync)",
-		slog.String("event", "config_applied"),
-		slog.Bool("forced", true),
-		slog.Int64("reported_ver", desiredVer),
-	)
+	// Hold path: partial apply this round and/or a prior key still
+	// failing. Report the succeeded keys + per-key outcomes at the CURRENT
+	// reportedVer so the node stays in drift while Hub still learns which keys
+	// converged. reportedVer is NOT advanced; the retry timer (armed by
+	// reconcileFailures) re-attempts the failed keys.
+	if sErr := c.sendShadowReport(reported, currentReported); sErr != nil {
+		c.logger.Error("Partial shadow report after config apply failure failed",
+			slog.String("event", "shadow_report_after_apply_failed"),
+			slog.Bool("forced", force),
+			slog.Int64("desired_ver", desiredVer),
+			slog.Int64("reported_ver", currentReported),
+			slog.Int("outstanding_failed_keys", outstanding),
+			slog.String("error", sErr.Error()),
+		)
+	}
 }
 
 // sendShadowReport sends the reported state to Hub via the currently active channel.

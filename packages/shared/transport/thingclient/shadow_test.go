@@ -515,3 +515,256 @@ func TestHeartbeatInterval_ReturnsConfig(t *testing.T) {
 		t.Errorf("HeartbeatInterval() = %v, want 7s", got)
 	}
 }
+
+// --- F-0121: partial-apply shadow report on the error path ---
+
+// partialApplyCallback returns a callback that mimics configloader.Loader.Apply:
+// continue-on-error. It applies every key in `succeed` (recording a success
+// outcome and echoing the desired state into reported) and fails every key in
+// `fail` (recording an error outcome), then returns the partial reported map
+// plus a non-nil first error. desiredVer is the per-key version stamped on each
+// outcome, matching how the Loader records cs.Version.
+func partialApplyCallback(c *Client, succeed []string, fail map[string]string, desiredVer int64) OnConfigChangedFunc {
+	return func(desired map[string]ConfigState) (map[string]ConfigState, error) {
+		reported := make(map[string]ConfigState, len(succeed))
+		for _, k := range succeed {
+			cs := desired[k]
+			c.Outcomes().Record(k, desiredVer, nil)
+			reported[k] = ConfigState{State: cs.State, Version: cs.Version}
+		}
+		var firstErr error
+		for k, msg := range fail {
+			err := errors.New(msg)
+			c.Outcomes().Record(k, desiredVer, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+		return reported, firstErr
+	}
+}
+
+func threeKeyDesired() map[string]ConfigState {
+	return map[string]ConfigState{
+		"routing":       {State: json.RawMessage(`{"provider":"openai"}`), Version: 7},
+		"observability": {State: json.RawMessage(`{"log_level":"info"}`), Version: 7},
+		"killswitch":    {State: json.RawMessage(`{"enabled":false}`), Version: 7},
+	}
+}
+
+// readShadowReport drains one shadow_report off the WS control queue and
+// decodes it. Fails the test if nothing arrives.
+func readShadowReport(t *testing.T, c *Client) thingMessage {
+	t.Helper()
+	select {
+	case raw := <-c.outChControl:
+		var msg thingMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatalf("unmarshal shadow_report: %v", err)
+		}
+		return msg
+	case <-time.After(time.Second):
+		t.Fatal("expected a shadow_report on the error path, got none")
+		return thingMessage{}
+	}
+}
+
+// TestApplyConfig_PartialFailure_SendsPartialReport is the core F-0121
+// regression: when 1 of 3 keys fails to apply, the node must NOT go dark.
+// The shadow_report is still sent carrying the 2 succeeded keys in `reported`
+// plus a per-key `reportedOutcomes` ledger (2 success + 1 error with detail),
+// while the global reportedVer stays behind desiredVer so the node correctly
+// shows drift.
+func TestApplyConfig_PartialFailure_SendsPartialReport(t *testing.T) {
+	c, _ := newTestClient(t)
+	setWSConnected(t, c)
+
+	c.OnConfigChanged(partialApplyCallback(c,
+		[]string{"routing", "observability"},
+		map[string]string{"killswitch": "killswitch apply failed"},
+		7,
+	))
+
+	c.applyConfig(threeKeyDesired(), 7)
+	msg := readShadowReport(t, c)
+
+	// Wire version stays at the OLD reported version (0) — the node has not
+	// converged, so Hub must keep showing it out of sync vs desired_ver=7.
+	if msg.ReportedVer != 0 {
+		t.Errorf("wire reportedVer = %d, want 0 (not converged on partial failure)", msg.ReportedVer)
+	}
+	if c.reportedVer.Load() != 0 {
+		t.Errorf("client reportedVer advanced to %d on partial failure; want 0", c.reportedVer.Load())
+	}
+
+	// reported map carries the 2 succeeded keys, NOT the failed one.
+	if _, ok := msg.Reported["routing"]; !ok {
+		t.Error("reported map missing succeeded key 'routing'")
+	}
+	if _, ok := msg.Reported["observability"]; !ok {
+		t.Error("reported map missing succeeded key 'observability'")
+	}
+	if _, ok := msg.Reported["killswitch"]; ok {
+		t.Error("reported map must NOT contain the failed key 'killswitch'")
+	}
+
+	// Per-key outcomes: 2 success (appliedVersion=7, no error), 1 error.
+	for _, k := range []string{"routing", "observability"} {
+		oc, ok := msg.ReportedOutcomes[k]
+		if !ok {
+			t.Fatalf("outcomes missing succeeded key %q", k)
+		}
+		if oc.ApplyError != nil {
+			t.Errorf("succeeded key %q has unexpected applyError %q", k, oc.ApplyError.Message)
+		}
+		if oc.AppliedVersion == nil || *oc.AppliedVersion != 7 {
+			t.Errorf("succeeded key %q appliedVersion = %v, want 7", k, oc.AppliedVersion)
+		}
+	}
+	failOC, ok := msg.ReportedOutcomes["killswitch"]
+	if !ok {
+		t.Fatal("outcomes missing failed key 'killswitch'")
+	}
+	if failOC.ApplyError == nil {
+		t.Fatal("failed key 'killswitch' has no applyError")
+	}
+	if failOC.ApplyError.Message != "killswitch apply failed" {
+		t.Errorf("applyError.Message = %q, want %q", failOC.ApplyError.Message, "killswitch apply failed")
+	}
+	if failOC.AppliedVersion != nil {
+		t.Errorf("never-applied key 'killswitch' has appliedVersion %v, want nil", *failOC.AppliedVersion)
+	}
+
+	// Metrics: counted as a failure, not a success.
+	if got := testutil.ToFloat64(c.promMetrics.configApplies.WithLabelValues("failure")); got != 1 {
+		t.Errorf("config_applies{failure} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(c.promMetrics.configApplies.WithLabelValues("success")); got != 0 {
+		t.Errorf("config_applies{success} = %v, want 0", got)
+	}
+}
+
+// TestApplyConfig_AllFailure_StillSendsReport verifies the all-fail path is no
+// longer silent: a report is sent with an empty (non-nil) reported map and an
+// all-error outcomes ledger, and reportedVer does not advance.
+func TestApplyConfig_AllFailure_StillSendsReport(t *testing.T) {
+	c, _ := newTestClient(t)
+	setWSConnected(t, c)
+
+	c.OnConfigChanged(partialApplyCallback(c,
+		nil,
+		map[string]string{"routing": "routing blew up"},
+		5,
+	))
+
+	c.applyConfig(sampleDesired(), 5)
+	msg := readShadowReport(t, c)
+
+	if c.reportedVer.Load() != 0 {
+		t.Errorf("reportedVer advanced to %d on all-fail; want 0", c.reportedVer.Load())
+	}
+	// No key applied, so the `reported` map carries no entries (the WS frame
+	// omits the empty map via omitempty); the apply detail rides entirely in
+	// reportedOutcomes below.
+	if len(msg.Reported) != 0 {
+		t.Errorf("reported map should be empty on all-fail, got %v", msg.Reported)
+	}
+	oc, ok := msg.ReportedOutcomes["routing"]
+	if !ok || oc.ApplyError == nil {
+		t.Fatalf("expected an error outcome for 'routing', got %+v", oc)
+	}
+	if oc.ApplyError.Message != "routing blew up" {
+		t.Errorf("applyError.Message = %q, want %q", oc.ApplyError.Message, "routing blew up")
+	}
+}
+
+// TestApplyConfig_PartialFailure_Disconnected covers the error-path send
+// failure branch: when not connected, sendShadowReport returns an error which
+// is logged (not fatal) and reportedVer still does not advance.
+func TestApplyConfig_PartialFailure_Disconnected(t *testing.T) {
+	c, _ := newTestClient(t)
+	// mode stays ModeDisconnected — sendShadowReport will fail.
+
+	c.OnConfigChanged(partialApplyCallback(c,
+		[]string{"routing"},
+		map[string]string{"observability": "boom"},
+		3,
+	))
+
+	c.applyConfig(threeKeyDesired(), 3)
+
+	select {
+	case <-c.outChControl:
+		t.Fatal("no message should reach the queue while disconnected")
+	default:
+	}
+	if c.reportedVer.Load() != 0 {
+		t.Errorf("reportedVer advanced to %d; want 0", c.reportedVer.Load())
+	}
+	// The partial-send attempt still counts as a shadow_report failure.
+	if got := testutil.ToFloat64(c.promMetrics.shadowReports.WithLabelValues("failure")); got != 1 {
+		t.Errorf("shadow_reports{failure} = %v, want 1", got)
+	}
+}
+
+// TestApplyConfigForce_PartialFailure_SendsPartialReport verifies the forced
+// "Re-sync this key" replay also emits partial detail on failure: the report is
+// sent at the current reportedVer with per-key outcomes, and reportedVer is not
+// advanced past the failed apply.
+func TestApplyConfigForce_PartialFailure_SendsPartialReport(t *testing.T) {
+	c, _ := newTestClient(t)
+	setWSConnected(t, c)
+
+	c.reportedVer.Store(7)
+	c.OnConfigChanged(partialApplyCallback(c,
+		[]string{"routing"},
+		map[string]string{"killswitch": "resync still failing"},
+		7,
+	))
+
+	c.applyConfigForce(threeKeyDesired(), 7)
+	msg := readShadowReport(t, c)
+
+	if msg.ReportedVer != 7 {
+		t.Errorf("forced wire reportedVer = %d, want 7 (current ver)", msg.ReportedVer)
+	}
+	if c.reportedVer.Load() != 7 {
+		t.Errorf("forced reportedVer = %d, want 7 (unchanged)", c.reportedVer.Load())
+	}
+	if _, ok := msg.Reported["routing"]; !ok {
+		t.Error("forced report missing succeeded key 'routing'")
+	}
+	if oc, ok := msg.ReportedOutcomes["killswitch"]; !ok || oc.ApplyError == nil {
+		t.Fatalf("forced report missing error outcome for 'killswitch': %+v", oc)
+	}
+	if got := testutil.ToFloat64(c.promMetrics.configApplies.WithLabelValues("failure")); got != 1 {
+		t.Errorf("config_applies{failure} = %v, want 1", got)
+	}
+}
+
+// TestApplyConfigForce_PartialFailure_Disconnected covers the forced error-path
+// send-failure branch (sendShadowReport returns an error, logged not fatal).
+func TestApplyConfigForce_PartialFailure_Disconnected(t *testing.T) {
+	c, _ := newTestClient(t)
+	c.reportedVer.Store(4)
+
+	c.OnConfigChanged(partialApplyCallback(c,
+		[]string{"routing"},
+		map[string]string{"killswitch": "boom"},
+		4,
+	))
+
+	c.applyConfigForce(threeKeyDesired(), 4)
+
+	select {
+	case <-c.outChControl:
+		t.Fatal("no message should reach the queue while disconnected")
+	default:
+	}
+	if c.reportedVer.Load() != 4 {
+		t.Errorf("reportedVer = %d, want 4 (unchanged)", c.reportedVer.Load())
+	}
+	if got := testutil.ToFloat64(c.promMetrics.shadowReports.WithLabelValues("failure")); got != 1 {
+		t.Errorf("shadow_reports{failure} = %v, want 1", got)
+	}
+}

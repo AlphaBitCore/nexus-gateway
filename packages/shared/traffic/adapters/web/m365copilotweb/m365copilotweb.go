@@ -9,7 +9,7 @@
 // delegates to copilot-ms-web for parsing while attributing traffic to
 // the M365 surface separately for audit.
 //
-// Per session policy: every vendor / surface gets its own adapter ID
+// Convention: every vendor / surface gets its own adapter ID
 // even when the wire is shared.
 package m365copilotweb
 

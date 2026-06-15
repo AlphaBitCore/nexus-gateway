@@ -7,11 +7,37 @@ import (
 	"time"
 )
 
+// leafExpirySkew is subtracted from a leaf's NotAfter when clamping a cache
+// lease, so a cert is evicted slightly before it actually expires rather than
+// being served right up to the wire.
+const leafExpirySkew = 1 * time.Minute
+
 // lruEntry holds a cached certificate along with its expiry time.
 type lruEntry struct {
 	hostname string
 	cert     *tls.Certificate
 	expiry   time.Time
+}
+
+// leaseExpiry computes the entry expiry as min(now+ttl, leaf.NotAfter-skew).
+//
+// A leaf is valid for issuer.LeafValidity (24h); a cert read back from
+// the L2 Redis cache (or re-promoted into the LRU after eviction) can already
+// be most of the way through that window, yet the old code stamped a fresh full
+// ttl on every Put — leasing an entry that outlived its own leaf and presenting
+// an EXPIRED cert until the lease finally fell off. Clamping the lease to the
+// leaf's NotAfter guarantees the cache never outlives the certificate; the
+// entry then misses and the next request re-signs a fresh leaf. Certs without a
+// parsed Leaf fall back to the plain ttl (fresh local signs are always well
+// within the window).
+func leaseExpiry(now time.Time, cert *tls.Certificate, ttl time.Duration) time.Time {
+	expiry := now.Add(ttl)
+	if cert != nil && cert.Leaf != nil {
+		if capped := cert.Leaf.NotAfter.Add(-leafExpirySkew); capped.Before(expiry) {
+			expiry = capped
+		}
+	}
+	return expiry
 }
 
 // LRUCache is a thread-safe LRU cache for TLS certificates, keyed by hostname.
@@ -64,11 +90,13 @@ func (c *LRUCache) Put(hostname string, cert *tls.Certificate, ttl time.Duration
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	now := time.Now()
+
 	// If already present, update in place
 	if elem, ok := c.items[hostname]; ok {
 		entry := elem.Value.(*lruEntry)
 		entry.cert = cert
-		entry.expiry = time.Now().Add(ttl)
+		entry.expiry = leaseExpiry(now, cert, ttl)
 		c.order.MoveToFront(elem)
 		return
 	}
@@ -88,7 +116,7 @@ func (c *LRUCache) Put(hostname string, cert *tls.Certificate, ttl time.Duration
 	entry := &lruEntry{
 		hostname: hostname,
 		cert:     cert,
-		expiry:   time.Now().Add(ttl),
+		expiry:   leaseExpiry(now, cert, ttl),
 	}
 	elem := c.order.PushFront(entry)
 	c.items[hostname] = elem

@@ -38,10 +38,8 @@ heartbeatIntervalSec: 60
 auditDrainIntervalSec: 30
 auditBatchSize: 200
 auditRetentionDays: 30
-configRefreshSec: 300
 
 defaultAction: "passthrough"
-policyRules: []
 
 updaterEnabled: true
 updaterCheckSec: 3600

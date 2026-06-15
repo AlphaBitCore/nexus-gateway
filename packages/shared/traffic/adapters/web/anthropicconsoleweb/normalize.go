@@ -3,17 +3,21 @@ package anthropicconsoleweb
 import (
 	"context"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
 )
 
-// Normalize implements normalize.Normalizer. Delegates to
-// extract.NormalizeForAdapter with the anthropic-messages spec.
-func (a *Adapter) Normalize(_ context.Context, raw []byte, meta normalize.Meta) (normalize.NormalizedPayload, error) {
-	return extract.NormalizeForAdapter(raw, meta, extract.AdapterSpecHint{
-		AdapterID:     "anthropic-console-web",
-		ReqSpecIDs:    []string{"anthropic-messages"},
-		RespSpecIDs:   []string{"anthropic-messages-nonstream", "anthropic-messages-sse"},
-		MinConfidence: 0.5,
-	})
+// Normalize implements normalize.Normalizer. The Anthropic web console
+// (workbench) speaks the Anthropic Messages wire shape, so decoding
+// delegates to the shared full-fidelity Anthropic Messages codec; only
+// DetectedSpec is re-stamped with this adapter's ID so audit rows keep
+// per-host provenance. Decode failures propagate so the Coordinator
+// falls through to Tier 2 / Tier 3.
+func (a *Adapter) Normalize(ctx context.Context, raw []byte, meta normalize.Meta) (normalize.NormalizedPayload, error) {
+	p, err := codecs.SharedAnthropicMessages().Normalize(ctx, raw, meta)
+	if err != nil {
+		return p, err
+	}
+	p.DetectedSpec = a.ID()
+	return p, nil
 }

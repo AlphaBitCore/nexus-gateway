@@ -102,7 +102,7 @@ func run() int {
 	tmRes := wiring.InitFleet(cfg, storageRes.Store, redisClient, mqRes.Producer, opsReg, logger)
 	opsRes := wiring.InitOpsMetrics(dbPool, opsReg, tmRes.WSServer, logger)
 	logger = wiring.InitDiagSink(cfg, opsRes, opsReg, buildVersion, logger)
-	wiring.StartWSSignalSubscriber(ctx, cfg.Hub.ID, mqRes.Consumer, tmRes.WSPool, logger)
+	wiring.StartWSSignalSubscriber(ctx, cfg.Hub.ID, mqRes.Consumer, tmRes.WSPool, cfg.Auth.SignalSecret, logger)
 
 	selfReg, err := wiring.InitSelfReg(ctx, cfg, buildVersion, storageRes.Store, logger)
 	if err != nil {
@@ -117,10 +117,14 @@ func run() int {
 	defer func() { _ = selfShadowRes.Manager.Stop(context.Background()) }()
 	wiring.InitSelfInstrumentation(ctx, cfg, buildVersion, time.Now().UTC(), dbPool, opsReg, opsRes, logger)
 
-	alertsRes := wiring.InitAlerts(dbPool, logger)
+	alertsRes, err := wiring.InitAlerts(dbPool, cfg.Auth.CredentialMasterKey, logger)
+	if err != nil {
+		logger.Error("alerts init failed", "error", err)
+		return 1
+	}
 	siemBridge := wiring.InitSIEMBridge(ctx, dbPool, logger)
 	sched, err := wiring.InitScheduler(ctx, cfg, dbPool, redisClient, mqRes.Consumer, mqRes.Producer,
-		storageRes.Store, tmRes.Mgr, opsReg, alertsRes.Store, alertsRes.Raiser, siemBridge, logger)
+		storageRes.Store, tmRes.Mgr, storageRes.SpillStore, opsReg, alertsRes.Store, alertsRes.Raiser, siemBridge, logger)
 	if err != nil {
 		logger.Error("scheduler init failed", "error", err)
 		return 1
@@ -130,11 +134,11 @@ func run() int {
 	}
 
 	ec := wiring.BuildEchoConfig(cfg, buildVersion, dbPool, redisClient, mqRes, storageRes,
-		consumerMgr, identityRes, tmRes, alertsRes, selfShadowRes, wiring.InitNormalizeRegistry(buildVersion), sched, logger)
+		consumerMgr, identityRes, tmRes, alertsRes, selfShadowRes, wiring.InitNormalizeRegistry(), sched, logger)
 	e := wiring.InitEcho(ec)
 	enrollAPI := wiring.MountRoutes(e, ec)
 	go func() {
-		addr := fmt.Sprintf(":%d", cfg.Server.Port)
+		addr := cfg.Server.BindAddr()
 		logger.Info("http server starting", "addr", addr)
 		if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server error", "error", err)

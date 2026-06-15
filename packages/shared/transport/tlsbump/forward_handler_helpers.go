@@ -41,10 +41,47 @@ func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 	return bodyBytes, nil
 }
 
-// decompressForCapture is a thin alias for the shared bodydecompress.Decompress.
-// Supports gzip / deflate / br / zstd with idempotent fallback semantics.
-func decompressForCapture(body []byte, resp *http.Response) []byte {
-	return bodydecompress.Decompress(body, resp)
+// readResponseBodyBounded reads up to maxBytes from the upstream response body
+// and closes it, mirroring readBody's cap on the request side so a malicious or
+// compromised upstream cannot OOM the proxy by returning an unbounded buffered
+// response (the buffered AI / response-hook path holds the whole body in
+// memory). maxBytes <= 0 falls back to the payload-capture default response cap
+// so an unset/invalid runtime config can never collapse the read to zero.
+// Overflow is truncated to maxBytes rather than erroring — the partial body is
+// still useful for usage extraction / capture, and the upstream stream is
+// abandoned along with the connection.
+func readResponseBodyBounded(body io.ReadCloser, maxBytes int64) ([]byte, error) {
+	if body == nil {
+		return nil, nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = payloadcapture.DefaultMaxResponseBytes
+	}
+	out, err := io.ReadAll(io.LimitReader(body, maxBytes+1))
+	_ = body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if int64(len(out)) > maxBytes {
+		out = out[:maxBytes]
+	}
+	return out, nil
+}
+
+// decompressForCapture wraps the shared bodydecompress.Decompress.
+// Supports gzip / deflate / br / zstd with idempotent fallback semantics and a
+// bounded decompressed size (bodydecompress.DefaultMaxDecompressedBytes) so a
+// br/zstd decompression bomb from a malicious upstream cannot OOM the proxy. On
+// overflow the original (still-compressed) bytes are captured opaquely and a
+// warning is logged.
+func decompressForCapture(body []byte, resp *http.Response, logger *slog.Logger) []byte {
+	out, truncated := bodydecompress.Decompress(body, resp, 0)
+	if truncated && logger != nil {
+		logger.Warn("decompressForCapture: response exceeded decompressed-size bound; capturing opaque bytes",
+			"contentEncoding", resp.Header.Get("Content-Encoding"),
+		)
+	}
+	return out
 }
 
 // contentBlocksToNormalized converts hook pipeline ModifiedContent into a
@@ -78,14 +115,15 @@ func copyHeadersStrippingAuth(src http.Header) map[string][]string {
 	return dst
 }
 
-// runtimeNormalize wraps the normalize hot path in preferred order:
-// Registry (Tier 1+2+3 chain) → adapter.Normalize (Tier 1 only) →
-// legacy ExtractRequest/Response.
+// runtimeNormalize wraps the normalize hot path: Registry (Tier
+// 1+2+3 chain) first, then the adapter's ExtractRequest/Response
+// segment extraction as the PII fallback.
 //
 // When reg is non-nil, runtimeNormalize calls reg.Normalize which runs
 // the full Tier 1+2+3 fallback, matching Hub agent_audit's BuildAuditFn.
-// Without a registry, the legacy path runs (Tier 1 only via
-// adapter.Normalize, then ExtractRequest/Response).
+// The Registry is the ONLY wire-format decode route — there is no
+// adapter-direct Normalize dispatch; per-host adapters participate by
+// registering into the same Registry at startup.
 //
 // Returns nil when neither path produces a normalized payload — the
 // caller (hook input builder) treats nil Normalized as "any kind" so
@@ -142,14 +180,6 @@ func runtimeNormalize(
 	// (3) AdapterType: lowercase — Registry keys are lowercase.
 	bareCT := normalize.StripContentTypeParams(contentType)
 	stream := direction == normalize.DirectionResponse && strings.HasPrefix(bareCT, "text/event-stream")
-	// Body signature for diagnostic logs: first 200 bytes + top-level
-	// JSON keys when body parses as JSON. Without this, "Tier 3 fall
-	// through" debugging requires re-dumping the spilled body via
-	// SQLCipher — the audit row's compressed body field. With the
-	// signature inline, agent.log alone tells you why each normalize
-	// decision happened.
-	bodyPreview := previewBody(body, 200)
-	jsonKeys := topLevelJSONKeys(body, 16)
 	// Preferred path: Registry Tier 1+2+3 chain. adapterType comes from
 	// the resolved adapter so reg.Normalize routes to the right Tier 1
 	// spec; empty adapter (no per-host match) still flows through Tier 2
@@ -159,17 +189,25 @@ func runtimeNormalize(
 		if adapter != nil {
 			adapterType = strings.ToLower(adapter.ID())
 		}
-		logger.Info("runtimeNormalize: Registry.Normalize ENTER",
-			"adapter", adapterType,
-			"direction", direction,
-			"path", path,
-			"contentType", bareCT,
-			"stream", stream,
-			"bodySize", len(body),
-			"bodyPreview", bodyPreview,
-			"jsonTopLevelKeys", jsonKeys,
-			"transactionId", transactionID,
-		)
+		// Body signature (first 200 bytes + top-level JSON keys) is the
+		// single most useful "why didn't this tier claim" diagnostic, but it
+		// echoes raw user prompt / model-output content. This is a
+		// compliance/DLP product: emit it ONLY at Debug so it never lands in
+		// the default (Info) prod logs, and compute it lazily so the hot path
+		// pays nothing when Debug is off.
+		if logger.Enabled(ctx, slog.LevelDebug) {
+			logger.Debug("runtimeNormalize: Registry.Normalize ENTER",
+				"adapter", adapterType,
+				"direction", direction,
+				"path", path,
+				"contentType", bareCT,
+				"stream", stream,
+				"bodySize", len(body),
+				"bodyPreview", previewBody(body, 200),
+				"jsonTopLevelKeys", topLevelJSONKeys(body, 16),
+				"transactionId", transactionID,
+			)
+		}
 		payload, err := reg.Normalize(ctx, body, normalize.Meta{
 			AdapterType:  adapterType,
 			ContentType:  bareCT,
@@ -200,8 +238,9 @@ func runtimeNormalize(
 			)
 			return &payload
 		}
-		// On Registry-side hard errors, fall through to legacy adapter
-		// direct call — partial coverage is better than no coverage.
+		// On Registry-side fall-through or hard errors, the adapter's
+		// segment extraction below still runs — partial coverage is
+		// better than no coverage.
 		if errors.Is(err, normalize.ErrUnsupported) {
 			logger.Info("runtimeNormalize: Registry.Normalize FELL-THROUGH (no tier above threshold)",
 				"adapter", adapterType,
@@ -220,30 +259,10 @@ func runtimeNormalize(
 	if adapter == nil {
 		return nil
 	}
-	// Legacy path: adapter implements normalize.Normalizer (Tier 1 only).
-	if n, ok := adapter.(normalize.Normalizer); ok {
-		payload, err := n.Normalize(ctx, body, normalize.Meta{
-			AdapterType:  strings.ToLower(adapter.ID()),
-			ContentType:  bareCT,
-			Direction:    direction,
-			EndpointPath: path,
-			Stream:       stream,
-		})
-		if err == nil {
-			return &payload
-		}
-		if !errors.Is(err, normalize.ErrUnsupported) {
-			logger.Warn("adapter.Normalize failed",
-				"adapter", adapter.ID(),
-				"direction", direction,
-				"transactionId", transactionID,
-				"error", err,
-			)
-			// Fall through to legacy path on hard errors — better to
-			// have flat segments than no content for core.
-		}
-	}
-	// Legacy fallback: ExtractRequest/Response → Segments.
+	// PII-extraction fallback: ExtractRequest/Response → Segments.
+	// This is a different concern from wire-format decoding — the
+	// adapter's per-host extractors recover hookable text segments
+	// even when no decoder claimed the body shape.
 	var nc traffic.NormalizedContent
 	var err error
 	if direction == normalize.DirectionResponse {

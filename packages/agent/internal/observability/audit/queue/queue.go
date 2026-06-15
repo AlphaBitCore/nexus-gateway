@@ -161,6 +161,11 @@ func NewQueue(dbPath string, encryptionKey []byte) (*Queue, error) {
 			-- (non-LLM traffic, non-bumped flow).
 			normalized_request TEXT,
 			normalized_response TEXT,
+			-- Redaction spans relocated to the storage-redacted normalized
+			-- payloads above (JSON array of TransformSpan). NULL for
+			-- unredacted rows.
+			request_redaction_spans TEXT,
+			response_redaction_spans TEXT,
 			-- Latency phase breakdown. All nullable.
 			upstream_ttfb_ms INTEGER,
 			upstream_total_ms INTEGER,
@@ -314,6 +319,9 @@ func NewQueue(dbPath string, encryptionKey []byte) (*Queue, error) {
 		// Out-of-band spill refs (JSON audit.SpillRef) for oversize bodies.
 		`ALTER TABLE audit_events ADD COLUMN request_spill_ref TEXT`,
 		`ALTER TABLE audit_events ADD COLUMN response_spill_ref TEXT`,
+		// Redaction spans for the storage-redacted normalized payloads.
+		`ALTER TABLE audit_events ADD COLUMN request_redaction_spans TEXT`,
+		`ALTER TABLE audit_events ADD COLUMN response_redaction_spans TEXT`,
 	} {
 		if _, err := db.ExecContext(context.Background(), alter); err != nil {
 			msg := err.Error()
@@ -444,12 +452,13 @@ func (q *Queue) Record(e event.Event) error {
 		 payload_request, payload_response,
 		 request_spill_ref, response_spill_ref,
 		 normalized_request, normalized_response,
+		 request_redaction_spans, response_redaction_spans,
 		 upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 		 latency_breakdown, hooks_pipeline,
 		 domain_rule_id, path_action,
 		 trace_id,
 		 synced)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		e.ID, e.Timestamp.UTC().Format(time.RFC3339Nano),
 		e.SourceProcess, e.OSUser, e.TargetHost, e.DestIP, e.DestPort,
 		nullableString(e.Method), nullableString(e.Path), nullableStatusCode(e.StatusCode),
@@ -460,6 +469,7 @@ func (q *Queue) Record(e event.Event) error {
 		nullableBytes(e.PayloadRequest), nullableBytes(e.PayloadResponse),
 		nullableSpillRefJSON(e.RequestSpillRef), nullableSpillRefJSON(e.ResponseSpillRef),
 		nullableJSONString(e.NormalizedRequest), nullableJSONString(e.NormalizedResponse),
+		nullableJSONString(e.RequestRedactionSpans), nullableJSONString(e.ResponseRedactionSpans),
 		nullableInt(e.UpstreamTtfbMs), nullableInt(e.UpstreamTotalMs),
 		nullableInt(e.RequestHooksMs), nullableInt(e.ResponseHooksMs),
 		encodeBreakdown(e.LatencyBreakdown), nullableJSONString(e.HooksPipeline),
@@ -503,12 +513,13 @@ func (q *Queue) RecordBatch(events []event.Event) error {
 		 payload_request, payload_response,
 		 request_spill_ref, response_spill_ref,
 		 normalized_request, normalized_response,
+		 request_redaction_spans, response_redaction_spans,
 		 upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 		 latency_breakdown, hooks_pipeline,
 		 domain_rule_id, path_action,
 		 trace_id,
 		 synced)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
 	for _, e := range events {
 		if _, err := tx.ExecContext(ctx, insertSQL,
 			e.ID, e.Timestamp.UTC().Format(time.RFC3339Nano),
@@ -521,6 +532,7 @@ func (q *Queue) RecordBatch(events []event.Event) error {
 			nullableBytes(e.PayloadRequest), nullableBytes(e.PayloadResponse),
 			nullableSpillRefJSON(e.RequestSpillRef), nullableSpillRefJSON(e.ResponseSpillRef),
 			nullableJSONString(e.NormalizedRequest), nullableJSONString(e.NormalizedResponse),
+			nullableJSONString(e.RequestRedactionSpans), nullableJSONString(e.ResponseRedactionSpans),
 			nullableInt(e.UpstreamTtfbMs), nullableInt(e.UpstreamTotalMs),
 			nullableInt(e.RequestHooksMs), nullableInt(e.ResponseHooksMs),
 			encodeBreakdown(e.LatencyBreakdown), nullableJSONString(e.HooksPipeline),
@@ -666,6 +678,7 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 		       payload_request, payload_response,
 		       request_spill_ref, response_spill_ref,
 		       normalized_request, normalized_response,
+		       request_redaction_spans, response_redaction_spans,
 		       domain_rule_id, path_action,
 		       trace_id
 		FROM audit_events
@@ -689,6 +702,7 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 		var payloadRequest, payloadResponse []byte
 		var requestSpillRef, responseSpillRef sql.NullString
 		var normalizedRequest, normalizedResponse sql.NullString
+		var requestRedactionSpans, responseRedactionSpans sql.NullString
 		var domainRuleID, pathAction, traceID sql.NullString
 		err := rows.Scan(&e.ID, &ts, &e.SourceProcess, &e.OSUser,
 			&e.TargetHost, &e.DestIP, &e.DestPort,
@@ -701,6 +715,7 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 			&payloadRequest, &payloadResponse,
 			&requestSpillRef, &responseSpillRef,
 			&normalizedRequest, &normalizedResponse,
+			&requestRedactionSpans, &responseRedactionSpans,
 			&domainRuleID, &pathAction, &traceID)
 		if err != nil {
 			return nil, err
@@ -712,6 +727,12 @@ func (q *Queue) DrainBatch(limit int) ([]event.Event, error) {
 		}
 		if normalizedResponse.Valid && normalizedResponse.String != "" {
 			e.NormalizedResponse = json.RawMessage(normalizedResponse.String)
+		}
+		if requestRedactionSpans.Valid && requestRedactionSpans.String != "" {
+			e.RequestRedactionSpans = json.RawMessage(requestRedactionSpans.String)
+		}
+		if responseRedactionSpans.Valid && responseRedactionSpans.String != "" {
+			e.ResponseRedactionSpans = json.RawMessage(responseRedactionSpans.String)
 		}
 		if traceID.Valid {
 			e.TraceID = traceID.String
@@ -1075,6 +1096,7 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 		       payload_request, payload_response,
 		       request_spill_ref, response_spill_ref,
 		       normalized_request, normalized_response,
+		       request_redaction_spans, response_redaction_spans,
 		       upstream_ttfb_ms, upstream_total_ms, request_hooks_ms, response_hooks_ms,
 		       latency_breakdown, hooks_pipeline,
 		       domain_rule_id, path_action, trace_id
@@ -1090,6 +1112,7 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 	var payloadRequest, payloadResponse []byte
 	var requestSpillRef, responseSpillRef sql.NullString
 	var normalizedRequest, normalizedResponse sql.NullString
+	var requestRedactionSpans, responseRedactionSpans sql.NullString
 	var upstreamTtfb, upstreamTotal, requestHooks, responseHooks sql.NullInt64
 	var latencyBreakdown, hooksPipeline sql.NullString
 	var domainRuleID, pathAction, traceID sql.NullString
@@ -1104,6 +1127,7 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 		&payloadRequest, &payloadResponse,
 		&requestSpillRef, &responseSpillRef,
 		&normalizedRequest, &normalizedResponse,
+		&requestRedactionSpans, &responseRedactionSpans,
 		&upstreamTtfb, &upstreamTotal, &requestHooks, &responseHooks,
 		&latencyBreakdown, &hooksPipeline,
 		&domainRuleID, &pathAction, &traceID)
@@ -1123,6 +1147,12 @@ func (q *Queue) EventByID(id string) (*event.Event, error) {
 	}
 	if normalizedResponse.Valid && normalizedResponse.String != "" {
 		e.NormalizedResponse = json.RawMessage(normalizedResponse.String)
+	}
+	if requestRedactionSpans.Valid && requestRedactionSpans.String != "" {
+		e.RequestRedactionSpans = json.RawMessage(requestRedactionSpans.String)
+	}
+	if responseRedactionSpans.Valid && responseRedactionSpans.String != "" {
+		e.ResponseRedactionSpans = json.RawMessage(responseRedactionSpans.String)
 	}
 	if traceID.Valid {
 		e.TraceID = traceID.String
@@ -1310,27 +1340,46 @@ func (q *Queue) DrainLoop(ctx context.Context, interval time.Duration, batchSize
 	}
 }
 
+// maxDrainBatchesPerWake bounds how many back-to-back full batches one
+// wake-up will upload, so clearing a deep backlog cannot monopolise the
+// goroutine (or the Hub) indefinitely — the next tick picks up the rest.
+const maxDrainBatchesPerWake = 50
+
+// drainOnce uploads pending audit events. It keeps draining back-to-back
+// while each batch comes back FULL (a full batch means more is waiting),
+// so a backlog built up between ticks clears at the upload rate instead
+// of one batch per tick. A partial batch, an empty queue, an upload
+// failure, or the per-wake cap ends the cycle.
 func (q *Queue) drainOnce(batchSize int, uploadFn func([]event.Event) error) {
-	events, err := q.DrainBatch(batchSize)
-	if err != nil {
-		slog.Error("drain batch failed", "error", err)
-		return
-	}
-	if len(events) == 0 {
-		return
-	}
+	for range maxDrainBatchesPerWake {
+		events, err := q.DrainBatch(batchSize)
+		if err != nil {
+			slog.Error("drain batch failed", "error", err)
+			return
+		}
+		if len(events) == 0 {
+			return
+		}
 
-	if err := uploadFn(events); err != nil {
-		slog.Warn("audit upload failed, will retry", "error", err, "count", len(events))
-		return
-	}
+		if err := uploadFn(events); err != nil {
+			slog.Warn("audit upload failed, will retry", "error", err, "count", len(events))
+			return
+		}
 
-	ids := make([]string, len(events))
-	for i, e := range events {
-		ids[i] = e.ID
-	}
-	if err := q.MarkSynced(ids); err != nil {
-		slog.Error("mark synced failed", "error", err)
+		ids := make([]string, len(events))
+		for j, e := range events {
+			ids[j] = e.ID
+		}
+		if err := q.MarkSynced(ids); err != nil {
+			slog.Error("mark synced failed", "error", err)
+			return
+		}
+
+		// A short batch means the queue is drained for now — stop and
+		// wait for the next tick rather than spin on empty reads.
+		if len(events) < batchSize {
+			return
+		}
 	}
 }
 

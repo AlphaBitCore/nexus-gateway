@@ -416,8 +416,8 @@ var (
 		// Accept-Encoding is permanently denied: forwarding it disables
 		// Go net/http.Transport's transparent gzip decompression and
 		// caused a real Anthropic SSE production incident. See the
-		// load-bearing comment at
-		// packages/ai-gateway/internal/providers/spec_adapter.go:38-51.
+		// load-bearing comment on specAdapter.effectiveAllowlist at
+		// packages/ai-gateway/internal/providers/dispatch/spec_adapter.go:~75-81.
 		"accept-encoding",
 	}
 	prefixDenylist = []string{

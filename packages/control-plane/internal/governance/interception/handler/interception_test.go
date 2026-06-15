@@ -33,6 +33,8 @@ type fakeInterceptionDB struct {
 	domains map[string]*interceptionstore.InterceptionDomainRow
 	paths   map[string]*interceptionstore.InterceptionPathRow
 
+	createHits int
+
 	listErr    error
 	getErr     error
 	createErr  error
@@ -101,6 +103,7 @@ func (f *fakeInterceptionDB) GetInterceptionDomain(_ context.Context, id string)
 func (f *fakeInterceptionDB) CreateInterceptionDomain(_ context.Context, in interceptionstore.CreateInterceptionDomainInput) (*interceptionstore.InterceptionDomainRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.createHits++
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
@@ -590,6 +593,108 @@ func TestCreateInterceptionDomain_InvalidHostMatchType_Returns400(t *testing.T) 
 	}
 }
 
+// F-0271a: a REGEX host pattern that does not compile must be rejected at
+// authoring time (400), never persisted (the data plane silently drops an
+// uncompilable matcher, so the intercept rule would never fire).
+func TestCreateInterceptionDomain_InvalidHostRegex_Returns400(t *testing.T) {
+	db := newFakeInterceptionDB()
+	h := newTestHandler(db, nil)
+	body := mustJSON(t, map[string]any{
+		"name": "x", "hostPattern": "(unbalanced", "adapterId": "a",
+		"hostMatchType": "REGEX",
+	})
+	c, rec := echoCtxWith(http.MethodPost, "/interception-domains", body)
+	if err := h.CreateInterceptionDomain(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (invalid host regex)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "regular expression") {
+		t.Errorf("expected regex error message; got %s", rec.Body.String())
+	}
+	if db.createHits != 0 {
+		t.Errorf("CreateInterceptionDomain store hit %d times; want 0", db.createHits)
+	}
+}
+
+// A REGEX host pattern that DOES compile is accepted (proves the check is not
+// over-broad — non-REGEX patterns with regex-special chars stay valid too).
+func TestCreateInterceptionDomain_ValidHostRegex_OK(t *testing.T) {
+	db := newFakeInterceptionDB()
+	h := newTestHandler(db, &fakeHubAPI{spy: &hubSpy{}})
+	body := mustJSON(t, map[string]any{
+		"name": "x", "hostPattern": `^api\.(openai|anthropic)\.com$`, "adapterId": "a",
+		"hostMatchType": "REGEX",
+	})
+	c, rec := echoCtxWith(http.MethodPost, "/interception-domains", body)
+	if err := h.CreateInterceptionDomain(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d; want 201 (valid regex, body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// F-0271a: an invalid REGEX path pattern is rejected too.
+func TestCreateInterceptionDomain_InvalidPathRegex_Returns400(t *testing.T) {
+	db := newFakeInterceptionDB()
+	h := newTestHandler(db, nil)
+	body := mustJSON(t, map[string]any{
+		"name": "x", "hostPattern": "x.com", "adapterId": "a",
+		"paths": []map[string]any{
+			{"matchType": "REGEX", "action": "PROCESS", "pathPattern": []string{"(bad["}},
+		},
+	})
+	c, rec := echoCtxWith(http.MethodPost, "/interception-domains", body)
+	if err := h.CreateInterceptionDomain(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (invalid path regex)", rec.Code)
+	}
+}
+
+// F-0271a: a PATCH that turns an existing EXACT host rule into a REGEX rule
+// with an uncompilable pattern (matchType + pattern both changed) is rejected
+// against the effective values.
+func TestUpdateInterceptionDomain_InvalidHostRegex_Returns400(t *testing.T) {
+	db := newFakeInterceptionDB()
+	seedDomain(db)
+	h := newTestHandler(db, nil)
+	body := mustJSON(t, map[string]any{"hostMatchType": "REGEX", "hostPattern": "(unbalanced"})
+	c, rec := echoCtxWith(http.MethodPut, "/interception-domains/dom-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("dom-1")
+	if err := h.UpdateInterceptionDomain(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (invalid host regex on update)", rec.Code)
+	}
+}
+
+// F-0271a: a PATCH that switches only the match type to REGEX must validate
+// against the STORED pattern (which was authored for EXACT and may be an
+// invalid regex). The effective-value check catches it.
+func TestUpdateInterceptionDomain_RegexTypeAgainstStoredBadPattern_Returns400(t *testing.T) {
+	db := newFakeInterceptionDB()
+	d := seedDomain(db)
+	d.HostPattern = "(unbalanced" // stored pattern, fine as EXACT
+	db.seedDomain(d)
+	h := newTestHandler(db, nil)
+	body := mustJSON(t, map[string]any{"hostMatchType": "REGEX"}) // pattern omitted
+	c, rec := echoCtxWith(http.MethodPut, "/interception-domains/dom-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("dom-1")
+	if err := h.UpdateInterceptionDomain(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (REGEX type vs stored bad pattern)", rec.Code)
+	}
+}
+
 func TestCreateInterceptionDomain_InvalidOnAdapterError_Returns400(t *testing.T) {
 	db := newFakeInterceptionDB()
 	h := newTestHandler(db, nil)
@@ -976,6 +1081,28 @@ func TestUpdateInterceptionPath_HappyPath(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d; want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// F-0271a: a path PATCH supplying a REGEX matchType + an uncompilable pattern
+// is rejected (400) against the effective values.
+func TestUpdateInterceptionPath_InvalidRegex_Returns400(t *testing.T) {
+	db := newFakeInterceptionDB()
+	seedDomain(db)
+	db.seedPath(interceptionstore.InterceptionPathRow{
+		ID: "path-1", DomainID: "dom-1", Action: "PROCESS", MatchType: "EXACT",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	h := newTestHandler(db, nil)
+	body := mustJSON(t, map[string]any{"matchType": "REGEX", "pathPattern": []string{"(bad["}})
+	c, rec := echoCtxWith(http.MethodPut, "/interception-domains/dom-1/paths/path-1", body)
+	c.SetParamNames("id", "pathId")
+	c.SetParamValues("dom-1", "path-1")
+	if err := h.UpdateInterceptionPath(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (invalid path regex on update)", rec.Code)
 	}
 }
 

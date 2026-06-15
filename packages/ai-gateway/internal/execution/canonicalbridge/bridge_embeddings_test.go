@@ -17,7 +17,7 @@ type stubEmbedCodec struct{}
 func (stubEmbedCodec) EncodeRequest(_ typology.WireShape, body []byte, _ provcore.CallTarget) (provcore.EncodeResult, error) {
 	return provcore.EncodeResult{Body: body, ContentType: "application/json"}, nil
 }
-func (stubEmbedCodec) DecodeResponse(_ typology.WireShape, body []byte, _ string) (provcore.DecodeResult, error) {
+func (stubEmbedCodec) DecodeResponse(_ typology.WireShape, body []byte, _ string, _ provcore.DecodeContext) (provcore.DecodeResult, error) {
 	return provcore.DecodeResult{CanonicalBody: body}, nil
 }
 
@@ -168,19 +168,22 @@ func TestIngressEmbeddingsToCanonical_UnsupportedFormat(t *testing.T) {
 func TestIngressEmbeddingsToWire_SameFormatPassthrough(t *testing.T) {
 	b := newEmbedBridge()
 	body := []byte(`{"texts":["x"],"model":"embed-english-v3.0"}`)
-	out, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatCohere, body, provcore.CallTarget{})
+	out, override, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatCohere, body, provcore.CallTarget{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(out) != string(body) {
 		t.Fatalf("same-format should passthrough: %s", out)
 	}
+	if override != "" {
+		t.Fatalf("same-format passthrough must emit no URL override, got %q", override)
+	}
 }
 
 func TestIngressEmbeddingsToWire_CrossFormat(t *testing.T) {
 	b := newEmbedBridge()
 	body := []byte(`{"texts":["hi"],"model":"embed-english-v3.0","input_type":"search_query"}`)
-	out, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, body, provcore.CallTarget{})
+	out, _, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, body, provcore.CallTarget{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +198,7 @@ func TestIngressEmbeddingsToWire_CrossFormat(t *testing.T) {
 
 func TestIngressEmbeddingsToWire_NoCodec(t *testing.T) {
 	b := newEmbedBridge()
-	_, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, provcore.FormatAnthropic, []byte(`{}`), provcore.CallTarget{})
+	_, _, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, provcore.FormatAnthropic, []byte(`{}`), provcore.CallTarget{})
 	if err == nil {
 		t.Fatal("want error for missing target codec")
 	}
@@ -207,7 +210,7 @@ func TestIngressEmbeddingsToWire_NoCodec(t *testing.T) {
 func TestIngressEmbeddingsToWire_InvalidCanonicalize(t *testing.T) {
 	b := newEmbedBridge()
 	// Invalid Cohere body — canonicalizer errors first.
-	_, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, []byte(`not-json`), provcore.CallTarget{})
+	_, _, err := b.IngressEmbeddingsToWire(provcore.FormatCohere, provcore.FormatOpenAI, []byte(`not-json`), provcore.CallTarget{})
 	if err == nil {
 		t.Fatal("want error from canonicalizer")
 	}

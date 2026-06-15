@@ -92,6 +92,72 @@ func TestSyslogFormatter(t *testing.T) {
 	}
 }
 
+// TestFormatters_RejectControlCharInjection is the F-0190 regression: an
+// attacker-controlled field (e.g. the unauthenticated email on admin.login.failed,
+// surfaced as actorLabel) must not be able to forge a second SIEM record by
+// embedding CR/LF, nor smuggle other control bytes into the audit stream.
+func TestFormatters_RejectControlCharInjection(t *testing.T) {
+	evil := Event{
+		"id":         "evt-evil",
+		"eventType":  "auth.login_failure",
+		"sourceIp":   "10.0.0.9",
+		"actorLabel": "x@y\nCEF:0|NexusGateway|ControlPlane|1.0|forged|forged|10|",
+		"hookReason": "denied\n<34>1 2026-01-01 host forged - - - injected",
+		"timestamp":  "2026-06-06T00:00:00Z",
+		"source":     "control-plane\x1b[31m",
+	}
+
+	for _, tc := range []struct {
+		name string
+		f    Formatter
+	}{
+		{"cef", &CEFFormatter{}},
+		{"syslog", &SyslogFormatter{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.f.FormatBatch([]Event{evil})
+			if err != nil {
+				t.Fatalf("FormatBatch() error: %v", err)
+			}
+			s := string(out)
+			// A single-event batch must be exactly one line — any raw newline
+			// means the attacker forged a second record.
+			if strings.ContainsAny(s, "\n\r") {
+				t.Fatalf("output contains a raw CR/LF (record-forging): %q", s)
+			}
+			// The CR/LF must survive as the visible literal escape, not vanish
+			// silently — so an operator can see the value contained a newline.
+			if !strings.Contains(s, `\n`) {
+				t.Errorf("expected the newline to be rendered as the literal \\n escape, got: %q", s)
+			}
+			// Other control bytes (NUL, ESC) must be dropped entirely.
+			if strings.ContainsRune(s, '\x00') || strings.ContainsRune(s, '\x1b') {
+				t.Errorf("output still contains a raw control byte: %q", s)
+			}
+		})
+	}
+
+	// Multi-event batches still use the newline as the inter-record separator:
+	// two clean events → exactly one separating newline.
+	for _, tc := range []struct {
+		name string
+		f    Formatter
+	}{
+		{"cef", &CEFFormatter{}},
+		{"syslog", &SyslogFormatter{}},
+	} {
+		t.Run(tc.name+"_separator_intact", func(t *testing.T) {
+			out, err := tc.f.FormatBatch([]Event{sampleEvent(), sampleEvent()})
+			if err != nil {
+				t.Fatalf("FormatBatch() error: %v", err)
+			}
+			if got := strings.Count(string(out), "\n"); got != 1 {
+				t.Errorf("two-event batch should have exactly 1 separator newline, got %d", got)
+			}
+		})
+	}
+}
+
 // TestNewFormatter verifies the factory returns non-nil for all known formats and "".
 func TestNewFormatter(t *testing.T) {
 	cases := []string{"json", "cef", "syslog", ""}

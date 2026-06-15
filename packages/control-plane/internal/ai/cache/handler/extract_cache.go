@@ -5,9 +5,12 @@
 // PUT  /api/admin/extract-cache/config — validates + saves + Hub-invalidates
 //
 // IAM: iam.ResourceExtractCache.{Read, Update}
-// Hub: InvalidateConfig (Category B — fire-and-forget; reconcile job recovers
-//      within 60s on transient Hub outages). Mirror of the semantic-cache
-//      handler shape.
+// Hub: NotifyConfigChange pushes the full state under
+//      response_cache.extract_config. A dropped push is escalated to HTTP 502
+//      AND healed within one reconcile cycle by the configreconcile content-diff
+//      watch for this key: the push and the reconcile loader
+//      share the ExtractCacheConfigRow.WireState projection. Mirror of the
+//      semantic-cache handler shape.
 
 package cache
 
@@ -46,7 +49,7 @@ type ExtractCacheHubPusher interface {
 // ExtractCacheHandlerDeps mirrors SemanticCacheHandlerDeps.
 type ExtractCacheHandlerDeps struct {
 	Store  ExtractCacheStore
-	Hub    ExtractCacheHubPusher // may be nil — push skipped, reconcile recovers
+	Hub    ExtractCacheHubPusher // may be nil — push skipped (test/dev mode)
 	Audit  *audit.Writer         // may be nil (tests)
 	Logger *slog.Logger
 }
@@ -139,26 +142,15 @@ func (h *ExtractCacheHandler) PutConfig(c echo.Context) error {
 
 	// Push the full state to Hub (Type A pattern) so the broadcast payload
 	// carries the new config bytes. The AI Gateway receiver atomically swaps
-	// its in-process cache config via SetConfig.
-	// Fire-and-forget on Hub errors — the DB write already succeeded and the
-	// reconcile job recovers within 60s on transient outages.
-	if h.hub != nil {
-		state := map[string]any{
-			"enabled":             saved.Enabled,
-			"ttlSeconds":          saved.TTLSeconds,
-			"applyFreshnessRules": saved.ApplyFreshnessRules,
-		}
-		if _, hubErr := h.hub.NotifyConfigChange(c.Request().Context(), hubclient.ConfigChangeRequest{
-			ThingType: "ai-gateway",
-			ConfigKey: configkey.ResponseCacheExtractConfig,
-			State:     state,
-			Action:    "update",
-			ActorID:   actor.UserID,
-			ActorName: actor.Name,
-		}); hubErr != nil {
-			h.logger.Warn("extract-cache: hub push failed (fire-and-forget; reconcile recovers)",
-				"error", hubErr)
-		}
+	// its in-process cache config via SetConfig. The same projection
+	// (ExtractCacheConfigRow.WireState) feeds the configreconcile watch for
+	// this key, so a dropped push is BOTH escalated to HTTP
+	// 502 here AND healed within one reconcile cycle if the admin does not
+	// retry — identical to cache.go.
+	state := saved.WireState()
+	if _, hubErr := hubclient.PushTypeA(c.Request().Context(), h.hub, "ai-gateway", configkey.ResponseCacheExtractConfig, state, hubclient.Actor{ID: actor.UserID, Name: actor.Name}); hubErr != nil {
+		h.logger.Error("extract-cache: hub push failed", "error", hubErr)
+		return hubclient.RespondPropagationFailure(c, hubErr)
 	}
 
 	if h.audit != nil {

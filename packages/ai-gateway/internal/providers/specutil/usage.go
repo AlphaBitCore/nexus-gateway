@@ -68,7 +68,7 @@ var reasoningTokenAliases = []struct {
 //
 // Callers: every adapter SchemaCodec.DecodeResponse that consumes an
 // OpenAI-compat upstream MUST call this (not re-implement the alias
-// chain). The d914275a-era audit found that scattered alias logic was
+// chain). Scattered alias logic was
 // the root cause of cache tokens silently disappearing from
 // traffic_event whenever a new sibling provider was wired without
 // reviewing every alias.

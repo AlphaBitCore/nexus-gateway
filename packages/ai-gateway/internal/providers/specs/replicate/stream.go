@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
@@ -75,13 +76,22 @@ func (s *streamSession) Next(ctx context.Context) (provcore.Chunk, error) {
 			NativeEvent: ev.Event,
 		}, nil
 	case "error":
+		// Terminal upstream error event. Surface it as a typed
+		// ProviderError so the executor records a real failure instead of
+		// folding the error text into assistant content and marking the
+		// stream a billed HTTP-200 success. Mirrors the
+		// Anthropic stream path (MapAnthropicStreamError).
 		s.done = true
-		return provcore.Chunk{
-			Delta:       string(ev.Data),
-			Done:        true,
-			RawBytes:    formatSSE(ev.Event, ev.Data),
-			NativeEvent: ev.Event,
-		}, nil
+		msg := string(ev.Data)
+		if msg == "" {
+			msg = "replicate stream error"
+		}
+		return provcore.Chunk{}, &provcore.ProviderError{
+			Status:  http.StatusBadGateway,
+			Code:    provcore.CodeUpstreamError,
+			Message: msg,
+			Raw:     ev.Data,
+		}
 	default:
 		// `logs` or unknown events: forward raw bytes for audit but no Delta.
 		return provcore.Chunk{

@@ -23,8 +23,7 @@ const (
 
 	// ConsumerGroup is the JetStream consumer group the Engine subscribes
 	// to MQ under. Independent from hub-db-writer (TrafficEventWriter,
-	// AdminAuditWriter) and hub-siem (SIEMForwarder); fan-out is the MQ
-	// driver's job.
+	// AdminAuditWriter); fan-out is the MQ driver's job.
 	ConsumerGroup = "hub-alerting"
 )
 

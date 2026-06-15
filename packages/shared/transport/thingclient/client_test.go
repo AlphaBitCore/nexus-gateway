@@ -189,9 +189,9 @@ func TestNew_RequiredFields(t *testing.T) {
 			wantErr: "ThingID is required",
 		},
 		{
-			name:    "missing Token",
+			name:    "missing Token and TokenFn",
 			cfg:     Config{HubURL: "ws://localhost/ws", ThingType: "agent", ThingID: "a1", Logger: logger, MetricsRegisterer: reg},
-			wantErr: "Token is required",
+			wantErr: "Token or TokenFn is required",
 		},
 		{
 			name:    "missing Logger",
@@ -524,10 +524,9 @@ func TestReadPump_ConfigChanged(t *testing.T) {
 
 	configChanged := hubMessage{
 		Type:       "config_changed",
+		ConfigKey:  "routing",
+		State:      json.RawMessage(`{"version":2}`),
 		DesiredVer: 2,
-		Desired: map[string]ConfigState{
-			"routing": {State: json.RawMessage(`{"version":2}`), Version: 2},
-		},
 	}
 	data, _ := json.Marshal(configChanged)
 	hub.sendCh <- data
@@ -599,10 +598,9 @@ func TestReadPump_UnknownType(t *testing.T) {
 
 	followUp := hubMessage{
 		Type:       "config_changed",
+		ConfigKey:  "quota",
+		State:      json.RawMessage(`{}`),
 		DesiredVer: 5,
-		Desired: map[string]ConfigState{
-			"quota": {State: json.RawMessage(`{}`), Version: 5},
-		},
 	}
 	followData, _ := json.Marshal(followUp)
 	hub.sendCh <- followData
@@ -667,10 +665,9 @@ func TestReadPump_InvalidJSON(t *testing.T) {
 
 	configMsg := hubMessage{
 		Type:       "config_changed",
+		ConfigKey:  "quota",
+		State:      json.RawMessage(`{}`),
 		DesiredVer: 3,
-		Desired: map[string]ConfigState{
-			"quota": {State: json.RawMessage(`{}`), Version: 3},
-		},
 	}
 	data, _ := json.Marshal(configMsg)
 	hub.sendCh <- data

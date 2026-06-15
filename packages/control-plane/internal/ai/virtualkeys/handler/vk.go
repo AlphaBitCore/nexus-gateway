@@ -10,7 +10,9 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -88,17 +90,24 @@ func (h *Handler) CreateVirtualKey(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON("name is required", "validation_error", ""))
 	}
 
+	// /api/admin/virtual-keys is the application-VK admin surface: an omitted
+	// vkType defaults to "application". Resolve the EFFECTIVE vkType BEFORE the
+	// approval gate so an omitted vkType cannot slip an application key past the
+	// maker-checker workflow. Gating on the literal request field while
+	// defaulting later let a `virtual-keys:create`-only principal mint an
+	// immediately-active application key with no project, bypassing :approve.
+	vkType := body.VKType
+	if vkType == "" {
+		vkType = "application"
+	}
+
 	vkStatus := "active"
-	if body.VKType == "application" {
+	if vkType == "application" {
 		if body.ProjectID == nil || *body.ProjectID == "" {
 			return c.JSON(http.StatusBadRequest, errJSON("projectId is required for application virtual keys", "validation_error", ""))
 		}
-		if body.ExpiresAt == nil {
-			return c.JSON(http.StatusBadRequest, errJSON("expiresAt is required for application virtual keys", "validation_error", ""))
-		}
-		maxExpiry := time.Now().AddDate(0, 3, 0)
-		if body.ExpiresAt.After(maxExpiry) {
-			return c.JSON(http.StatusBadRequest, errJSON("expiresAt must not exceed 3 months from now", "validation_error", ""))
+		if msg := capApplicationExpiry(body.ExpiresAt); msg != "" {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 		}
 		vkStatus = "pending"
 	}
@@ -125,15 +134,10 @@ func (h *Handler) CreateVirtualKey(c echo.Context) error {
 		allowedModels = body.AllowedModels
 	}
 
-	// /api/admin/virtual-keys is the application-VK admin surface.
-	vkType := body.VKType
-	if vkType == "" {
-		vkType = "application"
-	}
-
 	vk, err := h.vks.CreateVirtualKey(c.Request().Context(), vkstore.CreateVirtualKeyParams{
 		Name:                        body.Name,
 		KeyHash:                     keyHash,
+		KeyVersion:                  auth.CurrentKeyVersion(),
 		KeyPrefix:                   keyPrefix,
 		ProjectID:                   body.ProjectID,
 		SourceApp:                   body.SourceApp,
@@ -212,6 +216,20 @@ func (h *Handler) UpdateVirtualKey(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON(expiresAtErr, "validation_error", ""))
 	}
 
+	// Application VKs carry a maker-checker governance cap: their lifetime is
+	// bound to 3 months at create (vk.go CreateVirtualKey) and on renewal
+	// (approval.go RenewVirtualKey). The general PUT update path must enforce
+	// the SAME ceiling — otherwise an edit could set an arbitrarily-far expiry,
+	// or clear it to never-expire, and silently escape the re-approval cadence
+	// the cap exists to force. The check is
+	// scoped to vkType == "application": personal VKs have no cap and may carry
+	// any (or no) expiry, so they are intentionally exempt.
+	if updateExpiresAt && existing.VKType != nil && *existing.VKType == "application" {
+		if msg := capApplicationExpiry(newExpiresAt); msg != "" {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+		}
+	}
+
 	params := vkstore.UpdateVirtualKeyParams{
 		ProjectID:                   body.ProjectID,
 		SourceApp:                   body.SourceApp,
@@ -232,7 +250,9 @@ func (h *Handler) UpdateVirtualKey(c echo.Context) error {
 		return internalServerError(c, "Internal server error")
 	}
 
-	h.notifyVKInvalidate(c, existing.KeyHash)
+	if err := h.notifyVKInvalidate(c, existing.KeyHash); err != nil {
+		return hub.RespondPropagationFailure(c, err)
+	}
 
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbUpdate)
 	ae.EntityID = updated.Name
@@ -263,7 +283,9 @@ func (h *Handler) DeleteVirtualKey(c echo.Context) error {
 		return internalServerError(c, "Internal server error")
 	}
 
-	h.notifyVKInvalidate(c, existing.KeyHash)
+	if err := h.notifyVKInvalidate(c, existing.KeyHash); err != nil {
+		return hub.RespondPropagationFailure(c, err)
+	}
 
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbDelete)
 	ae.EntityID = existing.Name
@@ -292,14 +314,17 @@ func (h *Handler) RegenerateVirtualKey(c echo.Context) error {
 		h.logger.Error("rand.Read for regenerated virtual key", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to regenerate virtual key", "server_error", ""))
 	}
-	if err := h.vks.RegenerateVirtualKeyHash(c.Request().Context(), id, keyHash, keyPrefix); err != nil {
+	if err := h.vks.RegenerateVirtualKeyHash(c.Request().Context(), id, keyHash, auth.CurrentKeyVersion(), keyPrefix); err != nil {
 		return internalServerError(c, "Internal server error")
 	}
 
 	// Invalidate the OLD hash on the data plane so any in-flight or
 	// freshly-cached entry for the rotated key is dropped. The new hash
-	// is not in cache yet — first /v1 call will load it.
-	h.notifyVKInvalidate(c, vk.KeyHash)
+	// is not in cache yet — first /v1 call will load it. Fail loud: if the
+	// push fails the gateway keeps accepting the OLD secret from its cache.
+	if err := h.notifyVKInvalidate(c, vk.KeyHash); err != nil {
+		return hub.RespondPropagationFailure(c, err)
+	}
 
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbUpdate)
 	ae.EntityID = id

@@ -4,6 +4,34 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
+// Shared codec singletons. The codec structs are stateless, so one
+// instance per process serves every caller. Instance identity matters:
+// RegisterDefaultAIBuiltins registers these SAME instances under every
+// Tier-1 key alias and the sniff walk, so the Registry's `tried`
+// dedupe never runs one codec twice across the keyed walk and the
+// sniff pass. Per-host traffic adapters whose wire is a standard API
+// delegate their Normalize to these accessors instead of carrying a
+// second decoder for the same format.
+var (
+	sharedOpenAIChat        = NewOpenAIChatNormalizer()
+	sharedAnthropicMessages = NewAnthropicMessagesNormalizer()
+	sharedGeminiGenerate    = NewGeminiGenerateNormalizer()
+)
+
+// SharedOpenAIChat returns the process-wide OpenAI Chat codec instance —
+// the same instance RegisterDefaultAIBuiltins wires into the Registry.
+// Per-host adapters whose wire IS the OpenAI Chat schema delegate their
+// Normalize here and stamp their own adapter ID as DetectedSpec.
+func SharedOpenAIChat() *OpenAIChatNormalizer { return sharedOpenAIChat }
+
+// SharedAnthropicMessages returns the process-wide Anthropic Messages
+// codec instance (see SharedOpenAIChat for the delegation contract).
+func SharedAnthropicMessages() *AnthropicMessagesNormalizer { return sharedAnthropicMessages }
+
+// SharedGeminiGenerate returns the process-wide Gemini generateContent
+// codec instance (see SharedOpenAIChat for the delegation contract).
+func SharedGeminiGenerate() *GeminiGenerateNormalizer { return sharedGeminiGenerate }
+
 // RegisterDefaultAIBuiltins registers the AI normalizers that ship with
 // Nexus today. Routing keys are wire-format adapter types
 // (`providers.Format` in ai-gateway), NOT user-named provider strings —
@@ -30,7 +58,7 @@ import (
 // The registry is left unfrozen on return so callers can extend it with
 // service-specific normalizers before Freezing.
 func RegisterDefaultAIBuiltins(reg *core.Registry) {
-	oai := NewOpenAIChatNormalizer()
+	oai := sharedOpenAIChat
 	// Wire-compatible OpenAI Chat adapters. Each routes to the same
 	// normalizer because their wire format on /v1/chat/completions is
 	// the OpenAI Chat schema — only credentialing and host differ.
@@ -82,6 +110,14 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 		// to a non-OpenAI vendor whose adapter speaks the same schema).
 		reg.Register(key+"::/v1/responses", resp)
 	}
+	// Codex (the OpenAI CLI / IDE agent) speaks the Responses API but posts to
+	// chatgpt.com/backend-api/codex/responses, not /v1/responses, and its host
+	// resolves to the chatgpt-web adapter which does not claim this body — so
+	// without a path entry every codex turn fell through to Tier-3 generic-http
+	// (verified against a real 60 KB capture: model gpt-5.4, input[]+instructions,
+	// 4 messages once routed here). Path-only key so it matches regardless of the
+	// resolved adapter, mirroring the /v1/embeddings fallback below.
+	reg.Register("::/backend-api/codex/responses", resp)
 
 	// Embedding normalizers — per-path registrations are MORE SPECIFIC
 	// than the chat normalizers registered above (the registry picks the
@@ -160,7 +196,7 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 	reg.Register("::/v1beta/models/text-embedding-005:batchEmbedContents", gemEmb)
 	reg.Register("::/v1beta/models/text-multilingual-embedding-002:batchEmbedContents", gemEmb)
 
-	anth := NewAnthropicMessagesNormalizer()
+	anth := sharedAnthropicMessages
 	reg.Register("anthropic", anth)
 	reg.Register("anthropic::/v1/messages", anth)
 	// Bedrock currently fronts Anthropic Messages — bytes flowing
@@ -170,7 +206,7 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 	// require their own).
 	reg.Register("bedrock", anth)
 
-	gem := NewGeminiGenerateNormalizer()
+	gem := sharedGeminiGenerate
 	reg.Register("gemini", gem)
 	reg.Register("vertex", gem)
 
@@ -197,6 +233,45 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 	reg.Register("voyage", voyEmb)
 	reg.Register("voyage::/v1/embeddings", voyEmb)
 
+	// Tier 1.5 — sniff pass. Key-missed capture traffic (AdapterType
+	// carries a host or tool name, endpoint path absent) resolves no
+	// Tier-1 key at all; the sniff walk offers it to codecs that
+	// recognise their own wire shape so it lands on the same
+	// full-fidelity decoders as keyed traffic instead of the Tier-2
+	// pattern probe or the Tier-3 verbatim dump. Each sniffer probes
+	// BOTH directions: response markers unconditionally, request
+	// markers only when meta.Direction is request or unset.
+	// Registration order is probe precision, most distinctive marker
+	// first:
+	//
+	//  1. anthropic — the `event: message_start` SSE framing and the
+	//     type/role/stop_reason JSON triple are unique to that wire;
+	//     requests match on messages+max_tokens (max_tokens is
+	//     protocol-required). Anthropic MUST probe before openai-chat:
+	//     an Anthropic request body also carries messages+model, so
+	//     the codec with the stricter request marker set goes first.
+	//  2. openai-chat — `"object":"chat.completion[.chunk]"` is an
+	//     exact-value discriminator no other wire stamps; requests
+	//     match on messages+model with an `"author"` exclusion (see
+	//     the codec's LooksLike for the chatgpt-web collision).
+	//  3. openai-responses — `"object":"response"` / `event: response.`
+	//     are equally exact, but probe AFTER openai-chat so the
+	//     higher-volume Chat wires are answered on the earlier probe;
+	//     the two value sets are disjoint so order between them is a
+	//     throughput choice, not a correctness one.
+	//  4. gemini — `"candidates"` + a corroborating Gemini key on
+	//     responses; `"contents"` + a corroborating camelCase request
+	//     key on requests. Key-presence probes (not exact key:value
+	//     pairs), the loosest marker set of the four, so it goes last.
+	//
+	// Gemini gets no path-only Register fallback (its generate paths
+	// embed the model name, so there is no fixed path string to key);
+	// the sniffer is what covers its key-missed traffic.
+	reg.RegisterSniffer(anth)
+	reg.RegisterSniffer(oai)
+	reg.RegisterSniffer(resp)
+	reg.RegisterSniffer(gem)
+
 	// Catch-all for traffic that didn't match any AI adapter (cp/agent
 	// intercepting plain HTTP, ai-gateway audit rows without a routed
 	// adapter type). Registered under the "*:*:*" generic key so the
@@ -211,4 +286,15 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 	// the binary level to avoid a normalize → extract import cycle
 	// (extract imports normalize.NormalizedPayload). See each
 	// cmd/<service>/main.go.
+}
+
+// sniffProbe bounds a LooksLike probe to the leading 512 bytes so the
+// Tier-1.5 sniff walk stays O(prefix) on arbitrarily large bodies. The
+// window comfortably covers every discriminator the sniffers look for:
+// SSE first frames, response-head JSON keys, request envelope markers.
+func sniffProbe(raw []byte) []byte {
+	if len(raw) > 512 {
+		return raw[:512]
+	}
+	return raw
 }

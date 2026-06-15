@@ -35,6 +35,7 @@ type API interface {
 		policy cfgpolicy.RetryPolicy,
 		preparedBody []byte,
 		preparedRewrites []string,
+		preparedURLOverride string,
 	) *ExecutionResult
 }
 

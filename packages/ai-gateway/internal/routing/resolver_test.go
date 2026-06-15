@@ -110,7 +110,7 @@ func (f *resolverFixture) addModel(id, providerID, providerModelID string, enabl
 	// MatchConditions.Models = []string{"gpt-4"} still work end-to-end:
 	// hydrateRequestedModel resolves the request string via Code and the
 	// resulting CandidateIDs equal []string{id}.
-	f.store.models[id] = &store.Model{ID: id, Code: id, Name: id, ProviderID: providerID, ProviderModelID: providerModelID, Type: "chat", Enabled: enabled}
+	f.store.models[id] = &store.Model{ID: id, Code: id, Name: id, ProviderID: providerID, ProviderName: providerID, ProviderModelID: providerModelID, Type: "chat", Enabled: enabled}
 }
 
 func (f *resolverFixture) addRule(r store.RoutingRule) {
@@ -356,6 +356,91 @@ func TestResolver_InlineFallbackChain_PopulatesRecovery(t *testing.T) {
 	}
 }
 
+// TestResolver_InlineFallbackChain_RespectsVKAllowedModels is the SEC-C1-01
+// regression: an inline FallbackChain entry pointing at a (provider, model)
+// OUTSIDE the VK's allowedModels must be filtered out of RecoveryTargets — the
+// same allowlist gate the primary path enforces — so a primary failure cannot
+// dispatch (and bill / consume the upstream credential of) a model the VK is not
+// permitted to use. Before the fix the inline FallbackChain skipped the filter.
+func TestResolver_InlineFallbackChain_RespectsVKAllowedModels(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addProvider("anthropic", true)
+	f.addModel("gpt-4", "openai", "gpt-4", true)
+	f.addModel("claude-3", "anthropic", "claude-3", true)
+
+	chain := []core.FallbackChainEntry{
+		{ProviderID: "anthropic", ModelID: "claude-3"}, // NOT in the VK allowlist
+	}
+	f.addRule(store.RoutingRule{
+		ID:            "r-primary",
+		Name:          "primary + chain",
+		StrategyType:  "single",
+		PipelineStage: 1,
+		Config:        mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
+		FallbackChain: mustJSON(t, chain),
+	})
+
+	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "gpt-4"},
+		VirtualKey: &core.VKContext{
+			ID: "vk-restricted",
+			AllowedModels: []store.AllowedModelRef{
+				{ProviderID: "openai", ModelID: "gpt-4"}, // only gpt-4 permitted
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(plan.Targets) != 1 || plan.Targets[0].ModelID != "gpt-4" {
+		t.Fatalf("expected primary gpt-4 (in allowlist), got %+v", plan.Targets)
+	}
+	for _, rt := range plan.RecoveryTargets {
+		if rt.ModelID == "claude-3" {
+			t.Errorf("SEC-C1-01: inline FallbackChain leaked a non-allowlisted model into RecoveryTargets: %+v", plan.RecoveryTargets)
+		}
+	}
+}
+
+// TestResolver_InlineFallbackChain_KeepsAllowlistedEntry is the positive control
+// for SEC-C1-01: a FallbackChain entry that IS within the VK allowlist must still
+// survive the new filter (no over-blocking).
+func TestResolver_InlineFallbackChain_KeepsAllowlistedEntry(t *testing.T) {
+	f := newResolverFixture()
+	f.addProvider("openai", true)
+	f.addProvider("anthropic", true)
+	f.addModel("gpt-4", "openai", "gpt-4", true)
+	f.addModel("claude-3", "anthropic", "claude-3", true)
+
+	chain := []core.FallbackChainEntry{{ProviderID: "anthropic", ModelID: "claude-3"}}
+	f.addRule(store.RoutingRule{
+		ID:            "r-primary",
+		Name:          "primary + chain",
+		StrategyType:  "single",
+		PipelineStage: 1,
+		Config:        mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
+		FallbackChain: mustJSON(t, chain),
+	})
+
+	plan, err := f.resolver.Resolve(context.Background(), &core.RoutingContext{
+		RequestedModel: core.RequestedModel{ID: "gpt-4"},
+		VirtualKey: &core.VKContext{
+			ID: "vk-broad",
+			AllowedModels: []store.AllowedModelRef{
+				{ProviderID: "openai", ModelID: "gpt-4"},
+				{ProviderID: "anthropic", ModelID: "claude-3"}, // fallback permitted
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(plan.RecoveryTargets) != 1 || plan.RecoveryTargets[0].ModelID != "claude-3" {
+		t.Fatalf("allowlisted fallback claude-3 must be kept, got %+v", plan.RecoveryTargets)
+	}
+}
+
 // TestResolver_FallbackStrategyRule_PopulatesRecovery verifies that a
 // separate stage-1 rule with strategyType="fallback" is classified as a
 // recovery rule, not primary, and its targets land in RecoveryTargets.
@@ -546,6 +631,60 @@ func TestHydrateRequestedModel_AutoKeyword_LeavesCandidatesEmpty(t *testing.T) {
 	if len(rctx.RequestedModel.CandidateIDs) != 0 {
 		t.Errorf("auto sentinel should not produce candidates, got %v", rctx.RequestedModel.CandidateIDs)
 	}
+}
+
+// TestResolveTargets_RequestedSideIdentity locks the traffic_event REQUESTED-side
+// write decision: model_id/provider_id/provider_name are populated only when the
+// client requested a specific model that resolves to exactly one catalog model;
+// "auto" and multi-provider codes leave them empty.
+func TestResolveTargets_RequestedSideIdentity(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("specific single-candidate model → requested set", func(t *testing.T) {
+		f := newResolverFixture()
+		f.addProvider("openai", true)
+		f.addModel("gpt-4", "openai", "gpt-4", true)
+		f.addRule(store.RoutingRule{
+			ID: "r", Name: "r", StrategyType: "single", PipelineStage: 1, Priority: 100,
+			Config: mustJSON(t, core.StrategyNode{Type: "single", ProviderID: "openai", ModelID: "gpt-4"}),
+		})
+		rr, err := f.resolver.ResolveTargets(ctx, &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "gpt-4"}})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if rr.RequestedModelID != "gpt-4" || rr.RequestedProviderID != "openai" || rr.RequestedProviderName != "openai" {
+			t.Errorf("requested side = %q/%q/%q, want gpt-4/openai/openai", rr.RequestedModelID, rr.RequestedProviderID, rr.RequestedProviderName)
+		}
+	})
+
+	t.Run("auto → requested empty", func(t *testing.T) {
+		f := newResolverFixture()
+		f.addProvider("openai", true)
+		f.addModel("gpt-4", "openai", "gpt-4", true)
+		rr, err := f.resolver.ResolveTargets(ctx, &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "auto"}})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if rr.RequestedModelID != "" || rr.RequestedProviderID != "" || rr.RequestedProviderName != "" {
+			t.Errorf("auto requested side = %q/%q/%q, want all empty", rr.RequestedModelID, rr.RequestedProviderID, rr.RequestedProviderName)
+		}
+	})
+
+	t.Run("multi-provider code → requested empty (ambiguous)", func(t *testing.T) {
+		f := newResolverFixture()
+		f.addProvider("openai", true)
+		f.addProvider("anthropic", true)
+		// Same Code under two providers → ResolveModelCandidates returns 2.
+		f.store.models["m1"] = &store.Model{ID: "m1", Code: "shared", Name: "shared", ProviderID: "openai", ProviderName: "openai", Type: "chat", Enabled: true}
+		f.store.models["m2"] = &store.Model{ID: "m2", Code: "shared", Name: "shared", ProviderID: "anthropic", ProviderName: "anthropic", Type: "chat", Enabled: true}
+		rr, err := f.resolver.ResolveTargets(ctx, &core.RoutingContext{RequestedModel: core.RequestedModel{ID: "shared"}})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if rr.RequestedModelID != "" {
+			t.Errorf("multi-candidate requested model id = %q, want empty", rr.RequestedModelID)
+		}
+	})
 }
 
 // TestResolver_MatchConditions_PicksCorrectRule verifies that rule matching

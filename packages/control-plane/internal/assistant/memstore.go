@@ -8,10 +8,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
 )
 
-// memMemory is a process-local MemoryStore used in P2 (no persistence). It is
+// memMemory is the pool-less fallback MemoryStore (no persistence). It is
 // constructed ONE PER SESSION/CALLER, so isolation is structural (the instance
 // only ever holds one user's facts) — honoring the kernel's isolation contract.
-// P6 replaces it with a userId-scoped DB-backed impl.
+// A DB-wired deployment uses the userId-scoped DB-backed impl instead.
 type memMemory struct {
 	facts map[string]agent.MemoryFact
 }
@@ -64,8 +64,8 @@ func (m *memMemory) Forget(name string) (bool, error) {
 
 var _ agent.MemoryStore = (*memMemory)(nil)
 
-// memStore is a process-local SessionStore for P2 (no persistence). One instance
-// per caller; P6 replaces it with DB(metadata)+S3(transcript).
+// memStore is the pool-less fallback SessionStore (no persistence). One instance
+// per caller; a DB-wired deployment uses DB(metadata)+spill(transcript) instead.
 type memStore struct {
 	sessions map[string]*agent.Session
 }

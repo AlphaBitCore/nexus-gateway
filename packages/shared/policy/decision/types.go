@@ -9,6 +9,7 @@
 package decision
 
 import (
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -89,6 +90,15 @@ type CompliancePipelineResult struct {
 	// BlockingRule is the rule-pack attribution that caused the pipeline's
 	// (reject) decision.
 	BlockingRule *BlockingRule `json:"blockingRule,omitempty"`
+	// Redetect re-locates rule-attributed sensitive content within one
+	// text block of the storage-bound normalized payload. The pipeline
+	// stamps it from the executed hooks' compiled patterns when the run
+	// produced TransformSpans; the audit writers hand it to
+	// redact.ApplyStorageAction so a span whose hook-time address does not
+	// resolve on the storage-time payload can be re-located and redacted
+	// in place instead of degrading to the drop placeholder. In-process
+	// only — never serialized.
+	Redetect redact.Redetector `json:"-"`
 }
 
 // HookResult is the output produced by a single hook execution.
@@ -121,4 +131,9 @@ const (
 	ReasonRedactStorageOnlyByPolicy = "REDACT_STORAGE_ONLY_BY_POLICY"
 	ReasonStorageDroppedByPolicy    = "STORAGE_DROPPED_BY_POLICY"
 	ReasonAIGuardSuggestedVsPolicy  = "AIGUARD_SUGGESTED_VS_POLICY"
+	// ReasonFailClosed marks a request/response refused because a mandatory
+	// (fail-closed) hook could not be built under a strict (appliance) policy,
+	// so the traffic could not be inspected. SEC-W3-01 / F-0371: the strict
+	// caller refuses uninspectable traffic rather than forwarding it.
+	ReasonFailClosed = "COMPLIANCE_FAIL_CLOSED"
 )

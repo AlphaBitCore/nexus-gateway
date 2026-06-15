@@ -29,7 +29,6 @@ func (h *Handler) RegisterAdminAgentDeviceRoutes(
 	g.GET("/agent-devices", h.ListAgentDevices, iamMW(iam.ResourceAgentDevice.Action(iam.VerbRead)))
 	g.GET("/agent-devices/health", h.AgentFleetHealth, iamMW(iam.ResourceAgentDevice.Action(iam.VerbRead)))
 	g.GET("/agent-devices/:id", h.GetAgentDevice, iamMWDevice(iam.ResourceAgentDevice.Action(iam.VerbRead), "id"))
-	g.POST("/agent-devices/:id/rotate-cert", h.RotateAgentCert, iamMWDevice(iam.ResourceAgentDevice.Action(iam.VerbRotate), "id"))
 	g.GET("/agent-devices/:id/events", h.ListDeviceEvents, iamMWDevice(iam.ResourceAgentDevice.Action(iam.VerbRead), "id"))
 	// Assignment history — paginated DeviceAssignment rows for this device.
 	// Read-only; same IAM scope as the device detail page that consumes it.
@@ -206,43 +205,6 @@ func (h *Handler) ForceRefreshAgentDevice(c echo.Context) error {
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceAgentDevice, iam.VerbForceResync)
-	ae.EntityID = id
-	ae.AfterState = map[string]any{"thingId": id, "result": "ok"}
-	h.audit.LogObserved(c.Request().Context(), ae)
-
-	return c.JSON(http.StatusOK, resp)
-}
-
-// RotateAgentCert proxies to Hub's /things/:id/rotate-cert which advances
-// thing_agent.cert_expires_at to NOW() + 5min. The agent's next heartbeat
-// (every 15s) sees the cert as "near expiry" and triggers the existing
-// /api/internal/things/renew-cert flow — no new agent code path. Use case:
-// admin wants a fresh cert without waiting for the auto-renew threshold
-// (suspected key compromise or CA root rotation).
-func (h *Handler) RotateAgentCert(c echo.Context) error {
-	id := c.Param("id")
-	if id == "" {
-		return c.JSON(http.StatusBadRequest, errJSON("device id is required", "validation_error", ""))
-	}
-
-	existing, err := h.agents.GetThingNode(c.Request().Context(), id)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", "INTERNAL_ERROR"))
-	}
-	if existing == nil {
-		return c.JSON(http.StatusNotFound, errJSON("Device not found", "not_found", "NOT_FOUND"))
-	}
-
-	resp, hubErr := h.hub.RotateAgentCert(c.Request().Context(), id)
-	if errors.Is(hubErr, hub.ErrNotConfigured) {
-		return c.JSON(http.StatusServiceUnavailable, errJSON("Nexus Hub is not configured", "service_unavailable", "HUB_NOT_CONFIGURED"))
-	}
-	if hubErr != nil {
-		h.logger.Error("rotate-cert hub call", "deviceId", id, "error", hubErr)
-		return c.JSON(http.StatusBadGateway, errJSON("Nexus Hub rotate-cert failed", "bad_gateway", "HUB_ERROR"))
-	}
-
-	ae := audit.EntryFor(c, iam.ResourceAgentDevice, iam.VerbRotate)
 	ae.EntityID = id
 	ae.AfterState = map[string]any{"thingId": id, "result": "ok"}
 	h.audit.LogObserved(c.Request().Context(), ae)

@@ -7,6 +7,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // proxy_cachecost.go holds the cache pre-lookup classification, time-sensitivity
@@ -14,12 +15,22 @@ import (
 // (behavior unchanged).
 
 func classifyCachePreLookup(
+	endpointKind typology.EndpointKind,
 	cacheEnabled, hasNoCacheHeader, hasTargets, passthroughBypassCache bool,
 	detector timeSensitiveDetector,
 	canonicalMessages []freshness.ChatMessage,
 	skipTimeSensitivePolicy bool,
 ) (audit.GatewayCacheStatus, audit.GatewayCacheSkipReason) {
 	switch {
+	case endpointKind == typology.EndpointKindEmbeddings:
+		// Embeddings never use the response cache (L1 exact-match or the
+		// HIT_LIVE broker dedup): each embedding input is unique per workflow
+		// step and not session-bound, so caching yields minimal hit value at
+		// real Redis cost and pollutes the chat cache-hit dashboards. Skip at
+		// pre-lookup, before any cacheEnabled / target checks, so the decision
+		// is endpoint-driven regardless of admin cache config. The L2 semantic
+		// tier already self-skips embeddings.
+		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonEmbeddingsEndpoint
 	case !cacheEnabled:
 		return audit.GatewayCacheSkipped, audit.GatewayCacheSkipReasonDisabled
 	case !hasTargets:
@@ -103,8 +114,46 @@ func estimatedCostUSD(promptTok, completionTok int64, inPricePM, outPricePM floa
 	return float64(promptTok)*inPricePM/million + float64(completionTok)*outPricePM/million
 }
 
+// stampUnpricedCost writes metadata.cost.unpriced=true so cost surfaces can
+// show "$0 because no price is set" instead of silently reporting no spend,
+// which erodes trust in the cost feature. It is called only
+// from checkQuota, where the routed model's price POINTERS are inspected:
+// the caller has already established that the model has no price row at all
+// (both InputPricePM and OutputPricePM nil), which is distinct from a model
+// priced explicitly at 0 (genuinely free — never flagged). Returns the
+// updated metadata value (assign back to rec.Metadata).
+func stampUnpricedCost(existing any) any {
+	md := mergeIntoMetadataMap(existing)
+	cost, _ := md["cost"].(map[string]any)
+	if cost == nil {
+		cost = map[string]any{}
+	}
+	cost["unpriced"] = true
+	md["cost"] = cost
+	return md
+}
+
+// stampReasoningCost sets rec.ReasoningCostUsd as the subset of the estimated
+// cost attributable to reasoning tokens, billed at the output rate. It is a
+// breakdown field (a slice of EstimatedCostUsd), not an additional charge.
+//
+// Every cost-stamp path must call this so reasoning_cost_usd stays consistent
+// with reasoning_tokens regardless of how the response was served — direct
+// non-stream, broker non-stream, streaming, or cache HIT. Call it
+// AFTER rec.ReasoningTokens is set and (where applicable) BEFORE
+// computeCacheCosts, mirroring the direct-path ordering: outPricePM is the
+// model-table output price, the same denominator the would-have cost uses, so
+// the reasoning fraction is preserved even when computeCacheCosts later
+// recomputes EstimatedCostUsd from the Model-snapshot prices.
+func stampReasoningCost(rec *audit.Record, outPricePM float64) {
+	if rec.ReasoningTokens > 0 && outPricePM > 0 {
+		rec.ReasoningCostUsd = float64(rec.ReasoningTokens) * outPricePM / 1_000_000
+	}
+}
+
 // computeCacheCosts recomputes rec.EstimatedCostUsd and populates the cache
-// cost/savings fields using the provider_pricing table.
+// cost/savings fields using the Model row's four price-per-million columns
+// (input, output, cachedInputRead, cachedInputWrite) assembled by CachePricing.
 //
 // Token-bucket semantics differ by provider wire format:
 //   - Anthropic: input_tokens (→ PromptTokens) are NON-cached only; cache-read
@@ -113,10 +162,12 @@ func estimatedCostUSD(promptTok, completionTok int64, inPricePM, outPricePM floa
 //   - OpenAI / Gemini: prompt_tokens (→ PromptTokens) is the TOTAL input
 //     including any cached subset; CacheReadTokens is a sub-count of PromptTokens.
 //
-// EstimatedCostUsd is recomputed from scratch using provider_pricing so the
-// result is internally consistent regardless of what quotaInPrice (the model
-// table's configured price) was set to. This prevents negative cost values
-// that occurred when the two price sources diverged and savings > base cost.
+// EstimatedCostUsd is recomputed from scratch using the Model row's four price
+// columns so the result is internally consistent: the cache cost/savings fields
+// and the base cost now read the same four numbers, regardless of what
+// quotaInPrice (the price captured earlier in the request) was set to. This
+// prevents the negative cost values that occurred historically when two separate
+// price sources diverged and savings > base cost.
 func (h *Handler) computeCacheCosts(rec *audit.Record, target routingcore.RoutingTarget) {
 	if h.deps.CachePricing == nil {
 		return
@@ -124,7 +175,7 @@ func (h *Handler) computeCacheCosts(rec *audit.Record, target routingcore.Routin
 	if rec.CacheCreationTokens == 0 && rec.CacheReadTokens == 0 {
 		return
 	}
-	p := h.deps.CachePricing.LookupCachePricing(target.AdapterType, target.ProviderID, target.ModelCode)
+	p := h.deps.CachePricing.LookupCachePricing(target.ModelCode)
 	if p == nil {
 		return
 	}

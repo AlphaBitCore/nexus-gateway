@@ -46,6 +46,12 @@ type StartDeps struct {
 	// Shared with the OIDC callback so a document fetched here is reused on
 	// the return leg. May be nil (tests that pin explicit endpoints).
 	Resolver *oidcdisco.Resolver
+	// StateSigner binds the OIDC `state` (authctx) to the initiating browser
+	// via an HMAC-signed HttpOnly cookie set in startOIDC and verified on the
+	// callback (login-CSRF defense-in-depth). Shared with OIDCDeps.StateSigner
+	// so the same per-process key signs and verifies. May be nil (tests that
+	// don't exercise the cookie binding); when nil, startOIDC skips the cookie.
+	StateSigner *stateSigner
 }
 
 // StartHandler returns GET /authserver/idp/:idpId/start?authctx=<authctx>. It is
@@ -102,9 +108,20 @@ func bounceToLogin(c echo.Context, authctx string) error {
 	return c.Redirect(http.StatusFound, u.String())
 }
 
-// startOIDC builds the IdP authorization URL, stamps the chosen IdP id onto the
+// startOIDC builds the IdP authorize URL, stamps the chosen IdP id onto the
 // pending authorize entry so the callback loads the same config, and 302s the
 // browser to the IdP. state carries the authctx back on the callback.
+//
+// CSRF binding: `state` is the authctx, which is itself a 256-bit
+// crypto/rand opaque token (store.RandomOpaqueToken(32), minted in the OAuth
+// authorize endpoint — see oauth/authorize.go). It is NOT a sequential or
+// predictable identifier, so it already serves as the unguessable, single-use
+// CSRF nonce the OAuth spec asks `state` to be: the callback resolves it via
+// Pending.Take (a single-use server-side lookup) and rejects any value not
+// present, so a forged/guessed state cannot drive the callback. Adding a second
+// random component would not increase the (already 256-bit) entropy. A separate
+// per-login `nonce` (set below) is bound into the ID token for OIDC §3.1.2.1
+// replay defense — a distinct control from this CSRF state.
 func startOIDC(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx string) error {
 	cfg := store.DecodeOIDCConfig(idp)
 	if cfg == nil || cfg.ClientID == "" {
@@ -162,6 +179,22 @@ func startOIDC(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx
 	q.Set("state", authctx)
 	q.Set("nonce", nonce)
 	u.RawQuery = q.Encode()
+	// Bind the callback to THIS browser: set a short-lived HMAC-signed HttpOnly
+	// cookie carrying the authctx. The OIDC callback rejects any request whose
+	// signed cookie is absent or does not bind to the `state` query param,
+	// defeating login-CSRF (a forced callback in a victim's browser). Skipped
+	// only when no signer is wired (test harnesses that don't exercise it).
+	if d.StateSigner != nil {
+		c.SetCookie(&http.Cookie{
+			Name:     oidcStateCookieName,
+			Value:    d.StateSigner.sign(authctx),
+			Path:     oidcStateCookiePath,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   oidcStateCookieMaxAge,
+		})
+	}
 	return c.Redirect(http.StatusFound, u.String())
 }
 

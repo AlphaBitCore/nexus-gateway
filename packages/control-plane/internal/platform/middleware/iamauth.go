@@ -34,13 +34,12 @@ func RequireIAMPermission(engine *iam.Engine, action string, resourceFn func(ech
 				return c.JSON(http.StatusUnauthorized, errorResp("Authentication required", "authentication_error", "AUTH_REQUIRED"))
 			}
 
-			// Bootstrap and dev bypass skip IAM evaluation.
-			if aa.KeyID == "bootstrap" {
-				return next(c)
-			}
-			if aa.KeyID == "dev" {
-				return next(c)
-			}
+			// No principal ID is treated as privileged: every authenticated
+			// caller is evaluated against IAM policy. There is deliberately
+			// no magic-string ("bootstrap"/"dev") bypass — a future seed or
+			// fixture minting such a subject must NOT gain unconditional
+			// super-access. First-boot grants come from seeded
+			// IAM policies, not from a hardcoded principal-ID short-circuit.
 
 			// Derive the request NRN from the action so resource-scoped
 			// policies (the seed.ts default) evaluate correctly. See
@@ -52,8 +51,7 @@ func RequireIAMPermission(engine *iam.Engine, action string, resourceFn func(ech
 			}
 
 			ctx := iam.ConditionContext{
-				"nexus:SourceIp":    c.RealIP(),
-				"nexus:CurrentTime": "", // filled at eval time if needed
+				"nexus:SourceIp": c.RealIP(),
 			}
 
 			// Translate session auth principal type to IAM storage principal type.
@@ -122,9 +120,9 @@ func RequireIAMPermission(engine *iam.Engine, action string, resourceFn func(ech
 // Use it on routes that operate on a single device identified by a
 // path parameter:
 //
-//	g.POST("/agent-devices/:id/rotate-cert",
-//	  h.RotateAgentCert,
-//	  iamMWForDevice(iam.ResourceAgentDevice.Action(iam.VerbRotate), "id"))
+//	g.POST("/agent-devices/:id/force-refresh",
+//	  h.ForceRefreshAgentDevice,
+//	  iamMWForDevice(iam.ResourceAgentDevice.Action(iam.VerbForceResync), "id"))
 //
 // deviceIDParam is the Echo path-parameter name. lookup may be nil —
 // when nil the middleware behaves exactly like RequireIAMPermission
@@ -139,9 +137,8 @@ func RequireIAMPermissionForDevice(engine *iam.Engine, action, deviceIDParam str
 			if aa == nil {
 				return c.JSON(http.StatusUnauthorized, errorResp("Authentication required", "authentication_error", "AUTH_REQUIRED"))
 			}
-			if aa.KeyID == "bootstrap" || aa.KeyID == "dev" {
-				return next(c)
-			}
+			// No magic-string ("bootstrap"/"dev") IAM bypass — see the note
+			// in RequireIAMPermission.
 
 			deviceID := c.Param(deviceIDParam)
 			if deviceID == "" {
@@ -168,8 +165,7 @@ func RequireIAMPermissionForDevice(engine *iam.Engine, action, deviceIDParam str
 			resources := iam.BuildDeviceCandidateNRNs(action, deviceID, deviceGroups)
 
 			ctxCond := iam.ConditionContext{
-				"nexus:SourceIp":    c.RealIP(),
-				"nexus:CurrentTime": "",
+				"nexus:SourceIp": c.RealIP(),
 			}
 
 			iamPrincipalType := aa.AuthPrincipalType

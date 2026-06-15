@@ -353,3 +353,29 @@ func bytesRepeat(b byte, n int) []byte {
 	}
 	return out
 }
+
+// TestExtractStreamChunk_PathGatesProtobuf pins that a raw protobuf frame is
+// decoded as StreamChatResponse ONLY on a known chat path. The same frame on
+// /agent.v1.AgentService/Run (different frame schema) must yield nothing rather
+// than the garbage field-1 byte — this is the "j" regression.
+func TestExtractStreamChunk_PathGatesProtobuf(t *testing.T) {
+	a := &Adapter{}
+	// protobuf: field 1 (bytes) = "j"  -> [0x0a, 0x01, 'j']
+	frame := []byte{0x0a, 0x01, 'j'}
+
+	run, err := a.ExtractStreamChunk(context.Background(), frame, "/agent.v1.AgentService/Run")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(run.Segments) != 0 {
+		t.Fatalf("Run path leaked garbage segments %q; want none (frame schema differs)", run.Segments)
+	}
+
+	chat, err := a.ExtractStreamChunk(context.Background(), frame, "/aiserver.v1.AiService/StreamChat")
+	if err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	if len(chat.Segments) != 1 || chat.Segments[0] != "j" {
+		t.Fatalf("chat path segments = %q; want [j] (StreamChatResponse field 1)", chat.Segments)
+	}
+}

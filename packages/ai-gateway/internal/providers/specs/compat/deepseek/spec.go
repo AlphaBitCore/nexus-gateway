@@ -18,10 +18,11 @@ func NewSpec(log *slog.Logger) provcore.AdapterSpec {
 		log = slog.Default()
 	}
 	return provcore.AdapterSpec{
-		Format:          provcore.FormatDeepSeek,
-		Transport:       openai.NewTransport(log),
-		SchemaCodec:     openai.IdentityCodec(),
-		StreamDecoder:   openai.NewStreamDecoder(log),
-		ErrorNormalizer: openai.ErrorNormalizerInstance(),
+		Format:             provcore.FormatDeepSeek,
+		Transport:          openai.NewTransport(log),
+		SchemaCodec:        openai.IdentityCodec(),
+		StreamDecoder:      openai.NewStreamDecoder(log),
+		ErrorNormalizer:    openai.ErrorNormalizerInstance(),
+		PassthroughRewrite: ApplyRewrites,
 	}
 }

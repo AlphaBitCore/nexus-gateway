@@ -92,8 +92,10 @@ func (c *Cache) Close() {
 // Get returns the RSA public key for the given kid.
 //
 //   - If the cache is empty (never fetched), ErrCacheEmpty is returned.
-//   - If kid is empty, the first key in the cache is returned (convenience
-//     for single-key JWKS sets).
+//   - If kid is empty and exactly one key is cached, that key is returned
+//     (convenience for single-key JWKS sets). If kid is empty and multiple
+//     keys are cached, an error is returned — the binding would otherwise be
+//     nondeterministic.
 //   - If kid is unknown, an error naming the kid is returned.
 func (c *Cache) Get(kid string) (*rsa.PublicKey, error) {
 	c.mu.RLock()
@@ -103,6 +105,14 @@ func (c *Cache) Get(kid string) (*rsa.PublicKey, error) {
 		return nil, ErrCacheEmpty
 	}
 	if kid == "" {
+		// A JWT without a kid is only unambiguous when the set holds exactly
+		// one key. With multiple keys (the steady state during a rotation
+		// overlap) Go map iteration order is random, so returning "the first
+		// key" would bind to a nondeterministic key and intermittently fail
+		// signature verification. Force the caller to present a kid instead.
+		if len(c.keys) > 1 {
+			return nil, fmt.Errorf("jwks: kid required when multiple keys present")
+		}
 		for _, k := range c.keys {
 			return k, nil
 		}
@@ -165,6 +175,18 @@ func (c *Cache) refresh() {
 		newKeys[k.KID] = pub
 	}
 
+	// A 200 with zero usable keys (empty "keys" array, or every key
+	// non-RSA / malformed) must NOT replace a previously-good cache: doing
+	// so would advance fetchedAt, bypass the stale-grace window, and leave
+	// Get returning ErrCacheEmpty so every enrollment 503s. Treat it as a
+	// soft fetch failure instead — retain the stale cache and let
+	// handleFetchFailure drive the backoff/expiry path.
+	if len(newKeys) == 0 {
+		c.logger.Warn("jwks: fetch returned zero usable keys; retaining stale cache", "url", c.url)
+		c.handleFetchFailure()
+		return
+	}
+
 	c.mu.Lock()
 	c.keys = newKeys
 	c.fetchedAt = time.Now()
@@ -201,5 +223,27 @@ func parseRSAKey(k jwkJSON) (*rsa.PublicKey, error) {
 	n := new(big.Int).SetBytes(nBytes)
 	e := new(big.Int).SetBytes(eBytes)
 
-	return &rsa.PublicKey{N: n, E: int(e.Int64())}, nil
+	// Reject sub-2048-bit moduli. A truncated or deliberately weak modulus
+	// would otherwise be accepted and used to verify enrollment JWTs.
+	if n.BitLen() < 2048 {
+		return nil, fmt.Errorf("RSA modulus too small: %d bits", n.BitLen())
+	}
+
+	// e.Int64() silently truncates exponents that exceed 8 bytes, producing a
+	// wrong public key that would mis-verify signatures. Reject any exponent
+	// that does not fit in an int. A valid RSA exponent is small
+	// (commonly 65537), so this only rejects malformed/hostile keys.
+	if !e.IsInt64() {
+		return nil, fmt.Errorf("RSA exponent too large: %d bits", e.BitLen())
+	}
+	ev := e.Int64()
+	if ev < int64(2) || ev > int64(maxInt) {
+		return nil, fmt.Errorf("RSA exponent out of range: %d", ev)
+	}
+
+	return &rsa.PublicKey{N: n, E: int(ev)}, nil
 }
+
+// maxInt is the platform int ceiling, used to confirm a 64-bit RSA exponent
+// fits an int before the narrowing conversion in parseRSAKey.
+const maxInt = int64(^uint(0) >> 1)

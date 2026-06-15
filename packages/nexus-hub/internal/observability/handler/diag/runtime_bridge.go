@@ -49,7 +49,8 @@ type runtimeBridgeMeta struct {
 func (a *RuntimeBridgeAPI) Runtime(c echo.Context) error {
 	id := c.Param("id")
 	if id == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "id is required"})
+		// Canonical {error, code} envelope via the package error helper.
+		return badRequest(c, "id is required")
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
@@ -57,10 +58,11 @@ func (a *RuntimeBridgeAPI) Runtime(c echo.Context) error {
 
 	meta, metricsURL, err := a.fetchMeta(ctx, id)
 	if err != nil {
+		// Canonical {error, code} envelope via the package error helpers.
 		if errors.Is(err, pgx.ErrNoRows) {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "thing not found"})
+			return notFound(c, "thing not found")
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return internalError(c, err.Error())
 	}
 	if meta.ThingType == "agent" {
 		return c.JSON(http.StatusNotImplemented, map[string]any{

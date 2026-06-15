@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,26 +18,26 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/host/updater"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/attestation"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/auth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/enrollment"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/bootstrap"
 	lifecycle "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/state"
 	auditevent "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/event"
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/backpressure"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/diag"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/diagnostics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/localrollup"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/exemption"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/hub"
 	config "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/schema"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/shadow"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/status"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
-	sharedintro "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 	metricsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
@@ -47,55 +46,51 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/cmd/agent/wiring"
 )
 
-// emitShutdownGracefully emits an agent.shutdown lifecycle event and
-// then sleeps briefly so the WS outbox has time to flush the message
-// to Hub before the caller cancels the main context. Without the
-// flush window, the WS write pump's select sees ctx.Done at the same
-// instant outCh has a pending diag_event envelope, and exits before
-// the write — losing the shutdown row from Hub's view.
-//
-// Call this at EVERY shutdown-triggering cancel site (signal handler,
-// user-quit flag watcher, status-IPC SHUTDOWN) BEFORE the cancel().
-// 200 ms is empirically enough on a healthy local-Hub round-trip.
-func emitShutdownGracefully(e *lifecycle.Emitter, reason string) {
-	if e == nil {
-		return
-	}
-	e.Shutdown(reason)
-	time.Sleep(200 * time.Millisecond)
-}
-
+// cmdRun drives the enrolled daemon's full lifecycle: flag parsing, the
+// ordered subsystem constructor calls (one wiring call per subsystem — the
+// boot ORDER below is load-bearing), and the shutdown sequencing. Subsystem
+// construction lives in cmd/agent/wiring; per-key shadow config plumbing in
+// configappliers.go / configdispatch.go / configcache.go; IPC command wiring
+// in status_ipc.go.
 func cmdRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	configPath := fs.String("config", "agent.yaml", "path to agent config file")
 	_ = fs.Parse(args)
 
-	// User-controlled lifecycle gate. When the Swift menu-bar app's Quit
-	// handler writes the user-quit flag, every subsequent launchd respawn
-	// of this daemon should exit immediately and stay dead until the
-	// user re-launches NexusAgent.app (which clears the flag).
-	if _, err := os.Stat(userQuitFlagPath()); err == nil {
-		fmt.Fprintf(os.Stderr, "nexus-agent: user-quit flag present at %s — exiting (remove the flag or re-launch the menu-bar app to bring the daemon back)\n", userQuitFlagPath())
-		return 0
-	}
-
 	cfg, err := config.LoadFromFile(*configPath)
 	if err != nil {
+		// Config can't load → the quitAllowed policy is unknowable. Preserve the
+		// historical fast-exit when the user-quit flag is present so a quit +
+		// broken-config combination does not respawn-loop under launchd; a
+		// broken-config daemon cannot enforce compliance anyway, and editing the
+		// root-owned config file requires privilege an unprivileged bypass lacks.
+		if _, statErr := os.Stat(userQuitFlagPath()); statErr == nil {
+			fmt.Fprintf(os.Stderr, "nexus-agent: user-quit flag present and config load failed — exiting\n")
+			return 0
+		}
 		slog.Error("failed to load config", "error", err)
 		return 1
 	}
 
-	logger, err := logging.NewLogger(logging.Config{
-		Level:        cfg.Log.Level,
-		Format:       cfg.Log.Format,
-		File:         cfg.Log.File,
-		StackOnError: cfg.Log.StackOnError,
-	})
+	// User-controlled lifecycle gate. When the Swift menu-bar app's Quit
+	// handler writes the user-quit flag, every subsequent launchd respawn
+	// of this daemon exits immediately and stays dead until the user
+	// re-launches NexusAgent.app (which clears the flag). The check runs AFTER
+	// config load so it can honor the quitAllowed policy: on a quitAllowed=false
+	// fleet the flag is IGNORED, otherwise any local user able to create the
+	// world-readable flag file would defeat the no-quit policy — the same bypass
+	// the IPC SHUTDOWN gate already prevents.
+	startupQuitAllowed := cfg.QuitAllowed == nil || *cfg.QuitAllowed
+	if userQuitFlagShouldExit(userQuitFlagPath(), startupQuitAllowed) {
+		fmt.Fprintf(os.Stderr, "nexus-agent: user-quit flag present at %s — exiting (remove the flag or re-launch the menu-bar app to bring the daemon back)\n", userQuitFlagPath())
+		return 0
+	}
+
+	logger, err := wiring.InitLogger(cfg.Log.Level, cfg.Log.Format, cfg.Log.File, cfg.Log.StackOnError)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
 		return 1
 	}
-	slog.SetDefault(logger)
 
 	// macOS: flush mDNSResponder on every daemon startup so launchd
 	// respawns, OS reboots, and manual restarts all leave the user's
@@ -107,11 +102,7 @@ func cmdRun(args []string) int {
 	flushMDNSResponderIfDarwin()
 
 	// Check crash loop before full startup.
-	statusFile := cfg.AuditDBPath + ".status"
-	if updater.DetectCrashLoop(os.Args[0], statusFile, 30*time.Second) {
-		slog.Warn("rolled back to previous version due to crash loop")
-	}
-	_ = updater.WriteStartStatus(statusFile)
+	wiring.InitCrashLoopGuard(os.Args[0], cfg.AuditDBPath)
 
 	// Ops metrics registry (L3 business + Prometheus).
 	opsReg, processStartTime := wiring.InitOpsMetrics()
@@ -121,10 +112,11 @@ func cmdRun(args []string) int {
 	cDir := certDir(cfg)
 	var enrollMgrRef *enrollment.Manager
 	hubClient, err := wiring.InitHubClient(wiring.HubClientConfig{
-		HubHTTPURL: cfg.HubHTTPURL,
-		CertFile:   cfg.CertFile,
-		KeyFile:    cfg.KeyFile,
-		CACertFile: cfg.EffectiveHubCA(),
+		HubHTTPURL:   cfg.HubHTTPURL,
+		CertFile:     cfg.CertFile,
+		KeyFile:      cfg.KeyFile,
+		CACertFile:   cfg.EffectiveHubCA(),
+		DeviceCAFile: filepath.Join(paths.DefaultPaths().StateDir, "device-ca.pem"),
 		DeviceTokenFn: func() string {
 			tok, _ := auth.LoadDeviceToken(cDir)
 			return tok
@@ -141,23 +133,25 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
-	// Enrollment manager.
-	hubEnroller, err := enrollment.NewHubEnrollClient(cfg.HubHTTPURL, cfg.EffectiveHubCA())
+	// Enrollment manager (device-token renewal rides hubClient's HTTP path).
+	// The ONE place the run command constructs the platform keystore (macOS
+	// Keychain / Windows DPAPI / Linux file). Everything downstream takes it
+	// as a parameter so tests can inject a memory store — wiring code opening
+	// the real Keychain under `go test` triggers OS permission prompts
+	// (enforced by scripts/check-keystore-seam.sh).
+	platformKeystore := keystore.NewPlatformStore()
+
+	enrollMgr, hubEnroller, err := wiring.InitEnrollment(cfg.HubHTTPURL, cfg.EffectiveHubCA(), cDir, platformKeystore, hubClient)
 	if err != nil {
 		slog.Error("failed to init hub enroll client", "error", err)
 		return 1
 	}
-	enrollMgr := enrollment.NewManager(
-		cDir,
-		enrollment.WithHubEnroller(hubEnroller),
-		enrollment.WithCertRenewer(hubClient),
-	)
 	enrollMgrRef = enrollMgr
 
 	if !enrollMgr.IsEnrolled() {
 		runCtx, runCancel := context.WithCancel(context.Background())
 		defer runCancel()
-		return runPendingEnrollment(runCtx, cfg, logger, enrollMgr, hubEnroller, hubClient)
+		return runPendingEnrollment(runCtx, cfg, logger, enrollMgr, hubEnroller)
 	}
 	thingID := enrollMgr.ThingID()
 	slog.Info("device enrolled", "thing_id", thingID)
@@ -168,30 +162,17 @@ func cmdRun(args []string) int {
 	// forward-declared for the agent_settings shadow adapter.
 	var statusCollector *status.Collector
 
-	// Hub thingclient (WebSocket primary).
-	var tc *thingclient.Client
-	if cfg.HubURL != "" {
-		deviceToken, tokenErr := auth.LoadDeviceToken(cDir)
-		if tokenErr != nil {
-			logger.Warn("device token not found, audit uploads will use HTTP fallback only", "error", tokenErr)
-		} else {
-			var tcErr error
-			tc, tcErr = wiring.InitThingClient(wiring.ThingClientConfig{
-				HubURL:           cfg.HubURL,
-				HubHTTPURL:       cfg.HubHTTPURL,
-				ThingID:          thingID,
-				Version:          version,
-				DeviceToken:      deviceToken,
-				Logger:           logger,
-				ProcessStart:     processStartTime,
-				OpsReg:           opsReg,
-				ComposeVersionFn: platformshim.ComposeThingVersion,
-			})
-			if tcErr != nil {
-				logger.Warn("thingclient init failed, audit uploads will use HTTP fallback only", "error", tcErr)
-			}
-		}
-	}
+	// Hub thingclient (WebSocket primary; nil keeps HTTP audit upload only).
+	tc := wiring.InitThingClientFromStore(wiring.ThingClientConfig{
+		HubURL:           cfg.HubURL,
+		HubHTTPURL:       cfg.HubHTTPURL,
+		ThingID:          thingID,
+		Version:          version,
+		Logger:           logger,
+		ProcessStart:     processStartTime,
+		OpsReg:           opsReg,
+		ComposeVersionFn: platformshim.ComposeThingVersion,
+	}, cDir)
 
 	// OpenTelemetry.
 	tp, _ := wiring.InitTelemetry(wiring.TelemetryConfig{
@@ -247,12 +228,14 @@ func cmdRun(args []string) int {
 	defer appliers.diagModeLevel.stop()
 
 	// Construct the attestation Signer the bridge wiring installs as
-	// the UpstreamTransport request injector. Reads the Ed25519
-	// private key from <certDir>/attestation-key.pem (written by
-	// enrollment). If the file is absent, InjectInto returns nil
+	// the UpstreamTransport request injector. Reads the Ed25519 private
+	// key from the platform keystore (macOS Keychain / Windows
+	// DPAPI / Linux 0600 file, written there by enrollment), not a
+	// plaintext PEM on disk. If the key is absent, InjectInto returns a nil
 	// header (fail-open) and the request flows unattested.
 	attestationSigner := attestation.NewSigner(
-		filepath.Join(cDir, "attestation-key.pem"),
+		platformKeystore,
+		keystore.AttestationKeyName,
 		thingID,
 		func() bool { return attestationEnabledFlag.Load() },
 		logger,
@@ -285,31 +268,17 @@ func cmdRun(args []string) int {
 
 	// Runtime introspection registry.
 	introspectReg := wiring.InitIntrospect(thingID, version)
-	introspectReg.Register(sharedintro.SourceFunc{
-		SourceName: "config.killswitch",
-		Fn:         func(_ context.Context) (any, error) { return appliers.killSwitchObj.SnapshotState(), nil },
-	})
-	introspectReg.Register(sharedintro.SourceFunc{
-		SourceName: "config.payload_capture",
-		Fn:         func(_ context.Context) (any, error) { return comp.PayloadCaptureStore.Get(), nil },
-	})
+	wiring.RegisterConfigIntrospection(introspectReg, appliers.killSwitchObj, comp.PayloadCaptureStore)
 
 	// Wire Hub config-changed callback onto thingclient.
-	if tc != nil {
-		tc.OnConfigChanged(func(desired map[string]thingclient.ConfigState) (map[string]thingclient.ConfigState, error) {
-			logger.Info("thing config change received", "config_keys", len(desired))
-			reported, applyErr := cfgLoader.Apply(context.Background(), desired)
-			logger.Info("config apply finished", "reported_keys", len(reported))
-			return reported, applyErr
-		})
-	}
+	wiring.WireConfigChanged(tc, cfgLoader, logger)
 
 	// Config reload goroutine (must start before statusCollector is used).
 	configCh := cfgMgr.Subscribe()
 	go startConfigReloadGoroutine(configCh)
 
 	// Audit queue (SQLCipher-encrypted).
-	auditQueue, err := wiring.InitAuditQueue(cfg.AuditDBPath, logger)
+	auditQueue, err := wiring.InitAuditQueue(cfg.AuditDBPath, platformKeystore, logger)
 	if err != nil {
 		slog.Error("failed to open audit queue", "error", err)
 		return 1
@@ -359,22 +328,11 @@ func cmdRun(args []string) int {
 	wiring.WireSnapshotCacheToCollector(statusCollector, comp.PoliciesCache)
 	wiring.WireRecentEvents(statusCollector, auditQueue)
 
-	// Offline config cache. Opened on the audit queue's SQLCipher DB so
-	// applied policy is encrypted at rest alongside the audit log. Placed
-	// after statusCollector so a restored agent_settings entry can reach
-	// every subsystem it touches (the applier reads statusCollector). Once
-	// stored, the loader's per-key persist wrappers mirror every apply
-	// here. Replaying the cache now brings enforcement up immediately —
-	// well before platform interception starts and before the first Hub
-	// pull; a reachable Hub supersedes it via the config-startup refresh,
-	// while an unreachable Hub leaves the agent on last-known policy
-	// (stale but enforced — never fail-closed).
-	if cache, cacheErr := shadow.NewCache(auditQueue.DB()); cacheErr != nil {
-		logger.Warn("config_cache open failed; offline restore disabled", "error", cacheErr)
-	} else {
-		configCache.Store(cache)
-		restoreCachedConfig(ctx, cache, cfgRestoreMap, logger)
-	}
+	// Offline config cache: opened on the audit queue's SQLCipher DB and
+	// replayed now so enforcement comes up on last-known policy immediately.
+	// Placed after statusCollector so a restored agent_settings entry can
+	// reach every subsystem it touches (the applier reads statusCollector).
+	openAndRestoreConfigCache(ctx, auditQueue.DB(), &configCache, cfgRestoreMap, logger)
 
 	staticInfo := metricsplatform.CaptureStaticInfo(metricsplatform.BuildInfo{
 		ServiceVersion: "nexus-agent/" + version,
@@ -382,26 +340,7 @@ func cmdRun(args []string) int {
 	})
 
 	// Thingclient callbacks (disconnect/reconnect/heartbeat).
-	if tc != nil {
-		tc.OnDisconnect(func() { statusCollector.SetGatewayConnected(false) })
-		tc.OnHeartbeatTick(func() { statusCollector.SetLastHeartbeat(time.Now()) })
-		tcLocal, staticInfoLocal := tc, staticInfo
-		tc.OnReconnect(func() {
-			statusCollector.SetGatewayConnected(true)
-			statusCollector.SetLastHeartbeat(time.Now())
-			ctxPush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := tcLocal.UpdateStaticInfo(ctxPush, staticInfoLocal); err != nil {
-				logger.Warn("static_info push failed on reconnect", "error", err)
-			}
-			drained := diagBundle.ReconnectBuffer.Drain()
-			for _, e := range drained {
-				if pushErr := tcLocal.PushDiagEvent(ctxPush, e); pushErr != nil {
-					logger.Debug("reconnect drain push failed", "error", pushErr, "messageHash", e.MessageHash)
-				}
-			}
-		})
-	}
+	wiring.WireThingClientCallbacks(tc, staticInfo, statusCollector, diagBundle, logger)
 
 	// Diag dedup-tick goroutine (10s cadence).
 	go startDiagDedupGoroutine(ctx, tc, diagBundle, recoveryCfg, logger)
@@ -422,13 +361,7 @@ func cmdRun(args []string) int {
 	// reads each oversize body back from local disk and uploads it to S3,
 	// shipping an S3 SpillRef to Hub. The local file stays put so the agent's
 	// own detail view can read it without an S3 GET credential.
-	spillUploader := wiring.InitSpillUploader(hubClient)
-	var spillReader wiring.LocalSpillReader
-	if store, spillErr := wiring.NewLocalSpillStore(); spillErr != nil {
-		logger.Warn("audit drain: local spill store unavailable; oversize bodies will not upload", "error", spillErr)
-	} else {
-		spillReader = store
-	}
+	spillUploader, spillReader := wiring.InitSpillTransport(hubClient, platformKeystore, logger)
 
 	// Drain upload logic. comp.PayloadCaptureStore (Hub-pushed) is the body
 	// UPLOAD gate: when its StoreRequest/ResponseBody flags are off the drain
@@ -438,7 +371,7 @@ func cmdRun(args []string) int {
 	// Audit drain supervisor.
 	var drainWg sync.WaitGroup
 	drainWg.Add(1)
-	go startAuditDrainSupervisor(ctx, auditQueue, &drainWg, drainUpload, recoveryCfg, cfg, logger)
+	go startAuditDrainSupervisor(ctx, auditQueue, &drainWg, drainUpload, recoveryCfg, cfg)
 
 	// Audit prune goroutine.
 	go startAuditPruneGoroutine(ctx, auditQueue, recoveryCfg, cfg)
@@ -451,53 +384,26 @@ func cmdRun(args []string) int {
 	go startExemptionCleanupGoroutine(ctx, comp.ExemptionStore, recoveryCfg)
 	go startExemptionUploadGoroutine(ctx, comp.ExemptionStore, hubClient, thingID, recoveryCfg)
 
+	// Device-token renewal goroutine: rotates the bearer token before
+	// its bounded TTL lapses so a healthy agent never runs an expired token, and
+	// each rotation invalidates the prior token server-side.
+	go startDeviceTokenRenewalGoroutine(ctx, enrollMgr, recoveryCfg)
+
 	// Auto-updater.
-	up := wiring.InitUpdater(hubClient, cfg.UpdaterEnabled, cfg.UpdaterCheckSec, version, runtime.GOOS, os.Args[0])
-	go func() {
-		rcfg := recoveryCfg
-		rcfg.Source = "updater"
-		defer shareddiag.Recover(rcfg, nil)
-		up.RunWithAvailabilityCallback(ctx, statusCollector.SetUpdateAvailable)
-	}()
+	// dataDir is the agent's persistent state directory (AuditDBPath parent),
+	// used to persist the version floor file (updater-floor.json) across restarts.
+	updaterDataDir := filepath.Dir(cfg.AuditDBPath)
+	up := wiring.InitUpdater(hubClient, cfg.UpdaterEnabled, cfg.UpdaterCheckSec, version, runtime.GOOS, os.Args[0], updaterDataDir)
+	wiring.StartUpdater(ctx, up, recoveryCfg, statusCollector.SetUpdateAvailable)
 
 	// Drain pending crash DiagEvents to Hub before opening the WebSocket.
 	drainPendingDiagEvents(ctx, diagBundle, hubClient, cDir, cfg, thingID, logger)
 
-	// Start thingclient.
-	if tc != nil {
-		if err := tc.Start(ctx); err != nil {
-			logger.Warn("thingclient start failed, falling back to HTTP audit upload", "error", err)
-			tc = nil
-		} else {
-			defer func() {
-				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer shutdownCancel()
-				_ = tc.Close(shutdownCtx)
-			}()
-			logger.Info("connected to Hub via thingclient", "thing_id", thingID)
-			tcLocal, staticInfoLocal := tc, staticInfo
-			go func() {
-				rcfg := recoveryCfg
-				rcfg.Source = "static-info-push"
-				defer shareddiag.Recover(rcfg, nil)
-				time.Sleep(500 * time.Millisecond)
-				ctxPush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := tcLocal.UpdateStaticInfo(ctxPush, staticInfoLocal); err != nil {
-					logger.Warn("static_info push failed at startup", "error", err)
-				}
-			}()
-			loaderLocal := cfgLoader
-			go func() {
-				rcfg := recoveryCfg
-				rcfg.Source = "config-startup-refresh"
-				defer shareddiag.Recover(rcfg, nil)
-				time.Sleep(750 * time.Millisecond)
-				refreshCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer cancel()
-				_, _ = loaderLocal.RefreshPullKeys(refreshCtx)
-			}()
-		}
+	// Start thingclient (nil after a failed start → HTTP audit upload fallback).
+	var tcClose func()
+	tc, tcClose = wiring.StartThingClient(ctx, tc, thingID, staticInfo, cfgLoader, recoveryCfg, logger)
+	if tcClose != nil {
+		defer tcClose()
 	}
 
 	// Lifecycle emitter + kill switch + pauser.
@@ -508,64 +414,28 @@ func cmdRun(args []string) int {
 	})
 
 	// SSO auth state for IPC.
-	hostname, _ := os.Hostname()
-	ssoFlow := &enrollment.Flow{
-		HubEnroller: hubEnroller, Manager: enrollMgr, Hostname: hostname,
-		OS: runtime.GOOS, OSVersion: osVersion(), AgentVersion: version,
-		ResolveCpURL: buildResolveCpURL(bootstrapClient),
-	}
-	authState := &ssoAuthState{flow: ssoFlow, mgr: enrollMgr, bootstrap: bootstrapClient}
+	authState := wiring.InitSSOAuth(wiring.SSOAuthConfig{
+		HubEnroller:  hubEnroller,
+		Manager:      enrollMgr,
+		Bootstrap:    bootstrapClient,
+		OSVersion:    osVersion(),
+		AgentVersion: version,
+	})
 
 	// Status server.
 	statusSocketPath := guiSocketPath()
-	statusServer := status.NewServer(
-		statusSocketPath,
-		statusCollector,
-		func() (bool, string, error) {
-			info, err := hubClient.CheckUpdate(ctx, version, runtime.GOOS)
-			if err != nil {
-				return false, "", err
-			}
-			return info.Available, info.Version, nil
-		},
-		func() (bool, string, error) { return true, "", nil }, // config pull no-op
-		func() {
-			emitShutdownGracefully(lifecycleEmitter, "ipc_shutdown")
-			go func() { time.Sleep(250 * time.Millisecond); cancel() }()
-		},
-		auditQueue.QueryEvents,
-		func() bool { q := cfgMgr.Get().QuitAllowed; return q == nil || *q },
-		authState.authenticate,
-	)
-	statusServer.SetConfirmAuthFn(status.ConfirmAuthFn(authState.confirm))
-	statusServer.SetCancelAuthFn(status.CancelAuthFn(authState.cancel))
-	// #88 — wire the AI-only + Since filter path; UI Traffic page sends
-	// `ai_only=1&since=<unix-ms>` URL params to QUERY_EVENTS.
-	statusServer.SetQueryEventsFiltered(func(search, action string, aiOnly bool, sinceMs int64, offset, limit int) ([]auditevent.Event, int, error) {
-		var since time.Time
-		if sinceMs > 0 {
-			since = time.UnixMilli(sinceMs)
-		}
-		return auditQueue.QueryEventsFiltered(auditqueue.QueryEventsFilter{
-			Search: search,
-			Action: action,
-			AIOnly: aiOnly,
-			Since:  since,
-			Offset: offset,
-			Limit:  limit,
-		})
-	})
-	// Detail-by-id: the drawer fetches body + normalized + spill on demand.
-	// Oversize bodies that spilled locally are read back off disk here
-	// (spillReader); bodies already uploaded to S3 stay ref-only (no agent
-	// S3 GET credential) and the UI shows a "view in Control Plane" affordance.
-	statusServer.SetEventByID(func(id string) (*auditevent.Event, error) {
-		ev, err := auditQueue.EventByID(id)
-		if err != nil || ev == nil {
-			return ev, err
-		}
-		wiring.HydrateLocalSpill(ev, spillReader)
-		return ev, nil
+	statusServer := wiring.InitStatusServer(wiring.StatusServerDeps{
+		SocketPath:  statusSocketPath,
+		Collector:   statusCollector,
+		HubClient:   hubClient,
+		Ctx:         ctx,
+		Cancel:      cancel,
+		Version:     version,
+		Emitter:     lifecycleEmitter,
+		AuditQueue:  auditQueue,
+		ConfigMgr:   cfgMgr,
+		Auth:        authState,
+		SpillReader: spillReader,
 	})
 
 	// Wire IPC handlers onto the status server.
@@ -592,24 +462,7 @@ func cmdRun(args []string) int {
 	})
 
 	// OpenBrowser + status API start.
-	browserOpener := wiring.InitOpenBrowser()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if info, err := bootstrapClient.Get(ctx); err == nil && info.ControlPlaneURL != "" {
-			if u, perr := url.Parse(info.ControlPlaneURL); perr == nil && u.Hostname() != "" {
-				browserOpener.SetAllowedHosts(u.Hostname())
-			}
-		}
-	}()
-	statusServer.SetOpenBrowserFn(browserOpener.Open)
-	go func() {
-		rcfg := recoveryCfg
-		rcfg.Source = "status-api"
-		defer shareddiag.Recover(rcfg, nil)
-		_ = statusServer.Start()
-	}()
-	statusServer.SetRuntimeFn(func(ctx context.Context) any { return introspectReg.Snapshot(ctx) })
+	wiring.StartStatusAPI(statusServer, bootstrapClient, introspectReg, recoveryCfg)
 	defer statusServer.Stop()
 
 	slog.Info("agent running", "thing_id", thingID, "heartbeat", cfg.HeartbeatIntervalSec,
@@ -623,6 +476,98 @@ func cmdRun(args []string) int {
 	// Platform + connection bridge.
 	plat := wiring.InitPlatform(cfg.PlatformBridgeAddress)
 
+	// Interception-mode publication + darwin backpressure + health +
+	// diagnostics IPC.
+	wirePlatformReporting(plat, backpressureStore, statusCollector, statusServer, cfg)
+
+	// Build the shared Tier 1+2+3 normalize Registry once (shared with
+	// Hub agent_audit / ai-gateway / compliance-proxy).
+	normalizeRegistry := wiring.InitNormalizeRegistry()
+
+	// Linux/Windows: wire the shared/tlsbump bridge deps onto the platform
+	// BEFORE Start launches the accept loop (no-op on macOS, which wires its
+	// own deps in WireDarwinBridge below).
+	wiring.WireInspectBridge(plat, wiring.BridgeDepsArgs{
+		Keystore:      platformKeystore,
+		Logger:        logger,
+		AgentPipeline: comp.AgentPipeline,
+		// Local capture store (always-on by default) gates body capture in
+		// tlsbump — independent of the Hub upload config.
+		PayloadCaptureStore:  comp.LocalCaptureStore,
+		AuditQueue:           auditQueue,
+		StreamingPolicyStore: comp.StreamingPolicyStore,
+		NormalizeRegistry:    normalizeRegistry,
+		AttestationSigner:    attestationSigner,
+		UpstreamProxy:        cfg.UpstreamProxy,
+	})
+
+	wiring.StartPlatformInterception(ctx, plat, connHandler, recoveryCfg)
+	defer plat.Stop() //nolint:errcheck
+
+	bridgeCloser := platformshim.WireDarwinBridge(context.Background(), plat, platformshim.DarwinBridgeArgs{
+		Keystore:          platformKeystore,
+		Logger:            logger,
+		BridgeAddr:        cfg.MitmBridgeAddr,
+		AgentPipeline:     comp.AgentPipeline,
+		NormalizeRegistry: normalizeRegistry,
+		// Local capture store (always-on by default) gates body capture in the
+		// macOS NE bridge's tlsbump path — independent of the Hub upload config.
+		PayloadCaptureStore:  comp.LocalCaptureStore,
+		AuditQueue:           auditQueue,
+		StreamingPolicyStore: comp.StreamingPolicyStore,
+		AttestationSigner:    attestationSigner,
+	})
+	if bridgeCloser != nil {
+		defer bridgeCloser.Close() //nolint:errcheck
+	}
+
+	// User-quit flag watcher goroutine. Gated on the live quitAllowed policy so a
+	// quitAllowed=false fleet ignores a flag any local user could plant.
+	go startQuitFlagWatcher(ctx, lifecycleEmitter, cancel,
+		func() bool { q := cfgMgr.Get().QuitAllowed; return q == nil || *q },
+		recoveryCfg, logger)
+
+	// Wait for shutdown.
+	select {
+	case sig := <-sigCh:
+		slog.Info("received signal, shutting down", "signal", sig)
+		wiring.EmitShutdownGracefully(lifecycleEmitter, fmt.Sprintf("signal:%v", sig))
+		cancel()
+	case <-ctx.Done():
+		if _, err := os.Stat(userQuitFlagPath()); err != nil {
+			wiring.EmitShutdownGracefully(lifecycleEmitter, "ctx_done")
+		}
+	}
+
+	// Graceful shutdown: wait for audit drain (max 10s).
+	wiring.WaitForAuditDrain(&drainWg, recoveryCfg)
+
+	// macOS: flush DNS cache + restart mDNSResponder right before exit so
+	// the user's network goes cleanly back to native routing. After NE
+	// filter teardown getaddrinfo can hang ~5 s on stale cache entries
+	// while `dig` direct-to-UDP/53 still works — looks exactly like
+	// "I quit the agent and now I can't reach Google." The daemon runs
+	// as root and is the only process at this point with the privs to
+	// killall -HUP mDNSResponder; the menu-bar host cannot. See memory:
+	// feedback_macos_mdns_flush_after_ne_state_change.
+	flushMDNSResponderIfDarwin()
+
+	slog.Info("agent stopped")
+	return 0
+}
+
+// wirePlatformReporting publishes the platform's interception mode, wires the
+// darwin NE backpressure shim, surfaces interception health on the status
+// collector, and installs the diagnostics IPC command. Lives in package main
+// (not wiring) because the darwin backpressure shim comes from platformshim,
+// which itself imports the wiring package.
+func wirePlatformReporting(
+	plat api.Platform,
+	backpressureStore *backpressure.Store,
+	statusCollector *status.Collector,
+	statusServer *status.Server,
+	cfg *config.AgentConfig,
+) {
 	// Publish interception mode.
 	var interceptionModeRef atomic.Pointer[string]
 	if r, ok := plat.(api.InterceptionModeReporter); ok {
@@ -639,6 +584,8 @@ func cmdRun(args []string) int {
 				ConnectionsTotal: h.ConnectionsTotal,
 				ActiveSessions:   h.ActiveSessions,
 				LastFlowAt:       h.LastFlowAt,
+				SelfReported:     h.SelfReported,
+				DegradedReason:   h.DegradedReason,
 			}
 		})
 	}
@@ -661,105 +608,6 @@ func cmdRun(args []string) int {
 			InterceptionMode: s.InterceptionMode, Error: s.Error,
 		}
 	})
-
-	// Build the shared Tier 1+2+3 normalize Registry once (shared with
-	// Hub agent_audit / ai-gateway / compliance-proxy).
-	normalizeRegistry := wiring.InitNormalizeRegistry()
-
-	// Linux/Windows: wire the shared/tlsbump bridge deps onto the platform
-	// BEFORE Start launches the accept loop, so inspect flows bump through
-	// proxy.BumpFlow — the same engine macOS, the compliance proxy, and the
-	// AI gateway use. macOS wires its own deps and starts the NE bridge
-	// listener in WireDarwinBridge below.
-	if runtime.GOOS != "darwin" {
-		if bridgeDeps, depErr := wiring.BuildBridgeDeps(wiring.BridgeDepsArgs{
-			Logger:        logger,
-			AgentPipeline: comp.AgentPipeline,
-			// Local capture store (always-on by default) gates body capture in
-			// tlsbump — independent of the Hub upload config.
-			PayloadCaptureStore:  comp.LocalCaptureStore,
-			AuditQueue:           auditQueue,
-			StreamingPolicyStore: comp.StreamingPolicyStore,
-			NormalizeRegistry:    normalizeRegistry,
-			AttestationSigner:    attestationSigner,
-		}); depErr != nil {
-			logger.Warn("bridge deps build failed; inspect flows fall through to passthrough", "error", depErr)
-		} else if r, ok := plat.(api.BridgeDepsReceiver); ok {
-			r.SetBridgeDeps(bridgeDeps)
-			logger.Info("inspect flows wired through shared/tlsbump.BumpConnection")
-		}
-	}
-
-	go func() {
-		rcfg := recoveryCfg
-		rcfg.Source = "platform-intercept"
-		defer shareddiag.Recover(rcfg, nil)
-		if err := plat.Start(ctx, connHandler); err != nil {
-			slog.Warn("platform interception not available", "error", err)
-		}
-	}()
-	defer plat.Stop() //nolint:errcheck
-
-	bridgeCloser := platformshim.WireDarwinBridge(context.Background(), plat, platformshim.DarwinBridgeArgs{
-		Logger:            logger,
-		BridgeAddr:        cfg.MitmBridgeAddr,
-		AgentPipeline:     comp.AgentPipeline,
-		NormalizeRegistry: normalizeRegistry,
-		// Local capture store (always-on by default) gates body capture in the
-		// macOS NE bridge's tlsbump path — independent of the Hub upload config.
-		PayloadCaptureStore:  comp.LocalCaptureStore,
-		AuditQueue:           auditQueue,
-		StreamingPolicyStore: comp.StreamingPolicyStore,
-		AttestationSigner:    attestationSigner,
-	})
-	if bridgeCloser != nil {
-		defer bridgeCloser.Close() //nolint:errcheck
-	}
-
-	// User-quit flag watcher goroutine.
-	go startQuitFlagWatcher(ctx, lifecycleEmitter, cancel, recoveryCfg, logger)
-
-	// Wait for shutdown.
-	select {
-	case sig := <-sigCh:
-		slog.Info("received signal, shutting down", "signal", sig)
-		emitShutdownGracefully(lifecycleEmitter, fmt.Sprintf("signal:%v", sig))
-		cancel()
-	case <-ctx.Done():
-		if _, err := os.Stat(userQuitFlagPath()); err != nil {
-			emitShutdownGracefully(lifecycleEmitter, "ctx_done")
-		}
-	}
-
-	// Graceful shutdown: wait for audit drain (max 10s).
-	slog.Info("draining audit queue...")
-	drainDone := make(chan struct{})
-	go func() {
-		rcfg := recoveryCfg
-		rcfg.Source = "shutdown-wait"
-		defer shareddiag.Recover(rcfg, nil)
-		drainWg.Wait()
-		close(drainDone)
-	}()
-	select {
-	case <-drainDone:
-		slog.Info("audit queue drained")
-	case <-time.After(10 * time.Second):
-		slog.Warn("audit drain timeout after 10s")
-	}
-
-	// macOS: flush DNS cache + restart mDNSResponder right before exit so
-	// the user's network goes cleanly back to native routing. After NE
-	// filter teardown getaddrinfo can hang ~5 s on stale cache entries
-	// while `dig` direct-to-UDP/53 still works — looks exactly like
-	// "I quit the agent and now I can't reach Google." The daemon runs
-	// as root and is the only process at this point with the privs to
-	// killall -HUP mDNSResponder; the menu-bar host cannot. See memory:
-	// feedback_macos_mdns_flush_after_ne_state_change.
-	flushMDNSResponderIfDarwin()
-
-	slog.Info("agent stopped")
-	return 0
 }
 
 // runPendingEnrollment is the cold-boot path: the daemon's `run` command
@@ -770,11 +618,9 @@ func runPendingEnrollment(
 	logger *slog.Logger,
 	enrollMgr *enrollment.Manager,
 	hubEnroller *enrollment.HubEnrollClient,
-	hubClient *hub.Client,
 ) int {
 	logger.Info("agent starting in pending-enrollment mode (no device cert on disk)")
 	bootstrapClient := bootstrap.New(cfg.HubHTTPURL, bootstrap.DefaultHTTPClient(), cfg.CpURL)
-	_ = hubClient
 	warmBootstrap(ctx, bootstrapClient, logger)
 	hostname, _ := os.Hostname()
 
@@ -782,17 +628,14 @@ func runPendingEnrollment(
 	var enrolledOnce sync.Once
 	signalEnrolled := func() { enrolledOnce.Do(func() { close(enrolledCh) }) }
 
-	ssoFlow := &enrollment.Flow{
-		HubEnroller: hubEnroller, Manager: enrollMgr, Hostname: hostname,
-		OS: runtime.GOOS, OSVersion: osVersion(), AgentVersion: version,
-		ResolveCpURL: buildResolveCpURL(bootstrapClient),
-	}
-	authState := &ssoAuthState{
-		flow:      ssoFlow,
-		mgr:       enrollMgr,
-		bootstrap: bootstrapClient,
-		onSuccess: signalEnrolled,
-	}
+	authState := wiring.InitSSOAuth(wiring.SSOAuthConfig{
+		HubEnroller:  hubEnroller,
+		Manager:      enrollMgr,
+		Bootstrap:    bootstrapClient,
+		OSVersion:    osVersion(),
+		AgentVersion: version,
+		OnSuccess:    signalEnrolled,
+	})
 	tokenEnroll := func(token string) (string, error) {
 		if err := enrollMgr.Enroll(ctx, token, hostname, runtime.GOOS, osVersion(), version); err != nil {
 			return "", err
@@ -816,10 +659,10 @@ func runPendingEnrollment(
 		statusSocketPath, collector,
 		nil, nil, func() {}, nil,
 		func() bool { q := cfg.QuitAllowed; return q == nil || *q },
-		authState.authenticate,
+		authState.Authenticate,
 	)
-	statusServer.SetConfirmAuthFn(authState.confirm)
-	statusServer.SetCancelAuthFn(authState.cancel)
+	statusServer.SetConfirmAuthFn(authState.Confirm)
+	statusServer.SetCancelAuthFn(authState.Cancel)
 	statusServer.SetTokenEnrollFn(tokenEnroll)
 
 	go func() {
@@ -891,19 +734,6 @@ func warmBootstrap(ctx context.Context, c *bootstrap.Client, logger *slog.Logger
 	}()
 }
 
-func buildResolveCpURL(bc *bootstrap.Client) func(ctx context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		info, err := bc.Get(ctx)
-		if err != nil {
-			return "", err
-		}
-		if info.ControlPlaneURL == "" {
-			return "", fmt.Errorf("hub bootstrap returned empty controlPlaneURL")
-		}
-		return info.ControlPlaneURL, nil
-	}
-}
-
 func buildDiagCollector(cfg *config.AgentConfig) *diagnostics.Collector {
 	return &diagnostics.Collector{
 		HubHTTPURL: cfg.HubHTTPURL,
@@ -925,7 +755,22 @@ func writeDaemonPID(pidPath string, logger *slog.Logger) {
 	logger.Info("self-intercept guard: wrote daemon PID for NE filter", "path", pidPath, "pid", os.Getpid())
 }
 
-func startQuitFlagWatcher(ctx context.Context, e *lifecycle.Emitter, cancel context.CancelFunc, recoveryCfg shareddiag.RecoveryConfig, logger *slog.Logger) {
+// userQuitFlagShouldExit reports whether the presence of the user-quit flag
+// must stop the daemon. The flag is a console-user convenience for quitting the
+// agent; on a quitAllowed=false (locked / compliance) fleet it MUST be ignored.
+// Without this gate any local user who can create the flag file — the flag
+// directory is world-writable so the menu-bar app can write it across UIDs —
+// would defeat the no-quit policy, exactly the bypass the IPC SHUTDOWN gate
+// prevents. When quitAllowed is false the flag is not even stat'd.
+func userQuitFlagShouldExit(flagPath string, quitAllowed bool) bool {
+	if !quitAllowed {
+		return false
+	}
+	_, err := os.Stat(flagPath)
+	return err == nil
+}
+
+func startQuitFlagWatcher(ctx context.Context, e *lifecycle.Emitter, cancel context.CancelFunc, quitAllowedFn func() bool, recoveryCfg shareddiag.RecoveryConfig, logger *slog.Logger) {
 	rcfg := recoveryCfg
 	rcfg.Source = "user-quit-flag-watcher"
 	defer shareddiag.Recover(rcfg, nil)
@@ -937,9 +782,9 @@ func startQuitFlagWatcher(ctx context.Context, e *lifecycle.Emitter, cancel cont
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := os.Stat(flagPath); err == nil {
+			if userQuitFlagShouldExit(flagPath, quitAllowedFn()) {
 				slog.Info("user-quit flag detected at runtime, initiating graceful shutdown", "path", flagPath)
-				emitShutdownGracefully(e, "user_quit_flag")
+				wiring.EmitShutdownGracefully(e, "user_quit_flag")
 				cancel()
 				return
 			}
@@ -1070,6 +915,43 @@ func startLocalRollupGoroutine(ctx context.Context, localRollup *localrollup.Agg
 	}
 }
 
+// startDeviceTokenRenewalGoroutine periodically checks whether the device bearer
+// token is within its renewal window and, if so, rotates it. The check
+// is a cheap on-disk read; the hourly cadence against a multi-day renewal window
+// gives ample retries before the token's TTL could lapse. Rotation goes through
+// the HTTP path (hubClient), which reads the token fresh from disk on every
+// call, so all subsequent HTTP calls transparently use the rotated token.
+func startDeviceTokenRenewalGoroutine(ctx context.Context, enrollMgr *enrollment.Manager, recoveryCfg shareddiag.RecoveryConfig) {
+	rcfg := recoveryCfg
+	rcfg.Source = "device-token-renewal"
+	defer shareddiag.Recover(rcfg, nil)
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	renewIfNeeded := func() {
+		if !enrollMgr.DeviceTokenNeedsRenewal(time.Now()) {
+			return
+		}
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := enrollMgr.RenewDeviceToken(rctx); err != nil {
+			slog.Warn("device token renewal failed", "error", err)
+			return
+		}
+		slog.Info("device token renewed")
+	}
+	// Renew opportunistically at startup so a token that lapsed while the agent
+	// was off rotates immediately rather than waiting a full tick.
+	renewIfNeeded()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewIfNeeded()
+		}
+	}
+}
+
 func startExemptionCleanupGoroutine(ctx context.Context, exemptionStore *exemption.Store, recoveryCfg shareddiag.RecoveryConfig) {
 	rcfg := recoveryCfg
 	rcfg.Source = "exemption-cleanup"
@@ -1119,13 +1001,11 @@ func startAuditDrainSupervisor(
 	drainUpload func([]auditevent.Event) error,
 	recoveryCfg shareddiag.RecoveryConfig,
 	cfg *config.AgentConfig,
-	logger *slog.Logger,
 ) {
 	rcfg := recoveryCfg
 	rcfg.Source = "audit-drain"
 	defer shareddiag.Recover(rcfg, nil)
 	defer drainWg.Done()
-	_ = logger
 	interval := time.Duration(cfg.AuditDrainIntervalSec) * time.Second
 	auditQueue.DrainLoop(ctx, interval, cfg.AuditBatchSize, drainUpload)
 }

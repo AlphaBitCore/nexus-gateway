@@ -64,7 +64,6 @@ func (f *fakeOAuthClientStore) Create(_ context.Context, in authstore.CreateInpu
 	return &authstore.OAuthClient{
 		ID: in.ID, Name: in.Name, Type: in.Type,
 		RedirectURIs: in.RedirectURIs, AllowedScopes: in.AllowedScopes,
-		RequirePKCE:       in.RequirePKCE,
 		AccessTTLSeconds:  in.AccessTTLSeconds,
 		RefreshTTLSeconds: in.RefreshTTLSeconds,
 		ClientSecretHash:  in.SecretHash,
@@ -134,7 +133,6 @@ func sampleOAuthClient() *authstore.OAuthClient {
 		ID: "c1", Name: "Sample", Type: "confidential",
 		RedirectURIs:      []string{"https://x/cb"},
 		AllowedScopes:     []string{"openid"},
-		RequirePKCE:       true,
 		AccessTTLSeconds:  3600,
 		RefreshTTLSeconds: 86400,
 		ClientSecretHash:  &hash,
@@ -270,9 +268,6 @@ func TestCreateOAuthClient_PublicNoSecret(t *testing.T) {
 	if store.createCalls[0].SecretHash != nil {
 		t.Fatal("public client create must NOT store a secret hash")
 	}
-	if !store.createCalls[0].RequirePKCE {
-		t.Fatal("public client must force requirePkce=true (defaults override)")
-	}
 }
 
 func TestCreateOAuthClient_AppliesSpecDefaults(t *testing.T) {
@@ -288,7 +283,7 @@ func TestCreateOAuthClient_AppliesSpecDefaults(t *testing.T) {
 		t.Fatalf("code=%d, want 201", rec.Code)
 	}
 	got := store.createCalls[0]
-	if got.Type != "confidential" || !got.RequirePKCE ||
+	if got.Type != "confidential" ||
 		got.AccessTTLSeconds != 3600 || got.RefreshTTLSeconds != 86400 ||
 		len(got.AllowedScopes) != 3 || got.AllowedScopes[0] != "openid" {
 		t.Fatalf("spec defaults not applied: %+v", got)

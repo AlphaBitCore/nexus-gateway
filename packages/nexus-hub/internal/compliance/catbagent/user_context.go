@@ -136,8 +136,11 @@ func (l *AgentUserContextLoader) Load(ctx context.Context, thingID string) (any,
 		updatedAt = orgVer
 	}
 
-	// UnixNano is always positive for real user/org timestamps (post-1678).
-	return out, updatedAt.UnixNano(), nil
+	// timestampVersion guards a zero time.Time → 0; a fully empty result
+	// set (no active assignment, no resolvable org row) otherwise yields a
+	// large negative epoch-predecessor version that the configloader would
+	// treat as stale. Matches every sibling Cat B loader in this package.
+	return out, timestampVersion(updatedAt), nil
 }
 
 // loadOrgAncestors walks the org tree from leafID up to the root via

@@ -533,7 +533,7 @@ func TestEncodeRequest_emptyArrayContent_emptyTextPart(t *testing.T) {
 func TestDecodeResponse_nonChatEndpoint_passthrough(t *testing.T) {
 	var c gemcodec.Codec
 	body := []byte(`{"some":"response"}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeNone, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeNone, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
@@ -545,7 +545,7 @@ func TestDecodeResponse_nonChatEndpoint_passthrough(t *testing.T) {
 
 func TestDecodeResponse_emptyBody_returnsEmpty(t *testing.T) {
 	var c gemcodec.Codec
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, []byte{}, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, []byte{}, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {
@@ -567,7 +567,7 @@ func TestDecodeResponse_chatCompletion_outputShape(t *testing.T) {
 		"candidates":[{"index":0,"content":{"parts":[{"text":"hello"}],"role":"model"},"finishReason":"STOP"}],
 		"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {
@@ -589,7 +589,7 @@ func TestDecodeResponse_chatCompletion_outputShape(t *testing.T) {
 
 func TestDecodeResponse_malformedBody_gracefulFallback(t *testing.T) {
 	var c gemcodec.Codec
-	_, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, []byte(`{not json`), "")
+	_, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, []byte(`{not json`), "", provcore.DecodeContext{})
 	// Defensive: should not propagate a raw parse error.
 	_ = err
 }
@@ -922,7 +922,7 @@ func TestDecodeResponse_usageMetadata_cacheAndThoughtsStamp(t *testing.T) {
 		"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":50,"totalTokenCount":150,
 			"cachedContentTokenCount":30,"thoughtsTokenCount":20}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeGeminiGenerateContent, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)

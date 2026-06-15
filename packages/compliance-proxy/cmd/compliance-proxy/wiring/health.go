@@ -56,6 +56,11 @@ func InitHealthHandler(d HealthDeps) (*http.ServeMux, *runtimeintrospect.Registr
 	// Register shared-hooks regex cache counters on the default registerer
 	// so they are exposed alongside compliance-proxy's own metrics.
 	core.RegisterRegexCacheMetrics(prometheus.DefaultRegisterer)
+	// Register the compliance pipeline metric set (hook decisions /
+	// durations / fail-opens, storage-redaction outcomes) under the nexus
+	// namespace so the pipeline's package-level metrics export on /metrics
+	// instead of recording into their isolated no-op defaults.
+	pipeline.RegisterDefaultMetrics("nexus")
 	mux := health.NewHandler(d.Readiness, shadowProbe, prometheus.DefaultRegisterer)
 
 	// --- Runtime introspection (e31-s7) ---

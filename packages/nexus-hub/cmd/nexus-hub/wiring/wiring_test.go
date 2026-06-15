@@ -205,8 +205,15 @@ func TestCloseMQAndRedis_NilMQ_NonNilRedis(t *testing.T) {
 
 // InitAlerts — struct assembly
 
+// testEncryptionKey is a valid 64-hex (32-byte) CREDENTIAL_ENCRYPTION_KEY for
+// exercising the FU-1 fail-closed boot path; never used outside tests.
+const testEncryptionKey = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
 func TestInitAlerts_ConstructsAllFields(t *testing.T) {
-	res := InitAlerts(nil, testLogger())
+	res, err := InitAlerts(nil, testEncryptionKey, testLogger())
+	if err != nil {
+		t.Fatalf("InitAlerts with a valid key: unexpected error: %v", err)
+	}
 	if res.Store == nil {
 		t.Error("AlertsResult.Store is nil")
 	}
@@ -215,6 +222,30 @@ func TestInitAlerts_ConstructsAllFields(t *testing.T) {
 	}
 	if res.Dispatcher == nil {
 		t.Error("AlertsResult.Dispatcher is nil")
+	}
+}
+
+// FU-1: an EMPTY CREDENTIAL_ENCRYPTION_KEY must fail the hub closed at boot —
+// alert-channel secrets are never silently persisted as cleartext.
+func TestInitAlerts_UnsetEncryptionKey_FailsClosed(t *testing.T) {
+	res, err := InitAlerts(nil, "", testLogger())
+	if err == nil {
+		t.Fatal("InitAlerts with no key: expected a fail-closed error, got nil")
+	}
+	if res.Store != nil {
+		t.Error("AlertsResult must be zero-valued when boot fails closed")
+	}
+}
+
+// FU-1: a set-but-malformed key is also a hard boot error (a typo must never
+// silently downgrade to plaintext).
+func TestInitAlerts_MalformedEncryptionKey_FailsClosed(t *testing.T) {
+	res, err := InitAlerts(nil, "not-valid-hex-or-length", testLogger())
+	if err == nil {
+		t.Fatal("InitAlerts with a malformed key: expected error, got nil")
+	}
+	if res.Store != nil {
+		t.Error("AlertsResult must be zero-valued when boot fails closed")
 	}
 }
 
@@ -641,7 +672,7 @@ func TestWatchPgxpool_CtxAlreadyCancelled(t *testing.T) {
 func TestStartWSSignalSubscriber_NilConsumer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	StartWSSignalSubscriber(ctx, "hub-test", nil, nil, testLogger())
+	StartWSSignalSubscriber(ctx, "hub-test", nil, nil, nil, testLogger())
 }
 
 // registerAlertEvalEngine — nil consumer logs WARN
@@ -836,12 +867,35 @@ func TestGracefulShutdown_WithOpsRes(t *testing.T) {
 	GracefulShutdown(ctx, e, nil, nil, nil, nil, opsRes, testLogger())
 }
 
-// InitNormalizeRegistry — no panic
+// InitNormalizeRegistry — canonical BuildRegistry assembly
 
-func TestInitNormalizeRegistry_NoPanic(t *testing.T) {
-	fn := InitNormalizeRegistry("v1.0.0")
+func TestInitNormalizeRegistry_KeyMissedAnthropicSSELandsAIChat(t *testing.T) {
+	fn := InitNormalizeRegistry()
 	if fn == nil {
-		t.Error("expected non-nil AuditFn")
+		t.Fatal("expected non-nil AuditFn")
+	}
+	// Key-missed capture shape: AdapterType carries a host name, no
+	// endpoint path. The hub registry must be the full BuildRegistry
+	// assembly, whose Tier-1.5 sniff pass lands this on the anthropic
+	// codec — not a Tier-3 verbatim dump.
+	body := []byte("event: message_start\n" +
+		`data: {"type":"message_start","message":{"model":"claude-test","role":"assistant","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n")
+	raw, status, errReason := fn("response", "", "api.anthropic.com", "", "", true, body)
+	if status != "ok" || errReason != "" {
+		t.Fatalf("status=%q errReason=%q, want ok with no error", status, errReason)
+	}
+	if !bytes.Contains(raw, []byte(`"kind":"ai-chat"`)) || !bytes.Contains(raw, []byte(`"detectedSpec":"anthropic-messages"`)) {
+		t.Fatalf("normalized payload missing sniff-pass markers: %s", raw)
 	}
 }
 
@@ -891,50 +945,13 @@ func TestInitConsumerManager_WithConsumer_NoSIEM(t *testing.T) {
 	mgr.Stop()
 }
 
-func TestInitConsumerManager_WithConsumer_WithSIEM_BadURL(t *testing.T) {
-	cfg := minimalHubConfig()
-	cfg.Consumers.Enabled = true
-	cfg.Consumers.BatchSize = 10
-	cfg.Consumers.FlushInterval = 100 * time.Millisecond
-	cfg.Consumers.SIEM.Enabled = true
-	cfg.Consumers.SIEM.URL = "http://%%invalid%%"
-	cfg.Consumers.SIEM.Format = "json"
-	consumer := &fakeMQConsumer{}
-	opsReg := newIsolatedOpsReg()
-	// Bad URL → SIEM forwarder skipped; mgr is still created.
-	mgr := InitConsumerManager(cfg, nil, consumer, opsReg, testLogger())
-	if mgr == nil {
-		t.Error("expected non-nil manager (SIEM init error is non-fatal)")
-	}
-	mgr.Stop()
-}
-
-func TestInitConsumerManager_WithConsumer_WithSIEM_ValidURL(t *testing.T) {
-	cfg := minimalHubConfig()
-	cfg.Consumers.Enabled = true
-	cfg.Consumers.BatchSize = 10
-	cfg.Consumers.FlushInterval = 100 * time.Millisecond
-	cfg.Consumers.SIEM.Enabled = true
-	cfg.Consumers.SIEM.URL = "http://localhost:9999/siem"
-	cfg.Consumers.SIEM.Format = "json"
-	cfg.Consumers.SIEM.BatchSize = 50
-	cfg.Consumers.SIEM.FlushInterval = 100 * time.Millisecond
-	consumer := &fakeMQConsumer{}
-	opsReg := newIsolatedOpsReg()
-	mgr := InitConsumerManager(cfg, nil, consumer, opsReg, testLogger())
-	if mgr == nil {
-		t.Error("expected non-nil manager with SIEM enabled")
-	}
-	mgr.Stop()
-}
-
 // InitScheduler — disabled path
 
 func TestInitScheduler_Disabled_ReturnsNil(t *testing.T) {
 	cfg := minimalHubConfig()
 	cfg.Scheduler.Enabled = false
 	sched, err := InitScheduler(
-		context.Background(), cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, testLogger(),
+		context.Background(), cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, testLogger(),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1104,7 +1121,10 @@ func TestBuildIntrospectReg_AllNilFields(t *testing.T) {
 }
 
 func TestBuildIntrospectReg_WithAlertStore(t *testing.T) {
-	alertsRes := InitAlerts(nil, testLogger())
+	alertsRes, err := InitAlerts(nil, testEncryptionKey, testLogger())
+	if err != nil {
+		t.Fatalf("InitAlerts: %v", err)
+	}
 	ec := EchoConfig{
 		Cfg:          minimalHubConfig(),
 		BuildVersion: "v0",

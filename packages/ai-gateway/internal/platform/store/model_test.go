@@ -186,9 +186,13 @@ func TestFetchModelPricing(t *testing.T) {
 		if len(got) != 2 || got[0].ModelID != "m1" || got[0].InputPricePM != 3.0 {
 			t.Errorf("unexpected: %+v", got)
 		}
+		// A model with set price columns is Priced=true (F-0348).
+		if !got[0].Priced || !got[1].Priced {
+			t.Errorf("priced rows must report Priced=true; got %+v", got)
+		}
 	})
 
-	t.Run("missing id gets zero pricing", func(t *testing.T) {
+	t.Run("missing id gets zero pricing and Priced=false", func(t *testing.T) {
 		mock, db := newMockDB(t)
 		inP := "3.0"
 		outP := "12.0"
@@ -202,6 +206,54 @@ func TestFetchModelPricing(t *testing.T) {
 		}
 		if len(got) != 2 || got[1].ModelID != "missing" || got[1].InputPricePM != 0 {
 			t.Errorf("unexpected: %+v", got)
+		}
+		// F-0348: a model with NO row in the result has no enforceable price —
+		// it must be Priced=false so the downgrade selector skips it, while the
+		// present row is Priced=true.
+		if !got[0].Priced {
+			t.Errorf("present row must be Priced=true; got %+v", got[0])
+		}
+		if got[1].Priced {
+			t.Errorf("missing row must be Priced=false; got %+v", got[1])
+		}
+	})
+
+	t.Run("row with NULL prices is Priced=false", func(t *testing.T) {
+		// F-0348 critical case: the model HAS a row but both price columns are
+		// NULL. The float fields collapse to 0, indistinguishable from a free
+		// model — only Priced=false marks it unpriced so the downgrade selector
+		// fails closed instead of re-pricing it to 0 and bypassing the cap.
+		mock, db := newMockDB(t)
+		mock.ExpectQuery(`FROM "Model"`).
+			WithArgs([]string{"m1"}).
+			WillReturnRows(pgxmock.NewRows([]string{"id", "inputPricePerMillion", "outputPricePerMillion"}).
+				AddRow("m1", nil, nil))
+		got, err := db.FetchModelPricing(context.Background(), []string{"m1"})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if len(got) != 1 || got[0].InputPricePM != 0 || got[0].OutputPricePM != 0 {
+			t.Errorf("null prices must read as 0; got %+v", got)
+		}
+		if got[0].Priced {
+			t.Errorf("row with both prices NULL must be Priced=false; got %+v", got[0])
+		}
+	})
+
+	t.Run("row with only output price set is Priced=true", func(t *testing.T) {
+		// A single set price column is enough to make the model cost-enforceable.
+		mock, db := newMockDB(t)
+		outP := "5.0"
+		mock.ExpectQuery(`FROM "Model"`).
+			WithArgs([]string{"m1"}).
+			WillReturnRows(pgxmock.NewRows([]string{"id", "inputPricePerMillion", "outputPricePerMillion"}).
+				AddRow("m1", nil, &outP))
+		got, err := db.FetchModelPricing(context.Background(), []string{"m1"})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if len(got) != 1 || got[0].InputPricePM != 0 || got[0].OutputPricePM != 5.0 || !got[0].Priced {
+			t.Errorf("output-only price must be Priced=true; got %+v", got)
 		}
 	})
 

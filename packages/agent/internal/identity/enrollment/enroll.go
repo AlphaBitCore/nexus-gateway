@@ -13,12 +13,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/attestation"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/hub"
 	metricsplatform "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 )
@@ -98,32 +101,51 @@ const (
 	StateNeedsReenroll
 )
 
-// CertRenewer is the minimal subset of hub.Client needed to renew a
-// device cert. Defined at the consumer side so tests can inject fakes
-// without wiring a full mTLS client.
-type CertRenewer interface {
-	RenewCert(ctx context.Context, thingID, csrPEM string) (*hub.RenewCertResponse, error)
+// TokenRenewer is the minimal subset of hub.Client needed to rotate the device
+// bearer token. The call authenticates with the current (still-valid)
+// token via the client's injected DeviceToken/ThingID headers, so it carries no
+// arguments. Defined at the consumer side for fake injection in tests.
+type TokenRenewer interface {
+	RenewDeviceToken(ctx context.Context) (*hub.RenewTokenResponse, error)
 }
+
+// DeviceTokenRenewWindow is how long before expiry the agent rotates its device
+// token. With Hub's 30-day TTL this leaves a multi-day window of renewal
+// attempts before the token could lapse, so a transient Hub outage cannot strand
+// the agent on an expired token; rotation happens while the current token is
+// still valid (the refresh-while-valid discipline Hub's renew-token endpoint
+// depends on).
+const DeviceTokenRenewWindow = 7 * 24 * time.Hour
 
 // Manager handles enrollment lifecycle. All exported methods are safe for
 // concurrent use.
 type Manager struct {
-	hubEnroller HubEnroller
-	renewer     CertRenewer
-	certDir     string
-	mu          sync.RWMutex
-	thingID     string
-	state       State
+	hubEnroller  HubEnroller
+	tokenRenewer TokenRenewer
+	certDir      string
+	store        keystore.Store // platform keystore for the attestation key
+	mu           sync.RWMutex
+	thingID      string
+	state        State
 }
 
 // NewManager creates an enrollment manager. certDir is where device
-// artifacts (device.pem, device-key.pem, gateway-ca.pem, device-id,
-// device-token, thing-id) live. Options install the Hub enroller and the
-// optional cert renewer.
+// artifacts (device.pem, device-key.pem, device-id, device-token,
+// thing-id) live. Options install the Hub enroller and the optional
+// device-token renewer. The attestation private key is held in the
+// keystore injected via WithKeyStore, NOT under certDir. Callers MUST
+// inject one: production passes the platform store from its composition
+// root, tests pass keystore.NewMemoryStore(). There is deliberately no
+// platform-store default here — constructing the real Keychain/DPAPI
+// store outside the composition root makes `go test` prompt for OS
+// authorization (enforced by scripts/check-keystore-seam.sh).
 func NewManager(certDir string, opts ...ManagerOption) *Manager {
 	m := &Manager{certDir: certDir}
 	for _, o := range opts {
 		o(m)
+	}
+	if m.store == nil {
+		m.store = keystore.NewMemoryStore()
 	}
 	return m
 }
@@ -131,16 +153,24 @@ func NewManager(certDir string, opts ...ManagerOption) *Manager {
 // ManagerOption configures optional Manager behaviour.
 type ManagerOption func(*Manager)
 
+// WithKeyStore overrides the platform keystore the manager Sets/Deletes
+// the attestation private key in. Production leaves this unset (the real
+// platform store); tests inject keystore.NewMemoryStore() so they never
+// touch the host Keychain/DPAPI.
+func WithKeyStore(store keystore.Store) ManagerOption {
+	return func(m *Manager) { m.store = store }
+}
+
 // WithHubEnroller installs the Hub enrollment client. Required for
 // Enroll / Unenroll to contact the Hub.
 func WithHubEnroller(h HubEnroller) ManagerOption {
 	return func(m *Manager) { m.hubEnroller = h }
 }
 
-// WithCertRenewer installs the cert renewer used by Renew. Optional; when
-// unset, Renew returns an error.
-func WithCertRenewer(r CertRenewer) ManagerOption {
-	return func(m *Manager) { m.renewer = r }
+// WithTokenRenewer installs the device-token renewer used by RenewDeviceToken.
+// Optional; when unset, RenewDeviceToken returns an error.
+func WithTokenRenewer(r TokenRenewer) ManagerOption {
+	return func(m *Manager) { m.tokenRenewer = r }
 }
 
 // IsEnrolled checks if a valid enrollment exists on disk. Requires ALL three
@@ -247,47 +277,33 @@ func (m *Manager) PersistSSOEmail(email string) error {
 	return writeFileAtomic(filepath.Join(m.certDir, "sso-email"), []byte(email), 0600)
 }
 
-// Enroll generates a local keypair, creates a CSR, and asks the Hub to
-// sign it via POST /api/internal/things/enroll. The private key never
-// leaves the device.
+// Enroll generates a local device keypair + self-signed identity cert and
+// registers the device with the Hub via POST /api/internal/things/enroll.
+// The private key never leaves the device. Hub authentication is by the
+// device bearer token Hub mints in the response; the device cert is a
+// local identity artifact only (Hub does not verify it).
 func (m *Manager) Enroll(ctx context.Context, token, hostname, osName, osVersion, agentVersion string) error {
 	if m.hubEnroller == nil {
 		return fmt.Errorf("enrollment: hub enroller is not configured")
 	}
 
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), randReader)
+	keyPEM, certPEM, err := generateDeviceIdentity(hostname)
 	if err != nil {
-		return fmt.Errorf("generate keypair: %w", err)
+		return err
 	}
-
-	csrTemplate := &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: fmt.Sprintf("device-%s", hostname)},
-	}
-	csrDER, err := x509.CreateCertificateRequest(randReader, csrTemplate, privateKey)
-	if err != nil {
-		return fmt.Errorf("create CSR: %w", err)
-	}
-	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
 	if err := os.MkdirAll(m.certDir, 0700); err != nil {
 		return fmt.Errorf("create cert dir: %w", err)
 	}
 
-	keyDER, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return fmt.Errorf("marshal private key: %w", err)
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
 	// Generate a parallel Ed25519 keypair for traffic attestation.
-	// Fail-open — if any step fails we still enroll for mTLS (the
-	// device works without attestation). The Ed25519 private key
-	// never leaves the device; only the CSR is sent.
+	// Fail-open — if any step fails we still enroll (the device works
+	// without attestation). The Ed25519 private key never leaves the
+	// device; only the CSR is sent.
 	attestCsrPEM, attestKeyPEM := generateAttestationKeyMaterial(hostname)
 
 	hubResp, hubErr := m.hubEnroller.Enroll(ctx, token, HubEnrollRequest{
 		Version:           agentVersion,
-		CsrPEM:            string(csrPEM),
 		Hostname:          hostname,
 		OS:                osName,
 		OSVersion:         osVersion,
@@ -297,7 +313,45 @@ func (m *Manager) Enroll(ctx context.Context, token, hostname, osName, osVersion
 	if hubErr != nil {
 		return fmt.Errorf("enrollment failed: %w", hubErr)
 	}
-	return m.persistHubEnrollment(hubResp, keyPEM, attestKeyPEM)
+	return m.persistHubEnrollment(hubResp, keyPEM, certPEM, attestKeyPEM)
+}
+
+// generateDeviceIdentity creates the device's P-256 keypair and a
+// self-signed X.509 identity certificate. The cert is the agent's local
+// identity artifact (used as the mTLS client cert on outbound Hub calls
+// and surfaced in the device status UI); Hub does not verify it, so it is
+// self-signed rather than CA-signed. Returns (keyPEM, certPEM).
+func generateDeviceIdentity(hostname string) (keyPEM, certPEM []byte, err error) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), randReader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate keypair: %w", err)
+	}
+
+	serial, err := rand.Int(randReader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate cert serial: %w", err)
+	}
+	now := time.Now()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: fmt.Sprintf("device-%s", hostname)},
+		NotBefore:    now,
+		NotAfter:     now.AddDate(10, 0, 0),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	certDER, err := x509.CreateCertificate(randReader, tmpl, tmpl, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create device cert: %w", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	keyDER, err := x509.MarshalECPrivateKey(privateKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal private key: %w", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return keyPEM, certPEM, nil
 }
 
 // generateAttestationKeyMaterial produces the Ed25519 keypair + CSR the
@@ -332,26 +386,27 @@ func generateAttestationKeyMaterial(hostname string) (string, []byte) {
 // device-key.pem left a mismatched cert/key pair on disk and every
 // subsequent Hub call failed at tls.X509KeyPair. The atomic-rename pattern
 // matches the updater's swap and the secretstore writer.
-func (m *Manager) persistHubEnrollment(resp *HubEnrollResponse, keyPEM []byte, attestKeyPEM []byte) error {
+func (m *Manager) persistHubEnrollment(resp *HubEnrollResponse, keyPEM, certPEM []byte, attestKeyPEM []byte) error {
 	files := []struct {
 		name    string
 		content string
 	}{
 		// Order matters: write the private key first, then the cert that
-		// references it, then the CA, then the identity files. A crash
-		// between any two leaves the prior pair consistent.
+		// references it, then the identity files. A crash between any two
+		// leaves the prior pair consistent.
 		{"device-key.pem", string(keyPEM)},
-		{"device.pem", resp.CertPEM},
-		{"gateway-ca.pem", resp.CaCertPEM},
+		{"device.pem", string(certPEM)},
 		{"device-id", resp.ID},
 		{"thing-id", resp.ID},
 		{"device-token", resp.DeviceToken},
+		// Device-token expiry. The loop skips empty entries, so a
+		// Hub that predates token expiry leaves no file and the renewal
+		// scheduler treats the token as "renew now" on the first tick.
+		{"device-token-expires", resp.DeviceTokenExpiresAt},
 		{"trust-level", fmt.Sprintf("%d", resp.TrustLevel)},
-		// Attestation artifacts. Both keyed empty when Hub didn't sign
-		// the Ed25519 CSR; the writeFileAtomic loop skips empty entries
-		// so absence-of-file remains the "attestation not available yet"
-		// signal the signer reads.
-		{"attestation-key.pem", string(attestKeyPEM)},
+		// Attestation CERT (public). Empty when Hub didn't sign the Ed25519
+		// CSR; the writeFileAtomic loop skips empty entries. The attestation
+		// PRIVATE KEY is NOT in this on-disk batch — see below.
 		{"attestation.pem", resp.AttestationCertPem},
 	}
 	for _, f := range files {
@@ -360,6 +415,21 @@ func (m *Manager) persistHubEnrollment(resp *HubEnrollResponse, keyPEM []byte, a
 		}
 		if err := writeFileAtomic(filepath.Join(m.certDir, f.name), []byte(f.content), 0600); err != nil {
 			return fmt.Errorf("write %s: %w", f.name, err)
+		}
+	}
+
+	// The Ed25519 attestation private key — whose possession
+	// alone forges traffic attestation and bypasses compliance inspection —
+	// is held in the platform keystore (macOS Keychain / Windows DPAPI /
+	// Linux 0600 file), NOT as a plaintext PEM under certDir, so a host or
+	// backup filesystem read does not hand over the signing key. Skip when
+	// Hub didn't issue an Ed25519 cert (older Hub / attestation off); the
+	// signer reads keystore-absence as "attestation not available yet". A
+	// Set failure fails the enrollment (it is retried) rather than silently
+	// leaving the key unpersisted.
+	if len(attestKeyPEM) > 0 {
+		if err := m.store.Set(keystore.AttestationKeyName, attestKeyPEM); err != nil {
+			return fmt.Errorf("persist attestation key to keystore: %w", err)
 		}
 	}
 
@@ -375,11 +445,12 @@ func (m *Manager) persistHubEnrollment(resp *HubEnrollResponse, keyPEM []byte, a
 // PersistEnrollment writes Hub enrollment artifacts to disk atomically.
 // It is the public counterpart of persistHubEnrollment, used by the SSO
 // enrollment path which calls Hub directly (without the token-based flow).
+// keyPEM / certPEM are the device identity keypair + self-signed cert.
 // The optional attestKeyPEM carries the agent-generated Ed25519 private
 // key matching resp.AttestationCertPem; pass nil from call sites that
 // did not initiate the attestation CSR side-channel.
-func (m *Manager) PersistEnrollment(resp *HubEnrollResponse, keyPEM []byte, attestKeyPEM []byte) error {
-	return m.persistHubEnrollment(resp, keyPEM, attestKeyPEM)
+func (m *Manager) PersistEnrollment(resp *HubEnrollResponse, keyPEM, certPEM []byte, attestKeyPEM []byte) error {
+	return m.persistHubEnrollment(resp, keyPEM, certPEM, attestKeyPEM)
 }
 
 // Unenroll deletes local certs and notifies the Hub via
@@ -396,8 +467,14 @@ func (m *Manager) Unenroll(ctx context.Context) error {
 		}
 	}
 
-	for _, f := range []string{"device.pem", "device-key.pem", "gateway-ca.pem", "device-id", "device-token", "thing-id", "attestation-key.pem", "attestation.pem"} {
+	for _, f := range []string{"device.pem", "device-key.pem", "gateway-ca.pem", "device-id", "device-token", "device-token-expires", "thing-id", "attestation.pem"} {
 		_ = os.Remove(filepath.Join(m.certDir, f))
+	}
+	// The attestation private key lives in the platform keystore,
+	// not under certDir — delete it there so a decommission leaves no usable
+	// signing key behind. Best-effort, mirroring the file removes above.
+	if m.store != nil {
+		_ = m.store.Delete(keystore.AttestationKeyName)
 	}
 
 	m.mu.Lock()
@@ -408,65 +485,73 @@ func (m *Manager) Unenroll(ctx context.Context) error {
 	return nil
 }
 
-// Renew generates a new keypair and CSR, sends it to the Hub for signing
-// via POST /api/internal/things/renew-cert, and replaces the local
-// certificate files. The old private key is overwritten.
-func (m *Manager) Renew(ctx context.Context) error {
-	if m.renewer == nil {
-		return fmt.Errorf("cert renewal: renewer is not configured")
+// DeviceTokenExpiry reads the persisted device-token expiry from disk. Returns
+// the zero time and an error when the expiry file is absent or unparseable —
+// which the renewal scheduler treats as "renew now" so a legacy enrollment
+// without a recorded expiry self-heals onto a bounded token.
+func (m *Manager) DeviceTokenExpiry() (time.Time, error) {
+	path := filepath.Join(m.certDir, "device-token-expires")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read device token expiry: %w", err)
 	}
-	thingID := m.ThingID()
-	if thingID == "" {
-		return fmt.Errorf("cert renewal: thing id is empty, cannot renew")
+	exp, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse device token expiry: %w", err)
+	}
+	return exp, nil
+}
+
+// DeviceTokenNeedsRenewal reports whether the device token is within
+// DeviceTokenRenewWindow of expiry (or its expiry is unknown), as of `now`.
+// True means the renewal scheduler should rotate the token. A missing or
+// unparseable expiry returns true so the agent rotates a legacy/unbounded token
+// rather than running it indefinitely.
+func (m *Manager) DeviceTokenNeedsRenewal(now time.Time) bool {
+	exp, err := m.DeviceTokenExpiry()
+	if err != nil {
+		return true
+	}
+	return !now.Before(exp.Add(-DeviceTokenRenewWindow))
+}
+
+// RenewDeviceToken rotates the device bearer token: it asks Hub for a fresh
+// token (authenticated by the current still-valid token), then atomically
+// replaces the on-disk `device-token` + `device-token-expires` files. Hub
+// overwrites the stored hash as part of the same call, so the previous token is
+// invalidated server-side the moment Hub responds — a stolen token's replay
+// window is bounded by the rotation period.
+//
+// The token file is written before the expiry file: if a crash interleaves the
+// two, the agent is left with the new token (the security-critical artifact) and
+// at worst a stale-shorter expiry, which only triggers an earlier, harmless
+// re-rotation — never a longer-lived token than Hub granted.
+func (m *Manager) RenewDeviceToken(ctx context.Context) error {
+	if m.tokenRenewer == nil {
+		return fmt.Errorf("device token renewal: token renewer is not configured")
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	newKey, err := ecdsa.GenerateKey(elliptic.P256(), randReader)
+	resp, err := m.tokenRenewer.RenewDeviceToken(ctx)
 	if err != nil {
-		return fmt.Errorf("generate renewal keypair: %w", err)
+		return fmt.Errorf("device token renewal request: %w", err)
+	}
+	if resp == nil || resp.DeviceToken == "" {
+		return fmt.Errorf("device token renewal: hub returned an empty token")
 	}
 
-	hostname, _ := os.Hostname()
-	csrTemplate := &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: fmt.Sprintf("device-%s", hostname)},
+	if err := writeFileAtomic(filepath.Join(m.certDir, "device-token"), []byte(resp.DeviceToken), 0600); err != nil {
+		return fmt.Errorf("write rotated device token: %w", err)
 	}
-	csrDER, err := x509.CreateCertificateRequest(randReader, csrTemplate, newKey)
-	if err != nil {
-		return fmt.Errorf("create renewal CSR: %w", err)
-	}
-	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
-
-	resp, err := m.renewer.RenewCert(ctx, thingID, string(csrPEM))
-	if err != nil {
-		return fmt.Errorf("renewal request: %w", err)
-	}
-
-	keyDER, err := x509.MarshalECPrivateKey(newKey)
-	if err != nil {
-		return fmt.Errorf("marshal renewal key: %w", err)
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-
-	// Same atomic-rename + key-first ordering as persistHubEnrollment so a
-	// crash mid-renew does not leave the agent with a mismatched
-	// cert/key pair that would fail every subsequent Hub call.
-	renewedFiles := []struct {
-		name    string
-		content string
-	}{
-		{"device-key.pem", string(keyPEM)},
-		{"device.pem", resp.Certificate},
-		{"gateway-ca.pem", resp.GatewayCA},
-	}
-	for _, f := range renewedFiles {
-		if err := writeFileAtomic(filepath.Join(m.certDir, f.name), []byte(f.content), 0600); err != nil {
-			return fmt.Errorf("write renewed %s: %w", f.name, err)
+	if resp.DeviceTokenExpiresAt != "" {
+		if err := writeFileAtomic(filepath.Join(m.certDir, "device-token-expires"), []byte(resp.DeviceTokenExpiresAt), 0600); err != nil {
+			return fmt.Errorf("write rotated device token expiry: %w", err)
 		}
 	}
 
-	slog.Info("device cert renewed", "expiresAt", resp.ExpiresAt)
+	slog.Info("device token rotated", "expiresAt", resp.DeviceTokenExpiresAt)
 	return nil
 }
 

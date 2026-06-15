@@ -3,12 +3,14 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/kms"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/redisfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 )
@@ -55,6 +57,13 @@ type Config struct {
 	// Hub round-trip on every drawer open. Operators MUST keep both yamls
 	// in sync — drift causes the UI label to misrepresent Hub's rollup.
 	CostPolicy CostPolicyConfig `yaml:"costPolicy"`
+	// SecretCustody is the server-side envelope-custody config. provider "noop"
+	// (default) reads the crown-jewel secrets raw from env
+	// (dev); provider "command" reads them as base64 wrapped blobs and unwraps
+	// each once at boot via the configured KMS/sops/age/vault command. yaml/argv
+	// only — no secret here. Covers CREDENTIAL_ENCRYPTION_KEY / CREDENTIAL_KEY_MAP
+	// / ADMIN_KEY_HMAC_SECRET.
+	SecretCustody kms.CustodyConfig `yaml:"secretCustody"`
 }
 
 // CostPolicyConfig surfaces the same toggles the Hub scheduler reads, so the
@@ -105,12 +114,23 @@ type OtelConfig struct {
 type ServerConfig struct {
 	Port            int           `yaml:"port"`
 	ShutdownTimeout time.Duration `yaml:"shutdownTimeout"`
+	// Host is the bind interface for the HTTP server. Empty (default) binds
+	// all interfaces (":port") — what container / Kubernetes / direct
+	// deployments need. Set to "127.0.0.1" to bind loopback-only (the
+	// single-host appliance, where nginx fronts the service).
+	Host string `yaml:"host"`
 	// AdvertiseHost is the host portion of the URL Hub uses to reach this
 	// service's /metrics + /debug/runtime endpoints (registered via
 	// thingclient as `metricsUrl`). Empty defaults to 127.0.0.1, which is
 	// only correct when Hub and Control Plane run on the same host. Set
 	// explicitly in non-localhost deployments.
 	AdvertiseHost string `yaml:"advertiseHost"`
+}
+
+// BindAddr returns the host:port the HTTP server listens on. Empty Host yields
+// ":port" (all interfaces), preserving the historical default.
+func (s ServerConfig) BindAddr() string {
+	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
 
 // DatabaseConfig holds the PostgreSQL DSN and pgxpool tunables (uniform with
@@ -195,20 +215,30 @@ type HTTPClientConfig struct {
 // All fields are env-only per the "Secrets are env-only" binding (CLAUDE.md).
 // yaml:"-" prevents a stale yaml field from silently overriding the env value.
 type AuthConfig struct {
-	HMACSecret           string `yaml:"-"` // env ADMIN_KEY_HMAC_SECRET — hashes VK/Admin API keys
-	InternalServiceToken string `yaml:"-"` // env INTERNAL_SERVICE_TOKEN — thingclient + hubclient; must match Hub
+	HMACSecret string `yaml:"-"` // env ADMIN_KEY_HMAC_SECRET — single-version HMAC secret (hashes VK/Admin API keys)
+	// HMACKeyMap is the versioned HMAC keyring (env ADMIN_KEY_HMAC_KEY_MAP,
+	// "[*]vN:secret,…"). When set it supersedes HMACSecret:
+	// the *current version hashes new keys and all versions are tried on
+	// admission, so the secret rotates without a fleet lockstep flip. Either this
+	// OR HMACSecret is required. [MUST MATCH] the AI Gateway.
+	HMACKeyMap           string `yaml:"-"`
+	InternalServiceToken string `yaml:"-"` // env INTERNAL_SERVICE_TOKEN — thingclient (WS registration); must match Hub
+	// HubConfigToken authenticates CP's HTTP calls to Hub's config-write
+	// (/api/hub) and admin-alerts (/api/v1/admin/alerts) groups.
+	// env HUB_CONFIG_TOKEN, [MUST MATCH] Hub ONLY. Distinct from
+	// InternalServiceToken so the config-write authority is not the same
+	// credential the data-plane services share for /api/internal/things.
+	HubConfigToken string `yaml:"-"`
 }
 
 // CryptoConfig holds credential encryption settings.
 //
-// EncryptionKey / EncryptionPassphrase / EncryptionSalt / CredentialKeyMap
-// are secrets (env-only). Production is a feature flag — stays in yaml.
+// EncryptionKey / CredentialKeyMap are secrets (env-only).
+// Production is a feature flag — stays in yaml.
 type CryptoConfig struct {
-	EncryptionKey        string `yaml:"-"`          // env CREDENTIAL_ENCRYPTION_KEY
-	EncryptionPassphrase string `yaml:"-"`          // env CREDENTIAL_ENCRYPTION_PASSPHRASE
-	EncryptionSalt       string `yaml:"-"`          // env CREDENTIAL_ENCRYPTION_SALT
-	CredentialKeyMap     string `yaml:"-"`          // env CREDENTIAL_KEY_MAP — "v1:hex,v2:hex"; precedence over single key
-	Production           bool   `yaml:"production"` // feature flag; safe in yaml
+	EncryptionKey    string `yaml:"-"`          // env CREDENTIAL_ENCRYPTION_KEY
+	CredentialKeyMap string `yaml:"-"`          // env CREDENTIAL_KEY_MAP — "v1:hex,v2:hex"; precedence over single key
+	Production       bool   `yaml:"production"` // feature flag; safe in yaml
 }
 
 // AgentConfig holds agent-related settings.
@@ -237,10 +267,46 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnvOverrides(cfg)
+	if err := resolveCustodySecrets(cfg); err != nil {
+		return nil, fmt.Errorf("resolve custody secrets: %w", err)
+	}
 	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return cfg, nil
+}
+
+// resolveCustodySecrets unwraps the crown-jewel root secrets through the
+// SecretCustody provider. With the default "noop" provider
+// this returns each secret's raw env value (byte-identical to reading os.Getenv,
+// preserving today's behavior); with provider "command" each env var holds a
+// base64 wrapped blob that is unwrapped once here at boot. An empty secret stays
+// empty (validate() enforces the required ones); a non-empty secret that fails
+// to unwrap aborts the boot (fail-closed).
+func resolveCustodySecrets(cfg *Config) error {
+	custody, err := kms.NewCustody(cfg.SecretCustody)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	for _, s := range []struct {
+		env string
+		dst *string
+	}{
+		{"CREDENTIAL_ENCRYPTION_KEY", &cfg.Crypto.EncryptionKey},
+		{"CREDENTIAL_KEY_MAP", &cfg.Crypto.CredentialKeyMap},
+		{"ADMIN_KEY_HMAC_SECRET", &cfg.Auth.HMACSecret},
+		{"ADMIN_KEY_HMAC_KEY_MAP", &cfg.Auth.HMACKeyMap},
+	} {
+		v, err := custody.Unwrap(ctx, s.env)
+		if err != nil {
+			return err
+		}
+		if v != "" {
+			*s.dst = v
+		}
+	}
+	return nil
 }
 
 func defaults() *Config {
@@ -300,6 +366,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CONTROL_PLANE_PORT"); v != "" {
 		_, _ = fmt.Sscanf(v, "%d", &cfg.Server.Port)
 	}
+	if v := os.Getenv("CONTROL_PLANE_HOST"); v != "" {
+		cfg.Server.Host = v
+	}
 	if v := os.Getenv("CONTROL_PLANE_PUBLIC_URL"); v != "" {
 		cfg.PublicURL = v
 	}
@@ -319,19 +388,9 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Registry.NexusHubURL = v
 	}
 
-	// Crypto
-	if v := os.Getenv("CREDENTIAL_ENCRYPTION_KEY"); v != "" {
-		cfg.Crypto.EncryptionKey = v
-	}
-	if v := os.Getenv("CREDENTIAL_ENCRYPTION_PASSPHRASE"); v != "" {
-		cfg.Crypto.EncryptionPassphrase = v
-	}
-	if v := os.Getenv("CREDENTIAL_ENCRYPTION_SALT"); v != "" {
-		cfg.Crypto.EncryptionSalt = v
-	}
-	if v := os.Getenv("CREDENTIAL_KEY_MAP"); v != "" {
-		cfg.Crypto.CredentialKeyMap = v
-	}
+	// Crypto crown jewels (CREDENTIAL_ENCRYPTION_KEY / CREDENTIAL_KEY_MAP) are
+	// resolved through the SecretCustody loader in Load(),
+	// not read raw here, so they can be KMS-wrapped at rest.
 
 	// Agent
 	if v := os.Getenv("AGENT_CA_DIR"); v != "" {
@@ -361,12 +420,13 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.MQ.NATS.URL = v
 	}
 
-	// Auth — internal service token (shared with nexus-hub).
-	if v := os.Getenv("ADMIN_KEY_HMAC_SECRET"); v != "" {
-		cfg.Auth.HMACSecret = v
-	}
+	// Auth — ADMIN_KEY_HMAC_SECRET is a crown jewel resolved via the
+	// SecretCustody loader in Load(), not read raw here.
 	if v := os.Getenv("INTERNAL_SERVICE_TOKEN"); v != "" {
 		cfg.Auth.InternalServiceToken = v
+	}
+	if v := os.Getenv("HUB_CONFIG_TOKEN"); v != "" {
+		cfg.Auth.HubConfigToken = v
 	}
 
 	// Crypto — production flag (replaces NODE_ENV==production).
@@ -412,6 +472,25 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Auth.InternalServiceToken == "" {
 		return fmt.Errorf("auth.internalServiceToken is required (env INTERNAL_SERVICE_TOKEN; must match Hub)")
+	}
+	// The HMAC secret (resolved through the
+	// SecretCustody loader above) hashes every admin API key + virtual key before
+	// DB lookup. EITHER the single ADMIN_KEY_HMAC_SECRET OR the versioned
+	// ADMIN_KEY_HMAC_KEY_MAP keyring satisfies it (mirrors the credential
+	// single-key-OR-map contract). Required + non-empty, UNCONDITIONALLY (dev and
+	// prod alike, symmetric with the AI Gateway): with neither, every
+	// authenticated request would fail, so fail the boot closed here. wiring then
+	// builds the keyring and injects it via auth.InitHMACKeyring. [MUST MATCH] the
+	// AI Gateway for the shared VK hash.
+	if cfg.Auth.HMACSecret == "" && cfg.Auth.HMACKeyMap == "" {
+		return fmt.Errorf("an HMAC secret is required: set ADMIN_KEY_HMAC_SECRET (single) or ADMIN_KEY_HMAC_KEY_MAP (versioned \"[*]vN:secret\" keyring); hashes admin API keys + virtual keys before DB lookup; [MUST MATCH] AI Gateway")
+	}
+	// CP holds BOTH tokens — InternalServiceToken for WS
+	// registration, HubConfigToken for the /api/hub + admin-alerts HTTP calls.
+	// Required: an empty token would make every Hub config push 403 (Hub also
+	// refuses to boot without it), so fail closed at config load.
+	if cfg.Auth.HubConfigToken == "" {
+		return fmt.Errorf("auth.hubConfigToken is required (env HUB_CONFIG_TOKEN; [MUST MATCH] Hub)")
 	}
 	if len(cfg.Redis.Addrs) == 0 && os.Getenv("REDIS_ADDRS") == "" {
 		return fmt.Errorf("redis.addrs is required (set in yaml or via REDIS_ADDRS env)")

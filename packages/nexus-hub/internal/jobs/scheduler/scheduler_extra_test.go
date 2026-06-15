@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
 	jobstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
 )
 
@@ -929,5 +932,39 @@ func TestNextRunFor_NoCronYetReturnsNil(t *testing.T) {
 	s.mu.RUnlock()
 	if got := s.nextRunFor(e); got != nil {
 		t.Errorf("nextRunFor (no cron) = %v, want nil", got)
+	}
+}
+
+// TestWithMetrics_NilIsNoOp verifies that a nil registerer is accepted
+// without panicking and leaves leaderGauge nil.
+func TestWithMetrics_NilIsNoOp(t *testing.T) {
+	s := New(discardLogger()).WithMetrics(nil)
+	if s.leaderGauge != nil {
+		t.Error("leaderGauge must be nil when registerer is nil")
+	}
+}
+
+// TestWithMetrics_LeaderGaugeSetOnStart verifies that Start() sets the
+// nexus_hub_scheduler_leader gauge to 1 when WithMetrics has been wired.
+// Uses an isolated prometheus.Registry so the test never touches
+// prometheus.DefaultRegisterer (which is process-global and cannot be
+// reset between test runs).
+func TestWithMetrics_LeaderGaugeSetOnStart(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s := New(discardLogger()).WithMetrics(reg)
+	if s.leaderGauge == nil {
+		t.Fatal("leaderGauge must be non-nil after WithMetrics(non-nil)")
+	}
+
+	s.Start()
+	defer s.Stop()
+
+	// Read the gauge value directly via dto.Metric (no Gather needed).
+	var pb dto.Metric
+	if err := s.leaderGauge.Write(&pb); err != nil {
+		t.Fatalf("gauge.Write: %v", err)
+	}
+	if got := pb.GetGauge().GetValue(); got != 1 {
+		t.Errorf("nexus_hub_scheduler_leader = %v, want 1", got)
 	}
 }

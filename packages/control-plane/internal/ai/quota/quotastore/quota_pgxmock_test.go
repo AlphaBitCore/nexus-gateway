@@ -22,35 +22,37 @@ func anyArgs(n int) []any {
 
 var tNow = time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
 
-func sp(s string) *string   { return &s }
-func fp(f float64) *float64 { return &f }
-func i64p(i int64) *int64   { return &i }
+func sp(s string) *string       { return &s }
+func fp(f float64) *float64     { return &f }
+func tp(t time.Time) *time.Time { return &t }
+
+var qoExpiry = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 var qpCols = []string{
 	"id", "name", "description", "scope", "organizationId", "vkType",
-	"periodType", "costLimitUsd", "tokenLimit", "enforcementMode",
+	"periodType", "costLimitUsd", "enforcementMode",
 	"alertThresholds", "priority", "enabled", "createdBy", "createdAt", "updatedAt",
 }
 
 func qpRow(id, name string) []any {
 	return []any{
 		id, name, sp("d"), "organization", sp("org1"), sp("application"),
-		"monthly", fp(100.0), i64p(1_000_000), "hard",
+		"monthly", fp(100.0), "hard",
 		json.RawMessage(`[80,100]`), 10, true, sp("admin"), tNow, tNow,
 	}
 }
 
 // quota override scanQuotaOverride order (11 cols, no targetName).
-var qoCols = []string{"id", "targetType", "targetId", "reason", "costLimitUsd", "tokenLimit", "enforcementMode", "periodType", "createdBy", "createdAt", "updatedAt"}
+var qoCols = []string{"id", "targetType", "targetId", "reason", "costLimitUsd", "enforcementMode", "periodType", "expiresAt", "createdBy", "createdAt", "updatedAt"}
 
 // the List/Get JOIN projection adds targetName as the 4th column (12 cols).
-var qoJoinCols = []string{"id", "targetType", "targetId", "targetName", "reason", "costLimitUsd", "tokenLimit", "enforcementMode", "periodType", "createdBy", "createdAt", "updatedAt"}
+var qoJoinCols = []string{"id", "targetType", "targetId", "targetName", "reason", "costLimitUsd", "enforcementMode", "periodType", "expiresAt", "createdBy", "createdAt", "updatedAt"}
 
 func qoRow(id string) []any {
-	return []any{id, "organization", "org1", sp("vip"), fp(50.0), i64p(500_000), sp("soft"), sp("monthly"), sp("admin"), tNow, tNow}
+	return []any{id, "organization", "org1", sp("vip"), fp(50.0), sp("soft"), sp("monthly"), tp(qoExpiry), sp("admin"), tNow, tNow}
 }
 func qoJoinRow(id, name string) []any {
-	return []any{id, "organization", "org1", name, sp("vip"), fp(50.0), i64p(500_000), sp("soft"), sp("monthly"), sp("admin"), tNow, tNow}
+	return []any{id, "organization", "org1", name, sp("vip"), fp(50.0), sp("soft"), sp("monthly"), tp(qoExpiry), sp("admin"), tNow, tNow}
 }
 
 func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
@@ -91,10 +93,43 @@ func TestListQuotaPolicies_Errors(t *testing.T) {
 	}
 	s3, m3 := newMock(t)
 	bad := qpRow("qp1", "k")
-	bad[12] = "not-a-bool"
+	bad[11] = "not-a-bool" // enabled column (a bool, so a string trips the scan)
 	m3.ExpectQuery(`SELECT COUNT`).WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
 	m3.ExpectQuery(`FROM "QuotaPolicy"`).WithArgs(anyArgs(2)...).WillReturnRows(pgxmock.NewRows(qpCols).AddRow(bad...))
 	if _, _, err := s3.ListQuotaPolicies(context.Background(), QuotaPolicyListParams{Limit: 5}); err == nil {
+		t.Fatal("scan error should surface")
+	}
+}
+
+func TestListEnabledPoliciesForScopes(t *testing.T) {
+	s, m := newMock(t)
+	scopes := []string{"vk", "virtual_key"}
+	m.ExpectQuery(`FROM "QuotaPolicy" WHERE enabled = true AND scope = ANY\(\$1\) ORDER BY priority DESC`).
+		WithArgs(scopes).
+		WillReturnRows(pgxmock.NewRows(qpCols).AddRow(qpRow("qp1", "k")...).AddRow(qpRow("qp2", "k2")...))
+	pols, err := s.ListEnabledPoliciesForScopes(context.Background(), scopes)
+	if err != nil || len(pols) != 2 || pols[0].ID != "qp1" || pols[1].ID != "qp2" {
+		t.Fatalf("ListEnabledPoliciesForScopes: %+v err=%v", pols, err)
+	}
+
+	// Empty scope set short-circuits without a query.
+	if pols, err := s.ListEnabledPoliciesForScopes(context.Background(), nil); err != nil || pols != nil {
+		t.Fatalf("empty scopes → (nil,nil), got %+v %v", pols, err)
+	}
+
+	// Query error surfaces.
+	m.ExpectQuery(`FROM "QuotaPolicy" WHERE enabled = true`).WithArgs([]string{"user"}).WillReturnError(errors.New("boom"))
+	if _, err := s.ListEnabledPoliciesForScopes(context.Background(), []string{"user"}); err == nil {
+		t.Fatal("query error should surface")
+	}
+
+	// Scan error surfaces.
+	s2, m2 := newMock(t)
+	bad := qpRow("qp1", "k")
+	bad[11] = "not-a-bool"
+	m2.ExpectQuery(`FROM "QuotaPolicy" WHERE enabled = true`).WithArgs([]string{"user"}).
+		WillReturnRows(pgxmock.NewRows(qpCols).AddRow(bad...))
+	if _, err := s2.ListEnabledPoliciesForScopes(context.Background(), []string{"user"}); err == nil {
 		t.Fatal("scan error should surface")
 	}
 }
@@ -118,21 +153,21 @@ func TestGetQuotaPolicy(t *testing.T) {
 
 func TestCreateUpdateDeleteQuotaPolicy(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`INSERT INTO "QuotaPolicy"`).WithArgs(anyArgs(13)...).
+	m.ExpectQuery(`INSERT INTO "QuotaPolicy"`).WithArgs(anyArgs(12)...).
 		WillReturnRows(pgxmock.NewRows(qpCols).AddRow(qpRow("qp1", "k")...))
 	if pol, err := s.CreateQuotaPolicy(context.Background(), CreateQuotaPolicyParams{Name: "k", Scope: "organization", PeriodType: "monthly", EnforcementMode: "hard"}); err != nil || pol == nil {
 		t.Fatalf("CreateQuotaPolicy: %+v %v", pol, err)
 	}
-	m.ExpectQuery(`INSERT INTO "QuotaPolicy"`).WithArgs(anyArgs(13)...).WillReturnError(errors.New("boom"))
+	m.ExpectQuery(`INSERT INTO "QuotaPolicy"`).WithArgs(anyArgs(12)...).WillReturnError(errors.New("boom"))
 	if _, err := s.CreateQuotaPolicy(context.Background(), CreateQuotaPolicyParams{}); err == nil {
 		t.Fatal("create error should surface")
 	}
-	m.ExpectQuery(`UPDATE "QuotaPolicy" SET`).WithArgs(anyArgs(13)...).
+	m.ExpectQuery(`UPDATE "QuotaPolicy" SET`).WithArgs(anyArgs(12)...).
 		WillReturnRows(pgxmock.NewRows(qpCols).AddRow(qpRow("qp1", "k")...))
 	if _, err := s.UpdateQuotaPolicy(context.Background(), "qp1", UpdateQuotaPolicyParams{Name: sp("New")}); err != nil {
 		t.Fatalf("UpdateQuotaPolicy: %v", err)
 	}
-	m.ExpectQuery(`UPDATE "QuotaPolicy"`).WithArgs(anyArgs(13)...).WillReturnError(errors.New("boom"))
+	m.ExpectQuery(`UPDATE "QuotaPolicy"`).WithArgs(anyArgs(12)...).WillReturnError(errors.New("boom"))
 	if _, err := s.UpdateQuotaPolicy(context.Background(), "qp1", UpdateQuotaPolicyParams{}); err == nil {
 		t.Fatal("update error should surface")
 	}
@@ -208,10 +243,18 @@ func TestGetQuotaOverrideByTarget(t *testing.T) {
 
 func TestCreateQuotaOverride(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`INSERT INTO "QuotaOverride"`).WithArgs(anyArgs(8)...).
+	// expiresAt is the 7th positional INSERT arg (F-0161); assert it is bound
+	// verbatim and round-trips back through the scan.
+	m.ExpectQuery(`INSERT INTO "QuotaOverride" .*"expiresAt".*VALUES`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), tp(qoExpiry), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(qoCols).AddRow(qoRow("qo1")...))
-	if o, err := s.CreateQuotaOverride(context.Background(), CreateQuotaOverrideParams{TargetType: "organization", TargetID: "org1"}); err != nil || o == nil {
+	o, err := s.CreateQuotaOverride(context.Background(), CreateQuotaOverrideParams{TargetType: "organization", TargetID: "org1", ExpiresAt: tp(qoExpiry)})
+	if err != nil || o == nil {
 		t.Fatalf("CreateQuotaOverride: %+v %v", o, err)
+	}
+	if o.ExpiresAt == nil || !o.ExpiresAt.Equal(qoExpiry) {
+		t.Fatalf("expiresAt not round-tripped: %+v", o.ExpiresAt)
 	}
 	// Unique violation (23505) → ErrQuotaOverrideConflict (a named business failure).
 	m.ExpectQuery(`INSERT INTO "QuotaOverride"`).WithArgs(anyArgs(8)...).WillReturnError(&pgconn.PgError{Code: "23505"})
@@ -227,12 +270,22 @@ func TestCreateQuotaOverride(t *testing.T) {
 
 func TestUpdateDeleteQuotaOverride(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`UPDATE "QuotaOverride" SET`).WithArgs(anyArgs(6)...).
+	// id + reason + (clear,value)×{cost,mode,period} = 8 positional args.
+	m.ExpectQuery(`UPDATE "QuotaOverride" SET`).WithArgs(anyArgs(10)...).
 		WillReturnRows(pgxmock.NewRows(qoCols).AddRow(qoRow("qo1")...))
 	if _, err := s.UpdateQuotaOverride(context.Background(), "qo1", UpdateQuotaOverrideParams{Reason: sp("r")}); err != nil {
 		t.Fatalf("UpdateQuotaOverride: %v", err)
 	}
-	m.ExpectQuery(`UPDATE "QuotaOverride"`).WithArgs(anyArgs(6)...).WillReturnError(errors.New("boom"))
+	// Clear-cost path: the clear flag is true and the value is nil so the CASE
+	// resets the column to NULL (F-0146 "Inherit from policy" on edit). Typed
+	// nils because pgxmock distinguishes (*string)(nil) from an untyped nil.
+	m.ExpectQuery(`UPDATE "QuotaOverride" SET`).
+		WithArgs("qo1", (*string)(nil), true, (*float64)(nil), false, (*string)(nil), false, (*string)(nil), false, (*time.Time)(nil)).
+		WillReturnRows(pgxmock.NewRows(qoCols).AddRow(qoRow("qo1")...))
+	if _, err := s.UpdateQuotaOverride(context.Background(), "qo1", UpdateQuotaOverrideParams{ClearCostLimit: true}); err != nil {
+		t.Fatalf("UpdateQuotaOverride clear-cost: %v", err)
+	}
+	m.ExpectQuery(`UPDATE "QuotaOverride"`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("boom"))
 	if _, err := s.UpdateQuotaOverride(context.Background(), "qo1", UpdateQuotaOverrideParams{}); err == nil {
 		t.Fatal("update error should surface")
 	}

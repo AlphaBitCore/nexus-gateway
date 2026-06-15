@@ -16,7 +16,6 @@ type OAuthClient struct {
 	Type              string    `db:"type"`
 	RedirectUris      []string  `db:"redirect_uris"`
 	AllowedScopes     []string  `db:"allowed_scopes"`
-	RequirePkce       bool      `db:"require_pkce"`
 	AccessTtlSeconds  int32     `db:"access_ttl_seconds"`
 	RefreshTtlSeconds int32     `db:"refresh_ttl_seconds"`
 	ClientSecretHash  *string   `db:"client_secret_hash"`

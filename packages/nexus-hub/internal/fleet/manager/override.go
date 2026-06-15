@@ -127,6 +127,15 @@ func (m *Manager) SetOverride(ctx context.Context, req SetOverrideRequest) (*sto
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Serialize the per-type desired_ver bump against the type-fanout path
+	// (UpdateConfig) so an override and a concurrent type-wide update cannot
+	// collide on the same desired_ver for this Thing. MUST be the
+	// first statement in the tx for consistent lock ordering. See
+	// store.AcquireConfigVersionLock.
+	if err := m.store.RegistryStore().AcquireConfigVersionLock(ctx, tx, thing.Type); err != nil {
+		return nil, fmt.Errorf("acquire config version lock: %w", err)
+	}
+
 	if err := m.store.OverrideStore().UpsertOverride(ctx, tx, override); err != nil {
 		return nil, fmt.Errorf("upsert override: %w", err)
 	}
@@ -246,6 +255,13 @@ func (m *Manager) ClearOverride(ctx context.Context, thingID, configKey, actor s
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Serialize the per-type desired_ver bump against the type-fanout path
+	// (UpdateConfig) — same rationale and ordering requirement as SetOverride.
+	// See store.AcquireConfigVersionLock.
+	if err := m.store.RegistryStore().AcquireConfigVersionLock(ctx, tx, thing.Type); err != nil {
+		return fmt.Errorf("acquire config version lock: %w", err)
+	}
 
 	existed, err := m.store.OverrideStore().DeleteOverride(ctx, tx, thingID, configKey)
 	if err != nil {

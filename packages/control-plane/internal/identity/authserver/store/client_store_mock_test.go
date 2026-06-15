@@ -27,7 +27,7 @@ func newClientMock(t *testing.T) (pgxmock.PgxPoolIface, *store.ClientStore) {
 // (centralised in clientColumns inside client_store.go). When that constant
 // changes, this slice must change in lockstep.
 var clientRowCols = []string{
-	"id", "name", "type", "redirectUris", "allowedScopes", "requirePkce",
+	"id", "name", "type", "redirectUris", "allowedScopes",
 	"accessTtlSeconds", "refreshTtlSeconds", "clientSecretHash",
 	"lastSecretRotatedAt", "createdAt", "updatedAt",
 }
@@ -42,7 +42,7 @@ func addClientRow(rows *pgxmock.Rows, id, name, ctype string, hash *string, last
 		id, name, ctype,
 		[]string{"http://127.0.0.1:*/callback"},
 		[]string{"openid", "profile"},
-		true, 3600, 86400,
+		3600, 86400,
 		hash, lastRot, clientNow, clientNow,
 	)
 }
@@ -68,7 +68,7 @@ func TestClientStore_GetByID_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if c.ID != "client-1" || c.Type != "confidential" || !c.RequirePKCE {
+	if c.ID != "client-1" || c.Type != "confidential" {
 		t.Fatalf("unexpected row: %+v", c)
 	}
 	if c.AccessTTLSeconds != 3600 || c.RefreshTTLSeconds != 86400 {

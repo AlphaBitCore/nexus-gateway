@@ -6,20 +6,15 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
-// ErrorResponse matches the OpenAPI ErrorResponse schema.
-type ErrorResponse struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
-}
-
 func badRequest(c echo.Context, msg string) error {
-	return c.JSON(http.StatusBadRequest, ErrorResponse{Error: msg, Code: "INVALID_REQUEST"})
+	return c.JSON(http.StatusBadRequest, nexushttperr.ErrJSON(msg, "validation_error", "INVALID_REQUEST"))
 }
 
 func serviceUnavailable(c echo.Context, msg string) error {
-	return c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: msg, Code: "SERVICE_UNAVAILABLE"})
+	return c.JSON(http.StatusServiceUnavailable, nexushttperr.ErrJSON(msg, "service_unavailable", "SERVICE_UNAVAILABLE"))
 }
 
 const thingContextKey = "thing"

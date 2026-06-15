@@ -53,10 +53,15 @@ func ConnectionStage(
 			// the TLS handshake and request parsing). Pass "" and nil modalities
 			// to preserve existing behavior — all hooks that declare
 			// SupportsEndpoint("") == true will be included.
+			// strictFailClosed=false here: the connection-stage error handler below
+			// deliberately fails open (CONNECT predates request parsing; refusing at
+			// connect time is the wrong layer), so passing true would be a misleading
+			// no-op. The request/response stages are the real fail-closed enforcement
+			// surface. Build errors here skip the connection-stage pipeline.
 			pipe, err := resolver.BuildPipeline(
 				"connection", ingress,
 				"", nil,
-				perHookTimeout, totalTimeout, false, logger,
+				perHookTimeout, totalTimeout, false, false, logger,
 			)
 			if err != nil {
 				logger.Warn("connection-stage pipeline build error; failing open", "error", err)

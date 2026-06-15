@@ -115,6 +115,94 @@ func expectEmptyAssembleBlob(mock pgxmock.PgxPoolIface) {
 		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "enabled", "config", "expires_at", "enabled_by", "reason"}))
 }
 
+// F-0131: SourceState is the config-drift reconciler's SourceLoader. It must
+// assemble the gateway_passthrough source-of-truth blob from the three
+// gateway_passthrough_config_* tables — identical to what propagateConfig
+// pushes — so the drift diff compares CP tables against thing.desired, not a
+// Hub-written thing_config_template (which could never reveal a dropped push).
+func TestSourceState_AssemblesBlobFromConfigTables(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+
+	exp := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`FROM gateway_passthrough_config_global`).
+		WillReturnRows(pgxmock.NewRows([]string{"enabled", "config", "expires_at", "enabled_by", "reason"}).
+			AddRow(true, []byte(`{"bypassHooks":true,"bypassCache":false,"bypassNormalize":false}`), &exp, "admin-1", "global outage"))
+	mock.ExpectQuery(`FROM gateway_passthrough_config_adapter`).
+		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "enabled", "config", "expires_at", "enabled_by", "reason"}).
+			AddRow("anthropic", true, []byte(`{"bypassHooks":false,"bypassCache":true,"bypassNormalize":false}`), &exp, "admin-2", "adapter bypass"))
+	mock.ExpectQuery(`FROM gateway_passthrough_config_provider`).
+		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "enabled", "config", "expires_at", "enabled_by", "reason"}).
+			AddRow("prov-9", false, []byte(`{"bypassHooks":false,"bypassCache":false,"bypassNormalize":true}`), &exp, "admin-3", "provider bypass"))
+
+	raw, err := SourceState(context.Background(), mock)
+	if err != nil {
+		t.Fatalf("SourceState: %v", err)
+	}
+
+	var got blob
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal SourceState output: %v", err)
+	}
+
+	// Per-tier flags are preserved verbatim — SourceState does NOT collapse
+	// tiers (the runtime OR-merge happens in the gateway, not here).
+	if !got.Global.Enabled || !got.Global.BypassHooks || got.Global.BypassCache {
+		t.Errorf("global tier wrong: %+v", got.Global)
+	}
+	if got.Global.Reason != "global outage" || got.Global.EnabledBy != "admin-1" {
+		t.Errorf("global metadata wrong: %+v", got.Global)
+	}
+	a, ok := got.Adapters["anthropic"]
+	if !ok || !a.Enabled || a.BypassHooks || !a.BypassCache {
+		t.Errorf("adapter tier wrong: %+v", got.Adapters)
+	}
+	p, ok := got.Providers["prov-9"]
+	if !ok || p.Enabled || !p.BypassNormalize {
+		t.Errorf("provider tier wrong: %+v", got.Providers)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// F-0131: SourceState on an unseeded fleet marshals to the zero blob with
+// initialized (non-nil) maps, matching what an ai-gateway with no passthrough
+// config carries in thing.desired — so the content diff does not thrash.
+func TestSourceState_EmptyFleetZeroBlob(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatalf("pgxmock.NewPool: %v", err)
+	}
+	defer mock.Close()
+	expectEmptyAssembleBlob(mock)
+
+	raw, err := SourceState(context.Background(), mock)
+	if err != nil {
+		t.Fatalf("SourceState: %v", err)
+	}
+	var got blob
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Global.Enabled {
+		t.Errorf("expected disabled global on empty fleet; got %+v", got.Global)
+	}
+	if got.Adapters == nil || got.Providers == nil {
+		t.Errorf("expected non-nil adapter/provider maps; got %+v", got)
+	}
+	if len(got.Adapters) != 0 || len(got.Providers) != 0 {
+		t.Errorf("expected empty maps; got %+v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
 // validBody returns a marshaled enabled-true payload with sane defaults.
 func validBody(t *testing.T) string {
 	t.Helper()
@@ -204,7 +292,6 @@ func TestRegisterRoutes_IAMDeniesUnauthenticated(t *testing.T) {
 		{http.MethodGet, "/api/admin/passthrough/provider/prov-1"},
 		{http.MethodPut, "/api/admin/passthrough/provider/prov-1"},
 		{http.MethodDelete, "/api/admin/passthrough/provider/prov-1"},
-		{http.MethodGet, "/api/admin/passthrough/effective/prov-1"},
 		{http.MethodGet, "/api/admin/passthrough/snapshot"},
 	}
 	for _, p := range probes {
@@ -810,78 +897,6 @@ func TestDeleteProvider_HubPropagationError(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if rec.Code != http.StatusBadGateway {
-		t.Errorf("code = %d", rec.Code)
-	}
-}
-
-func TestGetEffective_NotFound(t *testing.T) {
-	mock, h := newMockHandler(t, nil)
-	mock.ExpectQuery(`FROM gateway_passthrough_config_effective WHERE provider_id`).
-		WithArgs("missing").
-		WillReturnRows(pgxmock.NewRows([]string{"enabled", "config", "expires_at", "reason"}))
-	c, rec := echoCtxWithUser(http.MethodGet, "/passthrough/effective/missing", "")
-	c = withParam(c, "provider_id", "missing")
-	if err := h.GetEffective(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("code = %d", rec.Code)
-	}
-}
-
-func TestGetEffective_HappyPath(t *testing.T) {
-	mock, h := newMockHandler(t, nil)
-	exp := time.Now().Add(1 * time.Hour)
-	reason := "incident-123"
-	mock.ExpectQuery(`FROM gateway_passthrough_config_effective WHERE provider_id`).
-		WithArgs("prov-1").
-		WillReturnRows(pgxmock.NewRows([]string{"enabled", "config", "expires_at", "reason"}).
-			AddRow(true, []byte(`{"bypassHooks":true,"bypassCache":true}`), &exp, &reason))
-	c, rec := echoCtxWithUser(http.MethodGet, "/passthrough/effective/prov-1", "")
-	c = withParam(c, "provider_id", "prov-1")
-	if err := h.GetEffective(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Errorf("code = %d", rec.Code)
-	}
-	var p payload
-	_ = json.Unmarshal(rec.Body.Bytes(), &p)
-	if !p.Enabled || !p.BypassHooks || !p.BypassCache || p.Reason != reason {
-		t.Errorf("decoded mismatch: %+v", p)
-	}
-}
-
-func TestGetEffective_NullReasonOmitted(t *testing.T) {
-	mock, h := newMockHandler(t, nil)
-	exp := time.Now().Add(1 * time.Hour)
-	mock.ExpectQuery(`FROM gateway_passthrough_config_effective WHERE provider_id`).
-		WithArgs("prov-1").
-		WillReturnRows(pgxmock.NewRows([]string{"enabled", "config", "expires_at", "reason"}).
-			AddRow(false, []byte(`{}`), &exp, (*string)(nil)))
-	c, rec := echoCtxWithUser(http.MethodGet, "/passthrough/effective/prov-1", "")
-	c = withParam(c, "provider_id", "prov-1")
-	if err := h.GetEffective(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	var p payload
-	_ = json.Unmarshal(rec.Body.Bytes(), &p)
-	if p.Reason != "" {
-		t.Errorf("Reason = %q; want empty", p.Reason)
-	}
-}
-
-func TestGetEffective_DBError(t *testing.T) {
-	mock, h := newMockHandler(t, nil)
-	mock.ExpectQuery(`FROM gateway_passthrough_config_effective`).
-		WithArgs("prov-1").
-		WillReturnError(errors.New("io"))
-	c, rec := echoCtxWithUser(http.MethodGet, "/passthrough/effective/prov-1", "")
-	c = withParam(c, "provider_id", "prov-1")
-	if err := h.GetEffective(c); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("code = %d", rec.Code)
 	}
 }

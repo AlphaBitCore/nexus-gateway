@@ -15,29 +15,29 @@ var ErrQuotaOverrideConflict = errors.New("quota override already exists for thi
 
 // QuotaOverride represents a row from the QuotaOverride table.
 type QuotaOverride struct {
-	ID              string    `json:"id"`
-	TargetType      string    `json:"targetType"`
-	TargetID        string    `json:"targetId"`
-	TargetName      string    `json:"targetName"`
-	Reason          *string   `json:"reason"`
-	CostLimitUsd    *float64  `json:"costLimitUsd"`
-	TokenLimit      *int64    `json:"tokenLimit"`
-	EnforcementMode *string   `json:"enforcementMode"`
-	PeriodType      *string   `json:"periodType"`
-	CreatedBy       *string   `json:"createdBy"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID              string     `json:"id"`
+	TargetType      string     `json:"targetType"`
+	TargetID        string     `json:"targetId"`
+	TargetName      string     `json:"targetName"`
+	Reason          *string    `json:"reason"`
+	CostLimitUsd    *float64   `json:"costLimitUsd"`
+	EnforcementMode *string    `json:"enforcementMode"`
+	PeriodType      *string    `json:"periodType"`
+	ExpiresAt       *time.Time `json:"expiresAt"`
+	CreatedBy       *string    `json:"createdBy"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 const quotaOverrideColumns = `id, "targetType", "targetId", reason,
-	"costLimitUsd"::double precision, "tokenLimit", "enforcementMode", "periodType",
+	"costLimitUsd"::double precision, "enforcementMode", "periodType", "expiresAt",
 	"createdBy", "createdAt", "updatedAt"`
 
 func scanQuotaOverride(row pgx.Row) (*QuotaOverride, error) {
 	var o QuotaOverride
 	err := row.Scan(
 		&o.ID, &o.TargetType, &o.TargetID, &o.Reason,
-		&o.CostLimitUsd, &o.TokenLimit, &o.EnforcementMode, &o.PeriodType,
+		&o.CostLimitUsd, &o.EnforcementMode, &o.PeriodType, &o.ExpiresAt,
 		&o.CreatedBy, &o.CreatedAt, &o.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -85,7 +85,7 @@ func (store *Store) ListQuotaOverrides(ctx context.Context, p QuotaOverrideListP
 		SELECT qo.id, qo."targetType", qo."targetId",
 			COALESCE(nu."displayName", org.name, proj.name, vk.name, qo."targetId") AS "targetName",
 			qo.reason,
-			qo."costLimitUsd"::double precision, qo."tokenLimit", qo."enforcementMode", qo."periodType",
+			qo."costLimitUsd"::double precision, qo."enforcementMode", qo."periodType", qo."expiresAt",
 			qo."createdBy", qo."createdAt", qo."updatedAt"
 		FROM "QuotaOverride" qo
 		LEFT JOIN "NexusUser" nu ON qo."targetType" = 'user' AND qo."targetId" = nu.id
@@ -109,7 +109,7 @@ func (store *Store) ListQuotaOverrides(ctx context.Context, p QuotaOverrideListP
 		var o QuotaOverride
 		if err := rows.Scan(
 			&o.ID, &o.TargetType, &o.TargetID, &o.TargetName, &o.Reason,
-			&o.CostLimitUsd, &o.TokenLimit, &o.EnforcementMode, &o.PeriodType,
+			&o.CostLimitUsd, &o.EnforcementMode, &o.PeriodType, &o.ExpiresAt,
 			&o.CreatedBy, &o.CreatedAt, &o.UpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan quota override: %w", err)
@@ -125,7 +125,7 @@ func (store *Store) GetQuotaOverride(ctx context.Context, id string) (*QuotaOver
 		SELECT qo.id, qo."targetType", qo."targetId",
 			COALESCE(nu."displayName", org.name, proj.name, vk.name, qo."targetId") AS "targetName",
 			qo.reason,
-			qo."costLimitUsd"::double precision, qo."tokenLimit", qo."enforcementMode", qo."periodType",
+			qo."costLimitUsd"::double precision, qo."enforcementMode", qo."periodType", qo."expiresAt",
 			qo."createdBy", qo."createdAt", qo."updatedAt"
 		FROM "QuotaOverride" qo
 		LEFT JOIN "NexusUser" nu ON qo."targetType" = 'user' AND qo."targetId" = nu.id
@@ -138,7 +138,7 @@ func (store *Store) GetQuotaOverride(ctx context.Context, id string) (*QuotaOver
 	err := store.pool.QueryRow(ctx, q, id).Scan(
 		&o.ID, &o.TargetType, &o.TargetID, &o.TargetName,
 		&o.Reason,
-		&o.CostLimitUsd, &o.TokenLimit, &o.EnforcementMode, &o.PeriodType,
+		&o.CostLimitUsd, &o.EnforcementMode, &o.PeriodType, &o.ExpiresAt,
 		&o.CreatedBy, &o.CreatedAt, &o.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -166,9 +166,9 @@ type CreateQuotaOverrideParams struct {
 	TargetID        string
 	Reason          *string
 	CostLimitUsd    *float64
-	TokenLimit      *int64
 	EnforcementMode *string
 	PeriodType      *string
+	ExpiresAt       *time.Time
 	CreatedBy       *string
 }
 
@@ -177,14 +177,14 @@ type CreateQuotaOverrideParams struct {
 func (store *Store) CreateQuotaOverride(ctx context.Context, p CreateQuotaOverrideParams) (*QuotaOverride, error) {
 	q := fmt.Sprintf(`
 		INSERT INTO "QuotaOverride" (id, "targetType", "targetId", reason,
-			"costLimitUsd", "tokenLimit", "enforcementMode", "periodType",
+			"costLimitUsd", "enforcementMode", "periodType", "expiresAt",
 			"createdBy", "createdAt", "updatedAt")
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		RETURNING %s
 	`, quotaOverrideColumns)
 	o, err := scanQuotaOverride(store.pool.QueryRow(ctx, q,
 		p.TargetType, p.TargetID, p.Reason,
-		p.CostLimitUsd, p.TokenLimit, p.EnforcementMode, p.PeriodType, p.CreatedBy,
+		p.CostLimitUsd, p.EnforcementMode, p.PeriodType, p.ExpiresAt, p.CreatedBy,
 	))
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -197,27 +197,45 @@ func (store *Store) CreateQuotaOverride(ctx context.Context, p CreateQuotaOverri
 }
 
 // UpdateQuotaOverrideParams holds optional fields for updating a quota override.
+//
+// Each of the three governing columns supports three intents: leave a nil
+// value + Clear=false to keep the current column (partial PATCH); a non-nil
+// value to set it; or Clear=true to reset it to NULL (the "inherit from the
+// matching policy" state the edit form's Inherit option selects). A plain
+// COALESCE cannot express the clear intent — nil would mean both "keep" and
+// "inherit" — so each clearable column carries an explicit Clear flag.
 type UpdateQuotaOverrideParams struct {
-	Reason          *string
-	CostLimitUsd    *float64
-	TokenLimit      *int64
-	EnforcementMode *string
-	PeriodType      *string
+	Reason               *string
+	CostLimitUsd         *float64
+	ClearCostLimit       bool
+	EnforcementMode      *string
+	ClearEnforcementMode bool
+	PeriodType           *string
+	ClearPeriodType      bool
+	ExpiresAt            *time.Time
+	ClearExpiresAt       bool
 }
 
-// UpdateQuotaOverride updates a quota override using COALESCE.
+// UpdateQuotaOverride updates a quota override. Each governing column resolves
+// to NULL when its Clear flag is set, otherwise to the supplied value or, when
+// that is nil, the existing column value (partial PATCH). Clearing "expiresAt"
+// (Inherit/never-expires) restores the override to a permanent exception.
 func (store *Store) UpdateQuotaOverride(ctx context.Context, id string, p UpdateQuotaOverrideParams) (*QuotaOverride, error) {
 	q := fmt.Sprintf(`UPDATE "QuotaOverride" SET
 		reason = COALESCE($2, reason),
-		"costLimitUsd" = COALESCE($3, "costLimitUsd"),
-		"tokenLimit" = COALESCE($4, "tokenLimit"),
-		"enforcementMode" = COALESCE($5, "enforcementMode"),
-		"periodType" = COALESCE($6, "periodType"),
+		"costLimitUsd" = CASE WHEN $3 THEN NULL ELSE COALESCE($4, "costLimitUsd") END,
+		"enforcementMode" = CASE WHEN $5 THEN NULL ELSE COALESCE($6, "enforcementMode") END,
+		"periodType" = CASE WHEN $7 THEN NULL ELSE COALESCE($8, "periodType") END,
+		"expiresAt" = CASE WHEN $9 THEN NULL ELSE COALESCE($10, "expiresAt") END,
 		"updatedAt" = NOW()
 	WHERE id = $1 RETURNING %s`, quotaOverrideColumns)
 
 	o, err := scanQuotaOverride(store.pool.QueryRow(ctx, q, id,
-		p.Reason, p.CostLimitUsd, p.TokenLimit, p.EnforcementMode, p.PeriodType,
+		p.Reason,
+		p.ClearCostLimit, p.CostLimitUsd,
+		p.ClearEnforcementMode, p.EnforcementMode,
+		p.ClearPeriodType, p.PeriodType,
+		p.ClearExpiresAt, p.ExpiresAt,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("update quota override: %w", err)

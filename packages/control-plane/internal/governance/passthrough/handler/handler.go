@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"time"
@@ -98,7 +99,6 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 	g.PUT("/passthrough/provider/:provider_id", h.PutProvider, iamMW(emergency))
 	g.DELETE("/passthrough/provider/:provider_id", h.DeleteProvider, iamMW(write))
 
-	g.GET("/passthrough/effective/:provider_id", h.GetEffective, iamMW(read))
 	g.GET("/passthrough/snapshot", h.GetSnapshot, iamMW(read))
 }
 
@@ -197,17 +197,28 @@ func (h *Handler) propagateConfig(ctx context.Context, actorID, actorName string
 	if err != nil {
 		return fmt.Errorf("assemble passthrough blob: %w", err)
 	}
-	_, err = h.hub.NotifyConfigChange(ctx, hub.ConfigChangeRequest{
-		ThingType: "ai-gateway",
-		ConfigKey: shadowKey,
-		State:     b,
-		ActorID:   actorID,
-		ActorName: actorName,
-	})
+	_, err = hub.PushTypeA(ctx, h.hub, "ai-gateway", shadowKey, b, hub.Actor{ID: actorID, Name: actorName})
 	return err
 }
 
 func (h *Handler) assembleBlob(ctx context.Context) (blob, error) {
+	return assembleBlob(ctx, h.pool)
+}
+
+// BlobQueryer is the minimal read surface assembleBlob needs. Both the
+// handler's pgxQueryer and store.PgxPool satisfy it, so the config-drift
+// reconciler can assemble the exact same source-of-truth blob the admin
+// write path pushes.
+type BlobQueryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// assembleBlob reads the three gateway_passthrough_config_* tables and
+// assembles the {global, adapters, providers} blob. This is the single
+// source-of-truth assembler shared by the admin push path (propagateConfig)
+// and the drift reconciler's SourceLoader (SourceState).
+func assembleBlob(ctx context.Context, pool BlobQueryer) (blob, error) {
 	b := blob{
 		Adapters:  map[string]tierBlob{},
 		Providers: map[string]tierBlob{},
@@ -216,7 +227,7 @@ func (h *Handler) assembleBlob(ctx context.Context) (blob, error) {
 	// Global singleton
 	var gCfg []byte
 	g := tierBlob{}
-	row := h.pool.QueryRow(ctx,
+	row := pool.QueryRow(ctx,
 		`SELECT enabled, config, expires_at, COALESCE(enabled_by, ''), COALESCE(reason, '')
 		   FROM gateway_passthrough_config_global WHERE id = 'singleton'`)
 	if err := row.Scan(&g.Enabled, &gCfg, &g.ExpiresAt, &g.EnabledBy, &g.Reason); err == nil {
@@ -227,7 +238,7 @@ func (h *Handler) assembleBlob(ctx context.Context) (blob, error) {
 	}
 
 	// Adapters
-	rows, err := h.pool.Query(ctx,
+	rows, err := pool.Query(ctx,
 		`SELECT adapter_type, enabled, config, expires_at, COALESCE(enabled_by, ''), COALESCE(reason, '')
 		   FROM gateway_passthrough_config_adapter`)
 	if err != nil {
@@ -247,7 +258,7 @@ func (h *Handler) assembleBlob(ctx context.Context) (blob, error) {
 	rows.Close()
 
 	// Providers
-	prows, err := h.pool.Query(ctx,
+	prows, err := pool.Query(ctx,
 		`SELECT provider_id, enabled, config, expires_at, COALESCE(enabled_by, ''), COALESCE(reason, '')
 		   FROM gateway_passthrough_config_provider`)
 	if err != nil {
@@ -269,6 +280,23 @@ func (h *Handler) assembleBlob(ctx context.Context) (blob, error) {
 	return b, nil
 }
 
+// SourceState assembles the gateway_passthrough source-of-truth blob and
+// marshals it to JSON exactly as propagateConfig pushes it (PushTypeA marshals
+// the same blob struct). The config-drift reconciler's SourceLoader calls this
+// so its content diff compares CP's source-of-truth tables against
+// thing.desired.gateway_passthrough — not a stale thing_config_template row,
+// which Hub itself writes from the last push and therefore can never reveal a
+// dropped push. An empty/unseeded fleet marshals to the zero blob
+// ({global:{...}, adapters:{}, providers:{}}), matching what an ai-gateway with
+// no passthrough config carries in its desired state.
+func SourceState(ctx context.Context, pool BlobQueryer) (json.RawMessage, error) {
+	b, err := assembleBlob(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(b)
+}
+
 func applyTierBypass(raw []byte, t *tierBlob) {
 	if len(raw) == 0 {
 		return
@@ -278,16 +306,6 @@ func applyTierBypass(raw []byte, t *tierBlob) {
 		t.BypassHooks = m["bypassHooks"]
 		t.BypassCache = m["bypassCache"]
 		t.BypassNormalize = m["bypassNormalize"]
-	}
-}
-
-func hubPropagationErrorJSON(detail error) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": "Passthrough config saved locally but propagation to ai-gateway failed; verify Hub health and retry, or wait up to 60s for the reconcile job to recover.",
-			"type":    "propagation_error",
-			"detail":  detail.Error(),
-		},
 	}
 }
 
@@ -357,7 +375,7 @@ func (h *Handler) PutGlobal(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("write global passthrough: "+err.Error(), "server_error", ""))
 	}
 	if err := h.propagateConfig(ctx, actorID, actorName); err != nil {
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 	// Emit audit after both the DB upsert and the Hub propagation have
 	// committed; matches the killswitch handler's ordering so the audit
@@ -417,7 +435,7 @@ func (h *Handler) PutAdapter(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("write adapter passthrough: "+err.Error(), "server_error", ""))
 	}
 	if err := h.propagateConfig(ctx, actorID, actorName); err != nil {
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 	h.emitAudit(c, iam.VerbEmergencyEnable, aType, before, payloadAuditState(body))
 	return c.JSON(http.StatusOK, body)
@@ -437,7 +455,7 @@ func (h *Handler) DeleteAdapter(c echo.Context) error {
 	}
 	actorID, actorName := actor(c)
 	if err := h.propagateConfig(ctx, actorID, actorName); err != nil {
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 	h.emitAudit(c, iam.VerbWrite, aType, before, nil)
 	return c.NoContent(http.StatusNoContent)
@@ -494,7 +512,7 @@ func (h *Handler) PutProvider(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("write provider passthrough: "+err.Error(), "server_error", ""))
 	}
 	if err := h.propagateConfig(ctx, actorID, actorName); err != nil {
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 	h.emitAudit(c, iam.VerbEmergencyEnable, pID, before, payloadAuditState(body))
 	return c.JSON(http.StatusOK, body)
@@ -514,32 +532,10 @@ func (h *Handler) DeleteProvider(c echo.Context) error {
 	}
 	actorID, actorName := actor(c)
 	if err := h.propagateConfig(ctx, actorID, actorName); err != nil {
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 	h.emitAudit(c, iam.VerbWrite, pID, before, nil)
 	return c.NoContent(http.StatusNoContent)
-}
-
-func (h *Handler) GetEffective(c echo.Context) error {
-	pID := c.Param("provider_id")
-	out := payload{}
-	var cfg []byte
-	var reason *string
-	err := h.pool.QueryRow(c.Request().Context(),
-		`SELECT enabled, config, expires_at, reason
-		   FROM gateway_passthrough_config_effective WHERE provider_id = $1`, pID,
-	).Scan(&out.Enabled, &cfg, &out.ExpiresAt, &reason)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return c.JSON(http.StatusNotFound, errJSON("provider not found", "not_found", ""))
-	}
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("read effective passthrough: "+err.Error(), "server_error", ""))
-	}
-	if reason != nil {
-		out.Reason = *reason
-	}
-	out.fillFromJSONB(cfg)
-	return c.JSON(http.StatusOK, out)
 }
 
 // nullableString turns "" into nil to land NULL in the column.
@@ -594,15 +590,8 @@ func (h *Handler) GetSnapshot(c echo.Context) error {
 	})
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 // readTierState is the small per-tier helper that snapshots
 // {enabled, bypassHooks, bypassCache, bypassNormalize, expiresAt, reason}

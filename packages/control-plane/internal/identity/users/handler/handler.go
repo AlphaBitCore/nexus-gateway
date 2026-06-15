@@ -8,6 +8,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -36,6 +37,10 @@ import (
 type HubAPI interface {
 	NotifyConfigChange(ctx context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error)
 	InvalidateConfig(ctx context.Context, thingType, configKey string)
+	// InvalidateConfigE is the error-returning, ledger-backed invalidate used
+	// for security-critical pushes: a failed VK-revoke propagation
+	// surfaces to the caller and is re-driven by ReconcilePending.
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 }
 
 // iamUserStore is the narrow userstore surface the iam handler needs.
@@ -52,7 +57,7 @@ type iamUserStore interface {
 	GetAdminAPIKey(ctx context.Context, id string) (*userstore.AdminAPIKey, error)
 	CreateAdminAPIKey(ctx context.Context, p userstore.CreateAdminAPIKeyParams) (*userstore.AdminAPIKey, error)
 	UpdateAdminAPIKey(ctx context.Context, id string, p userstore.UpdateAdminAPIKeyParams) (*userstore.AdminAPIKey, error)
-	RegenerateAdminAPIKey(ctx context.Context, id, keyHash, keyPrefix string) error
+	RegenerateAdminAPIKey(ctx context.Context, id, keyHash, keyVersion, keyPrefix string) error
 	RotateAdminAPIKey(ctx context.Context, p userstore.RotateAdminAPIKeyParams) (*userstore.RotateAdminAPIKeyResult, error)
 	RetireAdminAPIKey(ctx context.Context, id, targetStatus string) (*userstore.AdminAPIKey, error)
 	DeleteAdminAPIKey(ctx context.Context, id string) error
@@ -234,9 +239,8 @@ func New(d Deps) *Handler {
 	return h
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{"error": map[string]any{"message": message, "type": errType, "code": code}}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 // Actor mirrors handler.Actor.
 type Actor struct {

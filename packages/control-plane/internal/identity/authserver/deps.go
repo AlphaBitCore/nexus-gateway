@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	store "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
@@ -54,4 +55,10 @@ type Deps struct {
 	// without re-typing a password. When nil, that route is not registered (the
 	// SPA falls back to the password path).
 	JWTVerifier *jwtverifier.Verifier
+	// RedisClient is the shared CP Redis handle (the same one backing sessions
+	// and the IAM cache). When non-nil the login rate limiter counts in Redis so
+	// the per-(ip,email) and per-IP budgets hold across replicas and survive a
+	// restart; on any Redis error it degrades to the in-memory limiter. nil =
+	// local-only limiter (single-process / no-Redis dev path).
+	RedisClient redis.UniversalClient
 }

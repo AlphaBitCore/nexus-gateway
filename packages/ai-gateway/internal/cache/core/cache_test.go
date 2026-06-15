@@ -181,6 +181,45 @@ func TestBuildKey_V3_AllowlistVersionAffectsKey(t *testing.T) {
 	}
 }
 
+// TestBuildScopedKey_TenantIsolation is the F-0051 / F-0229 regression guard.
+// Two requests with byte-identical bodies but different tenant scopes must hash
+// to DIFFERENT L1 cache keys when a scope is folded in, while an empty scope
+// preserves fleet-wide dedup AND is byte-identical to the legacy BuildKey.
+func TestBuildScopedKey_TenantIsolation(t *testing.T) {
+	c := newTestCache("ai-gw:")
+	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"temperature":0.7}`)
+
+	// Two different VK scopes, identical body → different keys (isolation).
+	kVKA := c.BuildScopedKey("openai", "gpt-4o", body, "", "vk:vk-A")
+	kVKB := c.BuildScopedKey("openai", "gpt-4o", body, "", "vk:vk-B")
+	if kVKA == kVKB {
+		t.Fatalf("scoped keys collided across VKs: %q == %q", kVKA, kVKB)
+	}
+
+	// Same VK scope, identical body → same key (dedup within tenant).
+	if got := c.BuildScopedKey("openai", "gpt-4o", body, "", "vk:vk-A"); got != kVKA {
+		t.Fatalf("same-scope keys differ: %q != %q", got, kVKA)
+	}
+
+	// Empty scope (vary_by=none) → fleet-wide, and byte-identical to the
+	// legacy unscoped BuildKey so existing v3 entries stay reachable.
+	kNone := c.BuildScopedKey("openai", "gpt-4o", body, "", "")
+	kLegacy := c.BuildKey("openai", "gpt-4o", body, "")
+	if kNone != kLegacy {
+		t.Fatalf("empty scope re-keyed legacy entries: %q != %q", kNone, kLegacy)
+	}
+	if kNone == kVKA {
+		t.Fatalf("empty scope collided with vk-scoped key (no isolation): %q", kNone)
+	}
+
+	// Scope-type prefix prevents a VK id colliding with a same-valued user id.
+	kUserX := c.BuildScopedKey("openai", "gpt-4o", body, "", "user:X")
+	kVKX := c.BuildScopedKey("openai", "gpt-4o", body, "", "vk:X")
+	if kUserX == kVKX {
+		t.Fatalf("user:X and vk:X collided — scope type not folded: %q", kUserX)
+	}
+}
+
 func TestBuildKey_V2_JSONKeyOrderingInvariant(t *testing.T) {
 	// Same prompt with object keys in different orders must hash to
 	// the same key (canonicalizeJSON sorts keys recursively).

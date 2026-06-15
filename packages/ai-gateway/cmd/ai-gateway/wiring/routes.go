@@ -91,7 +91,20 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 		_, _ = fmt.Fprintf(w, `{"status":"ok","service":"ai-gateway"}`)
 	})
 	hookcore.RegisterRegexCacheMetrics(prometheus.DefaultRegisterer)
-	mux.Handle("GET /metrics", promhttp.Handler())
+	// Register the compliance pipeline metric set (hook decisions /
+	// durations / fail-opens, storage-redaction outcomes) under the nexus
+	// namespace so the pipeline's package-level metrics export on /metrics
+	// instead of recording into their isolated no-op defaults.
+	pipeline.RegisterDefaultMetrics("nexus")
+	// /metrics is gated behind the internal-service token. The
+	// ai-gateway HTTP server binds all interfaces on the same port as the
+	// public /v1/* data plane, so an unauthenticated /metrics would expose
+	// request counts, model/provider ids, and cost/latency histograms to
+	// anyone who can reach the port. The compliance-proxy already token-gates
+	// its runtime /metrics; this mirrors that posture using the same
+	// INTERNAL_SERVICE_TOKEN guard the /internal/* operator routes use.
+	metricsGuard := newInternalAuth(deps.Config.Auth.InternalServiceToken)
+	mux.HandleFunc("GET /metrics", metricsGuard.require(promhttp.Handler().ServeHTTP))
 
 	trafficReg := traffic.NewAdapterRegistry("nexus")
 	adapters.RegisterBuiltins(trafficReg)
@@ -159,31 +172,36 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 
 	proxyHandler := proxy.NewHandler(handlerDeps)
 
-	// Internal admin endpoints.
+	// Internal admin endpoints. These are service-to-service operator surfaces
+	// called by the Control Plane BFF, NOT VK data-plane routes — they are
+	// gated on the shared internal-service token (env INTERNAL_SERVICE_TOKEN)
+	// via guard.require. The /v1/* routes below stay on VK auth. Reuse the
+	// same guard instance that gates /metrics above.
+	guard := metricsGuard
 	mux.HandleFunc("POST /internal/provider-test",
-		debug.ProviderTestHandler(deps.ProviderReg, deps.Logger))
+		guard.require(debug.ProviderTestHandler(deps.ProviderReg, deps.Logger)))
 	mux.HandleFunc("POST /internal/routing-simulate",
-		debug.RoutingSimulateHandler(deps.RouterResolver, deps.FormatBridge, deps.Logger))
+		guard.require(debug.RoutingSimulateHandler(deps.RouterResolver, deps.FormatBridge, deps.Logger)))
 	mux.HandleFunc("POST /internal/v1/credentials/{id}/probe",
-		debug.CredentialProbeHandler(deps.CacheLayer, deps.ProviderReg, deps.CredManager, deps.Logger))
+		guard.require(debug.CredentialProbeHandler(deps.CacheLayer, deps.ProviderReg, deps.CredManager, deps.Logger)))
 	mux.HandleFunc("POST /internal/hooks-test",
-		debug.HooksTestHandler(deps.GWHookRegistry, rulePackLister, deps.Logger))
+		guard.require(debug.HooksTestHandler(deps.GWHookRegistry, rulePackLister, deps.Logger)))
 	// Embedding probe: called by CP BFF when admin clicks "Test Embedding" on
 	// the Cache Settings page. Embeddings are request/response only (no stream).
 	mux.HandleFunc("POST /internal/embedding-probe",
-		debug.EmbeddingProbeHandler(deps.UpstreamClient, deps.Logger))
+		guard.require(debug.EmbeddingProbeHandler(deps.UpstreamClient, deps.Logger)))
 	// FAQ pre-warm: called by CP admin API (POST /api/admin/semantic-cache/prewarm).
 	// Delegates embedding + Valkey HSET to the live semantic.Writer. The handler
 	// resolves the embedding provider URL + decrypted API key from ConfigCache +
 	// CredManager (mirrors proxy_l2.go resolution), so CP never forwards credentials.
 	// writer is nil when Redis is unavailable → 503.
 	mux.HandleFunc("POST /internal/semantic-prewarm",
-		debug.SemanticPrewarmHandler(
+		guard.require(debug.SemanticPrewarmHandler(
 			deps.Semantic.Writer,
 			deps.Semantic.ConfigCache,
 			deps.CredManager,
 			deps.Logger,
-		))
+		)))
 
 	// V1 API routes.
 	mux.HandleFunc("POST /v1/chat/completions", proxyHandler.ServeProxy(proxy.Ingress{
@@ -239,11 +257,27 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 		WireShape: typology.WireShapeOpenAIEmbeddings, BodyFormat: provcore.FormatGLM,
 	}))
 
-	// Model catalog + usage.
-	mux.HandleFunc("GET /v1/models", models.ModelsHandler(deps.DB, deps.VKAuth, deps.Logger))
-	mux.HandleFunc("GET /v1/models/{model}", models.ModelDetailHandler(deps.DB, deps.VKAuth, deps.Logger))
-	mux.HandleFunc("GET /v1/usage", envelope.UsageSummaryHandler(deps.DB, deps.VKAuth, deps.QuotaEngine, deps.Logger))
-	mux.HandleFunc("GET /v1/usage/daily", envelope.UsageDailyHandler(deps.DB, deps.VKAuth, deps.Logger))
+	// Model catalog + usage. These authenticated read-only endpoints are
+	// DB-backed and were previously unthrottled: a valid VK could
+	// hammer /v1/models or /v1/usage* with no per-key cap. Wrap them in the
+	// same per-VK RPM limiter the data-plane ServeProxy path enforces so one
+	// key cannot drive unbounded catalog/usage queries.
+	// Pass interface-typed nils when the concrete deps are nil so the wrapper's
+	// nil checks fire correctly (a typed-nil pointer in an interface is not ==
+	// nil). When either is absent the wrapper degrades to pass-through.
+	var readAuth readVKAuthenticator
+	if deps.VKAuth != nil {
+		readAuth = deps.VKAuth
+	}
+	var readLimiter readRateLimiter
+	if deps.RateLimiter != nil {
+		readLimiter = deps.RateLimiter
+	}
+	readRL := vkReadRateLimit(readAuth, readLimiter, deps.Logger)
+	mux.HandleFunc("GET /v1/models", readRL(models.ModelsHandler(deps.DB, deps.VKAuth, deps.Logger)))
+	mux.HandleFunc("GET /v1/models/{model}", readRL(models.ModelDetailHandler(deps.DB, deps.VKAuth, deps.Logger)))
+	mux.HandleFunc("GET /v1/usage", readRL(envelope.UsageSummaryHandler(deps.DB, deps.VKAuth, deps.QuotaEngine, deps.Logger)))
+	mux.HandleFunc("GET /v1/usage/daily", readRL(envelope.UsageDailyHandler(deps.DB, deps.VKAuth, deps.Logger)))
 
 	// Middleware chain.
 	var h http.Handler = mux

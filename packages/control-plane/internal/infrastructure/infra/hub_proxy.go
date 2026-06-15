@@ -15,8 +15,22 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
+
+// configSyncUpdateDenied lists configKeys that MUST NOT be pushed through the
+// generic /config-sync/update endpoint. Each has its own dedicated admin
+// endpoint that enforces narrower IAM verbs and additional business rules:
+//   - killswitch   → POST /api/admin/compliance/killswitch   (kill-switch.toggle)
+//   - gateway_passthrough → /api/admin/passthrough/*         (passthrough.emergency-enable)
+//
+// Any attempt to bypass those endpoints via the generic update path is rejected
+// with 400 and a message directing the caller to the correct surface.
+var configSyncUpdateDenied = map[string]string{
+	configkey.Killswitch:         "use the dedicated /api/admin/compliance/killswitch endpoint",
+	configkey.GatewayPassthrough: "use the dedicated /api/admin/passthrough/* endpoints",
+}
 
 // RegisterNodeRoutes registers BFF reverse-proxy routes to the Nexus Hub runtime
 // API using product-facing terminology (node / config-sync / out-of-sync).
@@ -37,10 +51,18 @@ func (h *Handler) RegisterNodeRoutes(g *echo.Group, iamMW func(action string) ec
 	g.GET("/nodes/:id/device-assignments", h.GetNodeDeviceAssignments, iamMW(iam.ResourceNode.Action(iam.VerbRead)))
 
 	// Config Sync
+	// Config Sync read surface stays on `settings.read` — it is the generic
+	// fleet-config inspection view (out-of-sync list / history / catalog) that
+	// any settings-reader can see. The write path pushes a config template to a
+	// node type, which is a node-level mutation: gate it on `node.update` so it
+	// matches the `node.update` audit row this handler already stamps (and the
+	// audit #21 carve-out that moved node visibility off the overloaded
+	// `settings` resource). Gating it on `settings.update` would grant the
+	// node-config push to anyone with generic settings-write.
 	g.GET("/config-sync/out-of-sync", h.ConfigSyncOutOfSync, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
 	g.GET("/config-sync/history", h.ConfigSyncHistory, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
 	g.GET("/config-sync/catalog", h.ConfigSyncCatalog, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
-	g.POST("/config-sync/update", h.ConfigSyncUpdate, iamMW(iam.ResourceSettings.Action(iam.VerbUpdate)))
+	g.POST("/config-sync/update", h.ConfigSyncUpdate, iamMW(iam.ResourceNode.Action(iam.VerbUpdate)))
 
 	// Scheduled Jobs (owned by Nexus Hub; CP proxies admin reads + writes).
 	g.GET("/jobs", h.JobsList, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
@@ -177,9 +199,15 @@ func (h *Handler) ConfigSyncCatalog(c echo.Context) error {
 	return h.hubForward(c, http.MethodGet, "/api/hub/config/catalog", hub.RenameConfigCatalogResponse)
 }
 
-// ConfigSyncUpdate proxies the admin "push a config update" action (used by
-// the Kill Switch page and any future direct config editors) to Hub's
-// POST /api/hub/config/update. CP's surface uses product-neutral `nodeType`
+// ConfigSyncUpdate proxies the generic admin "push a config update" action to
+// Hub's POST /api/hub/config/update. It bumps a node type's config template
+// version and broadcasts the new desired state to that type's online nodes.
+// This is NOT the Kill Switch path — the Kill Switch page calls the dedicated
+// /api/admin/compliance/killswitch endpoint (narrow `kill-switch.toggle` verb,
+// two-type fan-out, dedicated audit event). This endpoint is the catch-all for
+// direct config editors; the Config Sync reconciler heals drift via the
+// in-process hub.Client.NotifyConfigChange path, not this HTTP surface.
+// CP's surface uses product-neutral `nodeType`
 // while Hub's contract requires internal `thingType`; forwarding the admin
 // body unchanged would trip Hub's 400 "thingType and configKey are required"
 // validator. Validate here, re-serialize a clean Hub-contract body, then
@@ -196,6 +224,15 @@ func (h *Handler) ConfigSyncUpdate(c echo.Context) error {
 	}
 	if req.NodeType == "" || req.ConfigKey == "" {
 		return c.JSON(http.StatusBadRequest, errJSON("nodeType and configKey are required", "validation_error", ""))
+	}
+	// Reject sensitive configKeys that have dedicated endpoints with
+	// narrower IAM verbs and additional business rules. The generic update
+	// path must not bypass those surfaces.
+	if hint, denied := configSyncUpdateDenied[req.ConfigKey]; denied {
+		return c.JSON(http.StatusBadRequest, errJSON(
+			"configKey "+req.ConfigKey+" is not allowed via this endpoint: "+hint,
+			"validation_error", "CONFIG_KEY_DENIED",
+		))
 	}
 
 	hubPayload := map[string]any{

@@ -1,0 +1,18 @@
+{
+  "kind": "http-json",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "json": {
+        "candidates": [
+          "alice",
+          "bob"
+        ],
+        "total": 2
+      }
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

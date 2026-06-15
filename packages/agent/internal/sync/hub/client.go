@@ -15,6 +15,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,6 +27,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/clienttls"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/catrust"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
@@ -79,6 +81,16 @@ type Config struct {
 	// When non-nil and non-empty, every request emits X-Thing-Id —
 	// required by Hub's device-token auth path alongside the bearer.
 	ThingIDFn func() string
+
+	// DeviceCAFile is the on-disk path of the Nexus device CA cert
+	// (e.g. /var/lib/nexus-agent/device-ca.pem on Linux). When non-empty,
+	// the cert is loaded and excluded from the system root pool used for
+	// Hub TLS verification. This prevents a compromised device CA from being
+	// used to forge Hub server certificates. Optional: when empty the
+	// system pool is used as-is (acceptable when CACertFile provides a pin
+	// that replaces the system pool entirely, or when the device CA is not
+	// installed in the system trust store).
+	DeviceCAFile string
 }
 
 // AuditEvent mirrors the agent-side audit event structure sent to
@@ -143,21 +155,32 @@ type ExemptionUpload struct {
 
 // UpdateInfo is the response from GET /api/internal/things/update-check.
 type UpdateInfo struct {
-	Available    bool   `json:"available"`
-	Version      string `json:"version,omitempty"`
-	DownloadURL  string `json:"downloadUrl,omitempty"`
-	Signature    string `json:"signature,omitempty"`
-	SHA256       string `json:"sha256,omitempty"`
-	ReleaseNotes string `json:"releaseNotes,omitempty"`
-	ForceUpdate  bool   `json:"forceUpdate,omitempty"`
+	Available bool   `json:"available"`
+	Version   string `json:"version,omitempty"`
+	// DownloadURL is the HTTPS URL from which the updater fetches the binary.
+	DownloadURL string `json:"downloadUrl,omitempty"`
+	// Signature is the Ed25519 manifest signature (base64 StdEncoding).
+	// It signs sha256( Version + ":" + SHA256 + ":" + DownloadURL ) — binding
+	// the version string, binary hash, and download URL into a single signed
+	// tuple so an attacker cannot replay an old signed binary at a new version
+	// string. Verified BEFORE downloading the binary (fail-fast gate).
+	Signature string `json:"signature,omitempty"`
+	// BinarySignature is the Ed25519 binary-content signature (base64 StdEncoding).
+	// It signs sha256(binary_bytes) — defense-in-depth verification that the
+	// downloaded file content is the exact binary the release pipeline produced.
+	// Verified AFTER downloading the binary, after SHA256 check passes.
+	BinarySignature string `json:"binarySignature,omitempty"`
+	SHA256          string `json:"sha256,omitempty"`
+	ReleaseNotes    string `json:"releaseNotes,omitempty"`
+	ForceUpdate     bool   `json:"forceUpdate,omitempty"`
 }
 
-// RenewCertResponse is the response from POST /api/internal/things/renew-cert.
-type RenewCertResponse struct {
-	Certificate string `json:"certificate"`
-	GatewayCA   string `json:"gatewayCA"`
-	ExpiresAt   string `json:"expiresAt"`
-	Serial      string `json:"serial"`
+// RenewTokenResponse is the response from POST /api/internal/things/renew-token.
+// Hub mints a fresh device token, overwrites the stored hash (invalidating the
+// old token), and returns the new plaintext plus its expiry.
+type RenewTokenResponse struct {
+	DeviceToken          string `json:"deviceToken"`
+	DeviceTokenExpiresAt string `json:"deviceTokenExpiresAt"`
 }
 
 // Client is the Hub HTTP client.
@@ -191,7 +214,7 @@ func NewClient(cfg Config) (*Client, error) {
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 
 	if cfg.CACertFile != "" {
-		pem, err := os.ReadFile(cfg.CACertFile)
+		pemBytes, err := os.ReadFile(cfg.CACertFile)
 		if err != nil {
 			return nil, fmt.Errorf("hubhttp: read CA file %q: %w", cfg.CACertFile, err)
 		}
@@ -211,11 +234,37 @@ func NewClient(cfg Config) (*Client, error) {
 			slog.Warn("hubhttp: SystemCertPool unavailable, falling back to pinned-only pool",
 				"error", sysErr)
 		}
-		if !pool.AppendCertsFromPEM(pem) {
+		if !pool.AppendCertsFromPEM(pemBytes) {
 			return nil, fmt.Errorf("hubhttp: parse CA PEM at %q: no valid certificates", cfg.CACertFile)
 		}
 		tlsCfg.RootCAs = pool
 		slog.Info("hubhttp: loaded CA for TLS pinning (atop system roots)", "path", cfg.CACertFile)
+	} else if cfg.DeviceCAFile != "" {
+		// No Hub CA pin configured — Hub uses a public-PKI cert (e.g. Let's
+		// Encrypt). Build a system pool with the Nexus device CA excluded so
+		// a compromised device CA cannot forge Hub server certs.
+		deviceCAPEM, err := os.ReadFile(cfg.DeviceCAFile)
+		if err != nil {
+			// Fail-open: device CA file missing (not yet installed or already
+			// removed). Use the plain system pool and log a warning.
+			slog.Warn("hubhttp: device CA not readable; using unfiltered system pool for Hub TLS",
+				"path", cfg.DeviceCAFile, "error", err)
+		} else {
+			deviceCACert, err := parseSingleCertPEM(deviceCAPEM)
+			if err != nil {
+				slog.Warn("hubhttp: device CA parse failed; using unfiltered system pool for Hub TLS",
+					"path", cfg.DeviceCAFile, "error", err)
+			} else {
+				pool, filterErr := catrust.SystemPoolExcluding(deviceCACert)
+				if filterErr != nil {
+					slog.Warn("hubhttp: SystemPoolExcluding failed; using unfiltered system pool",
+						"error", filterErr)
+				} else {
+					tlsCfg.RootCAs = pool
+					slog.Info("hubhttp: upstream TLS pool excludes Nexus device CA", "deviceCA", cfg.DeviceCAFile)
+				}
+			}
+		}
 	}
 
 	if cfg.CertFile != "" && cfg.KeyFile != "" {
@@ -432,27 +481,37 @@ func (c *Client) CheckUpdate(ctx context.Context, currentVersion, osName string)
 	return result, nil
 }
 
-// RenewCert calls POST /api/internal/things/renew-cert with a PEM-encoded
-// CSR. ThingID is required by the Hub endpoint body.
-func (c *Client) RenewCert(ctx context.Context, deviceID, csrPEM string) (*RenewCertResponse, error) {
-	buf, err := json.Marshal(map[string]string{"thingId": deviceID, "csr": csrPEM})
+// RenewDeviceToken calls POST /api/internal/things/renew-token to rotate the
+// device bearer token. It carries no body: the call authenticates with
+// the current device token + X-Thing-Id injected by doWithRetry, and Hub
+// resolves the identity from that token. Because doWithRetry reads the token
+// fresh from disk on each call (DeviceTokenFn), follow-up HTTP calls
+// automatically pick up the rotated token once RenewDeviceToken persists it.
+func (c *Client) RenewDeviceToken(ctx context.Context) (*RenewTokenResponse, error) {
+	resp, err := c.doWithRetry(ctx, http.MethodPost, "/api/internal/things/renew-token", nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("marshal renew cert: %w", err)
-	}
-	resp, err := c.doWithRetry(ctx, http.MethodPost, "/api/internal/things/renew-cert", buf, nil)
-	if err != nil {
-		return nil, fmt.Errorf("renew cert: %w", err)
+		return nil, fmt.Errorf("renew device token: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
-		return nil, fmt.Errorf("renew cert failed (%d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("renew device token failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
-	var result RenewCertResponse
+	var result RenewTokenResponse
 	body := http.MaxBytesReader(nil, resp.Body, maxResponseBytes)
 	if err := json.NewDecoder(body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode renew cert: %w", err)
+		return nil, fmt.Errorf("decode renew device token: %w", err)
 	}
 	return &result, nil
+}
+
+// parseSingleCertPEM decodes the first PEM block from pemBytes and parses it
+// as an x509.Certificate. Used to load the device CA for pool filtering.
+func parseSingleCertPEM(pemBytes []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("no CERTIFICATE PEM block found")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }

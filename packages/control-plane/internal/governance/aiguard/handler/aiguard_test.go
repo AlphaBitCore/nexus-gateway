@@ -194,6 +194,36 @@ func TestPutConfig_RejectsMissingURLInExternalMode(t *testing.T) {
 	}
 }
 
+// TestPutConfig_RejectsNonHttpsExternalURL locks the SEC-M2-01 defence-in-depth
+// rule: the external judge URL must be https. A plaintext http:// URL (which
+// would leak the operator's CustomHeaders auth on the wire) and an SSRF-shaped
+// internal target are both rejected as 400 before the store is touched.
+func TestPutConfig_RejectsNonHttpsExternalURL(t *testing.T) {
+	for _, url := range []string{
+		"http://judge.example.com/v1",        // plaintext
+		"http://169.254.169.254/latest/meta", // SSRF metadata target
+		"ftp://judge.example.com",            // wrong scheme
+		"://no-scheme",                       // malformed
+	} {
+		e := echo.New()
+		s := &stubStore{}
+		h := newHandler(t, s, nil, nil, nil)
+		e.PUT("/api/admin/ai-guard/config", h.PutConfig)
+
+		payload := `{"backendMode":"external_url","externalUrl":"` + url + `","promptTemplate":"x"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/admin/ai-guard/config", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("url %q: want 400, got %d body=%s", url, rec.Code, rec.Body.String())
+		}
+		if s.saved != nil {
+			t.Fatalf("url %q: store must not be written on validation failure", url)
+		}
+	}
+}
+
 // TestPutConfig_RejectsUnknownBackendMode covers the default arm of
 // the BackendMode switch.
 func TestPutConfig_RejectsUnknownBackendMode(t *testing.T) {

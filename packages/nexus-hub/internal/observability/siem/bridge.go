@@ -191,6 +191,18 @@ func (b *Bridge) Reload(ctx context.Context) error {
 const checkpointKey = "siem.bridge.checkpoint"
 const adminCheckpointKey = "siem.bridge.admin_checkpoint"
 
+// bridgeCheckpoint is a keyset cursor: the (timestamp, id) of the last row
+// forwarded for a given source. A timestamp-only cursor permanently skips rows
+// that share the boundary millisecond beyond the LIMIT — Timestamptz(3) gives
+// millisecond resolution, so >batchSize rows in the same ms would advance the
+// cursor past rows it never sent. Pairing the timestamp with the row
+// id (the tiebreaker in ORDER BY) makes the cursor total, so no boundary row is
+// ever skipped.
+type bridgeCheckpoint struct {
+	TS time.Time `json:"ts"`
+	ID string    `json:"id"`
+}
+
 // Poll loads independent checkpoints for traffic events and admin audit events,
 // queries new rows for each, classifies and merges them, optionally filters by
 // configured event types, sends the batch to the Sink, and updates the
@@ -219,7 +231,7 @@ func (b *Bridge) Poll(ctx context.Context) {
 		b.logger.Error("siem bridge: load traffic checkpoint", "error", err)
 		return
 	}
-	trafficEvents, trafficLastTS, err := b.queryEvents(ctx, trafficCP, cfg.BatchSize)
+	trafficEvents, trafficNext, err := b.queryEvents(ctx, trafficCP, cfg.BatchSize)
 	if err != nil {
 		b.logger.Error("siem bridge: query traffic events", "error", err)
 		return
@@ -233,7 +245,7 @@ func (b *Bridge) Poll(ctx context.Context) {
 		b.logger.Error("siem bridge: load admin checkpoint", "error", err)
 		return
 	}
-	adminEvents, adminLastTS, err := b.queryAdminEvents(ctx, adminCP, cfg.BatchSize)
+	adminEvents, adminNext, err := b.queryAdminEvents(ctx, adminCP, cfg.BatchSize)
 	if err != nil {
 		b.logger.Error("siem bridge: query admin events", "error", err)
 		return
@@ -257,12 +269,12 @@ func (b *Bridge) Poll(ctx context.Context) {
 	}
 
 	if len(trafficEvents) > 0 {
-		if err := b.saveCheckpoint(ctx, checkpointKey, trafficLastTS); err != nil {
+		if err := b.saveCheckpoint(ctx, checkpointKey, trafficNext); err != nil {
 			b.logger.Error("siem bridge: save traffic checkpoint", "error", err)
 		}
 	}
 	if len(adminEvents) > 0 {
-		if err := b.saveCheckpoint(ctx, adminCheckpointKey, adminLastTS); err != nil {
+		if err := b.saveCheckpoint(ctx, adminCheckpointKey, adminNext); err != nil {
 			b.logger.Error("siem bridge: save admin checkpoint", "error", err)
 		}
 	}
@@ -274,59 +286,48 @@ func (b *Bridge) Poll(ctx context.Context) {
 		"admin", len(adminEvents))
 }
 
-// loadCheckpoint reads the last-forwarded timestamp for key from system_metadata.
-// Returns 24 hours ago if no checkpoint exists for that key.
+// defaultCheckpoint returns the cold-start cursor: 24 hours ago with an empty
+// id (every real row id sorts after "", so the empty tiebreaker includes the
+// boundary).
+func defaultCheckpoint() bridgeCheckpoint {
+	return bridgeCheckpoint{TS: time.Now().UTC().Add(-24 * time.Hour)}
+}
+
+// loadCheckpoint reads the keyset cursor for key from system_metadata. Returns
+// the 24h-ago default if no checkpoint exists for that key.
 //
-// Accepts either of two on-disk shapes for backward compatibility with
-// older runs that wrote a `{"lastForwardedAt": "..."}` object:
-//
-//   - bare RFC3339Nano JSON string (current format written by saveCheckpoint)
-//   - object with a "lastForwardedAt" field (legacy, surfaced only when an
-//     existing deploy already had the row before this code shipped)
-//
-// Stale unparseable rows fall back to the 24h-ago default rather than
-// crashing the bridge — the next saveCheckpoint will normalise the row.
-func (b *Bridge) loadCheckpoint(ctx context.Context, key string) (time.Time, error) {
+// The on-disk shape is the bridgeCheckpoint JSON object {"ts":...,"id":...}.
+// A stale unparseable row falls back to the 24h-ago default rather than
+// crashing the bridge — the next saveCheckpoint overwrites it in the canonical
+// form.
+func (b *Bridge) loadCheckpoint(ctx context.Context, key string) (bridgeCheckpoint, error) {
 	var raw json.RawMessage
 	err := b.pool.QueryRow(ctx,
 		`SELECT value FROM system_metadata WHERE key = $1`, key,
 	).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return time.Now().UTC().Add(-24 * time.Hour), nil
+			return defaultCheckpoint(), nil
 		}
-		return time.Time{}, fmt.Errorf("load checkpoint %s: %w", key, err)
+		return bridgeCheckpoint{}, fmt.Errorf("load checkpoint %s: %w", key, err)
 	}
 
-	// Try the canonical bare-string form first.
-	var ts string
-	if err := json.Unmarshal(raw, &ts); err == nil {
-		if t, perr := time.Parse(time.RFC3339Nano, ts); perr == nil {
-			return t, nil
-		}
-	}
-	// Fall back to the legacy `{"lastForwardedAt": "..."}` object form.
-	var legacy struct {
-		LastForwardedAt string `json:"lastForwardedAt"`
-	}
-	if err := json.Unmarshal(raw, &legacy); err == nil && legacy.LastForwardedAt != "" {
-		if t, perr := time.Parse(time.RFC3339Nano, legacy.LastForwardedAt); perr == nil {
-			b.logger.Info("siem bridge: migrated legacy checkpoint format",
-				slog.String("key", key))
-			return t, nil
-		}
+	var cp bridgeCheckpoint
+	if jErr := json.Unmarshal(raw, &cp); jErr == nil && !cp.TS.IsZero() {
+		return cp, nil
 	}
 	// Unparseable — log and reset to the 24h-ago default. The next
 	// successful flush will overwrite the row in the canonical format.
 	b.logger.Warn("siem bridge: checkpoint row unparseable, resetting to 24h default",
 		slog.String("key", key),
 		slog.String("raw", string(raw)))
-	return time.Now().UTC().Add(-24 * time.Hour), nil
+	return defaultCheckpoint(), nil
 }
 
-// saveCheckpoint upserts the checkpoint for key into system_metadata.
-func (b *Bridge) saveCheckpoint(ctx context.Context, key string, ts time.Time) error {
-	value, err := json.Marshal(ts.UTC().Format(time.RFC3339Nano))
+// saveCheckpoint upserts the keyset cursor for key into system_metadata.
+func (b *Bridge) saveCheckpoint(ctx context.Context, key string, cp bridgeCheckpoint) error {
+	cp.TS = cp.TS.UTC()
+	value, err := json.Marshal(cp)
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint %s: %w", key, err)
 	}
@@ -348,12 +349,17 @@ func (b *Bridge) saveCheckpoint(ctx context.Context, key string, ts time.Time) e
 //
 // batchSize comes from the live cfg snapshot in Poll() so the bridge picks up
 // the latest siem.config value without the per-query path reading a struct field.
-func (b *Bridge) queryEvents(ctx context.Context, since time.Time, batchSize int) ([]Event, time.Time, error) {
+func (b *Bridge) queryEvents(ctx context.Context, cursor bridgeCheckpoint, batchSize int) ([]Event, bridgeCheckpoint, error) {
 	// The traffic_event table uses split request_hook_* + response_hook_*
 	// columns (one per pipeline stage). The bridge selects both pairs and
 	// exposes them as requestHook* / responseHook* in the outgoing event so
 	// SIEM dashboards can distinguish pipeline stages. EITHER stage's block /
 	// rate-limited / budget-exceeded signal makes the row interesting.
+	//
+	// Keyset cursor: WHERE (timestamp, id) > (cursor.TS, cursor.ID)
+	// expressed as the index-friendly OR form, with id as the ORDER BY
+	// tiebreaker so rows sharing the boundary millisecond beyond the LIMIT are
+	// picked up on the next cycle instead of being skipped forever.
 	const query = `
 		SELECT id, source, timestamp,
 		       source_ip, target_host, method, path, status_code, latency_ms,
@@ -364,22 +370,22 @@ func (b *Bridge) queryEvents(ctx context.Context, since time.Time, batchSize int
 		       details,
 		       trace_id
 		FROM traffic_event
-		WHERE timestamp > $1
+		WHERE (timestamp > $1 OR (timestamp = $1 AND id > $2))
 		  AND (request_hook_decision = 'block'
 		       OR response_hook_decision = 'block'
 		       OR request_hook_reason_code IN ('rate_limited', 'budget_exceeded')
 		       OR response_hook_reason_code IN ('rate_limited', 'budget_exceeded'))
-		ORDER BY timestamp ASC
-		LIMIT $2
+		ORDER BY timestamp ASC, id ASC
+		LIMIT $3
 	`
-	rows, err := b.pool.Query(ctx, query, since, batchSize)
+	rows, err := b.pool.Query(ctx, query, cursor.TS, cursor.ID, batchSize)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("query traffic_event: %w", err)
+		return nil, bridgeCheckpoint{}, fmt.Errorf("query traffic_event: %w", err)
 	}
 	defer rows.Close()
 
 	var events []Event
-	var lastTS time.Time
+	next := cursor
 
 	for rows.Next() {
 		var (
@@ -405,7 +411,7 @@ func (b *Bridge) queryEvents(ctx context.Context, since time.Time, batchSize int
 			&details,
 			&traceID,
 		); err != nil {
-			return nil, time.Time{}, fmt.Errorf("scan traffic_event: %w", err)
+			return nil, bridgeCheckpoint{}, fmt.Errorf("scan traffic_event: %w", err)
 		}
 
 		evt := Event{
@@ -462,40 +468,40 @@ func (b *Bridge) queryEvents(ctx context.Context, since time.Time, batchSize int
 		}
 
 		events = append(events, evt)
-		lastTS = ts
+		next = bridgeCheckpoint{TS: ts, ID: id}
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, fmt.Errorf("rows iteration: %w", err)
+		return nil, bridgeCheckpoint{}, fmt.Errorf("rows iteration: %w", err)
 	}
 
-	return events, lastTS, nil
+	return events, next, nil
 }
 
 // queryAdminEvents fetches up to batchSize rows from the AdminAuditLog table
-// with timestamp > since, ordered by timestamp ASC.
+// after the keyset cursor, ordered by (timestamp, id) ASC.
 //
 // batchSize comes from the live cfg snapshot in Poll() so a shadow-driven
 // change to siem.config.batchSize takes effect on the next tick without
 // rebuilding the bridge.
-func (b *Bridge) queryAdminEvents(ctx context.Context, since time.Time, batchSize int) ([]Event, time.Time, error) {
+func (b *Bridge) queryAdminEvents(ctx context.Context, cursor bridgeCheckpoint, batchSize int) ([]Event, bridgeCheckpoint, error) {
 	rows, err := b.pool.Query(ctx, `
 		SELECT id, timestamp,
 		       "actorId", "actorLabel", "actorRole",
 		       "sourceIp", action, "entityType", "entityId",
 		       "beforeState", "afterState", "via"
 		FROM "AdminAuditLog"
-		WHERE timestamp > $1
-		ORDER BY timestamp ASC
-		LIMIT $2
-	`, since, batchSize)
+		WHERE (timestamp > $1 OR (timestamp = $1 AND id > $2))
+		ORDER BY timestamp ASC, id ASC
+		LIMIT $3
+	`, cursor.TS, cursor.ID, batchSize)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("query AdminAuditLog: %w", err)
+		return nil, bridgeCheckpoint{}, fmt.Errorf("query AdminAuditLog: %w", err)
 	}
 	defer rows.Close()
 
 	var events []Event
-	var lastTS time.Time
+	next := cursor
 
 	for rows.Next() {
 		var (
@@ -519,7 +525,7 @@ func (b *Bridge) queryAdminEvents(ctx context.Context, since time.Time, batchSiz
 			&sourceIP, &action, &entityType, &entityID,
 			&beforeState, &afterState, &via,
 		); err != nil {
-			return nil, time.Time{}, fmt.Errorf("scan AdminAuditLog: %w", err)
+			return nil, bridgeCheckpoint{}, fmt.Errorf("scan AdminAuditLog: %w", err)
 		}
 
 		evt := Event{
@@ -554,14 +560,14 @@ func (b *Bridge) queryAdminEvents(ctx context.Context, since time.Time, batchSiz
 		}
 
 		events = append(events, evt)
-		lastTS = ts
+		next = bridgeCheckpoint{TS: ts, ID: id}
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, fmt.Errorf("rows iteration (AdminAuditLog): %w", err)
+		return nil, bridgeCheckpoint{}, fmt.Errorf("rows iteration (AdminAuditLog): %w", err)
 	}
 
-	return events, lastTS, nil
+	return events, next, nil
 }
 
 func setIfNotNil(evt Event, key string, val *string) {

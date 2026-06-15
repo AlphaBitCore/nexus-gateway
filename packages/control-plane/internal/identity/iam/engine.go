@@ -3,6 +3,7 @@ package iam
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -135,6 +136,18 @@ func (e *Engine) EvaluateMulti(ctx context.Context, principalType, principalID, 
 	if len(resources) == 0 {
 		// Defensive — an empty candidate list should not silently allow.
 		resources = []string{"*"}
+	}
+	// Backfill nexus:CurrentTime centrally so Date-conditioned
+	// statements (DateLessThan/DateGreaterThan) evaluate against the real wall
+	// clock. Call sites that left it empty/unset previously made every
+	// time-windowed Deny silently fail-open (an empty actual fails time.Parse →
+	// the Date condition is false → the Deny never matches). A caller that sets
+	// an explicit value keeps it.
+	if condCtx == nil {
+		condCtx = ConditionContext{}
+	}
+	if condCtx["nexus:CurrentTime"] == "" {
+		condCtx["nexus:CurrentTime"] = time.Now().UTC().Format(time.RFC3339)
 	}
 	policies, cacheHit, err := e.loadPolicies(ctx, principalType, principalID)
 	if err != nil {

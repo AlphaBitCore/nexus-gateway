@@ -214,7 +214,7 @@ func TestConfigure_PathsItemNotString(t *testing.T) {
 // Normalize (Tier-1 multi-spec dispatch)
 
 // TestNormalize_OpenAIChat exercises the openai-chat branch of the
-// adapter's spec hint list.
+// adapter's codec walk + consumer-web fallback.
 func TestNormalize_OpenAIChat(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-4",

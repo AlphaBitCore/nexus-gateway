@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// dbconfirm.go is the NFR-10 durable mirror of the in-memory confirm registry. The
+// dbconfirm.go is the durable mirror of the in-memory confirm registry. The
 // in-memory channel is the live rendezvous for a parked dangerous-write; this row lets
 // a POST /confirm that misses the in-memory entry distinguish "the pod restarted —
 // re-issue" from "expired / unknown". It does NOT resume the write after a restart (the
 // turn goroutine is in-memory and gone) — see the migration comment. Isolated per user
-// (I3): every query carries WHERE "userId" with the authenticated principal's id.
+// : every query carries WHERE "userId" with the authenticated principal's id.
 
 // pendingConfirmFreshWindow bounds how recent an orphaned row may be to still read as
 // "restart — re-issue". A confirm that has been parked longer than confirmTimeout would

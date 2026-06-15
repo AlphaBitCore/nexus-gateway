@@ -95,7 +95,7 @@ func Plan(in PlanInput) (PlanResult, error) {
 // the expected output profile of the workload.
 //
 // The recommendation is a heuristic: it is safe to override via admin
-// config.  The InputStagingSelector UI component calls this to highlight
+// config.  The admin UI's input-staging selector calls this to highlight
 // the recommended option while still allowing admin override.
 //
 // Heuristic table:

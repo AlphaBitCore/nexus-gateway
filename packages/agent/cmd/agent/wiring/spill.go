@@ -10,7 +10,9 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	auditevent "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/event"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/spilluploader"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/hub"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	localfsspill "github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/localfs"
 )
@@ -31,8 +33,8 @@ func SpillRoot() string {
 // best-effort, never blocking. The key is derived once per call from the
 // keystore DB key, so the two write sites (Linux/Windows + macOS) and the drain
 // reader all open the store with the same key.
-func NewLocalSpillStore() (*localfsspill.Store, error) {
-	key, err := spillEncryptionKey()
+func NewLocalSpillStore(ks keystore.Store) (*localfsspill.Store, error) {
+	key, err := spillEncryptionKey(ks)
 	if err != nil {
 		// No key → refuse to write plaintext bodies to disk. Oversize bodies
 		// truncate inline instead; small bodies still ride the SQLCipher DB.
@@ -45,8 +47,10 @@ func NewLocalSpillStore() (*localfsspill.Store, error) {
 // SQLCipher DB key, domain-separated (SHA-256 over key‖label) so the spill
 // files and the audit DB never share the exact key while both stay bound to the
 // same device-held secret.
-func spillEncryptionKey() ([]byte, error) {
-	dbKey, err := keystore.GetOrCreateDBKey(keystore.NewPlatformStore())
+// The keystore is injected (composition root passes the platform store;
+// tests pass keystore.NewMemoryStore()) — never constructed here.
+func spillEncryptionKey(ks keystore.Store) ([]byte, error) {
+	dbKey, err := keystore.GetOrCreateDBKey(ks)
 	if err != nil {
 		return nil, fmt.Errorf("spill encryption key: %w", err)
 	}
@@ -65,6 +69,21 @@ type LocalSpillReader interface {
 // returns the resulting S3 SpillRef. *spilluploader.Uploader satisfies it.
 type SpillS3Uploader interface {
 	Upload(ctx context.Context, eventID, direction, contentType string, body []byte) (sharedaudit.SpillRef, error)
+}
+
+// InitSpillTransport builds the spill uploader (Hub presign → S3) and the
+// local spill reader the audit drain uses to read each oversize body back
+// from local disk before uploading it to S3. A nil reader (store unavailable)
+// is fail-open: metadata still ships, oversize bodies stay local-only.
+func InitSpillTransport(hubClient *hub.Client, ks keystore.Store, logger *slog.Logger) (*spilluploader.Uploader, LocalSpillReader) {
+	spillUploader := InitSpillUploader(hubClient)
+	var spillReader LocalSpillReader
+	if store, spillErr := NewLocalSpillStore(ks); spillErr != nil {
+		logger.Warn("audit drain: local spill store unavailable; oversize bodies will not upload", "error", spillErr)
+	} else {
+		spillReader = store
+	}
+	return spillUploader, spillReader
 }
 
 // HydrateLocalSpill reads oversize bodies back from the LOCAL spill store into

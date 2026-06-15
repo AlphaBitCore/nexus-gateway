@@ -11,7 +11,14 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/pidcache"
 )
+
+// procMetaCache collapses repeated Win32 process lookups for the same PID:
+// a browser opening many connections from one process resolves its image
+// name + token user (the latter can RPC to a domain controller in AD
+// environments) once per TTL instead of per connection.
+var procMetaCache = pidcache.New()
 
 // iphlpapi.dll functions for TCP table queries
 var (
@@ -38,8 +45,13 @@ type mibTCPRowOwnerPID struct {
 	OwningPid  uint32
 }
 
-// ProcessInfo resolves process metadata using Win32 APIs.
+// ProcessInfo resolves process metadata using Win32 APIs, cached by PID.
 func (p *WindowsPlatform) ProcessInfo(pid int) (api.ProcessMeta, error) {
+	return procMetaCache.Get(pid, processInfoUncached)
+}
+
+// processInfoUncached does the raw Win32 lookup for one PID.
+func processInfoUncached(pid int) (api.ProcessMeta, error) {
 	meta := api.ProcessMeta{PID: pid}
 
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))

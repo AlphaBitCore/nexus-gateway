@@ -423,14 +423,13 @@ func (a *Aggregator) processBucket5m(ctx context.Context, bucket time.Time) erro
 				distinctHost[dkHost][destHost] = struct{}{}
 			}
 
-			_ = srcUser
 			// Known limitation: compliance-tag breakdown via JSON-array
 			// unnest is out of scope for the agent-side rollup — the
 			// field is read but discarded here. The Hub-side metrics
 			// rollup carries the breakdown for fleet-wide views.
+			// (srcUser and ts are scanned to match the SELECT column
+			// count but are not aggregated into any local metric.)
 			_ = complianceTags
-			_ = ts
-			_ = bs
 		}
 	}
 	if err := rows.Err(); err != nil {

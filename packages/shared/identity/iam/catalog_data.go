@@ -10,7 +10,6 @@ var Catalog = []ResourceDef{
 	// Configuration + operational data for the /v1 AI API stack.
 	{Name: "provider", Service: ServiceGateway, Verbs: crud()},
 	{Name: "model", Service: ServiceGateway, Verbs: crud()},
-	{Name: "model-pricing", Service: ServiceGateway, Verbs: []Verb{VerbRead, VerbCreate, VerbDelete}},
 	{Name: "credential", Service: ServiceGateway, Verbs: append(crud(), VerbProbe, VerbRotate)},
 	{Name: "virtual-key", Service: ServiceGateway, Verbs: append(crud(),
 		VerbApprove, VerbReject, VerbRevoke, VerbRenew)},
@@ -75,13 +74,7 @@ var Catalog = []ResourceDef{
 	// desired config to this device when admin wants instant propagation
 	// instead of waiting for the next shadow tick. Used by the Devices
 	// detail "Force config refresh" action.
-	// VerbRotate triggers an immediate mTLS cert rotation on the device.
-	// Backend marks thing_agent.cert_expires_at = NOW() + 5min so the
-	// agent's next heartbeat (every 15s) sees "expiring" and calls
-	// /api/internal/things/renew-cert. Useful when ops needs a fresh
-	// cert without waiting for the auto-renew threshold (e.g. a CA root
-	// rotation or a suspected key compromise).
-	{Name: "agent-device", Service: ServiceAgent, Verbs: append(crud(), VerbForceResync, VerbRotate)},
+	{Name: "agent-device", Service: ServiceAgent, Verbs: append(crud(), VerbForceResync)},
 	{Name: "device-group", Service: ServiceAgent, Verbs: crud()},
 	// device-assignment.update is an audit-only action emitted when Hub's
 	// IdentityEnricher binds an agent device to a user (see
@@ -126,6 +119,17 @@ var Catalog = []ResourceDef{
 	{Name: "node", Service: ServicePlatform, Verbs: append(crud(),
 		VerbForceResync, VerbWriteOverride,
 	)},
+	// assistant gates the web "Chat with Nexus" surface itself (the
+	// streaming chat endpoints under /api/admin/assistant/*). It is a
+	// distinct resource from the admin APIs the assistant's tools self-call:
+	// inference (and the system-VK spend it incurs) happens BEFORE any tool
+	// runs, so login-alone is not a sufficient gate — a user with zero admin
+	// permissions could otherwise open the assistant and burn budget. Read
+	// covers the GET surface (list/get sessions, stream, models, file
+	// download); Write covers the mutating surface (start a turn, confirm,
+	// interrupt, delete a session). Per-tool admin self-calls remain
+	// independently IAM-checked (defense in depth).
+	{Name: "assistant", Service: ServicePlatform, Verbs: []Verb{VerbRead, VerbWrite}},
 
 	// ── Identity & Access (Service: iam) ──────────────────────────────
 	// Users, RBAC, audit, sessions.
@@ -197,7 +201,6 @@ var (
 	// AI traffic plane.
 	ResourceProvider         = MustFind("provider")
 	ResourceModel            = MustFind("model")
-	ResourceModelPricing     = MustFind("model-pricing")
 	ResourceCredential       = MustFind("credential")
 	ResourceVirtualKey       = MustFind("virtual-key")
 	ResourceRoutingRule      = MustFind("routing-rule")
@@ -236,6 +239,7 @@ var (
 	ResourceSettings         = MustFind("settings")
 	ResourceDiagnosticMode   = MustFind("diagnostic-mode")
 	ResourceNode             = MustFind("node")
+	ResourceAssistant        = MustFind("assistant")
 	ResourceNexusSession     = MustFind("nexus-session")
 
 	// Compliance plane.

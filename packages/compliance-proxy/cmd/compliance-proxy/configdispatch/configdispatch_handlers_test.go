@@ -123,6 +123,50 @@ func TestKillSwitch_DisengageWhenAlreadyMatching(t *testing.T) {
 	}
 }
 
+// TestKillSwitch_BlankTickPayloads exercises the F-0123 presence-based parser
+// invariant: empty / null / `{}` (no "engaged" field) payloads must NEVER toggle
+// the kill-switch — they are no-ops that preserve the current brake state.
+func TestKillSwitch_BlankTickPayloads(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload []byte
+	}{
+		{"empty_bytes", []byte{}},
+		{"whitespace_only", []byte("   ")},
+		{"null_literal", []byte("null")},
+		{"empty_object", []byte("{}")}, // has no "engaged" field → s.Engaged == nil
+		{"extra_fields_no_engaged", []byte(`{"state":"ok","reason":"test"}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := silentDeps(t)
+			// Pre-engage the kill-switch so a false blank-tick would disengage it.
+			d.KillSwitch.Toggle(true, "pre-test")
+			loader := configdispatch.BuildConfigLoader(d)
+
+			if err := applyKey(t, loader, "killswitch", tc.payload); err != nil {
+				t.Fatalf("blank tick %q: unexpected error: %v", tc.name, err)
+			}
+			if !d.KillSwitch.IsEngaged() {
+				t.Errorf("blank tick %q must NOT disengage an engaged kill-switch (F-0123)", tc.name)
+			}
+		})
+	}
+}
+
+// TestKillSwitch_InvalidJSON_ReturnsError verifies that a malformed shadow
+// payload surfaces a parse error (the registerKillSwitch error branch) rather
+// than silently toggling the brake.
+func TestKillSwitch_InvalidJSON_ReturnsError(t *testing.T) {
+	d := silentDeps(t)
+	loader := configdispatch.BuildConfigLoader(d)
+
+	err := applyKey(t, loader, "killswitch", []byte(`{not valid json`))
+	if err == nil {
+		t.Fatal("expected parse error for malformed killswitch JSON, got nil")
+	}
+}
+
 // sqlmock helpers
 
 // newSQLMock wraps a fresh sqlmock + sql.DB using the QueryMatcherEqual option
@@ -531,7 +575,7 @@ func TestStreamingCompliance_NilDB_NoError(t *testing.T) {
 	}
 }
 
-// #115: streaming_compliance handler now routes raw shadow payload
+// streaming_compliance handler now routes raw shadow payload
 // directly through Store.ApplyShadowState — no DB re-read. These
 // tests pin the new contract (3 branches):
 //   (1) nil Store → handler skips silently (no error, no panic)

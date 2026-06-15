@@ -40,6 +40,7 @@ func TestNew_StandaloneAllFields(t *testing.T) {
 		ReadTimeout:  4 * time.Second,
 		WriteTimeout: 4 * time.Second,
 		PoolTimeout:  5 * time.Second,
+		NoPing:       true, // no live Redis in unit tests; assert construction only
 	}
 	client, err := New(cfg, Env{}, quietLogger())
 	if err != nil {
@@ -66,6 +67,7 @@ func TestNew_SentinelHappyPath(t *testing.T) {
 		Password:    "data-pass",
 		DB:          1,
 		DialTimeout: 5 * time.Second,
+		NoPing:      true, // no live Redis in unit tests; assert construction only
 	}
 	client, err := New(cfg, Env{}, quietLogger())
 	if err != nil {
@@ -91,6 +93,7 @@ func TestNew_ClusterHappyPath(t *testing.T) {
 		PoolSize:    20,
 		MaxRetries:  2,
 		DialTimeout: 3 * time.Second,
+		NoPing:      true, // no live Redis in unit tests; assert construction only
 	}
 	client, err := New(cfg, Env{}, quietLogger())
 	if err != nil {
@@ -107,7 +110,8 @@ func TestNew_ClusterHappyPath(t *testing.T) {
 func TestNew_DefaultModeIsStandalone(t *testing.T) {
 	t.Parallel()
 	cfg := Config{
-		Addrs: []string{"127.0.0.1:6379"},
+		Addrs:  []string{"127.0.0.1:6379"},
+		NoPing: true, // no live Redis in unit tests; assert construction only
 	}
 	client, err := New(cfg, Env{}, quietLogger())
 	if err != nil {
@@ -457,6 +461,7 @@ func TestNew_TLSEnabledForAllModes(t *testing.T) {
 					Enabled: true,
 					CAFile:  ca,
 				},
+				NoPing: true, // no live Redis in unit tests; assert construction only
 			}
 			client, err := New(cfg, Env{}, quietLogger())
 			if err != nil {
@@ -464,6 +469,54 @@ func TestNew_TLSEnabledForAllModes(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = client.Close() })
 		})
+	}
+}
+
+// TestNew_NoPingSkipsReadinessCheck proves the F-0283c escape hatch: with
+// NoPing set, New constructs a client against an endpoint where nothing is
+// listening and returns no error — construction succeeds without a live Redis.
+func TestNew_NoPingSkipsReadinessCheck(t *testing.T) {
+	t.Parallel()
+	cfg := Config{
+		Mode:   ModeStandalone,
+		Addrs:  []string{"127.0.0.1:1"}, // nothing listens on port 1
+		NoPing: true,
+	}
+	client, err := New(cfg, Env{}, quietLogger())
+	if err != nil {
+		t.Fatalf("New with NoPing must not error against a dead endpoint: %v", err)
+	}
+	if client == nil {
+		t.Fatal("New: returned nil client")
+	}
+	t.Cleanup(func() { _ = client.Close() })
+}
+
+// TestNew_DefaultPingFailsOnDeadEndpoint proves the F-0283c default: without
+// NoPing, New issues a startup PING and surfaces a wrapped error when the
+// endpoint is unreachable, so a down Redis fails loudly at startup rather than
+// on the first cache call. A bounded PingTimeout keeps the test fast.
+func TestNew_DefaultPingFailsOnDeadEndpoint(t *testing.T) {
+	t.Parallel()
+	cfg := Config{
+		Mode:        ModeStandalone,
+		Addrs:       []string{"127.0.0.1:1"}, // connection refused
+		DialTimeout: 200 * time.Millisecond,
+		PingTimeout: 500 * time.Millisecond,
+	}
+	client, err := New(cfg, Env{}, quietLogger())
+	if err == nil {
+		if client != nil {
+			_ = client.Close()
+		}
+		t.Fatal("New must error when the startup ping cannot reach Redis")
+	}
+	if client != nil {
+		_ = client.Close()
+		t.Fatal("New must return a nil client when the startup ping fails")
+	}
+	if !strings.Contains(err.Error(), "startup ping failed") {
+		t.Errorf("error %q does not mention the startup ping", err.Error())
 	}
 }
 

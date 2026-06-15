@@ -93,7 +93,11 @@ func InitHub(d HubDeps) (HubResult, error) {
 		Caller:         "cp-hub-main",
 		PropagateReqID: true,
 	})
-	hubClient := hub.New(cfg.Registry.NexusHubURL, cfg.Auth.InternalServiceToken, hubHTTPC, logger)
+	// The Hub HTTP client (/api/hub config-write +
+	// /api/v1/admin/alerts) authenticates with the dedicated HubConfigToken, not
+	// the fleet-wide InternalServiceToken. The InternalServiceToken stays on the
+	// WS thingclient registration below.
+	hubClient := hub.New(cfg.Registry.NexusHubURL, cfg.Auth.HubConfigToken, hubHTTPC, logger)
 
 	cpID := DeriveThingID(cfg)
 

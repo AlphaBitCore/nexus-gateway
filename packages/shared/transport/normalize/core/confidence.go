@@ -119,13 +119,10 @@ func scoreTier1Confidence(raw []byte, spec FieldSpec) float64 {
 	score += optBonus
 	score -= 0.10 * float64(unknown) / float64(len(observed))
 
-	if score < 0.40 {
-		score = 0.40
-	}
-	if score > 1.00 {
-		score = 1.00
-	}
-	return score
+	// Defensive clamp. The terms above already bound score to
+	// [0.40, 1.00] with the current weights; the clamp keeps that
+	// contract if a weight is ever retuned.
+	return min(max(score, 0.40), 1.00)
 }
 
 // topLevelKeys returns the set of top-level keys in raw's outermost
@@ -189,3 +186,16 @@ func stringSet(keys []string) map[string]bool {
 	}
 	return out
 }
+
+// SelectionEvidence is the provenance of a normalizer's selection when
+// it is stronger than decode coverage (the host-evidence exception the
+// Registry accepts over the confidence threshold). See
+// NormalizedPayload.SelectionEvidence.
+type SelectionEvidence string
+
+const (
+	// SelectionEvidenceHost marks a payload whose adapter was resolved by
+	// interception-domain host match — selection evidence the Registry
+	// trusts over the confidence threshold.
+	SelectionEvidenceHost SelectionEvidence = "host"
+)

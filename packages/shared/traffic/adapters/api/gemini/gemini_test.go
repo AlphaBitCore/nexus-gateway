@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 func TestAdapter_ID(t *testing.T) {
@@ -564,40 +563,6 @@ func TestExtractRequest_ModelMetadata(t *testing.T) {
 }
 
 // Normalize — Tier-1 dispatch via the unified extract helper.
-
-func TestNormalize_GeminiGenerateShape(t *testing.T) {
-	body := []byte(`{
-		"contents":[{"role":"user","parts":[{"text":"hello gemini"}]}]
-	}`)
-	a := &Adapter{}
-	payload, err := a.Normalize(context.Background(), body, normalize.Meta{
-		AdapterType:  "gemini",
-		Direction:    normalize.DirectionRequest,
-		ContentType:  "application/json",
-		EndpointPath: "/v1beta/models/gemini-pro:generateContent",
-	})
-	if err != nil {
-		t.Fatalf("Normalize err=%v", err)
-	}
-	if payload.Kind != normalize.KindAIChat {
-		t.Errorf("Kind=%v want ai-chat", payload.Kind)
-	}
-	if payload.DetectedSpec != "gemini" {
-		t.Errorf("DetectedSpec=%q want gemini", payload.DetectedSpec)
-	}
-}
-
-func TestNormalize_NonGenerateBody(t *testing.T) {
-	a := &Adapter{}
-	_, err := a.Normalize(context.Background(), []byte(`{"foo":"bar"}`), normalize.Meta{
-		AdapterType: "gemini",
-		Direction:   normalize.DirectionRequest,
-		ContentType: "application/json",
-	})
-	if err == nil {
-		t.Fatal("expected error for non-gemini body")
-	}
-}
 
 // TestExtractStreamChunk_NoMetadataAllocOnEmpty pins the optimisation
 // that empty Metadata stays nil on the streaming hot path.

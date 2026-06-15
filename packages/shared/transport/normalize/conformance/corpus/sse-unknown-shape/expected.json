@@ -1,0 +1,31 @@
+{
+  "kind": "http-sse",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "sseFrames": [
+        {
+          "event": "foo",
+          "data": {
+            "a": 1
+          }
+        },
+        {
+          "event": "bar",
+          "dataText": "not-json-text"
+        },
+        {
+          "data": {
+            "b": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

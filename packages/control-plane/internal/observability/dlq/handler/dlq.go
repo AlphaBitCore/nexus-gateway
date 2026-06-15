@@ -7,6 +7,7 @@ package dlq
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 
@@ -112,6 +113,5 @@ func (h *Handler) RetryDLQ(c echo.Context) error {
 // errJSON mirrors the SIEM handler's helper for a consistent admin-API
 // error envelope. Duplicated rather than imported because the handler
 // stays standalone (no cross-handler runtime coupling).
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{"error": map[string]any{"message": message, "type": errType, "code": code}}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON

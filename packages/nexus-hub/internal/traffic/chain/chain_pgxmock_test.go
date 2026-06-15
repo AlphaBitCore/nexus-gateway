@@ -329,26 +329,22 @@ func TestNextHash_PgxMock_MarshalPayloadError_AfterState(t *testing.T) {
 
 func TestCanonicalizePayload_KeysAreLexicographic(t *testing.T) {
 	p := HashPayload{
-		TimestampMs:     7,
-		Action:          "act",
-		ActorID:         "actor",
-		EntityType:      "etype",
-		EntityID:        "eid",
-		BeforeState:     json.RawMessage(`{"b":1}`),
-		AfterState:      json.RawMessage(`{"a":2}`),
-		NexusRequestID:  "nr",
-		ClientRequestID: "cr",
-		ClientUserID:    "cu",
-		ClientSessionID: "cs",
+		TimestampMs:    7,
+		Action:         "act",
+		ActorID:        "actor",
+		EntityType:     "etype",
+		EntityID:       "eid",
+		BeforeState:    json.RawMessage(`{"b":1}`),
+		AfterState:     json.RawMessage(`{"a":2}`),
+		NexusRequestID: "nr",
 	}
 	cb, err := canonicalizePayload(p)
 	if err != nil {
 		t.Fatalf("canonicalizePayload: %v", err)
 	}
 	// First key in canonical bytes must be "action" (alphabetically first
-	// among action / actorId / afterState / beforeState / clientRequestId /
-	// clientSessionId / clientUserId / entityId / entityType /
-	// nexusRequestId / timestampMs).
+	// among action / actorId / afterState / beforeState / entityId /
+	// entityType / nexusRequestId / timestampMs).
 	if !strings.HasPrefix(string(cb), `{"action":`) {
 		t.Errorf("canonical bytes do not start with \"action\" key; got: %s", cb)
 	}
@@ -372,8 +368,7 @@ func TestCanonicalizePayload_OmitemptyDropsEmptyFields(t *testing.T) {
 		ActorID:     "b",
 		EntityType:  "c",
 		// Everything else (EntityID, BeforeState, AfterState,
-		// NexusRequestID, ClientRequestID, ClientUserID,
-		// ClientSessionID) left at zero value — must NOT appear in
+		// NexusRequestID) left at zero value — must NOT appear in
 		// canonical bytes.
 	}
 	cb, err := canonicalizePayload(p)
@@ -383,7 +378,7 @@ func TestCanonicalizePayload_OmitemptyDropsEmptyFields(t *testing.T) {
 	got := string(cb)
 	omitted := []string{
 		"entityId", "beforeState", "afterState",
-		"nexusRequestId", "clientRequestId", "clientUserId", "clientSessionId",
+		"nexusRequestId",
 	}
 	for _, k := range omitted {
 		if strings.Contains(got, `"`+k+`"`) {

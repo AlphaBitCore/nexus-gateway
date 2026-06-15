@@ -123,7 +123,7 @@ func ResponsesUpgradeFromContext(ctx context.Context) bool {
 // onto the stream-HIT pipeline so the chunkSSEReader can pick the right
 // transcoder when the cached chunks were written under a different
 // ingress than the current request (cross-ingress shape contamination
-// fix, Option B2). When unset (live MISS / non-stream HIT / non-stream
+// fix). When unset (live MISS / non-stream HIT / non-stream
 // joiner), the standard (ingress, target) transcoder selection runs.
 type streamHitOriginCtxKey struct{}
 
@@ -131,7 +131,7 @@ type streamHitOriginCtxKey struct{}
 // Stored on the request context by [Handler.handleStreamHit] when the
 // entry is tagged with OriginWireShape; absent for legacy untagged
 // entries (the reader falls back to the standard transcoder selection
-// which preserves pre-B2 behavior).
+// which preserves the legacy behavior).
 type StreamHitOrigin struct {
 	WireShape typology.WireShape
 }

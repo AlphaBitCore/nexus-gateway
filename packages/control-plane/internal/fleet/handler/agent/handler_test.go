@@ -24,9 +24,6 @@ func (stubHub) CreateEnrollmentToken(_ context.Context, _ hub.CreateEnrollmentTo
 func (stubHub) ForceResyncAll(_ context.Context, _ string) (map[string]any, error) {
 	return map[string]any{}, nil
 }
-func (stubHub) RotateAgentCert(_ context.Context, _ string) (map[string]any, error) {
-	return map[string]any{}, nil
-}
 
 func TestNew_NilLoggerDefaults(t *testing.T) {
 	h := New(Deps{})

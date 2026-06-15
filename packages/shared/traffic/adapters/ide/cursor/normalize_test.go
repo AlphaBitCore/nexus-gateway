@@ -3,6 +3,7 @@ package cursor
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"strings"
 	"testing"
 
@@ -240,5 +241,27 @@ func TestCursorNormalize_EmptyBody(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected ErrUnsupported for empty body")
+	}
+}
+
+// TestCursorNormalize_Response_GarbageBinary_NoBomb — a binary response that
+// is neither Connect-framed nor a StreamChatResponse must return
+// ErrUnsupported. Bytes 1-5 of such bodies, read as an envelope length,
+// can declare multi-GB payloads; the frame reader must refuse the declared
+// length instead of allocating it.
+func TestCursorNormalize_Response_GarbageBinary_NoBomb(t *testing.T) {
+	body := make([]byte, 428)
+	body[0] = 0x1F                                    // not JSON, not a bare-protobuf chat tag, eos bit clear
+	binary.BigEndian.PutUint32(body[1:5], 0xC8C7C6C5) // ~3.37GB declared frame
+	for i := 5; i < len(body); i++ {
+		body[i] = 0xFF // invalid protobuf wire type everywhere
+	}
+	a := &Adapter{}
+	_, err := a.Normalize(context.Background(), body, normalize.Meta{
+		AdapterType: adapterID,
+		Direction:   normalize.DirectionResponse,
+	})
+	if !errors.Is(err, normalize.ErrUnsupported) {
+		t.Fatalf("err = %v, want normalize.ErrUnsupported", err)
 	}
 }
