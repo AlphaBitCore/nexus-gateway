@@ -185,6 +185,7 @@ export function QuotaPolicyListPage() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
         searchPlaceholder={t('pages:quotaPolicies.searchPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}
@@ -230,7 +231,7 @@ export function QuotaPolicyListPage() {
         />
       </Card>
 
-      <ListPagination offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
+      <ListPagination variant="plain" offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
 
       <AlertDialog
         open={!!deleting}

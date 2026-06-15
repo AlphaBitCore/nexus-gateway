@@ -14,7 +14,7 @@ export function QuotaOverrideDetail() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const canUpdate = usePermission('quotaPolicy:update');
+  const canUpdate = usePermission('quota:update');
 
   const { data: row, loading, error, refetch } = useApi<QuotaOverride>(
     () => quotaOverrideApi.get(id!),

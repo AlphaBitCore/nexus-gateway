@@ -28,24 +28,5 @@
     "1": "Registrado",
     "2": "Vinculado",
     "3": "Conforme"
-  },
-  "inputStaging": {
-    "label": "Estrategia de preparación de entrada",
-    "recommendedBadge": "Recomendado",
-    "help": "Controla cómo se trunca la conversación antes de generar embeddings cuando supera el límite de contexto del modelo.",
-    "strategies": {
-      "last_user": "Último mensaje de usuario",
-      "system_plus_last_user": "Sistema + último usuario",
-      "recent_turns": "Turnos recientes",
-      "head_plus_tail": "Inicio + fin",
-      "full_truncated": "Completo (truncado)"
-    },
-    "tooltips": {
-      "last_user": "Solo se envía el último mensaje del usuario para la búsqueda en caché. El más pequeño y rápido.",
-      "system_plus_last_user": "Prompt del sistema + último mensaje del usuario. Equilibra el contexto de persona con la especificidad de la consulta.",
-      "recent_turns": "Los turnos de conversación más recientes que quepan. Ideal para flujos de múltiples turnos.",
-      "head_plus_tail": "Primeras y últimas partes de la conversación. Útil cuando importan tanto la configuración inicial como el contexto reciente.",
-      "full_truncated": "Conversación completa, truncada desde el inicio si es necesario. Modo heredado."
-    }
   }
 }

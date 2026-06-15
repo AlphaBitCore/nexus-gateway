@@ -46,6 +46,30 @@
   font-family: var(--g-font-sans);
 }
 
+.singleValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inlineSearchInput {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--g-font-sans);
+  font-size: 13px;
+  outline: none;
+}
+
+.inlineSearchInput::placeholder {
+  color: var(--color-text-muted);
+}
+
 .placeholder {
   color: var(--color-text-muted);
 }

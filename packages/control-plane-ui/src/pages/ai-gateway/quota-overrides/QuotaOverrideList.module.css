@@ -1,19 +1,61 @@
-.filterSelect {
-  height: 36px;
-  width: 100%;
-  padding: 0 var(--g-space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--g-radius-md);
-  background: var(--color-surface);
+.filterToolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.filterControl {
+  width: 220px;
+}
+
+.targetSearchControl {
+  width: 400px;
+  max-width: 100%;
+}
+
+.targetCombobox :global(input[role='combobox']) {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-color: var(--color-border-strong);
+  border-radius: 8px;
   color: var(--color-text);
   font-size: var(--g-font-size-sm);
+}
+
+.targetCombobox :global(input[role='combobox']::placeholder) {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
+.targetCombobox :global(input[role='combobox']:focus) {
+  border-color: var(--color-link);
+  box-shadow: none;
+}
+
+.filterSelect {
+  appearance: none;
+  height: 38px;
+  width: 100%;
+  padding: 0 36px 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background-color: var(--color-surface);
+  background-image: url('/icons/chevron-down.svg');
+  background-position: calc(100% - 12px) 50%;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
   font-family: var(--g-font-sans);
+  line-height: 24px;
   cursor: pointer;
 }
 
 .filterSelect:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  border-color: var(--color-border);
+  box-shadow: none;
+  outline: none;
 }
 
 .filterLabel {

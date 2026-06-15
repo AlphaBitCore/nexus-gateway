@@ -1,15 +1,31 @@
 /* ── CachePage — design-token strict ──────────────────────────────────────── */
 /* All colors via semantic CSS variables. No hex/rgba/hsla literals.           */
 
+.cacheCardSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cacheCardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .cardHeading {
-  margin: var(--g-space-3) 0 var(--g-space-2);
-  font-size: 1rem;
+  margin: 0;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 24px;
   color: var(--color-text-primary);
 }
 
-.cardHeading:first-child {
-  margin-top: 0;
+.cardSubtitle {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
 }
 
 .subHeading {
@@ -30,21 +46,29 @@
    `.settingsRowSpan` / `.settingControlSpan` helpers. */
 .settingsGrid {
   display: grid;
-  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr) minmax(140px, max-content) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: var(--g-space-4);
   row-gap: var(--g-space-3);
-  align-items: center;
+  align-items: start;
 }
 
 @media (max-width: 1024px) {
   .settingsGrid {
-    grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
+}
+
+.settingField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
 }
 
 /* Make a control span from col 2 to end of row (e.g. Probe button + chips). */
 .settingControlSpan {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -56,12 +80,14 @@
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-text-primary);
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--g-space-1);
+  width: 100%;
+  min-height: 0;
 }
 
 .settingControl {
@@ -70,6 +96,14 @@
   align-items: center;
   gap: var(--g-space-2);
   min-width: 0;
+  min-height: 38px;
+  width: 100%;
+}
+
+.settingControl :global(input),
+.settingControl :global(select),
+.settingControl :global(button[role='combobox']) {
+  min-height: 38px;
 }
 
 .settingsDivider,
@@ -99,11 +133,17 @@
 
 .settingsActions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--g-space-2);
   margin-top: var(--g-space-4);
   padding-top: var(--g-space-3);
   border-top: 1px solid var(--color-border-subtle);
+}
+
+.settingsActions :global(button) {
+  height: 38px !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
 }
 
 .headRow {
@@ -132,13 +172,23 @@
 }
 
 .warningBanner {
-  border: 1px solid var(--color-warning-border);
-  background: var(--color-warning-light);
-  color: var(--color-warning-text);
-  padding: var(--g-space-2) var(--g-space-3);
-  border-radius: var(--radius-md);
-  font-size: 0.875rem;
-  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-info) 16%, transparent);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--color-primary);
+  letter-spacing: -0.1504px;
+  text-transform: none;
 }
 
 .switchWrapper {
@@ -199,11 +249,14 @@
 }
 
 .shortInput {
-  width: 6rem;
+  width: 180px;
+  min-height: 38px;
 }
 
 .mediumSelect {
-  min-width: 14rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
 }
 
 /* ── Embedding chip (collapsed state) ─────────────────────────────────────── */

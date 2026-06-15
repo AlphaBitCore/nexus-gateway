@@ -55,13 +55,11 @@ describe('systemApi — traffic + audit', () => {
 describe('systemApi — settings + models + cache', () => {
   beforeEach(() => Object.values(m).forEach((f) => f.mockClear()));
 
-  it('provider health + cache stats + settings get/put', () => {
+  it('provider health + settings get/put', () => {
     systemApi.listProviderHealth();
-    systemApi.getCacheStats();
     systemApi.getSettings();
     systemApi.updateSettings({ defaultLocale: 'en' } as never);
     expect(m.get).toHaveBeenCalledWith('/api/admin/provider-health');
-    expect(m.get).toHaveBeenCalledWith('/api/admin/cache/stats');
     expect(m.get).toHaveBeenCalledWith('/api/admin/settings');
     expect(m.put).toHaveBeenCalledWith('/api/admin/settings', { defaultLocale: 'en' });
   });
@@ -77,13 +75,11 @@ describe('systemApi — settings + models + cache', () => {
     expect(m.delete).toHaveBeenCalledWith('/api/admin/models/mdl1');
   });
 
-  it('instances + runtime-cache refresh + me + cache preview', () => {
+  it('instances + me + cache preview', () => {
     systemApi.listInstances();
-    systemApi.refreshRuntimeCache({ targets: ['providers'] });
     systemApi.me();
     systemApi.previewCacheNormaliser({ body: '{}' } as never);
     expect(m.get).toHaveBeenCalledWith('/api/admin/instances');
-    expect(m.post).toHaveBeenCalledWith('/api/admin/runtime-cache/refresh', { targets: ['providers'] });
     expect(m.get).toHaveBeenCalledWith('/api/admin/me');
     expect(m.post).toHaveBeenCalledWith('/api/admin/cache/preview', { body: '{}' });
   });

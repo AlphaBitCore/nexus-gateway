@@ -16,9 +16,144 @@
   flex-wrap: wrap;
 }
 
-.searchInput {
+.searchBox {
+  position: relative;
   min-width: 200px;
   flex: 1;
+}
+
+.searchIcon {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 2px solid var(--color-text-secondary);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.searchIcon::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  width: 7px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-text-secondary);
+  transform: rotate(45deg);
+}
+
+.searchInput {
+  width: 100%;
+}
+
+.boxed {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin-bottom: calc(8px - var(--g-space-6));
+}
+
+.boxed .row {
+  gap: 8px;
+}
+
+.boxed .searchBox {
+  width: min(100%, 420px);
+  max-width: 100%;
+  flex: 0 1 420px;
+  display: flex;
+  align-items: center;
+  height: 38px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.boxed .searchIcon {
+  display: block;
+  position: relative;
+  top: auto;
+  left: auto;
+  width: 15px;
+  height: 15px;
+  margin: 0 8px 0 17px;
+  flex: 0 0 15px;
+  border-width: 1.8px;
+  border-color: var(--color-text-muted);
+  transform: none;
+}
+
+.boxed .searchIcon::after {
+  right: -4px;
+  bottom: -2px;
+  height: 1.8px;
+  background: var(--color-text-muted);
+  transform-origin: center;
+}
+
+.boxed .searchInput {
+  height: 36px;
+  min-width: 0;
+  min-height: 36px;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.boxed .searchInput::placeholder {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
+.boxed .searchInput:focus,
+.boxed .searchInput:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+
+.boxed .searchBox:focus-within {
+  border-color: var(--color-link);
+}
+
+.boxed .row :global(select) {
+  appearance: none;
+  width: 220px;
+  height: 38px;
+  padding: 0 36px 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background-color: var(--color-surface);
+  background-image: url('/icons/chevron-down.svg');
+  background-position: calc(100% - 12px) 50%;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+  color: var(--color-text-secondary);
+  font-family: var(--g-font-sans);
+  font-size: 14px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+.boxed .row :global(select:focus),
+.boxed .row :global(select:focus-visible) {
+  border-color: var(--color-border);
+  box-shadow: none;
+  outline: none;
 }
 
 .clearButton {
@@ -43,4 +178,8 @@
   margin-top: var(--g-space-2);
   padding-top: 0;
   border-top: none;
+}
+
+.boxed .meta {
+  margin-top: 20px;
 }

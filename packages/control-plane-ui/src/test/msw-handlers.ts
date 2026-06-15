@@ -470,22 +470,6 @@ export const defaultHandlers = [
     return HttpResponse.json({ data: [], total: 0, limit, offset });
   }),
 
-  // Cache
-  http.get('/api/admin/cache/stats', () =>
-    HttpResponse.json({
-      enabled: true,
-      backend: 'memory',
-      entryCount: 500,
-      maxEntries: 10000,
-      memorySizeBytes: 5242880,
-      maxMemoryBytes: 52428800,
-      hitRate: 0.45,
-      hitCount: 1000,
-      missCount: 1222,
-      evictionCount: 50,
-    }),
-  ),
-
   // Users
   http.get('/api/admin/users', () =>
     HttpResponse.json({ data: [mockUser], total: 1 }),
@@ -624,15 +608,6 @@ export const defaultHandlers = [
   ),
   http.get('/api/admin/proxy/killswitch', () =>
     HttpResponse.json({ enabled: true, lastChanged: '2026-03-30T10:00:00Z', changedBy: 'admin' }),
-  ),
-  http.get('/api/admin/proxy/reject-config', () =>
-    HttpResponse.json({
-      defaultLevel: 1,
-      contactInfo: 'compliance@example.com',
-      policyOverrides: {},
-      updatedAt: '2026-03-30T10:00:00Z',
-      updatedBy: 'admin',
-    }),
   ),
   http.get('/api/admin/proxy/compliance/coverage', () =>
     HttpResponse.json({

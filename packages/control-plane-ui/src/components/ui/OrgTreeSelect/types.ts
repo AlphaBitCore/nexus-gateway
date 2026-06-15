@@ -24,6 +24,8 @@ export interface OrgTreeSelectProps {
   disabled?: boolean;
   /** Show clear button. Default: true */
   allowClear?: boolean;
+  /** Search in the trigger field instead of rendering a second search field in the dropdown. */
+  inlineSearch?: boolean;
   /** CSS class for the root element. */
   className?: string;
   /** Org IDs to exclude from the tree (e.g. exclude self when picking parent). */

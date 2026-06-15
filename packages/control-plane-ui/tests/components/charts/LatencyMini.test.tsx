@@ -9,7 +9,6 @@
  */
 import { describe, it, expect } from 'vitest';
 import { screen } from '@testing-library/react';
-import '@testing-library/jest-dom/vitest';
 
 import { renderWithProviders } from '@/test/test-utils';
 import { LatencyMini } from '../../../src/components/charts/LatencyMini';

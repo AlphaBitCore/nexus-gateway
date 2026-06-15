@@ -195,11 +195,18 @@ const LABELS: Partial<Record<keyof LiveTrafficFiltersState, string>> = {
   complianceTags: 'Compliance tag',
 };
 
-const STATUS_RANGE_LABEL: Record<Exclude<LiveTrafficStatusRange, ''>, string> = {
+export const STATUS_RANGE_LABEL: Record<Exclude<LiveTrafficStatusRange, ''>, string> = {
   '2xx': '2xx success',
   '4xx': '4xx client error',
   '5xx': '5xx server error',
 };
+
+// i18n key suffix (under pages:traffic.activeFilterLabels) for a status range,
+// so the removable chip renders a translated label instead of the English
+// STATUS_RANGE_LABEL used by the internal describe/count path.
+export function statusRangeLabelKey(range: Exclude<LiveTrafficStatusRange, ''>): string {
+  return { '2xx': 'range2xx', '4xx': 'range4xx', '5xx': 'range5xx' }[range];
+}
 
 /** Human-readable active filter lines for summary chips (uses applied filters only). */
 export function describeLiveTrafficFilters(filters: LiveTrafficFiltersState): string[] {

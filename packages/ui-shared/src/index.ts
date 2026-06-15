@@ -28,7 +28,6 @@ export * from './components/Chip';
 export * from './components/ErrorBanner';
 export * from './components/HelpIconButton';
 export * from './components/IconButton';
-export * from './components/InputStaging';
 export * from './components/LinkButton';
 export * from './theme/chartColors';
 export * from './theme/ThemeConfig';

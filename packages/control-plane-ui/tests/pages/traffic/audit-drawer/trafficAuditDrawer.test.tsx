@@ -11,7 +11,6 @@
  *  T6d.6  i18n key presence — all required semanticHit keys in EN/ZH/ES.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import '@testing-library/jest-dom/vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 
 import { renderWithRouter } from '@/test/test-utils';

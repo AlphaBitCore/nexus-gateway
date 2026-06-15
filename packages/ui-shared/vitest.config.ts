@@ -17,16 +17,17 @@ export default defineConfig({
     // (frontend section). Target core 100% / overall 95% (same as Go). This
     // package is fully backfilled: theme engine (themeLoader/chartColors/
     // completeness/ThemeContext), shared components, and barrels all covered.
-    // Floors are pinned at the achieved 100% (1 defensive InputStaging branch
-    // is the lone exception) — never lower.
+    // Floors are pinned at the achieved 100% — never lower.
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'json-summary'],
       include: ['src/**'],
-      exclude: ['src/test/**', 'src/**/*.d.ts', 'src/**/*.stories.{ts,tsx}', '**/*.test.{ts,tsx}'],
+      // *.json: i18n resource bundles — no executable statements; vitest 4's
+      // v8 provider counts imported JSON modules, which only adds 0% noise.
+      exclude: ['src/test/**', 'src/**/*.d.ts', 'src/**/*.stories.{ts,tsx}', '**/*.test.{ts,tsx}', 'src/**/*.json'],
       thresholds: {
         statements: 100,
-        branches: 99,
+        branches: 100,
         functions: 100,
         lines: 100,
       },

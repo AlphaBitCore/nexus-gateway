@@ -14,6 +14,7 @@ export function OrgTreeSelect({
   placeholder,
   disabled = false,
   allowClear = true,
+  inlineSearch = false,
   className,
   excludeIds,
 }: OrgTreeSelectProps) {
@@ -22,6 +23,7 @@ export function OrgTreeSelect({
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const inlineSearchRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -60,10 +62,14 @@ export function OrgTreeSelect({
 
   // Focus search input when dropdown opens
   useEffect(() => {
+    if (open && inlineSearch && inlineSearchRef.current) {
+      inlineSearchRef.current.focus();
+      return;
+    }
     if (open && searchRef.current) {
       searchRef.current.focus();
     }
-  }, [open]);
+  }, [inlineSearch, open]);
 
   // Scroll focused node into view
   useEffect(() => {
@@ -283,11 +289,25 @@ export function OrgTreeSelect({
       >
         <div className={styles.triggerContent}>
           {mode === 'single' ? (
-            <span className={clsx(!hasValue && styles.placeholder)}>
-              {hasValue
-                ? getLabel(value as string)
-                : resolvedPlaceholder}
-            </span>
+            inlineSearch && open ? (
+              <input
+                ref={inlineSearchRef}
+                type="text"
+                className={styles.inlineSearchInput}
+                placeholder={hasValue ? getLabel(value as string) : resolvedPlaceholder}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+                aria-label={t('common:orgTreeSelect.search')}
+              />
+            ) : (
+              <span className={clsx(styles.singleValue, !hasValue && styles.placeholder)}>
+                {hasValue
+                  ? getLabel(value as string)
+                  : resolvedPlaceholder}
+              </span>
+            )
           ) : (
             <>
               {(value as string[]).length === 0 && (
@@ -330,7 +350,8 @@ export function OrgTreeSelect({
       {open && !disabled && (
         <div className={styles.dropdown}>
           {/* Search input */}
-          <div className={styles.searchWrapper}>
+          {!inlineSearch && (
+            <div className={styles.searchWrapper}>
             <input
               ref={searchRef}
               type="text"
@@ -340,7 +361,8 @@ export function OrgTreeSelect({
               onChange={(e) => setSearchQuery(e.target.value)}
               aria-label={t('common:orgTreeSelect.search')}
             />
-          </div>
+            </div>
+          )}
 
           {/* Tree */}
           <div ref={treeRef} className={styles.treeContainer} role="tree">

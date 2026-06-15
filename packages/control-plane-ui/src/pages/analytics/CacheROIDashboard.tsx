@@ -70,21 +70,16 @@ function SummaryCard({ label, value, sub, valueColor }: SummaryCardProps) {
 
 interface SectionBlockProps {
   title: string;
-  badge: string;
-  accentColor: string;
   description: string;
   children: React.ReactNode;
 }
 
-function SectionBlock({ title, badge, accentColor, description, children }: SectionBlockProps) {
+function SectionBlock({ title, description, children }: SectionBlockProps) {
   return (
     <div className={styles.section}>
-      <div className={styles.sectionHead} style={{ borderLeftColor: accentColor }}>
-        <span className={styles.sectionTitle}>{title}</span>
-        <span className={styles.sectionBadge} style={{ color: accentColor, borderColor: accentColor }}>
-          {badge}
-        </span>
-        <span className={styles.sectionDesc}>{description}</span>
+      <div className={styles.sectionHead}>
+        <h2 className={styles.sectionTitle}>{title}</h2>
+        <p className={styles.sectionDesc}>{description}</p>
       </div>
       {children}
     </div>
@@ -94,7 +89,7 @@ function SectionBlock({ title, badge, accentColor, description, children }: Sect
 function LayerTag({ label, tooltip }: { label: string; tooltip: string }) {
   return (
     <Tooltip content={tooltip} side="top">
-      <span className={styles.layerTag}>{label}</span>
+      <span className={styles.layerTag} role="button" tabIndex={0}>{label}</span>
     </Tooltip>
   );
 }
@@ -214,10 +209,10 @@ export function CacheROIDashboard() {
       <div className={styles.heroGrid}>
         <SummaryCard
           label={
-            <>
-              {t('pages:analytics.cacheRoi.combinedSavings')}
+            <span className={styles.summaryLabelRow}>
+              <span className={styles.summaryLabelText}>{t('pages:analytics.cacheRoi.combinedSavings')}</span>
               <LayerTag label={t('pages:analytics.cacheRoi.sectionGateway') + ' + ' + t('pages:analytics.cacheRoi.sectionProvider')} tooltip={t('pages:analytics.cacheRoi.tooltipCombinedSavings')} />
-            </>
+            </span>
           }
           value={<AnimatedNumber value={combinedSavingsUsd} precision={4} format={fmtUSD} />}
           sub={t('pages:analytics.cacheRoi.overDays', { days: d.periodDays })}
@@ -225,13 +220,13 @@ export function CacheROIDashboard() {
         />
         <SummaryCard
           label={
-            <>
-              {t('pages:analytics.cacheRoi.savingsRate')}
+            <span className={styles.summaryLabelRow}>
+              <span className={styles.summaryLabelText}>{t('pages:analytics.cacheRoi.savingsRate')}</span>
               <LayerTag label={t('pages:analytics.cacheRoi.sectionGateway') + ' + ' + t('pages:analytics.cacheRoi.sectionProvider')} tooltip={t('pages:analytics.cacheRoi.tooltipCombinedSavings')} />
               <Tooltip content={t('pages:analytics.cacheRoi.savingsRateFormula')} side="top">
                 <span className={styles.questionBadge}>?</span>
               </Tooltip>
-            </>
+            </span>
           }
           value={savingsRate != null ? <AnimatedNumber value={savingsRate} format={(n) => `${n.toFixed(0)}%`} /> : '—'}
           sub={savingsRate != null ? t('pages:analytics.cacheRoi.savingsRateSub') : undefined}
@@ -239,10 +234,10 @@ export function CacheROIDashboard() {
         />
         <SummaryCard
           label={
-            <>
-              {t('pages:analytics.cacheRoi.roiMultiplier')}
+            <span className={styles.summaryLabelRow}>
+              <span className={styles.summaryLabelText}>{t('pages:analytics.cacheRoi.roiMultiplier')}</span>
               <LayerTag label={t('pages:analytics.cacheRoi.sectionGateway') + ' + ' + t('pages:analytics.cacheRoi.sectionProvider')} tooltip={t('pages:analytics.cacheRoi.tooltipCombinedSavings')} />
-            </>
+            </span>
           }
           value={roiMultiplier !== null ? <AnimatedNumber value={roiMultiplier} precision={1} format={(n) => `${n.toFixed(1)}×`} /> : '—'}
           sub={roiMultiplier !== null ? t('pages:analytics.cacheRoi.roiMultiplierSub') : undefined}
@@ -260,8 +255,6 @@ export function CacheROIDashboard() {
       {/* Gateway Cache section (removed misleading L1–L3 badge — only one gateway cache exists). */}
       <SectionBlock
         title={t('pages:analytics.cacheRoi.sectionGateway')}
-        badge=""
-        accentColor={gatewayColor}
         description={t('pages:analytics.cacheRoi.sectionGatewayDesc')}
       >
         <div className={styles.sectionCards2}>
@@ -282,8 +275,6 @@ export function CacheROIDashboard() {
       {/* Provider Prompt Cache section (removed misleading L4 badge). */}
       <SectionBlock
         title={t('pages:analytics.cacheRoi.sectionProvider')}
-        badge=""
-        accentColor={promptCacheColor}
         description={t('pages:analytics.cacheRoi.sectionProviderDesc')}
       >
         <div className={styles.sectionCards4}>

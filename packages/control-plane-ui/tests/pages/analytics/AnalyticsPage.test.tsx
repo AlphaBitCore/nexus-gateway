@@ -53,20 +53,23 @@ describe('AnalyticsPage', () => {
 
   it('changing the time range surfaces a removable filter chip', () => {
     wrap();
-    fireEvent.change(screen.getByLabelText(i18n.t('pages:traffic.labelTimeRange'), { selector: 'select' }), { target: { value: '30d' } });
+    fireEvent.change(screen.getByLabelText(i18n.t('pages:analytics.labelTimeRange'), { selector: 'select' }), { target: { value: '30d' } });
     expect(screen.getByLabelText(i18n.t('pages:traffic.resetTimeRange'))).toBeInTheDocument();
   });
 
   it('changing group-by surfaces a removable filter chip', () => {
     wrap();
-    fireEvent.change(screen.getByLabelText(i18n.t('pages:traffic.labelGroupBy'), { selector: 'select' }), { target: { value: 'model' } });
+    fireEvent.change(screen.getByLabelText(i18n.t('pages:analytics.labelGroupBy'), { selector: 'select' }), { target: { value: 'model' } });
     expect(screen.getByLabelText(i18n.t('pages:traffic.resetGroupBy'))).toBeInTheDocument();
   });
 
   it('selecting the Compliance Proxy source hides the VK-only cost/usage section', () => {
     wrap();
     expect(screen.getByText(i18n.t('pages:traffic.sectionCostUsage'))).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: i18n.t('pages:analytics.sourceProxy') }));
+    fireEvent.change(
+      screen.getByLabelText(i18n.t('pages:analytics.sourceFilter'), { selector: 'select' }),
+      { target: { value: 'proxy' } },
+    );
     expect(screen.queryByText(i18n.t('pages:traffic.sectionCostUsage'))).toBeNull();
   });
 
@@ -84,6 +87,22 @@ describe('AnalyticsPage', () => {
     expect(await screen.findByTestId('rollups-stub')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: i18n.t('pages:analytics.latencyTab', 'Latency') }));
     expect(await screen.findByTestId('latency-stub')).toBeInTheDocument();
+  });
+
+  it('keeps each tab filter independent — analytics time range does not leak to the metrics tab', async () => {
+    const user = userEvent.setup();
+    wrap();
+    // Set the Analytics tab time range to 30d.
+    fireEvent.change(
+      screen.getByLabelText(i18n.t('pages:analytics.labelTimeRange'), { selector: 'select' }),
+      { target: { value: '30d' } },
+    );
+    // Switch to the Metrics tab — its own filter bar must still show the 7d default.
+    await user.click(screen.getByRole('tab', { name: i18n.t('pages:traffic.metrics') }));
+    const metricsTimeRange = await screen.findByLabelText(
+      i18n.t('pages:analytics.labelTimeRange'), { selector: 'select' },
+    );
+    expect((metricsTimeRange as HTMLSelectElement).value).toBe('7d');
   });
 
   it('renders the loading and error branches', () => {

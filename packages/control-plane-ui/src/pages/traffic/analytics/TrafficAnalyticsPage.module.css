@@ -1,5 +1,69 @@
 /* TrafficAnalyticsPage styles */
 
+.liveTrafficHeader h1 {
+  font-weight: 800;
+}
+
+.liveTrafficHeader {
+  margin-bottom: calc(12px - var(--g-space-6));
+}
+
+.sourceTabsList {
+  position: relative;
+  height: 56px;
+  min-height: 56px;
+  gap: var(--g-space-6);
+  align-items: stretch;
+  border-bottom-color: var(--color-border-light);
+  background: transparent;
+}
+
+.sourceTabsTrigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 0;
+  border-bottom-width: 0;
+  margin-bottom: 0;
+  background: transparent !important;
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: 22px;
+}
+
+.sourceTabsTrigger::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: transparent;
+  transition: background var(--g-transition-fast);
+}
+
+.sourceTabsTrigger[data-state='active'] {
+  color: var(--color-tab-active, var(--color-info));
+  border-bottom-color: transparent;
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.sourceTabsTrigger[data-state='active']::after {
+  background: var(--color-tab-active, var(--color-info));
+}
+
+.sourceTabsTrigger:hover {
+  color: var(--color-tab-active, var(--color-info));
+  background: transparent !important;
+}
+
+.sourceTabsTrigger[data-state='active']:hover {
+  background: transparent !important;
+}
+
 .cacheBadge {
   display: inline-flex;
   align-items: center;
@@ -89,6 +153,63 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
+}
+
+.emptyStatePanel {
+  display: flex;
+  min-height: 330px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 48px 24px;
+  background: var(--color-surface);
+  border-radius: var(--g-radius-md);
+}
+
+.emptyStateTitle {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  text-align: center;
+}
+
+.noDataTitle {
+  composes: emptyStateTitle;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.emptyStateDescription {
+  max-width: 572px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: var(--g-font-weight-normal);
+  line-height: 22px;
+  text-align: center;
+}
+
+.emptyStateRefreshButton {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-weight: 400;
+}
+
+.emptyStateRefreshButton.emptyStateRefreshButton:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 90%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--color-primary) 90%, var(--color-text-primary));
+  color: var(--color-primary-foreground);
+}
+
+.emptyStateRefreshButton.emptyStateRefreshButton:active {
+  border-color: color-mix(in srgb, var(--color-primary) 82%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--color-primary) 82%, var(--color-text-primary));
+  color: var(--color-primary-foreground);
 }
 
 .paginationInfo {

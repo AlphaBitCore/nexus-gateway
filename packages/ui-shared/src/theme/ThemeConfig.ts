@@ -10,7 +10,7 @@
 //   - `brand`         non-visual identity (name, logo, favicon, tagline)
 //   - `typography`    Layer 1 font overrides (mode-independent)
 //   - `layer1`        Layer 1 non-color overrides (radius, spacing, effects)
-//                     ⚠️ Layer 1 colour palette (--g-gray-*, --g-blue-*) is
+//                     NOTE: Layer 1 colour palette (--g-gray-*, --g-blue-*) is
 //                     deliberately NOT exposed — themes override semantic
 //                     tokens via lightTokens/darkTokens, never raw palette.
 //   - `lightTokens`   Layer 2 semantic overrides for light mode
@@ -96,6 +96,7 @@ export type SemanticTokenName =
   | 'color-primary-light'
   | 'color-primary-dark'
   | 'color-primary-500'
+  | 'color-tab-active'
   | 'color-title-gradient'
   | 'page-shell-glow'
   | 'page-shell-glow-opacity'

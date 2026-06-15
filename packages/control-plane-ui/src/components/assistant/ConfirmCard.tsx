@@ -9,7 +9,7 @@ interface ConfirmCardProps {
 }
 
 // ConfirmCard renders the confirm-tier write card. A prod Allow is two-step
-// (FR-9): the first Allow surfaces the second-step prompt (confirmToken set by the
+// : the first Allow surfaces the second-step prompt (confirmToken set by the
 // parent) and the next Allow executes. Stateless — all decision logic lives in the
 // parent's decideConfirm.
 export function ConfirmCard({ pendingConfirm, confirmToken, decideConfirm }: ConfirmCardProps) {

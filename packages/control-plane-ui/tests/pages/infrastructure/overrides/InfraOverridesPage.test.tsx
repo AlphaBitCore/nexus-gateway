@@ -7,7 +7,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Routes, Route } from 'react-router-dom';
-import '@testing-library/jest-dom/vitest';
 
 import { renderWithRouter, server, http, HttpResponse } from '@/test/test-utils';
 import { hubApi } from '@/api/services/infrastructure/nodes/hub';

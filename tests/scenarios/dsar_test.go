@@ -22,16 +22,16 @@ import (
 // BRAINSTORM (pre): DSAR is the most regulated surface in the system.
 // Two PM-grade invariants the test must catch:
 //
-//   1. Status state machine. The validDSARTransitions map only allows
-//      PENDING→IN_PROGRESS / PENDING→REJECTED / IN_PROGRESS→COMPLETED
-//      / IN_PROGRESS→REJECTED. An illegal transition (PENDING→COMPLETED,
-//      COMPLETED→anything) must return 400 — silently allowing it
-//      means an operator can close a request without actually
-//      fulfilling it.
-//   2. Validation enums + required fields. POST without subjectId
-//      returns 400; type ∉ {ACCESS, ERASURE} returns 400. Silent
-//      acceptance of malformed input corrupts the regulator-facing
-//      record.
+//  1. Status state machine. The validDSARTransitions map only allows
+//     PENDING→IN_PROGRESS / PENDING→REJECTED / IN_PROGRESS→COMPLETED
+//     / IN_PROGRESS→REJECTED. An illegal transition (PENDING→COMPLETED,
+//     COMPLETED→anything) must return 400 — silently allowing it
+//     means an operator can close a request without actually
+//     fulfilling it.
+//  2. Validation enums + required fields. POST without subjectId
+//     returns 400; type ∉ {ACCESS, ERASURE} returns 400. Silent
+//     acceptance of malformed input corrupts the regulator-facing
+//     record.
 //
 // Cross-service: CP-only (DSAR is a CP-owned record). PM-grade
 // because a state-machine break here is a regulatory liability —
@@ -39,15 +39,15 @@ import (
 // fulfilled" is exactly the failure mode auditors look for.
 //
 // Assertions:
-//   1. POST {subjectId, type=ACCESS} returns 201 with status=PENDING.
-//   2. POST without subjectId returns 400.
-//   3. POST with type=NOT_A_TYPE returns 400.
-//   4. PUT illegal transition (PENDING→COMPLETED) returns 400.
-//   5. PUT legal transition (PENDING→IN_PROGRESS) returns 200; record
-//      reflects the new status.
-//   6. PUT terminal (IN_PROGRESS→REJECTED) returns 200; completedAt
-//      is set; subsequent PUT REJECTED→anything returns 400.
-//   7. AdminAuditLog has create + update rows for our entityId.
+//  1. POST {subjectId, type=ACCESS} returns 201 with status=PENDING.
+//  2. POST without subjectId returns 400.
+//  3. POST with type=NOT_A_TYPE returns 400.
+//  4. PUT illegal transition (PENDING→COMPLETED) returns 400.
+//  5. PUT legal transition (PENDING→IN_PROGRESS) returns 200; record
+//     reflects the new status.
+//  6. PUT terminal (IN_PROGRESS→REJECTED) returns 200; completedAt
+//     is set; subsequent PUT REJECTED→anything returns 400.
+//  7. AdminAuditLog has create + update rows for our entityId.
 func TestS096_DSARLifecycle(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -144,7 +144,16 @@ func TestS096_DSARLifecycle(t *testing.T) {
 		t.Errorf("REJECTED→IN_PROGRESS: status=%d (want 400, terminal state)", st)
 	}
 
-	// (7) AdminAuditLog rows: 1 create + at least 2 updates.
+	// (7) AdminAuditLog rows: 1 create + at least 2 updates. This cross-check
+	// reads Postgres directly, which prod-safe-e2e has no access to; the
+	// PENDING→IN_PROGRESS→REJECTED transitions above already proved the
+	// lifecycle over the API. Skip the DB-backed audit assertion on prod
+	// (cleanup still runs via sc.Cleanup); keep it strict locally.
+	if helpers.IsProdSafeE2E() {
+		t.Logf("S-096 OK (prod safe-e2e; audit DB cross-check skipped — Postgres not directly reachable): dsar %s lifecycle PENDING→IN_PROGRESS→REJECTED", created.ID)
+		return
+	}
+
 	deadline := time.Now().Add(10 * time.Second)
 	var creates, updates int
 	for time.Now().Before(deadline) {

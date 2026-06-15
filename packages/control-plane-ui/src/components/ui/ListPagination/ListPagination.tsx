@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import clsx from 'clsx';
 import { Button } from '../Button';
 import { ADMIN_LIST_PAGE_SIZE_OPTIONS } from '@/constants/admin-api';
 import type { AdminListPageSize } from '@/constants/admin-api';
@@ -19,6 +20,9 @@ export type ListPaginationProps = {
   pageSizeOptions?: readonly number[];
   /** When false, hides the rows-per-page selector (e.g. client-side tables with a fixed slice size). @default true */
   showLimitSelect?: boolean;
+  /** Visual style variant. */
+  variant?: 'default' | 'plain';
+  className?: string;
 };
 
 function fmtInt(n: number): string {
@@ -50,6 +54,8 @@ export function ListPagination({
   onLimitChange,
   pageSizeOptions = ADMIN_LIST_PAGE_SIZE_OPTIONS,
   showLimitSelect = true,
+  variant = 'default',
+  className,
 }: ListPaginationProps) {
   const { t } = useTranslation('common');
 
@@ -72,7 +78,11 @@ export function ListPagination({
   const atLast = offset + limit >= total;
 
   return (
-    <div className={css.bar} role="navigation" aria-label={t('listPaginationNav')}>
+    <div
+      className={clsx(css.bar, variant === 'plain' && css.barPlain, className)}
+      role="navigation"
+      aria-label={t('listPaginationNav')}
+    >
       <div className={css.summary}>
         <span className={css.range}>
           {t('paginationRowRange', {

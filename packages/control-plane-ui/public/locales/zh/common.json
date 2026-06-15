@@ -38,7 +38,21 @@
     "modelNoMatch": "无匹配模型",
     "maximize": "最大化",
     "restore": "还原大小",
-    "toolDetails": "显示 {{name}} 的详情"
+    "toolDetails": "查看 {{name}} 的调用详情",
+    "slash": {
+      "help": "命令：/help — 本列表 · /clear 或 /new — 开始新对话"
+    },
+    "toolResponse": "响应",
+    "compacted": "为适应上下文窗口，本会话较早的对话轮次已被压缩。",
+    "compactedTitle": "会话已压缩",
+    "filterSessions": "筛选会话…",
+    "noSessionsMatch": "没有匹配 “{{filter}}” 的会话。",
+    "timeJustNow": "刚刚",
+    "timeMinAgo": "{{n}} 分钟前",
+    "timeHourAgo": "{{n}} 小时前",
+    "timeDayAgo": "{{n}} 天前",
+    "fileExpired": "该文件已不可用（可能已过期）。",
+    "integrityWarning": "此对话的完整性校验未通过——其存储的历史记录可能被改动过。"
   },
   "copy": "复制",
   "copied": "已复制！",
@@ -157,6 +171,8 @@
   "next": "下一页",
   "accessDenied": "访问被拒绝",
   "accessDeniedMessage": "您没有权限访问此页面。",
+  "forbiddenSection": "您没有权限查看此内容。",
+  "forbiddenRequires": "需要权限：{{action}}",
   "pageNotFound": "您要查找的页面不存在。",
   "goToDashboard": "返回仪表盘",
   "sessionExpiringSoon": "由于长时间未操作，您即将被登出。请与页面交互以保持登录状态。",
@@ -192,5 +208,14 @@
   },
   "hookConfig": {
     "redactExamplePlaceholder": "[REDACTED_<RULE_ID>]"
+  },
+  "validation": {
+    "configSchemaMismatch": "配置与架构不匹配：{{error}}",
+    "configMustBeObject": "配置必须是 JSON 对象",
+    "invalidConfigJson": "无效的配置 JSON",
+    "usernameRequired": "用户名为必填项",
+    "passwordsDoNotMatch": "两次输入的新密码不一致",
+    "passwordTooShort": "新密码长度至少为 {{count}} 个字符",
+    "currentPasswordRequired": "当前密码为必填项"
   }
 }

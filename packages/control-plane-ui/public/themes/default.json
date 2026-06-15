@@ -48,6 +48,7 @@
     "color-danger-dark": "#b91c1c",
     "color-info": "#1156e6",
     "color-info-light": "#eff6ff",
+    "color-tab-active": "#1166dc",
 
     "color-bg": "#ffffff",
     "color-surface": "#f8f9fb",
@@ -104,6 +105,7 @@
     "color-danger-dark": "#dc2626",
     "color-info": "#a3a3a3",
     "color-info-light": "rgba(163, 163, 163, 0.10)",
+    "color-tab-active": "#1166dc",
 
     "color-bg": "#0f1422",
     "color-bg-translucent": "rgba(15, 20, 34, 0.72)",

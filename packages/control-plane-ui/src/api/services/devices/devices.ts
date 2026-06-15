@@ -147,6 +147,15 @@ export interface AgentSettingsResponse {
    */
   forceQUICFallbackBundles?: string[];
   /**
+   * bypassBundles — macOS SOURCE-app exemption list consumed by the NE
+   * proxy. A flow whose originating bundle matches an entry is passed
+   * through WITHOUT inspection (no TLS bump, no audit). Matching is by
+   * source bundle, never by host, so the same destination stays inspected
+   * from other apps. Empty = exempt nothing (inspect everything); ships
+   * empty. Used for trusted tools whose pinned TLS breaks under bump.
+   */
+  bypassBundles?: string[];
+  /**
    * Fleet-wide opt-in for agent attestation. When true, agents sign every
    * outbound CONNECT with their Ed25519 key so the compliance-proxy can
    * transparently tunnel (skip MITM + hooks) on a verified signature.
@@ -181,6 +190,8 @@ export interface AgentSettingsRequest {
   themeId?: string;
   /** See AgentSettingsResponse.forceQUICFallbackBundles. */
   forceQUICFallbackBundles?: string[];
+  /** See AgentSettingsResponse.bypassBundles. */
+  bypassBundles?: string[];
   /** See AgentSettingsResponse.attestationEnabled. */
   attestationEnabled?: boolean;
 }

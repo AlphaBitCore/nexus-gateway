@@ -17,6 +17,16 @@
   margin: 0.25rem 0 0;
 }
 
+.warningCallout {
+  font-size: 0.875rem;
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--g-radius-md);
+  padding: var(--g-space-3);
+  margin: 0;
+}
+
 .hintTextMutedIndented {
   font-size: 0.8125rem;
   color: var(--color-text-muted);

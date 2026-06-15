@@ -93,60 +93,68 @@ export function ExtractCacheCard() {
   const saveDisabled = !canUpdate || saving || !dirty || ttlOutOfRange;
 
   return (
-    <Card>
-      <h3 className={styles.cardHeading}>
-        {t('pages:aiGateway.cache.extract.cardTitle')}
-      </h3>
-      <p className={styles.cardSubtitle}>
-        {t('pages:aiGateway.cache.extract.cardSubtitle')}
-      </p>
-
-      <div className={styles.settingsGrid}>
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.extract.enabled')}
-        </label>
-        <div className={styles.settingControl}>
-          <Switch
-            checked={draft.enabled}
-            onCheckedChange={(v) => setDraft({ ...draft, enabled: v })}
-            disabled={!canUpdate}
-            aria-label={t('pages:aiGateway.cache.extract.enabled')}
-          />
-        </div>
-
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.extract.ttlLabel')}
-          <Tooltip content={t('pages:aiGateway.cache.extract.ttlHelp')}>
-            <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
-          </Tooltip>
-        </label>
-        <div className={styles.settingControl}>
-          <Input
-            type="number"
-            min={60}
-            max={604800}
-            value={String(draft.ttlSeconds)}
-            disabled={!canUpdate || !draft.enabled}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              setDraft({ ...draft, ttlSeconds: isNaN(v) ? draft.ttlSeconds : v });
-            }}
-            aria-label={t('pages:aiGateway.cache.extract.ttlLabel')}
-            className={styles.ttlInput}
-          />
-          {ttlOutOfRange && (
-            <span role="alert" className={styles.rowError}>
-              {t('pages:aiGateway.cache.extract.ttlOutOfRange')}
-            </span>
-          )}
-        </div>
+    <section className={styles.cardSection}>
+      <div className={styles.cardHeader}>
+        <h3 className={styles.cardHeading}>
+          {t('pages:aiGateway.cache.extract.cardTitle')}
+        </h3>
+        <p className={styles.cardSubtitle}>
+          {t('pages:aiGateway.cache.extract.cardSubtitle')}
+        </p>
       </div>
 
-      <div className={styles.settingsActions}>
-        <Button onClick={() => void executeSave(undefined)} loading={saving} disabled={saveDisabled}>
-          {t('common:save')}
-        </Button>
-      </div>
-    </Card>
+      <Card>
+        <div className={styles.settingsGrid}>
+          <div className={styles.settingField}>
+            <label className={styles.settingLabel}>
+              {t('pages:aiGateway.cache.extract.enabled')}
+            </label>
+            <div className={styles.settingControl}>
+            <Switch
+              checked={draft.enabled}
+              onCheckedChange={(v) => setDraft({ ...draft, enabled: v })}
+              disabled={!canUpdate}
+              aria-label={t('pages:aiGateway.cache.extract.enabled')}
+            />
+            </div>
+          </div>
+
+          <div className={styles.settingField}>
+            <label className={styles.settingLabel}>
+              {t('pages:aiGateway.cache.extract.ttlLabel')}
+              <Tooltip content={t('pages:aiGateway.cache.extract.ttlHelp')}>
+                <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
+              </Tooltip>
+            </label>
+            <div className={styles.settingControl}>
+            <Input
+              type="number"
+              min={60}
+              max={604800}
+              value={String(draft.ttlSeconds)}
+              disabled={!canUpdate || !draft.enabled}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                setDraft({ ...draft, ttlSeconds: isNaN(v) ? draft.ttlSeconds : v });
+              }}
+              aria-label={t('pages:aiGateway.cache.extract.ttlLabel')}
+              className={styles.ttlInput}
+            />
+            {ttlOutOfRange && (
+              <span role="alert" className={styles.rowError}>
+                {t('pages:aiGateway.cache.extract.ttlOutOfRange')}
+              </span>
+            )}
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.settingsActions}>
+          <Button onClick={() => void executeSave(undefined)} loading={saving} disabled={saveDisabled}>
+            {t('common:save')}
+          </Button>
+        </div>
+      </Card>
+    </section>
   );
 }

@@ -15,6 +15,7 @@ export interface ListFilterToolbarProps {
   /** Optional line below filters */
   meta?: React.ReactNode;
   className?: string;
+  variant?: 'default' | 'boxed';
 }
 
 export function ListFilterToolbar({
@@ -26,28 +27,32 @@ export function ListFilterToolbar({
   children,
   meta,
   className,
+  variant = 'default',
 }: ListFilterToolbarProps) {
   const { t } = useTranslation();
   const hasSearch = !hideSearch && searchValue.trim().length > 0;
 
   return (
     <div
-      className={clsx(styles.toolbar, className)}
+      className={clsx(styles.toolbar, variant === 'boxed' && styles.boxed, className)}
       role={hideSearch ? 'group' : 'search'}
     >
       <div className={styles.row}>
         {!hideSearch && (
           <>
-            <Input
-              type="search"
-              enterKeyHint="search"
-              autoComplete="off"
-              aria-label={searchAriaLabel ?? searchPlaceholder}
-              placeholder={searchPlaceholder}
-              value={searchValue}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className={styles.searchInput}
-            />
+            <div className={styles.searchBox}>
+              <span className={styles.searchIcon} aria-hidden="true" />
+              <Input
+                type="search"
+                enterKeyHint="search"
+                autoComplete="off"
+                aria-label={searchAriaLabel ?? searchPlaceholder}
+                placeholder={searchPlaceholder}
+                value={searchValue}
+                onChange={(e) => onSearchChange(e.target.value)}
+                className={styles.searchInput}
+              />
+            </div>
             {hasSearch && (
               <button data-design-system-escape="primitive-internal"
                 type="button"

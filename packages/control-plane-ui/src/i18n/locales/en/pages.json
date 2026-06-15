@@ -70,7 +70,7 @@
     "viewAll": "View all →",
     "splitBarVk": "Virtual Key: {{count}}",
     "splitBarProxy": "Proxy: {{count}}",
-    "splitBarSubtitle": "{{vk}} Virtual Key · {{proxy}} Proxy",
+    "splitBarSubtitle": "{{vk}} Virtual Key | {{proxy}} Proxy",
     "win1h": "Last 1h",
     "win1d": "Last 24h",
     "win7d": "Last 7d",
@@ -158,7 +158,7 @@
     "cacheSaveError": "Failed to save provider cache settings.",
     "cacheAnthropicSubtitle": "The AI Gateway injects Anthropic native cache_control markers into requests to enable server-side prompt caching at system prompt and conversation history boundaries.",
     "cacheGeminiTitle": "Gemini Prompt Cache",
-    "cacheGeminiInfo": "This provider uses Gemini's native cachedContent API. The AI Gateway automatically creates and manages cached content resources based on request token thresholds. Cache configuration (TTL, enablement) is managed at the gateway level through Hub device shadow settings.",
+    "cacheGeminiInfo": "This provider uses Gemini's native cachedContent API. The AI Gateway automatically creates and manages cached content resources based on request token thresholds. Cache configuration (TTL, enablement) is managed at the gateway level through Hub node settings.",
     "cacheGeminiEnabled": "Enable Gemini Prompt Cache",
     "cacheGeminiEnabledHint": "When enabled, the gateway creates and reuses Gemini cachedContent resources for requests with large system instructions.",
     "cacheGeminiMinSystemChars": "Minimum system instruction size (bytes)",
@@ -1364,7 +1364,6 @@
     },
     "providerHealthSubtitle": "Real-time health status of all configured providers",
     "tabOverview": "Overview",
-    "tabCache": "Cache",
     "tabProviders": "Providers ({{count}})",
     "uptime": "Uptime",
     "version": "Version",
@@ -1387,7 +1386,6 @@
     "scopeAllServicesLink": "View all services →",
     "configVersion": "Config Version",
     "configVersionTooltip": "Active configuration snapshot identifier from the gateway. Use Config Management to correlate with historical versions.",
-    "responseCache": "Response Cache",
     "cacheEnabled": "Enabled",
     "cacheDisabled": "Disabled",
     "cacheTooltip": "Hit rate reflects recent traffic on this instance. Low hit rate after deploys is expected while entries warm up.",
@@ -1399,9 +1397,6 @@
     "evictions": "Evictions",
     "memory": "Memory",
     "cacheNotAvailable": "Cache stats not available.",
-    "runtimeConfigCache": "Runtime Configuration Cache",
-    "runtimeConfigDesc": "Clears in-process hook, routing, and credential decrypt caches so the next request reloads from the database.",
-    "refreshRuntimeCaches": "Refresh Runtime Caches",
     "noProviders": "No providers configured.",
     "errorRate": "Error Rate",
     "latency": "Latency",
@@ -1415,8 +1410,6 @@
     "ariaHelpResponseCache": "Help: response cache",
     "ariaHelpProviderStatus": "Help: provider status",
     "colStatus": "Status",
-    "runtimeCacheRefreshed": "Runtime Cache Refreshed",
-    "refreshFailed": "Refresh Failed",
     "services": "Services",
     "noServicesRegistered": "No services registered",
     "instancesCount": "{{count}} instance(s)",
@@ -1499,11 +1492,6 @@
     "metricBreakdown": "Metric Breakdown",
     "viewDetail": "View →",
     "backToStatus": "← System Status",
-    "iamPolicyCache": "IAM Policy Cache",
-    "iamPolicyCacheEntries": "Cached entries",
-    "iamPolicyCacheNote": "CP-side cache for resolved IAM authorization decisions. Cleared automatically on policy edits.",
-    "responseCacheRedirectNote": "Response cache lives on the ai-gateway data plane. View per-instance hit rate / entries / memory on the service detail page.",
-    "responseCacheRedirectLink": "Open Infrastructure → Nodes →",
     "recentErrors": {
       "title": "Recent Errors",
       "viewAll": "View all →",
@@ -1669,11 +1657,11 @@
     "agentShutdownWarningPlaceholder": "Enter warning message for this language...",
     "agentWarningUsingDefault": "Using default warning message. Customize it above.",
     "quitPolicyTitle": "Agent Quit Policy",
-    "quitPolicyDesc": "Controls whether the agent menu bar exposes Restart Agent and Quit Nexus Agent items. Turn off for compliance always-on deployments — users cannot quit the agent process.",
-    "quitAllowedLabel": "Allow users to quit the agent",
-    "quitAllowedOnHint": "Restart Agent and Quit Nexus Agent menu items are visible.",
-    "quitAllowedOffHint": "Restart Agent and Quit Nexus Agent menu items are hidden — only Restart App is available.",
-    "shutdownWarningDisabledHint": "This text only appears when \"Allow users to quit the agent\" is turned on. Edit it now so the message is ready when quit is enabled.",
+    "quitPolicyDesc": "Controls whether employees can turn protection off on their device. Turn off for compliance always-on deployments: the user cannot quit, pause, or sign out of the agent, so monitoring can't be disabled. Signing in always works.",
+    "quitAllowedLabel": "Allow users to turn off the agent",
+    "quitAllowedOnHint": "Quit, Pause, and Sign Out are available to the user.",
+    "quitAllowedOffHint": "Always-on: Quit, Pause, and Sign Out are hidden — the user can't turn protection off. Signing in still works.",
+    "shutdownWarningDisabledHint": "This text only appears when \"Allow users to turn off the agent\" is turned on. Edit it now so the message is ready.",
     "shutdownWarningEnabledLabel": "Show this warning when the user clicks Quit",
     "attestation": {
       "title": "Agent Attestation",
@@ -1713,6 +1701,16 @@
       "add": "Add",
       "remove": "Remove",
       "empty": "No bundles configured — agent will not close any UDP flows.",
+      "howToFind": "Find a Mac app's bundle ID with: defaults read /Applications/SomeApp.app/Contents/Info.plist CFBundleIdentifier"
+    },
+    "bypassBundles": {
+      "title": "Exempted bundles (macOS)",
+      "desc": "macOS bundle IDs of apps the agent will pass through WITHOUT inspection. Use only for a trusted tool whose certificate-pinned TLS genuinely breaks under inspection (e.g. a developer CLI). Matching is by source app, never by destination — so the same host stays inspected from every other app. Leave empty unless you have a specific, reviewed reason.",
+      "warning": "⚠ Apps listed here are NOT inspected for compliance. Their AI traffic produces no audit records and is invisible to policy. Every entry is a deliberate, reviewed compliance carve-out — keep this list as short as possible, and remove entries once they are no longer needed.",
+      "placeholder": "com.example.MyTool — press Enter to add",
+      "add": "Add",
+      "remove": "Remove",
+      "empty": "No apps exempted — everything is inspected (recommended).",
       "howToFind": "Find a Mac app's bundle ID with: defaults read /Applications/SomeApp.app/Contents/Info.plist CFBundleIdentifier"
     },
     "authenticationTab": "Authentication",
@@ -2330,6 +2328,31 @@
     "applyFilters": "Apply filters",
     "clearFilters": "Clear filters",
     "activeFilters": "Active filters ({{count}})",
+    "activeFilterLabels": {
+      "provider": "Provider",
+      "virtualKey": "Virtual key",
+      "user": "User",
+      "organization": "Organization",
+      "project": "Project",
+      "model": "Model",
+      "requestId": "Request ID",
+      "requestHook": "Request hook",
+      "responseHook": "Response hook",
+      "http": "HTTP",
+      "cache": "Cache",
+      "time": "Time",
+      "any": "Any",
+      "target": "Target",
+      "path": "Path",
+      "device": "Device",
+      "node": "Node",
+      "process": "Process",
+      "bumpStatus": "Bump status",
+      "complianceTag": "Compliance tag",
+      "range2xx": "2xx success",
+      "range4xx": "4xx client error",
+      "range5xx": "5xx server error"
+    },
     "filterPanelDescription": "Filter by <strong>project</strong>, <strong>virtual key</strong>, <strong>provider</strong>, and <strong>model</strong> (choose a provider first to pick a model). Use the buttons below to apply or open more criteria.",
     "labelProvider": "Provider",
     "tipProvider": "Search and select a provider. Required before choosing a model.",
@@ -2344,6 +2367,7 @@
     "tipVirtualKeyDefault": "Search by name. Open Advanced to narrow by organization → project first.",
     "placeholderVirtualKey": "Search by name…",
     "labelQuickRange": "Quick range",
+    "timeSelect": "Time selection",
     "tipQuickRange": "Preset windows in local time. Apply still runs when you click Apply filters.",
     "clearTime": "Clear time",
     "labelFrom": "From",
@@ -2357,10 +2381,10 @@
     "tipTargetHost": "Filter by target hostname (substring match).",
     "placeholderTargetHost": "e.g. api.openai.com",
     "labelNode": "Node",
-    "tipNode": "Filter by the Thing (node) that emitted the event — agent device, AI Gateway, or compliance proxy. The dropdown lists only nodes of the type relevant to the active source tab.",
+    "tipNode": "Filter by the node that emitted the event — agent device, AI Gateway, or compliance proxy. The dropdown lists only nodes of the type relevant to the active source tab.",
     "placeholderNode": "Select a node…",
-    "advancedExpand": "Advanced ▼",
-    "advancedCollapse": "Advanced ▲",
+    "advancedExpand": "Advanced Filter",
+    "advancedCollapse": "Advanced Filter",
     "scopeTitle": "Scope",
     "scopeDescription": "Pick organization first, then project. Choosing scope here clears a direct virtual key in the row above (and the opposite).",
     "stepOrganization": "1 · Organization",
@@ -2448,6 +2472,8 @@
     "colHook": "Hook",
     "colCache": "Cache",
     "emptyTraffic": "No traffic recorded yet",
+    "noFilteredDataTitle": "No matching traffic",
+    "noFilteredDataDescription": "No data matches your current filters. Try adjusting or clearing them, then refresh.",
     "copiedTooltip": "Copied!",
     "clickToCopy": "Click to copy: {{id}}",
     "closeDetailPanel": "Close detail panel",
@@ -2610,7 +2636,19 @@
           "disabled": "Skipped — cache disabled",
           "no_cache": "Skipped — client opt-out",
           "passthrough": "Skipped — emergency passthrough",
-          "not_cacheable": "Skipped — not cacheable"
+          "not_cacheable": "Skipped — not cacheable",
+          "time_sensitive": "Skipped — time-sensitive request",
+          "oversize_for_embedding": "Skipped — too large to embed",
+          "valkey_unavailable": "Skipped — cache store unavailable",
+          "embedding_timeout": "Skipped — embedding timed out",
+          "embedding_provider_error": "Skipped — embedding provider error",
+          "embedding_dim_mismatch": "Skipped — embedding dimension mismatch",
+          "semantic_search_error": "Skipped — semantic search error",
+          "semantic_search_timeout": "Skipped — semantic search timed out",
+          "semantic_reindex_in_progress": "Skipped — semantic index rebuilding",
+          "semantic_unavailable": "Skipped — semantic cache unavailable",
+          "embedding_circuit_open": "Skipped — embedding circuit open",
+          "poisoned": "Skipped — cache entry quarantined"
         },
         "provider": {
           "hit": "HIT — {{tokens}} cached tokens",
@@ -2748,9 +2786,17 @@
         "tier": {
           "tier1": "Tier 1",
           "tier2": "Tier 2",
-          "hint": "Which normalizer claimed this row: Tier 1 = precise per-host parse; Tier 2 = multi-spec pattern probe; no badge = Tier 3 verbatim."
+          "structural": "Structural",
+          "hostMatched": "host-matched",
+          "hint": "Which decoder claimed this row: Tier 1 = exact protocol decoder (matched by key, host, or content sniff); Tier 2 = pattern probe for consumer web surfaces; Structural = typed projection of the raw HTTP body, no protocol decode; no badge = legacy raw verbatim row. \"host-matched\" replaces the confidence number when the adapter was chosen by host: its coverage is honest but not a trust score comparable to a sniffed decode."
         },
         "modelLabel": "Model",
+        "redaction": {
+          "rule": "rule",
+          "source": "source",
+          "action": "action",
+          "reason": "reason"
+        },
         "finishReason": "Finish reason",
         "role": {
           "system": "System",
@@ -2763,7 +2809,8 @@
           "completion": "Completion",
           "total": "Total",
           "cacheRead": "Cache read",
-          "cacheCreate": "Cache create"
+          "cacheCreate": "Cache create",
+          "reasoning": "Reasoning"
         },
         "banner": {
           "failedTitle": "Normalize failed for this direction.",
@@ -2775,7 +2822,17 @@
         "dropped": {
           "title": "Content dropped per storage policy.",
           "hint": "Operator set storageAction=drop-content for the hook that matched. The audit log retains decision + metadata only.",
-          "ruleIds": "Triggered by rules"
+          "ruleIds": "Triggered by rules",
+          "degradedTitle": "Content dropped — the redaction policy could not be safely applied to the stored copy.",
+          "degradedHint": "The hook's storage policy was redact; the stored copy was dropped because the redaction could not be safely applied to it. Cause: {{cause}}.",
+          "degradedAddresses": "Unresolved content addresses",
+          "neutralHint": "Content not stored per the storage policy. This row does not record whether the drop was the configured action or a redaction fallback.",
+          "cause": {
+            "no-spans": "the policy produced no redactable positions (no-spans)",
+            "payload-unmarshal": "the stored copy could not be parsed (payload-unmarshal)",
+            "spans-unresolved": "the redaction positions could not be resolved on the stored copy (spans-unresolved)",
+            "marshal-failed": "the redacted copy could not be re-serialized (marshal-failed)"
+          }
         },
         "binary": {
           "title": "Binary content",
@@ -2788,6 +2845,13 @@
           "binaryInputNotStored": "Binary token-array input — not stored per audit policy.",
           "vectorsNotStored": "Embedding vectors are not stored per audit policy.",
           "noInputs": "No inputs captured."
+        },
+        "emptyBody": "Empty body.",
+        "sse": {
+          "framesTitle": "SSE frames",
+          "eventFallbackLabel": "message",
+          "showAllFrames": "Show all {{count}} frames",
+          "truncatedNote": "Frame view truncated — the full stream was captured and is available in the Raw tab."
         }
       },
       "reasonCodes": {
@@ -2804,6 +2868,11 @@
     "colPath": "Request Path"
   },
   "analytics": {
+    "subtitle": "Track traffic cost, token usage, latency, and source-level breakdowns across the selected period.",
+    "customRangeStart": "Custom range start",
+    "customRangeEnd": "Custom range end",
+    "labelTimeRange": "Time range",
+    "labelGroupBy": "Group by",
     "sourceFilter": "Source",
     "sourceAll": "All Traffic",
     "sourceVK": "AI Gateway",
@@ -2915,7 +2984,7 @@
     "trendsHeading": "Trends",
     "breakdownsHeading": "Breakdowns",
     "breakdownEmpty": "No data for this breakdown in the selected window.",
-    "notSupportedType": "Per-Thing stats are not collected for this Thing type ({{type}}).",
+    "notSupportedType": "Per-node stats are not collected for this node type ({{type}}).",
     "disabledFallback": "Per-agent rollup is not enabled on the Hub. View detailed metrics on the agent local UI.",
     "kpi": {
       "requests": "Requests",
@@ -2987,6 +3056,8 @@
       "compliance": "Compliance",
       "pass": "Pass",
       "noTraffic": "No traffic found for this node",
+      "exemptBadge_one": "⚠ {{count}} app exempted from inspection (fleet-wide) — its AI traffic is not audited",
+      "exemptBadge_other": "⚠ {{count}} apps exempted from inspection (fleet-wide) — their AI traffic is not audited",
       "subtitleAgent": "Recent AI requests originated by this device (last 50).",
       "subtitleGateway": "Recent AI requests processed by this gateway instance (last 50).",
       "subtitleProxy": "Recent AI requests processed by this proxy instance (last 50).",
@@ -3224,7 +3295,7 @@
     "saving": "Saving..."
   },
   "metrics": {
-    "rollupsDescription": "Rollups Description",
+    "rollupsDescription": "Aggregated metric rollups for the selected window.",
     "range": "Range",
     "last6Hours": "Last 6 Hours",
     "last24Hours": "Last 24 Hours",
@@ -3364,26 +3435,6 @@
       "latencyMs": "Latency (ms)",
       "backfilledAt": "Backfilled at"
     },
-    "rejectConfig": {
-      "title": "Reject response configuration",
-      "subtitle": "Control how blocked requests are presented to clients",
-      "defaultLevel": "Default verbosity level",
-      "levelLabel": "Level {{level}}",
-      "level0Desc": "Generic 403 with minimal detail (stealth mode).",
-      "level1Desc": "Blocked message with contact info and transaction ID.",
-      "level2Desc": "Detailed reason and policy context for administrators.",
-      "contactInfoLabel": "IT contact information",
-      "contactInfoPlaceholder": "e.g. security@company.com or internal wiki link",
-      "contactInfoHint": "Shown on level 1 and 2 reject pages when configured.",
-      "lastUpdated": "Last updated {{date}} by {{user}}",
-      "save": "Save configuration",
-      "saved": "Configuration saved",
-      "saveFailed": "Failed to save configuration",
-      "confirmTitle": "Save reject page settings?",
-      "confirmDesc": "Default level will be set to {{level}} for new reject responses.",
-      "cancel": "Cancel",
-      "confirmSave": "Save"
-    },
     "alertHistory": {
       "title": "Proxy Alerts",
       "subtitle": "Active alerts and recent history from the compliance-proxy alert evaluator",
@@ -3491,7 +3542,7 @@
       "hostname": "Hostname",
       "boundUser": "Bound user",
       "physicalId": "Physical ID",
-      "thingId": "Thing ID",
+      "thingId": "Node ID",
       "ip": "IP"
     },
     "forceRefresh": "Force config refresh",
@@ -3814,7 +3865,7 @@
     "configSaved": "Config saved",
     "configRemoved": "Config removed",
     "configTitle": "Group-scoped config",
-    "configSubtitle": "Override fleet defaults per group. Cascade: per-thing override > highest-priority group > fleet default.",
+    "configSubtitle": "Override fleet defaults per group. Cascade: per-node override > highest-priority group > fleet default.",
     "addConfig": "Add config",
     "configEmpty": "No group-scoped configs. Devices in this group fall through to fleet defaults.",
     "lastEdited": "Last edited by {{by}} at {{at}}",
@@ -4342,7 +4393,7 @@
     "backToNodes": "Back to Nodes",
     "nodeInfo": "Node Information",
     "nodeId": "Node ID",
-    "thingId": "Thing ID",
+    "thingId": "Node ID",
     "hostname": "Hostname",
     "physicalIdFull": "Physical ID",
     "primaryIp": "Primary IP",
@@ -4756,10 +4807,10 @@
       "disableFailed": "Failed to close diagnostic-mode window",
       "bulkTitle": "Enable on agents",
       "filterAgentVersion": "Agent version",
-      "filterAgentVersionHelp": "Match agents whose reported version equals this string.",
+      "filterAgentVersionHelp": "Match agents whose version equals this string.",
       "filterAgentVersionPlaceholder": "e.g. 1.4.2",
       "filterOs": "Operating system",
-      "filterOsHelp": "Match agents whose reported OS equals this value.",
+      "filterOsHelp": "Match agents whose OS equals this value.",
       "osAny": "Any",
       "filterThingIds": "Node IDs (overrides version + OS filters)",
       "filterThingIdsHelp": "Paste one Node ID per line, or comma-separated. When non-empty, this list takes priority.",
@@ -4975,12 +5026,12 @@
       "downloadHint": "Pick the build for your platform. Each is a single static executable — no installer required.",
       "downloadButton": "Download ({{arch}})",
       "installTitle": "Install",
-      "installMacOSStep1": "# Apple Silicon shown; for Intel swap arm64 → amd64\ncurl -fL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest -o nexus",
+      "installMacOSStep1": "# Apple Silicon shown; for Intel swap arm64 → amd64\ncurl -fL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest -o nexus\n# Verify the download against the published checksum before running it\necho \"$(curl -fsSL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest.sha256)  nexus\" | shasum -a 256 -c -",
       "installMacOSStep2": "# The binary is not notarized — clear the Gatekeeper quarantine flag, then make it executable\nxattr -d com.apple.quarantine ./nexus 2>/dev/null; chmod +x ./nexus",
       "installMacOSStep3": "# Move it onto your PATH\nsudo mv ./nexus /usr/local/bin/nexus",
-      "installLinuxStep1": "curl -fL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest -o nexus && chmod +x ./nexus",
+      "installLinuxStep1": "curl -fL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest -o nexus\n# Verify the download against the published checksum before running it\necho \"$(curl -fsSL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest.sha256)  nexus\" | sha256sum -c -\nchmod +x ./nexus",
       "installLinuxStep2": "sudo mv ./nexus /usr/local/bin/nexus",
-      "installWindowsStep1": "# PowerShell — download to the current folder\nInvoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe -OutFile nexus.exe",
+      "installWindowsStep1": "# PowerShell — download to the current folder\nInvoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe -OutFile nexus.exe\n# Verify the download against the published checksum before running it\n$expected = (Invoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe.sha256 -UseBasicParsing).Content.Trim()\nif ((Get-FileHash nexus.exe -Algorithm SHA256).Hash -ine $expected) { throw 'nexus.exe checksum mismatch — do not run it' }",
       "installWindowsStep2": "# Move nexus.exe into a folder on your PATH (e.g. %LOCALAPPDATA%\\Programs), then reopen your terminal",
       "quickstartTitle": "Quickstart",
       "quickstartHint": "First launch runs a short wizard: pick an environment → sign in → pick a model → pick or create a Virtual Key.",
@@ -5005,9 +5056,7 @@
         "simulate": "Run a crafted request through the gateway pipeline (request lab)",
         "resource": "Browse and operate any Control Plane admin resource (OpenAPI-driven)",
         "killswitch": "Show or toggle the global kill switch",
-        "passthrough": "Show or toggle emergency passthrough (bypass compliance hooks)",
-        "skill": "List and install agent skills (progressive-disclosure playbooks)",
-        "mcp": "Run the Model Context Protocol server for agents and partner platforms"
+        "passthrough": "Show or toggle emergency passthrough (bypass compliance hooks)"
       }
     },
     "agentSetup": {
@@ -5147,7 +5196,7 @@
           "linux": {
             "whyRoot": {
               "q": "Why does the agent need root on Linux? Does it stay running as root?",
-              "a": "Three things require root at install time: (1) install the device CA into `/usr/local/share/ca-certificates/` and run `update-ca-certificates`; (2) install iptables NAT REDIRECT rules to capture outbound traffic; (3) bind to localhost ports. The daemon itself drops privileges to the unprivileged `nexus-agent` system user after these one-time setup tasks finish. Confirm with `ps -fC nexus-agent` — the running process should show user `nexus-agent`, not root."
+              "a": "Three steps require root at install time: (1) install the device CA into `/usr/local/share/ca-certificates/` and run `update-ca-certificates`; (2) install iptables NAT REDIRECT rules to capture outbound traffic; (3) bind to localhost ports. The daemon itself drops privileges to the unprivileged `nexus-agent` system user after these one-time setup tasks finish. Confirm with `ps -fC nexus-agent` — the running process should show user `nexus-agent`, not root."
             },
             "firewallReload": {
               "q": "iptables rules disappeared after firewalld / ufw reload — is the agent broken?",
@@ -5975,6 +6024,7 @@
       "expiresAt": "Expires at",
       "expiresAtHint": "Maximum {{hours}}h from now. The Hub reconcile job automatically flips enabled=false at this time, so leaving incident-response cleanup to humans is not required.",
       "reason": "Reason (≥ {{count}} chars)",
+      "reasonPlaceholder": "Describe why emergency passthrough is needed",
       "reasonHint": "{{count}} of {{min}} chars. Required for audit; appears on every traffic_event row that was bypassed by this tier."
     },
     "validation": {

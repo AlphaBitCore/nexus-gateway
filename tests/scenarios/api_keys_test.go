@@ -44,15 +44,15 @@ import (
 // AdminAuditLog verify the side-channel write isn't silently dropped.
 //
 // Assertions:
-//   1. POST create returns 201 with id + rawKey + keyPrefix.
-//   2. GET list contains the new key with the same keyPrefix and
-//      NO raw key leak (the zero-knowledge contract).
-//   3. The rawKey authenticates against GET /api/me via x-admin-key.
-//   4. POST regenerate returns a new rawKey; the OLD rawKey now 401s.
-//   5. The NEW rawKey authenticates against GET /api/me.
-//   6. DELETE removes the key; the new rawKey now 401s too.
-//   7. AdminAuditLog records create + update (regenerate) + delete
-//      rows for the user's keyId within the test window.
+//  1. POST create returns 201 with id + rawKey + keyPrefix.
+//  2. GET list contains the new key with the same keyPrefix and
+//     NO raw key leak (the zero-knowledge contract).
+//  3. The rawKey authenticates against GET /api/me via x-admin-key.
+//  4. POST regenerate returns a new rawKey; the OLD rawKey now 401s.
+//  5. The NEW rawKey authenticates against GET /api/me.
+//  6. DELETE removes the key; the new rawKey now 401s too.
+//  7. AdminAuditLog records create + update (regenerate) + delete
+//     rows for the user's keyId within the test window.
 func TestS115_UserAPIKeyLifecycle(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -193,7 +193,15 @@ func TestS115_UserAPIKeyLifecycle(t *testing.T) {
 		t.Errorf("DELETED key still authenticates: status=%d (want 401)", delStatus)
 	}
 
-	// (7) AdminAuditLog rows.
+	// (7) AdminAuditLog rows. This cross-check reads Postgres directly, which
+	// prod-safe-e2e has no access to; the create→use→regen→delete lifecycle
+	// above already proved the behavior over the API. Skip the DB-backed audit
+	// assertion on prod (cleanup still runs via sc.Cleanup); strict locally.
+	if helpers.IsProdSafeE2E() {
+		t.Logf("S-115 OK (prod safe-e2e; audit DB cross-check skipped — Postgres not directly reachable): key %s lifecycle create→use→regen→delete", created.ID)
+		return
+	}
+
 	auditDeadline := time.Now().Add(10 * time.Second)
 	var auditCounts struct{ create, update, del int }
 	for time.Now().Before(auditDeadline) {

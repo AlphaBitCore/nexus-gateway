@@ -217,6 +217,7 @@ export function CredentialListPage() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
         searchPlaceholder={t('pages:credentials.searchPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}
@@ -249,7 +250,7 @@ export function CredentialListPage() {
         />
       </Card>
 
-      <ListPagination offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
+      <ListPagination variant="plain" offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
 
       <AlertDialog
         open={!!deleting}

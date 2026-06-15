@@ -1,6 +1,6 @@
 /**
- * Forward-proxy API service — proxy status, connections, kill switch,
- * reject stats, reject config, and compliance coverage.
+ * Forward-proxy API service — proxy status, connections, reject stats,
+ * hook health, and compliance coverage.
  */
 import { api } from '../../../client';
 
@@ -21,14 +21,6 @@ export interface ProxyConnection {
   duration: string;
 }
 
-
-export interface RejectConfig {
-  defaultLevel: 0 | 1 | 2;
-  contactInfo: string;
-  policyOverrides: Record<string, number>;
-  updatedAt: string | null;
-  updatedBy: string | null;
-}
 
 export interface ComplianceCoverage {
   coveragePercent: number;
@@ -124,14 +116,6 @@ export const proxyApi = {
 
   getComplianceCoverage(startTime: string, endTime: string): Promise<ComplianceCoverage> {
     return api.get(`/api/admin/proxy/compliance/coverage?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`);
-  },
-
-  getRejectConfig(): Promise<RejectConfig> {
-    return api.get('/api/admin/proxy/reject-config');
-  },
-
-  updateRejectConfig(config: Partial<RejectConfig>): Promise<RejectConfig> {
-    return api.put('/api/admin/proxy/reject-config', config);
   },
 
   getHookHealth(startTime: string, endTime: string): Promise<HookHealthStats> {

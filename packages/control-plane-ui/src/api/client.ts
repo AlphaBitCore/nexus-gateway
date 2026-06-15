@@ -169,6 +169,40 @@ export function scheduleProactiveRefresh(): () => void {
   return () => clearTimeout(timer);
 }
 
+/**
+ * Bearer-authenticated `fetch` for callers that need the raw `Response` —
+ * SSE streams, blob downloads, and best-effort fire-and-forget POSTs (the
+ * assistant native clients). Attaches the access token on top of the
+ * caller's headers, and on a 401 performs the same serialized refresh-token
+ * rotation as `request` and re-dispatches the call once with the fresh
+ * token. If the refresh itself fails the browser is redirected to `/login`
+ * (the session is gone) and the original 401 response is returned, so
+ * non-throwing callers keep their falsy-result handling.
+ */
+export async function authorizedFetch(
+  input: string,
+  init: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> } = {},
+): Promise<Response> {
+  const run = (): Promise<Response> => {
+    const token = getAccessToken();
+    return fetch(input, {
+      ...init,
+      headers: { ...init.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+  };
+
+  let res = await run();
+  if (res.status === 401) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      res = await run();
+    } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.assign('/login');
+    }
+  }
+  return res;
+}
+
 /** Parse an error body shape produced by the Echo handlers: `{ error: { code, message, type, details } }`. */
 async function toApiError(res: Response): Promise<ApiError> {
   const errorBody = await res.json().catch(() => ({ error: res.statusText }));

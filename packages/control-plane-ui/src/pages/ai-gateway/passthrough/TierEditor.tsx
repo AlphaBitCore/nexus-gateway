@@ -76,6 +76,7 @@ export function TierEditor({
           className={styles.reasonInput}
           value={form.reason}
           disabled={disabled || !form.enabled}
+          placeholder={t('pages:passthrough.fields.reasonPlaceholder')}
           rows={3}
           onChange={e => setForm({ ...form, reason: e.target.value })}
         />

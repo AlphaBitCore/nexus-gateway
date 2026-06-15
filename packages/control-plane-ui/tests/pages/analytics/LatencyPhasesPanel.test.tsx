@@ -11,7 +11,6 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import '@testing-library/jest-dom/vitest';
 
 import { renderWithProviders } from '@/test/test-utils';
 import { analyticsApi, type LatencyPhaseRow } from '@/api/services/overview/analytics';

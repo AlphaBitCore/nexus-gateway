@@ -10,6 +10,7 @@ import {
   TabsContent,
 } from '@/components/ui';
 import { TrafficTab, type TrafficSourceFilter } from '../list/TrafficTab';
+import css from './TrafficAnalyticsPage.module.css';
 
 /* -- Source sub-tabs --
  *
@@ -34,6 +35,7 @@ function getSourceTabs(t: (key: string) => string): { value: TrafficSourceFilter
 }
 
 const VALID_TAB_VALUES = new Set<TrafficSourceFilter>(['', 'vk', 'proxy', 'agent']);
+const TAB_LOCAL_FILTER_URL_KEYS = ['thingId', 'thingName', 'eventId', 'status', 'model'];
 
 /* -- Main Page -- */
 
@@ -59,6 +61,9 @@ export function TrafficAnalyticsPage() {
       } else {
         next.set('source', v);
       }
+      for (const key of TAB_LOCAL_FILTER_URL_KEYS) {
+        next.delete(key);
+      }
       // Replace so rapid tab-clicking doesn't pollute browser history.
       setSearchParams(next, { replace: true });
     },
@@ -67,19 +72,19 @@ export function TrafficAnalyticsPage() {
 
   return (
     <Stack gap="lg">
-      <PageHeader title={t('pages:traffic.liveTraffic')} subtitle={t('pages:traffic.subtitle')} />
+      <div className={css.liveTrafficHeader}>
+        <PageHeader title={t('pages:traffic.liveTraffic')} subtitle={t('pages:traffic.subtitle')} />
+      </div>
 
       <Tabs value={sourceTab} onValueChange={handleTabChange}>
-        <TabsList>
+        <TabsList className={css.sourceTabsList}>
           {SOURCE_TABS.map((st) => (
-            <TabsTrigger key={st.value} value={st.value}>{st.label}</TabsTrigger>
+            <TabsTrigger key={st.value} value={st.value} className={css.sourceTabsTrigger}>{st.label}</TabsTrigger>
           ))}
         </TabsList>
-        {SOURCE_TABS.map((st) => (
-          <TabsContent key={st.value} value={st.value}>
-            <TrafficTab source={st.value} />
-          </TabsContent>
-        ))}
+        <TabsContent key={sourceTab || 'all'} value={sourceTab}>
+          <TrafficTab source={sourceTab} />
+        </TabsContent>
       </Tabs>
     </Stack>
   );

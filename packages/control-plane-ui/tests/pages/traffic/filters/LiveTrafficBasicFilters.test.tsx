@@ -56,14 +56,12 @@ describe('LiveTrafficBasicFilters', () => {
     const end = new Date();
     const start = new Date(end.getTime() - 3600_000);
     wrap('vk', { startTime: start.toISOString(), endTime: end.toISOString() });
-    // a Clear affordance appears once a time range is set
-    expect(screen.getByRole('button', { name: i18n.t('pages:traffic.clearTime') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('clear-time resets both bounds', () => {
-    const onPatch = wrap('vk', { startTime: '2026-05-28T00:00', endTime: '2026-05-28T01:00' });
-    fireEvent.click(screen.getByRole('button', { name: i18n.t('pages:traffic.clearTime') }));
-    expect(onPatch).toHaveBeenCalledWith({ startTime: '', endTime: '' });
+  it('does not render the removed clear-time affordance', () => {
+    wrap('vk', { startTime: '2026-05-28T00:00', endTime: '2026-05-28T01:00' });
+    expect(screen.queryByRole('button', { name: i18n.t('pages:traffic.clearTime') })).not.toBeInTheDocument();
   });
 
   it('vk source exposes the request hook-decision filter', () => {

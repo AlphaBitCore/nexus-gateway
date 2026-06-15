@@ -166,12 +166,6 @@ export function MetricsRollupsSection({ embedded, externalStart, externalEnd, so
 
   return (
     <Stack gap="lg">
-      {embedded ? (
-        <p className={styles.mutedInfo}>
-          {t('pages:metrics.rollupsDescription')}
-        </p>
-      ) : null}
-
       <KpiCards
         hasExternal={hasExternal}
         hours={hours}

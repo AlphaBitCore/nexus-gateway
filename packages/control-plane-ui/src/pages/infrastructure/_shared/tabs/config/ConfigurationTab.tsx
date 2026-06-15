@@ -201,7 +201,7 @@ export function ConfigurationTab({ thingId, thingType, appliedOutcomes }: Config
   const showKillswitchBanner = detectKillswitchBypass(killswitchEntry);
 
   if (loading && !data) return <Skeleton.DetailPageSkeleton />;
-  if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
+  if (error) return <ErrorBanner error={error} onRetry={refetch} />;
   if (!data) return null;
 
   const desiredVer = data.targetVersion ?? 0;

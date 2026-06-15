@@ -72,8 +72,10 @@ export function PassthroughPage() {
 
   return (
     <>
-      <PageHeader title={t('pages:passthrough.title')} subtitle={t('pages:passthrough.subtitle')} />
-      <Stack gap="lg">
+      <div className={styles.pageHeader}>
+        <PageHeader title={t('pages:passthrough.title')} subtitle={t('pages:passthrough.subtitle')} />
+      </div>
+      <Stack gap="lg" className={styles.contentStack}>
         <ActiveBanner snapshot={snap} />
         <GlobalPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} />
         <AdapterOverridesPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} canDelete={canDelete} />
@@ -109,10 +111,13 @@ function GlobalPanel({ snapshot, onChange, canEnable }: { snapshot: PassthroughS
   };
 
   return (
-    <Card>
-      <Stack gap="md">
+    <section className={styles.panelSection}>
+      <div className={styles.panelHeader}>
         <h2 className={styles.panelTitle}>{t('pages:passthrough.global.title')}</h2>
         <p className={styles.subtitle}>{t('pages:passthrough.global.subtitle')}</p>
+      </div>
+      <Card>
+        <Stack gap="md">
         <TierEditor
           form={form}
           setForm={setForm}
@@ -123,25 +128,26 @@ function GlobalPanel({ snapshot, onChange, canEnable }: { snapshot: PassthroughS
         {!valid && form.enabled && (
           <div className={styles.validation}>{t(`pages:passthrough.validation.${code}`)}</div>
         )}
-        <Stack direction="horizontal" gap="sm">
-          <Button onClick={onSave} disabled={saving || !canEnable || (form.enabled && !valid)} variant={form.enabled ? 'danger' : 'primary'}>
+        <Stack direction="horizontal" gap="sm" className={styles.globalActions}>
+          <Button className={styles.saveButton} onClick={onSave} disabled={saving || !canEnable || (form.enabled && !valid)} variant={form.enabled ? 'danger' : 'primary'}>
             {saving ? t('common:saving') : form.enabled ? t('pages:passthrough.global.saveEnableBtn') : t('pages:passthrough.global.saveDisableBtn')}
           </Button>
           {!canEnable && (
             <span className={styles.subtitle}>{t('pages:passthrough.noPermissionToEnable')}</span>
           )}
         </Stack>
-      </Stack>
+        </Stack>
 
-      <EnableConfirmDialog
-        open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        onConfirm={() => save(undefined)}
-        scope="global"
-        scopeKey="global"
-        form={form}
-      />
-    </Card>
+        <EnableConfirmDialog
+          open={confirmOpen}
+          onClose={() => setConfirmOpen(false)}
+          onConfirm={() => save(undefined)}
+          scope="global"
+          scopeKey="global"
+          form={form}
+        />
+      </Card>
+    </section>
   );
 }
 
@@ -152,17 +158,21 @@ function AdapterOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { s
   const adapters = Object.entries(snapshot.adapters).sort(([a], [b]) => a.localeCompare(b));
 
   return (
-    <Card>
-      <Stack gap="md">
-        <Stack direction="horizontal" gap="md" justify="between">
-          <div>
-            <h2 className={styles.panelTitle}>{t('pages:passthrough.adapter.title')}</h2>
-            <p className={styles.subtitle}>{t('pages:passthrough.adapter.subtitle')}</p>
-          </div>
-          <Button onClick={() => setEditing('')} disabled={!canEnable}>{t('pages:passthrough.adapter.addBtn')}</Button>
-        </Stack>
+    <section className={styles.panelSection}>
+      <div className={styles.panelHeaderRow}>
+        <div className={styles.panelHeader}>
+          <h2 className={styles.panelTitle}>{t('pages:passthrough.adapter.title')}</h2>
+          <p className={styles.subtitle}>{t('pages:passthrough.adapter.subtitle')}</p>
+        </div>
+        <Button className={styles.textActionButton} onClick={() => setEditing('')} disabled={!canEnable}>
+          <span className={styles.textActionIcon} aria-hidden>+</span>
+          <span>{t('pages:passthrough.adapter.addBtn')}</span>
+        </Button>
+      </div>
+      <Card>
+        <Stack gap="md">
         {adapters.length === 0 ? (
-          <p className={styles.empty}>{t('pages:passthrough.adapter.empty')}</p>
+          <p className={styles.emptyState}>{t('pages:passthrough.adapter.empty')}</p>
         ) : (
           <table className={styles.tierTable}>
             <thead>
@@ -205,17 +215,18 @@ function AdapterOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { s
             </tbody>
           </table>
         )}
-      </Stack>
+        </Stack>
 
-      {editing !== null && (
-        <AdapterEditorDialog
-          adapterType={editing}
-          existing={editing ? snapshot.adapters[editing] : undefined}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); onChange(); }}
-        />
-      )}
-    </Card>
+        {editing !== null && (
+          <AdapterEditorDialog
+            adapterType={editing}
+            existing={editing ? snapshot.adapters[editing] : undefined}
+            onClose={() => setEditing(null)}
+            onSaved={() => { setEditing(null); onChange(); }}
+          />
+        )}
+      </Card>
+    </section>
   );
 }
 
@@ -298,17 +309,21 @@ function ProviderOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { 
   const providerName = (id: string) => snapshot.providerNames?.[id] ?? id.slice(0, 8) + '…';
 
   return (
-    <Card>
-      <Stack gap="md">
-        <Stack direction="horizontal" gap="md" justify="between">
-          <div>
-            <h2 className={styles.panelTitle}>{t('pages:passthrough.provider.title')}</h2>
-            <p className={styles.subtitle}>{t('pages:passthrough.provider.subtitle')}</p>
-          </div>
-          <Button onClick={() => setEditing('')} disabled={!canEnable}>{t('pages:passthrough.provider.addBtn')}</Button>
-        </Stack>
+    <section className={styles.panelSection}>
+      <div className={styles.panelHeaderRow}>
+        <div className={styles.panelHeader}>
+          <h2 className={styles.panelTitle}>{t('pages:passthrough.provider.title')}</h2>
+          <p className={styles.subtitle}>{t('pages:passthrough.provider.subtitle')}</p>
+        </div>
+        <Button className={styles.textActionButton} onClick={() => setEditing('')} disabled={!canEnable}>
+          <span className={styles.textActionIcon} aria-hidden>+</span>
+          <span>{t('pages:passthrough.provider.addBtn')}</span>
+        </Button>
+      </div>
+      <Card>
+        <Stack gap="md">
         {providers.length === 0 ? (
-          <p className={styles.empty}>{t('pages:passthrough.provider.empty')}</p>
+          <p className={styles.emptyState}>{t('pages:passthrough.provider.empty')}</p>
         ) : (
           <table className={styles.tierTable}>
             <thead>
@@ -351,16 +366,17 @@ function ProviderOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { 
             </tbody>
           </table>
         )}
-      </Stack>
-      {editing !== null && (
-        <ProviderEditorDialog
-          providerId={editing}
-          existing={editing ? snapshot.providers[editing] : undefined}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); onChange(); }}
-        />
-      )}
-    </Card>
+        </Stack>
+        {editing !== null && (
+          <ProviderEditorDialog
+            providerId={editing}
+            existing={editing ? snapshot.providers[editing] : undefined}
+            onClose={() => setEditing(null)}
+            onSaved={() => { setEditing(null); onChange(); }}
+          />
+        )}
+      </Card>
+    </section>
   );
 }
 

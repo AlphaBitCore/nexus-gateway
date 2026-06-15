@@ -9,6 +9,7 @@ import {
   ErrorBanner,
   Stack,
   ListPagination,
+  Button,
 } from '@/components/ui';
 import type { TrafficEvent, TrafficStorageResponse } from '../../../api/types';
 import { TrafficEventDrawer } from '../audit-drawer/trafficAuditDrawer';
@@ -16,6 +17,7 @@ import { LiveTrafficActiveFiltersBar } from '../filters/LiveTrafficActiveFilters
 import { LiveTrafficFilterPanel } from '../filters/LiveTrafficFilterPanel';
 import {
   buildTrafficAuditLogQueryParams,
+  countLiveTrafficFilters,
   parseTrafficNavParams,
   type TrafficSourceFilter,
 } from '../filters/liveTrafficFilters';
@@ -92,6 +94,7 @@ export function TrafficTab({ source }: TrafficTabProps) {
   }, []);
 
   useEffect(() => {
+    if ((searchParams.get('source') ?? '') !== source) return;
     const nav = parseTrafficNavParams(searchParams);
     if (!nav.hasNav) return;
 
@@ -121,7 +124,7 @@ export function TrafficTab({ source }: TrafficTabProps) {
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
-  }, [searchParams, setSearchParams, applyFilterPatch, setSelectedEntry]);
+  }, [source, searchParams, setSearchParams, applyFilterPatch, setSelectedEntry]);
 
   const storage = useApi<TrafficStorageResponse>(
     () => systemApi.getTrafficStorage(),
@@ -151,6 +154,11 @@ export function TrafficTab({ source }: TrafficTabProps) {
     clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = setTimeout(() => setRefreshing(false), 800);
   }, [storage, logs]);
+
+  const handleRefreshFilteredEmpty = useCallback(() => {
+    handleClearAllFilters();
+    handleRefresh();
+  }, [handleClearAllFilters, handleRefresh]);
 
   if (storage.loading && !storage.data) return <LoadingSpinner />;
   if (storage.error) return <ErrorBanner message={storage.error.message} onRetry={storage.refetch} />;
@@ -188,6 +196,7 @@ export function TrafficTab({ source }: TrafficTabProps) {
   const entries = logs.data?.data ?? [];
   const total = logs.data?.total ?? 0;
   const columns = getColumnsForSource(source, t);
+  const hasUserSearchOrFilters = countLiveTrafficFilters(appliedFilters) > 0;
 
   return (
     <Stack gap="md">
@@ -203,22 +212,48 @@ export function TrafficTab({ source }: TrafficTabProps) {
         refreshing={refreshing}
       />
 
-      <LiveTrafficActiveFiltersBar applied={appliedFilters} />
+      <LiveTrafficActiveFiltersBar
+        applied={appliedFilters}
+        onRemove={applyFilterPatch}
+        onClearAll={handleClearAllFilters}
+      />
 
-      {total === 0 ? <p className={css.helperText}>{t('pages:traffic.noRowsMatch')}</p> : null}
-
-      <div data-testid="traffic-table" className={css.tableWrapper}>
-        <DataTable hideSearch
-          pageSize={pageLimit}
-          columns={columns}
-          data={entries}
-          emptyMessage={t('pages:traffic.emptyTraffic')}
-          onRowClick={(row) => {
-            if (selectedEntry?.id === row.id) closeDrawer();
-            else setSelectedEntry(row);
-          }}
-        />
-      </div>
+      {total === 0 ? (
+        <div data-testid="traffic-table" className={css.emptyStatePanel}>
+          {hasUserSearchOrFilters ? (
+            <>
+              <h2 className={css.emptyStateTitle}>{t('pages:traffic.noFilteredDataTitle')}</h2>
+              <p className={css.emptyStateDescription}>
+                {t('pages:traffic.noFilteredDataDescription')}
+              </p>
+              <Button
+                variant="primary"
+                onClick={handleRefreshFilteredEmpty}
+                disabled={refreshing}
+                loading={refreshing}
+                className={css.emptyStateRefreshButton}
+              >
+                {t('pages:traffic.refresh')}
+              </Button>
+            </>
+          ) : (
+            <h2 className={css.noDataTitle}>{t('pages:traffic.emptyTraffic')}</h2>
+          )}
+        </div>
+      ) : (
+        <div data-testid="traffic-table" className={css.tableWrapper}>
+          <DataTable hideSearch
+            pageSize={pageLimit}
+            columns={columns}
+            data={entries}
+            emptyMessage={t('pages:traffic.emptyTraffic')}
+            onRowClick={(row) => {
+              if (selectedEntry?.id === row.id) closeDrawer();
+              else setSelectedEntry(row);
+            }}
+          />
+        </div>
+      )}
 
       {selectedEntry && (
         <TrafficEventDrawer
@@ -229,13 +264,15 @@ export function TrafficTab({ source }: TrafficTabProps) {
         />
       )}
 
-      <ListPagination
-        offset={offset}
-        limit={pageLimit}
-        total={total}
-        onOffsetChange={setOffset}
-        onLimitChange={setPageLimit}
-      />
+      {total > 0 ? (
+        <ListPagination
+          offset={offset}
+          limit={pageLimit}
+          total={total}
+          onOffsetChange={setOffset}
+          onLimitChange={setPageLimit}
+        />
+      ) : null}
     </Stack>
   );
 }

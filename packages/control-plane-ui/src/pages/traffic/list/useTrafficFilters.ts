@@ -3,20 +3,33 @@ import { useSearchParams } from 'react-router-dom';
 import { DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize } from '@/components/ui';
 import {
   EMPTY_LIVE_TRAFFIC_FILTERS,
-  toDatetimeLocalValue,
   type LiveTrafficFiltersState,
   type TrafficSourceFilter,
 } from '../filters/liveTrafficFilters';
 
+interface TrafficFilterSnapshot {
+  offset: number;
+  pageLimit: AdminListPageSize;
+  draftFilters: LiveTrafficFiltersState;
+  appliedFilters: LiveTrafficFiltersState;
+  showAdvanced: boolean;
+}
+
+const trafficFilterSnapshots = new Map<TrafficSourceFilter, TrafficFilterSnapshot>();
+
+function cloneFilters(filters: LiveTrafficFiltersState): LiveTrafficFiltersState {
+  return {
+    ...filters,
+    complianceTags: [...filters.complianceTags],
+  };
+}
+
 /**
  * useTrafficFilters — filter draft/applied state, pagination offset/limit, and
- * the Node-filter↔URL mirror for the Traffic list. Owns the tab-switch reset
- * and the apply/clear handlers. URL-sync, defaults, and reset behavior are
- * preserved verbatim.
+ * the Node-filter↔URL mirror for the Traffic list. Each source tab keeps its
+ * own snapshot so filters applied in one tab do not bleed into another tab.
  */
 export function useTrafficFilters(source: TrafficSourceFilter) {
-  const [offset, setOffset] = useState(0);
-  const [pageLimit, setPageLimit] = useState<AdminListPageSize>(DEFAULT_ADMIN_LIST_PAGE_SIZE);
   // Cross-link entry point: /traffic?thingId=<thing-id>&thingName=<label>
   // is set by the node-detail "View all traffic" link so this page opens
   // pre-filtered to traffic emitted by that node. After init we treat the
@@ -27,37 +40,40 @@ export function useTrafficFilters(source: TrafficSourceFilter) {
   // address bar (bug repro: open from node detail, click "Clear filters",
   // URL still shows thingId).
   const [searchParams, setSearchParams] = useSearchParams();
-  // Default to 24h range so the quick-range button shows as selected
   const [defaultFilters] = useState<LiveTrafficFiltersState>(() => {
-    const end = new Date();
-    const start = new Date(end.getTime() - 24 * 3600_000);
+    const urlSource = searchParams.get('source') ?? '';
+    const shouldSeedFromUrl = urlSource === source;
     return {
       ...EMPTY_LIVE_TRAFFIC_FILTERS,
-      startTime: toDatetimeLocalValue(start),
-      endTime: toDatetimeLocalValue(end),
-      thingId: searchParams.get('thingId') ?? '',
-      _thingLabel: searchParams.get('thingName') ?? '',
+      thingId: shouldSeedFromUrl ? searchParams.get('thingId') ?? '' : '',
+      _thingLabel: shouldSeedFromUrl ? searchParams.get('thingName') ?? '' : '',
     };
   });
-  const [draftFilters, setDraftFilters] = useState<LiveTrafficFiltersState>(defaultFilters);
-  const [appliedFilters, setAppliedFilters] = useState<LiveTrafficFiltersState>(defaultFilters);
+  const [initialSnapshot] = useState(() => trafficFilterSnapshots.get(source));
+  const [offset, setOffset] = useState(initialSnapshot?.offset ?? 0);
+  const [pageLimit, setPageLimit] = useState<AdminListPageSize>(
+    initialSnapshot?.pageLimit ?? DEFAULT_ADMIN_LIST_PAGE_SIZE,
+  );
+  const [draftFilters, setDraftFilters] = useState<LiveTrafficFiltersState>(
+    () => cloneFilters(initialSnapshot?.draftFilters ?? defaultFilters),
+  );
+  const [appliedFilters, setAppliedFilters] = useState<LiveTrafficFiltersState>(
+    () => cloneFilters(initialSnapshot?.appliedFilters ?? defaultFilters),
+  );
   const [applyTick, setApplyTick] = useState(0);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(initialSnapshot?.showAdvanced ?? false);
 
-  // Reset filters when switching tabs, but keep the time range
+  // Cache the tab's local filter state so unmounting inactive Radix tabs does
+  // not make their filters leak to the next tab or disappear when switching back.
   useEffect(() => {
-    setDraftFilters((prev) => ({
-      ...EMPTY_LIVE_TRAFFIC_FILTERS,
-      startTime: prev.startTime,
-      endTime: prev.endTime,
-    }));
-    setAppliedFilters((prev) => ({
-      ...EMPTY_LIVE_TRAFFIC_FILTERS,
-      startTime: prev.startTime,
-      endTime: prev.endTime,
-    }));
-    setOffset(0);
-  }, [source]);
+    trafficFilterSnapshots.set(source, {
+      offset,
+      pageLimit,
+      draftFilters: cloneFilters(draftFilters),
+      appliedFilters: cloneFilters(appliedFilters),
+      showAdvanced: false,
+    });
+  }, [source, offset, pageLimit, draftFilters, appliedFilters, showAdvanced]);
 
   // Mirror the active Node filter into the URL so the address bar reflects
   // what's actually applied. Replace-history so rapid filter edits don't
@@ -67,6 +83,7 @@ export function useTrafficFilters(source: TrafficSourceFilter) {
   // other state worth preserving, which already round-trips via the time
   // preset buttons).
   useEffect(() => {
+    if ((searchParams.get('source') ?? '') !== source) return;
     const next = new URLSearchParams(searchParams);
     const id = appliedFilters.thingId.trim();
     const label = appliedFilters._thingLabel.trim();
@@ -92,8 +109,8 @@ export function useTrafficFilters(source: TrafficSourceFilter) {
   }, [draftFilters]);
 
   const handleClearAllFilters = useCallback(() => {
-    setDraftFilters(EMPTY_LIVE_TRAFFIC_FILTERS);
-    setAppliedFilters(EMPTY_LIVE_TRAFFIC_FILTERS);
+    setDraftFilters(cloneFilters(EMPTY_LIVE_TRAFFIC_FILTERS));
+    setAppliedFilters(cloneFilters(EMPTY_LIVE_TRAFFIC_FILTERS));
     setOffset(0);
   }, []);
 

@@ -69,26 +69,48 @@
   height: 100%;
 }
 
+.sectionHeaderBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 24px 0 0;
+}
+
 .sectionHeading {
-  font-size: var(--g-font-size-lg);
+  font-size: 16px;
   font-family: var(--g-font-display);
   font-weight: 600;
   color: var(--color-text);
   letter-spacing: 0;
-  margin-top: 24px;
+  margin: 0;
 }
 
 .sectionSubtitle {
+  margin: 0;
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
-  margin-top: 2px;
 }
 
 .byProviderGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
   align-items: stretch;
+}
+
+.byProviderGrid > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .chartPair,
+  .byProviderGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .byProviderGrid > :last-child:nth-child(odd) {
+    grid-column: auto;
+  }
 }
 
 .chartPanel {
@@ -99,20 +121,34 @@
   height: 100%;
 }
 
+.chartPanelHeader {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: 0 0 16px;
+}
+
 .chartPanelTitle {
-  font-size: var(--g-font-size-lg);
+  margin: 0;
+  font-size: 14px;
   font-family: var(--g-font-display);
+  font-weight: 600;
+  color: var(--color-text);
   letter-spacing: 0;
+  line-height: 24px;
 }
 
 .chartPanelSubtitle {
+  margin: 0;
   color: var(--color-text-muted);
   font-size: var(--g-font-size-sm);
-  margin-bottom: 16px;
+  line-height: 20px;
 }
 
 .chartPanelEmpty {
   color: var(--color-text-muted);
+  font-size: 13px;
   flex: 1;
   display: flex;
   align-items: center;
@@ -137,19 +173,15 @@
 }
 
 .statLabel {
-  display: flex;
-  align-items: center;
-  gap: var(--g-space-1-5);
-  font-size: var(--g-font-size-md);
-  font-family: var(--g-font-display);
-  font-weight: 600;
-  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
   letter-spacing: 0;
-  margin-bottom: var(--g-space-1-5);
+  margin-bottom: 4px;
 }
 
 .statValue {
-  font-size: var(--g-font-size-2xl);
+  font-size: 24px;
   font-weight: 700;
   color: var(--color-text);
   line-height: 1.2;
@@ -157,8 +189,8 @@
 }
 
 .statSubtitle {
-  font-size: var(--g-font-size-xs);
+  font-size: 12px;
   color: var(--color-text-muted);
-  margin-top: var(--g-space-1-5);
+  margin-top: 4px;
   line-height: 1.5;
 }

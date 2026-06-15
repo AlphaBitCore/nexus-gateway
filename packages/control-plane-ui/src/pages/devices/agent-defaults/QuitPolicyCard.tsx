@@ -16,7 +16,7 @@ export function QuitPolicyCard({ quitAllowed, onQuitToggle, loading }: QuitPolic
       <Stack gap="md">
         <h3 style={{ margin: 'var(--g-space-0)' }}>{t('pages:settings.quitPolicyTitle', 'Agent Quit Policy')}</h3>
         <p className={styles.helpTextSecondary}>
-          {t('pages:settings.quitPolicyDesc', 'Controls whether the agent menu bar exposes Restart Agent and Quit Nexus Agent items. Turn off for compliance always-on deployments — users cannot quit the agent process.')}
+          {t('pages:settings.quitPolicyDesc', "Controls whether employees can turn protection off on their device. Turn off for compliance always-on deployments: the user cannot quit, pause, or sign out of the agent, so monitoring can't be disabled. Signing in always works.")}
         </p>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-3)', cursor: 'pointer' }}>
@@ -27,12 +27,12 @@ export function QuitPolicyCard({ quitAllowed, onQuitToggle, loading }: QuitPolic
           />
           <div>
             <div style={{ fontWeight: 'var(--g-font-weight-medium)' }}>
-              {t('pages:settings.quitAllowedLabel', 'Allow users to quit the agent')}
+              {t('pages:settings.quitAllowedLabel', 'Allow users to turn off the agent')}
             </div>
             <div className={styles.hintTextMuted}>
               {quitAllowed
-                ? t('pages:settings.quitAllowedOnHint', 'Restart Agent and Quit Nexus Agent menu items are visible.')
-                : t('pages:settings.quitAllowedOffHint', 'Restart Agent and Quit Nexus Agent menu items are hidden — only Restart App is available.')}
+                ? t('pages:settings.quitAllowedOnHint', 'Quit, Pause, and Sign Out are available to the user.')
+                : t('pages:settings.quitAllowedOffHint', "Always-on: Quit, Pause, and Sign Out are hidden — the user can't turn protection off. Signing in still works.")}
             </div>
           </div>
         </label>

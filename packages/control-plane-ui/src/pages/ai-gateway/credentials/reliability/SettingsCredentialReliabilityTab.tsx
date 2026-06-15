@@ -122,11 +122,13 @@ export function SettingsCredentialReliabilityTab() {
   };
 
   return (
-    <Stack gap="lg">
-      <Card>
+    <div className={styles.layout}>
+      <div className={styles.header}>
         <h2 className={styles.title}>{t('pages:settings.reliability.title')}</h2>
         <p className={styles.help}>{t('pages:settings.reliability.subtitle')}</p>
+      </div>
 
+      <Card>
         <div className={styles.grid}>
           {FIELDS.map((k) => (
             <FormField
@@ -138,18 +140,18 @@ export function SettingsCredentialReliabilityTab() {
             </FormField>
           ))}
         </div>
-
-        {validationErr && <div className={styles.validationErr}>{validationErr}</div>}
-
-        <Stack direction="horizontal" gap="sm" className={styles.actions}>
-          <Button onClick={onSave} loading={saving}>{t('common:save')}</Button>
-          <Button variant="secondary" onClick={onResetDefaults}>
-            {t('pages:settings.reliability.resetDefaults')}
-          </Button>
-        </Stack>
-
-        <p className={styles.afterSaveNote}>{t('pages:settings.reliability.propagateNote')}</p>
       </Card>
-    </Stack>
+
+      {validationErr && <div className={styles.validationErr}>{validationErr}</div>}
+
+      <Stack direction="horizontal" gap="sm" className={styles.actions}>
+        <Button className={styles.primaryAction} onClick={onSave} loading={saving}>{t('common:save')}</Button>
+        <Button className={styles.secondaryAction} variant="secondary" onClick={onResetDefaults}>
+          {t('pages:settings.reliability.resetDefaults')}
+        </Button>
+      </Stack>
+
+      <p className={styles.afterSaveNote}>{t('pages:settings.reliability.propagateNote')}</p>
+    </div>
   );
 }

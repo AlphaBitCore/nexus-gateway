@@ -67,66 +67,76 @@ export function SemanticCacheCard({
       draft.embeddingModelId !== (data.embeddingModelId ?? null));
 
   return (
-    <Card>
-      <h3 className={styles.cardHeading}>
-        {t('pages:aiGateway.cache.semantic.cardTitle')}
-      </h3>
+    <section className={styles.cacheCardSection}>
+      <div className={styles.cacheCardHeader}>
+        <h3 className={styles.cardHeading}>
+          {t('pages:aiGateway.cache.semantic.cardTitle')}
+        </h3>
+        <p className={styles.cardSubtitle}>
+          {t('pages:aiGateway.cache.semantic.cardSubtitle')}
+        </p>
+      </div>
 
-      <div className={styles.settingsGrid}>
+      <Card>
+        <div className={styles.settingsGrid}>
         {/* ── Embedding model ──────────────────────────────────────────── */}
         <div className={styles.settingsDivider}>
           {t('pages:aiGateway.cache.embedding.cardTitle')}
         </div>
 
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.embedding.providerLabel')}
-        </label>
-        <div className={styles.settingControl}>
-          <Select
-            value={draft.embeddingProviderId ?? ''}
-            onValueChange={(v) =>
-              onDraftChange({
-                ...draft,
-                embeddingProviderId: v === '' ? null : v,
-                embeddingModelId: null,
-              })
-            }
-            options={providerGroups
-              .filter((g) => g.provider && (g.models ?? []).some((m) => m.type === 'embedding'))
-              .map((g) => ({
-                value: g.provider!.id,
-                label: g.provider!.displayName?.trim() || g.provider!.name,
-              }))
-              .sort((a, b) => a.label.localeCompare(b.label))}
-            placeholder={t('common:providerModelPicker.selectProvider', 'Select a configured provider…')}
-            disabled={!canUpdateSemantic}
-            className={styles.mediumSelect}
-          />
+        <div className={styles.settingField}>
+          <label className={styles.settingLabel}>
+            {t('pages:aiGateway.cache.embedding.providerLabel')}
+          </label>
+          <div className={styles.settingControl}>
+            <Select
+              value={draft.embeddingProviderId ?? ''}
+              onValueChange={(v) =>
+                onDraftChange({
+                  ...draft,
+                  embeddingProviderId: v === '' ? null : v,
+                  embeddingModelId: null,
+                })
+              }
+              options={providerGroups
+                .filter((g) => g.provider && (g.models ?? []).some((m) => m.type === 'embedding'))
+                .map((g) => ({
+                  value: g.provider!.id,
+                  label: g.provider!.displayName?.trim() || g.provider!.name,
+                }))
+                .sort((a, b) => a.label.localeCompare(b.label))}
+              placeholder={t('common:providerModelPicker.selectProvider', 'Select a configured provider…')}
+              disabled={!canUpdateSemantic}
+              className={styles.mediumSelect}
+            />
+          </div>
         </div>
 
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.embedding.modelLabel')}
-        </label>
-        <div className={styles.settingControl}>
-          <Select
-            value={draft.embeddingModelId ?? ''}
-            onValueChange={(v) =>
-              onDraftChange({ ...draft, embeddingModelId: v === '' ? null : v })
-            }
-            options={(
-              providerGroups.find((g) => g.provider?.id === draft.embeddingProviderId)?.models ?? []
-            )
-              .filter((m) => m.type === 'embedding')
-              .map((m) => ({ value: m.id, label: `${m.name} (${m.providerModelId})` }))
-              .sort((a, b) => a.label.localeCompare(b.label))}
-            placeholder={
-              !draft.embeddingProviderId
-                ? t('common:providerModelPicker.selectProviderFirst', 'Select a provider first')
-                : t('common:providerModelPicker.selectModel', 'Select a model…')
-            }
-            disabled={!canUpdateSemantic || !draft.embeddingProviderId}
-            className={styles.mediumSelect}
-          />
+        <div className={styles.settingField}>
+          <label className={styles.settingLabel}>
+            {t('pages:aiGateway.cache.embedding.modelLabel')}
+          </label>
+          <div className={styles.settingControl}>
+            <Select
+              value={draft.embeddingModelId ?? ''}
+              onValueChange={(v) =>
+                onDraftChange({ ...draft, embeddingModelId: v === '' ? null : v })
+              }
+              options={(
+                providerGroups.find((g) => g.provider?.id === draft.embeddingProviderId)?.models ?? []
+              )
+                .filter((m) => m.type === 'embedding')
+                .map((m) => ({ value: m.id, label: `${m.name} (${m.providerModelId})` }))
+                .sort((a, b) => a.label.localeCompare(b.label))}
+              placeholder={
+                !draft.embeddingProviderId
+                  ? t('common:providerModelPicker.selectProviderFirst', 'Select a provider first')
+                  : t('common:providerModelPicker.selectModel', 'Select a model…')
+              }
+              disabled={!canUpdateSemantic || !draft.embeddingProviderId}
+              className={styles.mediumSelect}
+            />
+          </div>
         </div>
 
         {hasProviderAndModel && (
@@ -224,10 +234,11 @@ export function SemanticCacheCard({
           {t('pages:aiGateway.cache.semantic.tuningSubheading')}
         </div>
 
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.semantic.killSwitch')}
-        </label>
-        <div className={styles.settingControl}>
+        <div className={styles.settingField}>
+          <label className={styles.settingLabel}>
+            {t('pages:aiGateway.cache.semantic.killSwitch')}
+          </label>
+          <div className={styles.settingControl}>
           {killSwitchDisabled ? (
             <Tooltip content={t('pages:aiGateway.cache.semantic.killSwitchDisabledTooltip')}>
               <div className={styles.switchWrapper}>
@@ -247,105 +258,115 @@ export function SemanticCacheCard({
               aria-label={t('pages:aiGateway.cache.semantic.killSwitch')}
             />
           )}
+          </div>
         </div>
 
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.semantic.thresholdLabel')}
-          <Tooltip content={t('pages:aiGateway.cache.semantic.thresholdHelp')}>
-            <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
-          </Tooltip>
-        </label>
-        <div className={styles.settingControl}>
-          <Input
-            type="number"
-            step="0.01"
-            min={0}
-            max={1}
-            value={String(draft.threshold)}
-            disabled={!canUpdateSemantic}
-            onChange={(e) => {
-              const v = parseFloat(e.target.value);
-              onDraftChange({ ...draft, threshold: isNaN(v) ? draft.threshold : v });
-            }}
-            aria-label={t('pages:aiGateway.cache.semantic.thresholdLabel')}
-            className={styles.shortInput}
-          />
+        <div className={styles.settingField}>
+          <label className={styles.settingLabel}>
+            {t('pages:aiGateway.cache.semantic.thresholdLabel')}
+            <Tooltip content={t('pages:aiGateway.cache.semantic.thresholdHelp')}>
+              <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
+            </Tooltip>
+          </label>
+          <div className={styles.settingControl}>
+            <Input
+              type="number"
+              step="0.01"
+              min={0}
+              max={1}
+              value={String(draft.threshold)}
+              disabled={!canUpdateSemantic}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                onDraftChange({ ...draft, threshold: isNaN(v) ? draft.threshold : v });
+              }}
+              aria-label={t('pages:aiGateway.cache.semantic.thresholdLabel')}
+              className={styles.shortInput}
+            />
+          </div>
         </div>
 
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.semantic.allowCrossModelLabel')}
-          <Tooltip content={t('pages:aiGateway.cache.semantic.allowCrossModelHelp')}>
-            <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
-          </Tooltip>
-        </label>
-        <div className={styles.settingControl}>
-          <Switch
-            checked={draft.allowCrossModel}
-            onCheckedChange={(checked) => onDraftChange({ ...draft, allowCrossModel: checked })}
-            disabled={!canUpdateSemantic}
-            aria-label={t('pages:aiGateway.cache.semantic.allowCrossModelLabel')}
-          />
+        <div className={styles.settingField}>
+          <label className={styles.settingLabel}>
+            {t('pages:aiGateway.cache.semantic.allowCrossModelLabel')}
+            <Tooltip content={t('pages:aiGateway.cache.semantic.allowCrossModelHelp')}>
+              <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
+            </Tooltip>
+          </label>
+          <div className={styles.settingControl}>
+            <Switch
+              checked={draft.allowCrossModel}
+              onCheckedChange={(checked) => onDraftChange({ ...draft, allowCrossModel: checked })}
+              disabled={!canUpdateSemantic}
+              aria-label={t('pages:aiGateway.cache.semantic.allowCrossModelLabel')}
+            />
+          </div>
         </div>
 
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.semantic.varyByLabel')}
-          <Tooltip content={t('pages:aiGateway.cache.semantic.varyByHelp')}>
-            <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
-          </Tooltip>
-        </label>
-        <div className={styles.settingControl}>
-          <Select
-            value={draft.varyBy}
-            disabled={!canUpdateSemantic}
-            onValueChange={(v) => onDraftChange({ ...draft, varyBy: v as VaryBy })}
-            options={[
-              { value: 'vk', label: 'vk (single-tenant default)' },
-              { value: 'user', label: 'user' },
-              { value: 'org', label: 'org' },
-              { value: 'none', label: 'none (no isolation)' },
-            ]}
-            className={styles.mediumSelect}
-          />
+        <div className={styles.settingField}>
+          <label className={styles.settingLabel}>
+            {t('pages:aiGateway.cache.semantic.varyByLabel')}
+            <Tooltip content={t('pages:aiGateway.cache.semantic.varyByHelp')}>
+              <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
+            </Tooltip>
+          </label>
+          <div className={styles.settingControl}>
+            <Select
+              value={draft.varyBy}
+              disabled={!canUpdateSemantic}
+              onValueChange={(v) => onDraftChange({ ...draft, varyBy: v as VaryBy })}
+              options={[
+                { value: 'vk', label: 'vk (single-tenant default)' },
+                { value: 'user', label: 'user' },
+                { value: 'org', label: 'org' },
+                { value: 'none', label: 'none (no isolation)' },
+              ]}
+              className={styles.mediumSelect}
+            />
+          </div>
         </div>
 
-        <label className={styles.settingLabel}>
-          {t('pages:aiGateway.cache.semantic.embedStrategyLabel')}
-          <Tooltip content={t('pages:aiGateway.cache.semantic.embedStrategyHelp')}>
-            <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
-          </Tooltip>
-        </label>
-        <div className={styles.settingControl}>
-          <Select
-            value={draft.embedStrategy}
-            disabled={!canUpdateSemantic}
-            onValueChange={(v) => onDraftChange({ ...draft, embedStrategy: v as EmbedStrategy })}
-            options={[
-              { value: 'system_plus_last_user', label: 'system + last user (default)' },
-              { value: 'last_user', label: 'last user message only' },
-              { value: 'recent_turns', label: 'recent conversation turns' },
-              { value: 'head_plus_tail', label: 'head + tail (long convo)' },
-              { value: 'full_truncated', label: 'full convo, truncated' },
-            ]}
-            className={styles.mediumSelect}
-          />
+        <div className={styles.settingField}>
+          <label className={styles.settingLabel}>
+            {t('pages:aiGateway.cache.semantic.embedStrategyLabel')}
+            <Tooltip content={t('pages:aiGateway.cache.semantic.embedStrategyHelp')}>
+              <span className={styles.helpIcon} aria-label={t('pages:cache.moreInfoAria')}>?</span>
+            </Tooltip>
+          </label>
+          <div className={styles.settingControl}>
+            <Select
+              value={draft.embedStrategy}
+              disabled={!canUpdateSemantic}
+              onValueChange={(v) => onDraftChange({ ...draft, embedStrategy: v as EmbedStrategy })}
+              options={[
+                { value: 'system_plus_last_user', label: 'system + last user (default)' },
+                { value: 'last_user', label: 'last user message only' },
+                { value: 'recent_turns', label: 'recent conversation turns' },
+                { value: 'head_plus_tail', label: 'head + tail (long convo)' },
+                { value: 'full_truncated', label: 'full convo, truncated' },
+              ]}
+              className={styles.mediumSelect}
+            />
+          </div>
         </div>
       </div>
 
       {/* Actions — right-aligned at the bottom of the Semantic cache card */}
-      <div className={styles.settingsActions}>
-        {data?.enabled && (
-          <Button
-            variant="secondary"
-            onClick={onPrewarmOpen}
-            disabled={!canUpdateSemantic}
-          >
-            {t('pages:aiGateway.cache.prewarm.openButton')}
+        <div className={styles.settingsActions}>
+          {data?.enabled && (
+            <Button
+              variant="secondary"
+              onClick={onPrewarmOpen}
+              disabled={!canUpdateSemantic}
+            >
+              {t('pages:aiGateway.cache.prewarm.openButton')}
+            </Button>
+          )}
+          <Button onClick={onSaveClick} loading={saving} disabled={saveDisabled}>
+            {t('common:save')}
           </Button>
-        )}
-        <Button onClick={onSaveClick} loading={saving} disabled={saveDisabled}>
-          {t('common:save')}
-        </Button>
-      </div>
-    </Card>
+        </div>
+      </Card>
+    </section>
   );
 }

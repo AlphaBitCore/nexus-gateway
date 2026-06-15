@@ -17,7 +17,7 @@ export function RuntimeStateTab({ thingId }: RuntimeStateTabProps) {
   );
 
   if (loading && !data) return <Skeleton.DetailPageSkeleton />;
-  if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
+  if (error) return <ErrorBanner error={error} onRetry={refetch} />;
   if (!data) return null;
 
   const { snapshot, meta: bridgeMeta } = data;

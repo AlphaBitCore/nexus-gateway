@@ -83,7 +83,7 @@ export function NodeLoginHistoryTab({ nodeId }: Props) {
   ];
 
   if (loading) return <Skeleton.ListPageSkeleton />;
-  if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
+  if (error) return <ErrorBanner error={error} onRetry={refetch} />;
 
   return (
     <DataTable

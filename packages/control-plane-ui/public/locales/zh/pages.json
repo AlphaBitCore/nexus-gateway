@@ -70,7 +70,7 @@
     "viewAll": "查看全部 →",
     "splitBarVk": "虚拟密钥：{{count}}",
     "splitBarProxy": "代理：{{count}}",
-    "splitBarSubtitle": "{{vk}} 虚拟密钥 · {{proxy}} 代理",
+    "splitBarSubtitle": "{{vk}} 虚拟密钥 | {{proxy}} 代理",
     "win1h": "最近1小时",
     "win1d": "最近24小时",
     "win7d": "最近7天",
@@ -110,7 +110,7 @@
     "cacheSaveError": "保存提供商缓存设置失败。",
     "cacheAnthropicSubtitle": "AI 网关会向请求中注入 Anthropic 原生 cache_control 标记，以在系统提示和对话历史边界处启用服务端提示缓存。",
     "cacheGeminiTitle": "Gemini 提示缓存",
-    "cacheGeminiInfo": "此 Provider 使用 Gemini 原生 cachedContent API。AI 网关根据请求 token 阈值自动创建和管理缓存内容资源。缓存配置（TTL、启用状态）通过 Hub 设备 Shadow 设置在网关级别进行管理。",
+    "cacheGeminiInfo": "此 Provider 使用 Gemini 原生 cachedContent API。AI 网关根据请求 token 阈值自动创建和管理缓存内容资源。缓存配置（TTL、启用状态）通过 Hub 节点设置在网关级别进行管理。",
     "cacheGeminiEnabled": "启用 Gemini 提示缓存",
     "cacheGeminiEnabledHint": "启用后，网关会为包含大型系统指令的请求创建并复用 Gemini cachedContent 资源。",
     "cacheGeminiMinSystemChars": "最小系统指令大小（字节）",
@@ -1669,11 +1669,11 @@
     "agentShutdownWarningPlaceholder": "输入此语言的警告消息...",
     "agentWarningUsingDefault": "正在使用默认警告消息。在上方自定义。",
     "quitPolicyTitle": "Agent 退出策略",
-    "quitPolicyDesc": "控制 Agent 菜单栏是否暴露「重启 Agent」和「退出 Nexus Agent」菜单项。合规 always-on 部署应关闭——用户将无法退出 Agent 进程。",
-    "quitAllowedLabel": "允许用户退出 Agent",
-    "quitAllowedOnHint": "「重启 Agent」和「退出 Nexus Agent」菜单项可见。",
-    "quitAllowedOffHint": "「重启 Agent」和「退出 Nexus Agent」菜单项已隐藏——仅保留「重启 App」。",
-    "shutdownWarningDisabledHint": "此文本仅在「允许用户退出 Agent」开启时显示。可以现在编辑，开启退出后即生效。",
+    "quitPolicyDesc": "控制员工能否在自己的设备上关闭保护。合规 always-on 部署应关闭：用户将无法退出、暂停或登出 Agent，因此无法停用监控。登录始终可用。",
+    "quitAllowedLabel": "允许用户关闭 Agent",
+    "quitAllowedOnHint": "用户可使用退出、暂停和登出。",
+    "quitAllowedOffHint": "始终开启：退出、暂停和登出均已隐藏——用户无法关闭保护。登录仍然可用。",
+    "shutdownWarningDisabledHint": "此文本仅在「允许用户关闭 Agent」开启时显示。可以现在编辑，使消息提前就绪。",
     "shutdownWarningEnabledLabel": "用户点击「退出」时显示此警告",
     "attestation": {
       "title": "Agent 证明",
@@ -1713,6 +1713,16 @@
       "add": "添加",
       "remove": "移除",
       "empty": "未配置任何 bundle —— agent 不会关闭任何 UDP 流量。",
+      "howToFind": "查询 Mac 应用 bundle ID:defaults read /Applications/SomeApp.app/Contents/Info.plist CFBundleIdentifier"
+    },
+    "bypassBundles": {
+      "title": "豁免应用清单 (macOS)",
+      "desc": "agent 将**不做检查**直接放行的 macOS 应用 bundle ID。仅用于其证书固定 (pinning) 的 TLS 确实无法被检查的可信工具 (例如开发者 CLI)。按来源应用匹配,而非按目的地——因此同一主机从其他任何应用访问时仍会被检查。除非有明确且经过评审的理由,否则请留空。",
+      "warning": "⚠ 此处列出的应用**不会被合规检查**。它们的 AI 流量不产生任何审计记录,对策略完全不可见。每一条都是刻意、经评审的合规豁免——请尽量精简此清单,不再需要时及时移除。",
+      "placeholder": "com.example.MyTool — 按 Enter 添加",
+      "add": "添加",
+      "remove": "移除",
+      "empty": "未豁免任何应用 —— 一切都被检查(推荐)。",
       "howToFind": "查询 Mac 应用 bundle ID:defaults read /Applications/SomeApp.app/Contents/Info.plist CFBundleIdentifier"
     },
     "authenticationTab": "认证",
@@ -2330,6 +2340,31 @@
     "applyFilters": "应用筛选",
     "clearFilters": "清除筛选",
     "activeFilters": "活跃筛选 ({{count}})",
+    "activeFilterLabels": {
+      "provider": "供应商",
+      "virtualKey": "虚拟密钥",
+      "user": "用户",
+      "organization": "组织",
+      "project": "项目",
+      "model": "模型",
+      "requestId": "请求 ID",
+      "requestHook": "请求 Hook",
+      "responseHook": "响应 Hook",
+      "http": "HTTP",
+      "cache": "缓存",
+      "time": "时间",
+      "any": "任意",
+      "target": "目标",
+      "path": "路径",
+      "device": "设备",
+      "node": "节点",
+      "process": "进程",
+      "bumpStatus": "Bump 状态",
+      "complianceTag": "合规标签",
+      "range2xx": "2xx 成功",
+      "range4xx": "4xx 客户端错误",
+      "range5xx": "5xx 服务端错误"
+    },
     "filterPanelDescription": "按<strong>项目</strong>、<strong>虚拟密钥</strong>、<strong>供应商</strong>和<strong>模型</strong>筛选（先选择供应商再选择模型）。使用下方按钮应用或展开更多条件。",
     "labelProvider": "供应商",
     "tipProvider": "搜索并选择供应商。选择模型前必须先选择供应商。",
@@ -2344,6 +2379,7 @@
     "tipVirtualKeyDefault": "按标识符搜索。打开高级选项可先按组织 → 项目缩小范围。",
     "placeholderVirtualKey": "按标识符搜索…",
     "labelQuickRange": "快速范围",
+    "timeSelect": "时间选择",
     "tipQuickRange": "本地时间的预设窗口。点击应用筛选后才会生效。",
     "clearTime": "清除时间",
     "labelFrom": "从",
@@ -2357,10 +2393,10 @@
     "tipTargetHost": "按目标主机名筛选（子字符串匹配）。",
     "placeholderTargetHost": "如 api.openai.com",
     "labelNode": "节点",
-    "tipNode": "按发出事件的 Thing（节点）过滤 — agent 设备、AI Gateway 或 compliance proxy。下拉框只列出与当前 source tab 匹配类型的节点。",
+    "tipNode": "按发出事件的节点过滤 — agent 设备、AI Gateway 或 compliance proxy。下拉框只列出与当前 source tab 匹配类型的节点。",
     "placeholderNode": "选择一个节点…",
-    "advancedExpand": "高级选项 ▼",
-    "advancedCollapse": "高级选项 ▲",
+    "advancedExpand": "高级选项",
+    "advancedCollapse": "高级选项",
     "scopeTitle": "范围",
     "scopeDescription": "先选择组织，然后选择项目。在此选择范围会清除上方的直接虚拟密钥（反之亦然）。",
     "stepOrganization": "1 · 组织",
@@ -2448,6 +2484,8 @@
     "colHook": "钩子",
     "colCache": "缓存",
     "emptyTraffic": "暂无流量记录",
+    "noFilteredDataTitle": "无匹配的流量",
+    "noFilteredDataDescription": "没有数据匹配当前筛选条件。请调整或清除筛选后刷新。",
     "copiedTooltip": "已复制！",
     "clickToCopy": "点击复制：{{id}}",
     "closeDetailPanel": "关闭详情面板",
@@ -2610,7 +2648,19 @@
           "disabled": "跳过 —— 缓存已禁用",
           "no_cache": "跳过 —— 客户端选择不缓存",
           "passthrough": "跳过 —— 紧急直通",
-          "not_cacheable": "跳过 —— 响应不可缓存"
+          "not_cacheable": "跳过 —— 响应不可缓存",
+          "time_sensitive": "已跳过——时效敏感请求",
+          "oversize_for_embedding": "已跳过——内容过大无法嵌入",
+          "valkey_unavailable": "已跳过——缓存存储不可用",
+          "embedding_timeout": "已跳过——嵌入超时",
+          "embedding_provider_error": "已跳过——嵌入服务商错误",
+          "embedding_dim_mismatch": "已跳过——嵌入维度不匹配",
+          "semantic_search_error": "已跳过——语义检索错误",
+          "semantic_search_timeout": "已跳过——语义检索超时",
+          "semantic_reindex_in_progress": "已跳过——语义索引重建中",
+          "semantic_unavailable": "已跳过——语义缓存不可用",
+          "embedding_circuit_open": "已跳过——嵌入熔断开启",
+          "poisoned": "已跳过——缓存条目已隔离"
         },
         "provider": {
           "hit": "HIT —— {{tokens}} 个缓存 token",
@@ -2748,9 +2798,17 @@
         "tier": {
           "tier1": "Tier 1",
           "tier2": "Tier 2",
-          "hint": "哪一层 normalizer 处理了这条数据：Tier 1 = 精确的 per-host 解析；Tier 2 = 多 spec 模式探测；无徽章 = Tier 3 原文兜底。"
+          "structural": "结构化",
+          "hostMatched": "按 host 匹配",
+          "hint": "哪一层解码器处理了这条数据：Tier 1 = 精确协议解码器（按 key、host 或内容嗅探匹配）；Tier 2 = 面向消费级 Web 表面的模式探测；结构化 = 对原始 HTTP 报文的类型化投影（不做协议解码）；无徽章 = 旧版原文逐字数据。当 adapter 按 host 选中时，用\"按 host 匹配\"替代置信度数字：其覆盖率是诚实的，但不是可与嗅探解码相比的信任分。"
         },
         "modelLabel": "模型",
+        "redaction": {
+          "rule": "规则",
+          "source": "来源",
+          "action": "操作",
+          "reason": "原因"
+        },
         "finishReason": "结束原因",
         "role": {
           "system": "系统",
@@ -2763,7 +2821,8 @@
           "completion": "补全",
           "total": "总计",
           "cacheRead": "缓存命中",
-          "cacheCreate": "缓存写入"
+          "cacheCreate": "缓存写入",
+          "reasoning": "推理"
         },
         "banner": {
           "failedTitle": "该方向的规范化失败。",
@@ -2775,7 +2834,17 @@
         "dropped": {
           "title": "内容已按存储策略丢弃。",
           "hint": "匹配该 hook 的操作员设置了 storageAction=drop-content。审计日志仅保留决策和元数据。",
-          "ruleIds": "触发规则"
+          "ruleIds": "触发规则",
+          "degradedTitle": "内容已丢弃——脱敏策略无法安全地应用到存储副本。",
+          "degradedHint": "该 hook 的存储策略为 redact；由于脱敏无法安全地应用到存储副本，该副本已被丢弃。原因：{{cause}}。",
+          "degradedAddresses": "未解析的内容地址",
+          "neutralHint": "内容未按存储策略存储。该记录未注明丢弃是配置的动作还是脱敏的降级处理。",
+          "cause": {
+            "no-spans": "策略未产生可脱敏的位置（no-spans）",
+            "payload-unmarshal": "存储副本无法解析（payload-unmarshal）",
+            "spans-unresolved": "脱敏位置无法在存储副本上解析（spans-unresolved）",
+            "marshal-failed": "脱敏后的副本无法重新序列化（marshal-failed）"
+          }
         },
         "binary": {
           "title": "二进制内容",
@@ -2788,6 +2857,13 @@
           "binaryInputNotStored": "二进制 token 数组输入 — 按审计策略不予存储。",
           "vectorsNotStored": "嵌入向量按审计策略不予存储。",
           "noInputs": "未捕获到输入。"
+        },
+        "emptyBody": "内容为空。",
+        "sse": {
+          "framesTitle": "SSE 帧",
+          "eventFallbackLabel": "message",
+          "showAllFrames": "显示全部 {{count}} 帧",
+          "truncatedNote": "帧视图已截断 — 完整流已被捕获，可在\"原始\"标签查看。"
         }
       },
       "reasonCodes": {
@@ -2804,6 +2880,11 @@
     "colPath": "请求路径"
   },
   "analytics": {
+    "subtitle": "查看所选时间范围内的流量成本、Token 用量、延迟表现和数据源分布。",
+    "customRangeStart": "自定义范围开始",
+    "customRangeEnd": "自定义范围结束",
+    "labelTimeRange": "时间范围",
+    "labelGroupBy": "分组",
     "sourceFilter": "数据源",
     "sourceAll": "全部流量",
     "sourceVK": "AI 网关",
@@ -2915,7 +2996,7 @@
     "trendsHeading": "趋势",
     "breakdownsHeading": "分维度",
     "breakdownEmpty": "当前窗口内该维度暂无数据。",
-    "notSupportedType": "该 Thing 类型（{{type}}）不采集 per-Thing 统计。",
+    "notSupportedType": "该节点类型（{{type}}）不采集每节点统计。",
     "disabledFallback": "Hub 未开启 per-agent rollup。请到 agent 本地界面查看详细指标。",
     "kpi": {
       "requests": "请求数",
@@ -2987,6 +3068,8 @@
       "compliance": "合规",
       "pass": "通过",
       "noTraffic": "该节点暂无流量记录",
+      "exemptBadge_one": "⚠ {{count}} 个应用被豁免检查(全 fleet)—— 其 AI 流量不被审计",
+      "exemptBadge_other": "⚠ {{count}} 个应用被豁免检查(全 fleet)—— 其 AI 流量不被审计",
       "subtitleAgent": "该设备最近发起的 AI 请求（最多 50 条）。",
       "subtitleGateway": "该 Gateway 实例最近处理的 AI 请求（最多 50 条）。",
       "subtitleProxy": "该 Proxy 实例最近处理的 AI 请求（最多 50 条）。",
@@ -3224,7 +3307,7 @@
     "saving": "保存中..."
   },
   "metrics": {
-    "rollupsDescription": "聚合指标概览",
+    "rollupsDescription": "所选时段的聚合指标汇总。",
     "range": "范围",
     "last6Hours": "最近6小时",
     "last24Hours": "最近24小时",
@@ -3364,26 +3447,6 @@
       "latencyMs": "延迟（毫秒）",
       "backfilledAt": "回填时间"
     },
-    "rejectConfig": {
-      "title": "拒绝响应配置",
-      "subtitle": "控制被拦截请求向客户端展示的内容",
-      "defaultLevel": "默认详细级别",
-      "levelLabel": "级别 {{level}}",
-      "level0Desc": "通用 403，信息最少（隐蔽模式）。",
-      "level1Desc": "拦截说明、联系方式与事务 ID。",
-      "level2Desc": "面向管理员的详细原因与策略上下文。",
-      "contactInfoLabel": "IT 联系方式",
-      "contactInfoPlaceholder": "例如 security@company.com 或内部文档链接",
-      "contactInfoHint": "在级别 1 和 2 的拒绝页上显示（若已填写）。",
-      "lastUpdated": "{{date}} 由 {{user}} 更新",
-      "save": "保存配置",
-      "saved": "配置已保存",
-      "saveFailed": "保存配置失败",
-      "confirmTitle": "保存拒绝页设置？",
-      "confirmDesc": "新拒绝响应的默认级别将设为 {{level}}。",
-      "cancel": "取消",
-      "confirmSave": "保存"
-    },
     "alertHistory": {
       "title": "代理告警",
       "subtitle": "来自转发代理告警评估器的活动告警与历史记录",
@@ -3491,7 +3554,7 @@
       "hostname": "主机名",
       "boundUser": "绑定用户",
       "physicalId": "物理 ID",
-      "thingId": "Thing ID",
+      "thingId": "Node ID",
       "ip": "IP"
     },
     "forceRefresh": "强制下发配置",
@@ -4342,7 +4405,7 @@
     "backToNodes": "返回节点列表",
     "nodeInfo": "节点信息",
     "nodeId": "节点 ID",
-    "thingId": "Thing ID",
+    "thingId": "Node ID",
     "hostname": "主机名",
     "physicalIdFull": "物理 ID",
     "primaryIp": "IP 地址",
@@ -4975,12 +5038,12 @@
       "downloadHint": "选择适用于你平台的版本。每个都是单一静态可执行文件，无需安装程序。",
       "downloadButton": "下载（{{arch}}）",
       "installTitle": "安装",
-      "installMacOSStep1": "# 此处为 Apple 芯片；Intel 请将 arm64 改为 amd64\ncurl -fL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest -o nexus",
+      "installMacOSStep1": "# 此处为 Apple 芯片；Intel 请将 arm64 改为 amd64\ncurl -fL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest -o nexus\n# 运行前先用已发布的校验和验证下载文件\necho \"$(curl -fsSL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest.sha256)  nexus\" | shasum -a 256 -c -",
       "installMacOSStep2": "# 该二进制未经过公证——清除 Gatekeeper 隔离标记，然后赋予可执行权限\nxattr -d com.apple.quarantine ./nexus 2>/dev/null; chmod +x ./nexus",
       "installMacOSStep3": "# 移动到你的 PATH\nsudo mv ./nexus /usr/local/bin/nexus",
-      "installLinuxStep1": "curl -fL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest -o nexus && chmod +x ./nexus",
+      "installLinuxStep1": "curl -fL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest -o nexus\n# 运行前先用已发布的校验和验证下载文件\necho \"$(curl -fsSL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest.sha256)  nexus\" | sha256sum -c -\nchmod +x ./nexus",
       "installLinuxStep2": "sudo mv ./nexus /usr/local/bin/nexus",
-      "installWindowsStep1": "# PowerShell —— 下载到当前文件夹\nInvoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe -OutFile nexus.exe",
+      "installWindowsStep1": "# PowerShell —— 下载到当前文件夹\nInvoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe -OutFile nexus.exe\n# 运行前先用已发布的校验和验证下载文件\n$expected = (Invoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe.sha256 -UseBasicParsing).Content.Trim()\nif ((Get-FileHash nexus.exe -Algorithm SHA256).Hash -ine $expected) { throw 'nexus.exe 校验和不匹配——请勿运行' }",
       "installWindowsStep2": "# 将 nexus.exe 移动到 PATH 中的文件夹（例如 %LOCALAPPDATA%\\Programs），然后重新打开终端",
       "quickstartTitle": "快速开始",
       "quickstartHint": "首次启动会运行一个简短向导：选择环境 → 登录 → 选择模型 → 选择或创建一个 Virtual Key。",
@@ -5005,9 +5068,7 @@
         "simulate": "让构造的请求经过网关管道运行（请求实验室）",
         "resource": "浏览并操作任意 Control Plane 管理资源（基于 OpenAPI）",
         "killswitch": "显示或切换全局 kill switch",
-        "passthrough": "显示或切换紧急 passthrough（绕过合规 hook）",
-        "skill": "列出并安装 agent skill（渐进式披露 playbook）",
-        "mcp": "运行 Model Context Protocol 服务器，服务于 agent 和合作平台"
+        "passthrough": "显示或切换紧急 passthrough（绕过合规 hook）"
       }
     },
     "agentSetup": {
@@ -5933,12 +5994,12 @@
       "title": "全局覆盖",
       "subtitle": "适用于所有 provider，除非匹配到 adapter 或 provider 级别的覆盖。",
       "saveEnableBtn": "全局启用直通…",
-      "saveDisableBtn": "保存（关闭状态）"
+      "saveDisableBtn": "保存"
     },
     "adapter": {
       "title": "Adapter 级别覆盖",
       "subtitle": "Adapter 级别覆盖优先于全局，但会被 provider 级别覆盖覆盖。",
-      "addBtn": "添加 Adapter 覆盖",
+      "addBtn": "Adapter 覆盖",
       "editTitle": "编辑 Adapter 覆盖 — {{adapter}}",
       "adapterTypeHint": "本覆盖作用的 provider adapterType（如 anthropic、openai）。",
       "empty": "暂无 Adapter 级覆盖。",
@@ -5952,7 +6013,7 @@
     "provider": {
       "title": "Provider 级别覆盖",
       "subtitle": "Provider 级别是最具体的一层，优先于 adapter 与全局。",
-      "addBtn": "添加 Provider 覆盖",
+      "addBtn": "Provider 覆盖",
       "editTitle": "编辑 Provider 覆盖 — {{provider}}",
       "providerHint": "本覆盖作用的具体 provider。",
       "empty": "暂无 Provider 级覆盖。",
@@ -5975,6 +6036,7 @@
       "expiresAt": "到期时间",
       "expiresAtHint": "最长不能超过现在 +{{hours}} 小时。Hub 60s reconcile 任务会自动把 enabled 置为 false，不依赖人工清理。",
       "reason": "原因（≥{{count}} 字符）",
+      "reasonPlaceholder": "请填写启用紧急直通的原因",
       "reasonHint": "已输入 {{count}}/{{min}} 字符。审计必填；每条因本层 bypass 的 traffic_event 都会带上此理由。"
     },
     "validation": {

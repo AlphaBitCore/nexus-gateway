@@ -8,6 +8,7 @@
 //   http-text      → decoded text with monospace font and line wrapping.
 //   http-form      → key=value table.
 //   http-binary    → metadata card (size · content-type · sha256).
+//   http-sse       → server-sent event frame list (event chip + data).
 //   unsupported    → muted placeholder with link-to-raw hint.
 //
 // When `payload.redacted === true` the entire content was dropped per
@@ -17,11 +18,12 @@
 import { useTranslation } from 'react-i18next';
 import type {
   NormalizedPayload,
-  NormalizedMessage,
-  NormalizedContentBlock,
   TransformSpan,
 } from '@/api/types';
+import { MessageBubble } from './NormalizedMessageBubble';
+import { renderHttpJson, renderHttpText, renderHttpForm, renderHttpBinary, renderHttpSse } from './NormalizedHttpViews';
 import css from './NormalizedPayloadView.module.css';
+import { renderTierBadge } from './NormalizedTierBadge';
 
 interface Props {
   payload: NormalizedPayload | null | undefined;
@@ -69,12 +71,50 @@ export function NormalizedPayloadView(props: Props) {
   }
 
   if (payload.redacted) {
+    // Three distinct stories share the placeholder shape.
+    // "operator-drop": dropping the content is the configured policy —
+    // assert it. "redact-degraded": the operator asked for redact, but the
+    // stored copy could not be redacted precisely, so it was dropped
+    // instead — blame the degradation, not the operator. No reason
+    // recorded (rows written before the reason was stamped): stay
+    // neutral — the row cannot tell which of the two happened.
+    const degraded = payload.redactedReason === 'redact-degraded';
+    const operatorDrop = payload.redactedReason === 'operator-drop';
+    const failedAddresses = payload.redactedDetail?.failedAddresses ?? [];
+    // The degradation cause arrives as a machine token; render the
+    // localized phrase when one exists, the raw token otherwise.
+    const causeToken = payload.redactedDetail?.cause ?? 'unknown';
+    const causeLabel = t(`pages:traffic.detail.normalized.dropped.cause.${causeToken}`, {
+      defaultValue: causeToken,
+    });
     return (
       <div className={css.wrap}>
         {banner}
         <div className={css.banner}>
-          <strong>{t('pages:traffic.detail.normalized.dropped.title')}</strong>
-          <div style={{ marginTop: 'var(--g-space-1)' }}>{t('pages:traffic.detail.normalized.dropped.hint')}</div>
+          <strong>
+            {degraded
+              ? t('pages:traffic.detail.normalized.dropped.degradedTitle')
+              : t('pages:traffic.detail.normalized.dropped.title')}
+          </strong>
+          <div style={{ marginTop: 'var(--g-space-1)' }}>
+            {degraded
+              ? t('pages:traffic.detail.normalized.dropped.degradedHint', {
+                  cause: causeLabel,
+                })
+              : operatorDrop
+                ? t('pages:traffic.detail.normalized.dropped.hint')
+                : t('pages:traffic.detail.normalized.dropped.neutralHint')}
+          </div>
+          {degraded && failedAddresses.length > 0 ? (
+            <div style={{ marginTop: 'var(--g-space-1-5)' }}>
+              {t('pages:traffic.detail.normalized.dropped.degradedAddresses')}:
+              <ul style={{ margin: 'var(--g-space-0-5) 0 0', paddingLeft: 'var(--g-space-4)', fontFamily: 'var(--g-font-mono)' }}>
+                {failedAddresses.map((addr) => (
+                  <li key={addr}>{addr}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {payload.ruleIds && payload.ruleIds.length > 0 ? (
             <div style={{ marginTop: 'var(--g-space-1-5)', fontFamily: 'var(--g-font-mono)' }}>
               {t('pages:traffic.detail.normalized.dropped.ruleIds')}: {payload.ruleIds.join(', ')}
@@ -91,10 +131,11 @@ export function NormalizedPayloadView(props: Props) {
       {renderTierBadge(payload, t)}
       {payload.kind === 'ai-embedding' ? renderAiEmbedding(payload, t) : null}
       {payload.kind !== 'ai-embedding' && payload.kind.startsWith('ai-') ? renderAi(payload, spans, props.direction, t) : null}
-      {payload.kind === 'http-json' ? renderHttpJson(payload) : null}
+      {payload.kind === 'http-json' ? renderHttpJson(payload, t) : null}
       {payload.kind === 'http-text' ? renderHttpText(payload) : null}
-      {payload.kind === 'http-form' ? renderHttpForm(payload) : null}
+      {payload.kind === 'http-form' ? renderHttpForm(payload, t) : null}
       {payload.kind === 'http-multipart' || payload.kind === 'http-binary' ? renderHttpBinary(payload, t) : null}
+      {payload.kind === 'http-sse' ? renderHttpSse(payload, t) : null}
       {payload.kind === 'unsupported' ? (
         <div className={css.placeholder}>
           {t('pages:traffic.detail.normalized.banner.unsupported')}
@@ -104,50 +145,6 @@ export function NormalizedPayloadView(props: Props) {
   );
 }
 
-// renderTierBadge surfaces the normalizer-reported DetectedSpec + Confidence
-// so operators can tell whether a row was parsed by a precise Tier-1
-// per-host normalizer ("chatgpt-web" confidence 0.95), the Tier-2 multi-spec
-// pattern probe ("pattern:chatgpt-web" confidence 0.78), or fell through to
-// Tier 3 verbatim (no badge). The tier is inferred from the detectedSpec
-// prefix: "pattern:" = Tier 2, anything else = Tier 1.
-function renderTierBadge(
-  payload: NormalizedPayload,
-  t: ReturnType<typeof useTranslation>['t'],
-): React.ReactNode {
-  if (!payload.detectedSpec) return null;
-  const isTier2 = payload.detectedSpec.startsWith('pattern:');
-  const specLabel = isTier2
-    ? payload.detectedSpec.slice('pattern:'.length)
-    : payload.detectedSpec;
-  const tierKey = isTier2 ? 'tier2' : 'tier1';
-  const tierLabel = t(`pages:traffic.detail.normalized.tier.${tierKey}`);
-  // Confidence is absent on older rows — omit when not present. Two decimals.
-  const confLabel =
-    typeof payload.confidence === 'number' && payload.confidence > 0
-      ? ` · ${payload.confidence.toFixed(2)}`
-      : '';
-  const styles: React.CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 'var(--g-space-1)',
-    padding: 'var(--g-space-0-5) var(--g-space-1-5)',
-    marginBottom: 'var(--g-space-2)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 'var(--g-font-size-xs)',
-    fontFamily: 'var(--g-font-mono)',
-    background: isTier2 ? 'var(--color-warning-soft)' : 'var(--color-success-soft)',
-    color: isTier2 ? 'var(--color-warning-text)' : 'var(--color-text-primary)',
-    border: '1px solid',
-    borderColor: isTier2 ? 'var(--color-warning-border)' : 'var(--color-border-subtle)',
-  };
-  return (
-    <div style={styles} title={t('pages:traffic.detail.normalized.tier.hint')}>
-      <span>{tierLabel}</span>
-      <span>·</span>
-      <span>{specLabel}{confLabel}</span>
-    </div>
-  );
-}
 
 // AI rendering
 
@@ -188,6 +185,11 @@ function renderAi(
           {usage.completionTokens != null ? (
             <span className={css.usageItem}>
               <strong>{t('pages:traffic.detail.normalized.usage.completion')}:</strong>{usage.completionTokens}
+            </span>
+          ) : null}
+          {typeof usage.reasoningTokens === 'number' ? (
+            <span className={css.usageItem}>
+              <strong>{t('pages:traffic.detail.normalized.usage.reasoning')}:</strong>{usage.reasoningTokens}
             </span>
           ) : null}
           {usage.totalTokens != null ? (
@@ -294,216 +296,4 @@ function renderAiEmbedding(
       ) : null}
     </>
   );
-}
-
-function MessageBubble({
-  message,
-  messageIndex,
-  spans,
-  t,
-}: {
-  message: NormalizedMessage;
-  messageIndex: number;
-  spans: TransformSpan[] | null | undefined;
-  t: ReturnType<typeof useTranslation>['t'];
-}) {
-  const role = message.role;
-  const bubbleClass = `${css.chatBubble} ${
-    role === 'user' ? css.chatBubbleUser :
-    role === 'assistant' ? css.chatBubbleAssistant :
-    role === 'system' ? css.chatBubbleSystem :
-    css.chatBubbleTool
-  }`;
-  const chipClass = `${css.roleChip} ${
-    role === 'user' ? css.roleChipUser :
-    role === 'assistant' ? css.roleChipAssistant :
-    role === 'system' ? css.roleChipSystem :
-    css.roleChipTool
-  }`;
-  return (
-    <div className={bubbleClass}>
-      <div className={css.roleRow}>
-        <span className={chipClass}>{t(`pages:traffic.detail.normalized.role.${role}`)}</span>
-        {message.finishReason ? (
-          <span className={css.finishReason}>
-            {t('pages:traffic.detail.normalized.finishReason')}: {message.finishReason}
-          </span>
-        ) : null}
-      </div>
-      {(message.content ?? []).map((b, j) => (
-        <ContentBlockRow
-          key={j}
-          block={b}
-          address={`messages.${messageIndex}.content.${j}`}
-          spans={spans}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ContentBlockRow({
-  block,
-  address,
-  spans,
-}: {
-  block: NormalizedContentBlock;
-  address: string;
-  spans: TransformSpan[] | null | undefined;
-}) {
-  if (block.type === 'text') {
-    return <div className={css.contentText}>{renderTextWithSpans(block.text ?? '', address, spans)}</div>;
-  }
-  if (block.type === 'reasoning') {
-    return <div className={css.contentReasoning}>{block.text ?? ''}</div>;
-  }
-  if (block.type === 'tool_use') {
-    return (
-      <div className={css.contentToolUse}>
-        <strong>{block.toolUse?.name}</strong>
-        {block.toolUse?.callId ? ` · ${block.toolUse.callId}` : ''}
-        <div>{JSON.stringify(block.toolUse?.input ?? {}, null, 2)}</div>
-      </div>
-    );
-  }
-  if (block.type === 'tool_result') {
-    return (
-      <div className={css.contentToolUse}>
-        <strong>tool_result</strong>
-        {block.toolResult?.callId ? ` · ${block.toolResult.callId}` : ''}
-        <div>{renderTextWithSpans(block.toolResult?.output ?? '', `${address}.toolResult`, spans)}</div>
-      </div>
-    );
-  }
-  if (block.type === 'image_ref') {
-    return (
-      <div className={css.binaryCard}>
-        <span>
-          {block.imageRef?.contentType ?? 'image'} · {formatBytesShort(block.imageRef?.size ?? 0)}
-        </span>
-        {block.imageRef?.sha256 ? <code>{block.imageRef.sha256.slice(0, 16)}…</code> : null}
-      </div>
-    );
-  }
-  return null;
-}
-
-// renderTextWithSpans inserts redaction badges for spans that address
-// this content block. Spans not addressing this block are ignored.
-function renderTextWithSpans(
-  text: string,
-  address: string,
-  spans: TransformSpan[] | null | undefined,
-): React.ReactNode {
-  if (!spans || spans.length === 0) return text;
-  const relevant = spans
-    .filter((s) => s.contentAddress === address)
-    .sort((a, b) => a.start - b.start);
-  if (relevant.length === 0) return text;
-
-  // Walk text left-to-right, alternating verbatim slices and badges.
-  const out: React.ReactNode[] = [];
-  let cursor = 0;
-  relevant.forEach((s, i) => {
-    if (s.start > cursor) {
-      out.push(text.slice(cursor, s.start));
-    }
-    // The redacted substring has already been replaced by ApplySpans in
-    // the stored payload — what we read in `text` is the post-redact
-    // version. We render a badge with the rule id + tooltip.
-    const tooltip = [
-      s.sourceId ? `rule: ${s.sourceId}` : null,
-      s.source ? `source: ${s.source}` : null,
-      s.action ? `action: ${s.action}` : null,
-      s.reason ? `reason: ${s.reason}` : null,
-    ].filter(Boolean).join('\n');
-    // The replacement string is already substituted in `text`; we
-    // overlay a badge styling on it by rendering the same text inside
-    // a span with the badge class for the replacement-length.
-    // For simplicity we render the badge AROUND the replacement text.
-    const replacementLen = s.replacement ? s.replacement.length : (s.end - s.start);
-    const segEnd = s.start + replacementLen;
-    out.push(
-      <span key={i} className={css.redactBadge} title={tooltip}>
-        {text.slice(s.start, segEnd)}
-      </span>,
-    );
-    cursor = segEnd;
-  });
-  if (cursor < text.length) {
-    out.push(text.slice(cursor));
-  }
-  return out;
-}
-
-// HTTP rendering
-
-function renderHttpJson(payload: NormalizedPayload) {
-  const json = payload.http?.bodyView?.json;
-  if (json != null) {
-    return <pre className={css.jsonTree}>{JSON.stringify(json, null, 2)}</pre>;
-  }
-  // Defence-in-depth for legacy rows that left Kind=http-json populated but
-  // only carried BodyView.text (the normalizer wrote raw bytes into text and
-  // returned an error). Show the raw text so the operator still sees content
-  // instead of "(empty)". Current rows route correctly to http-text and
-  // never reach this branch.
-  const text = payload.http?.bodyView?.text;
-  if (text) {
-    return <pre className={css.jsonTree}>{text}</pre>;
-  }
-  return <div className={css.placeholder}>(empty)</div>;
-}
-
-function renderHttpText(payload: NormalizedPayload) {
-  const text = payload.http?.bodyView?.text ?? '';
-  return <pre className={css.jsonTree}>{text}</pre>;
-}
-
-function renderHttpForm(payload: NormalizedPayload) {
-  const form = payload.http?.bodyView?.form ?? {};
-  const rows = Object.entries(form);
-  if (rows.length === 0) {
-    return <div className={css.placeholder}>(empty)</div>;
-  }
-  return (
-    <pre className={css.jsonTree}>
-      {rows.map(([k, v]) => `${k}=${v}`).join('\n')}
-    </pre>
-  );
-}
-
-function renderHttpBinary(
-  payload: NormalizedPayload,
-  t: ReturnType<typeof useTranslation>['t'],
-) {
-  const ref = payload.http?.bodyView?.binaryRef;
-  return (
-    <div className={css.binaryCard}>
-      <strong>{t('pages:traffic.detail.normalized.binary.title')}</strong>
-      {ref ? (
-        <>
-          <span>
-            {t('pages:traffic.detail.normalized.binary.size')}: <code>{formatBytesShort(ref.size)}</code>
-          </span>
-          <span>
-            {t('pages:traffic.detail.normalized.binary.contentType')}: <code>{ref.contentType || '(unknown)'}</code>
-          </span>
-          {ref.sha256 ? (
-            <span>
-              sha256: <code>{ref.sha256}</code>
-            </span>
-          ) : null}
-        </>
-      ) : (
-        <span>{t('pages:traffic.detail.normalized.binary.metadataOnly')}</span>
-      )}
-    </div>
-  );
-}
-
-function formatBytesShort(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
 }

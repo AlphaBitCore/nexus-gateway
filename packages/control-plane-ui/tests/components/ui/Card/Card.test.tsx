@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import '@testing-library/jest-dom/vitest';
 import { Card } from '../../../../src/components/ui/Card/Card';
 
 describe('Card', () => {

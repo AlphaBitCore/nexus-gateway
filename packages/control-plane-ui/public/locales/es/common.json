@@ -38,7 +38,21 @@
     "modelNoMatch": "No hay modelos coincidentes",
     "maximize": "Maximizar",
     "restore": "Restaurar tamaño",
-    "toolDetails": "Mostrar detalles de {{name}}"
+    "toolDetails": "Mostrar lo que ejecutó {{name}}",
+    "slash": {
+      "help": "Comandos: /help — esta lista · /clear o /new — empezar una conversación nueva"
+    },
+    "toolResponse": "Respuesta",
+    "compacted": "Los turnos anteriores de esta conversación se condensaron para ajustarse a la ventana de contexto.",
+    "compactedTitle": "Conversación condensada",
+    "filterSessions": "Filtrar conversaciones…",
+    "noSessionsMatch": "Ninguna conversación coincide con \"{{filter}}\".",
+    "timeJustNow": "ahora mismo",
+    "timeMinAgo": "hace {{n}} min",
+    "timeHourAgo": "hace {{n}} h",
+    "timeDayAgo": "hace {{n}} d",
+    "fileExpired": "Este archivo ya no está disponible (puede haber caducado).",
+    "integrityWarning": "La verificación de integridad de esta conversación no pasó: su historial almacenado puede haber sido alterado."
   },
   "copy": "Copiar",
   "copied": "Copiado!",
@@ -157,6 +171,8 @@
   "next": "Siguiente",
   "accessDenied": "Acceso Denegado",
   "accessDeniedMessage": "No tiene permiso para acceder a esta página.",
+  "forbiddenSection": "No tiene permiso para ver este contenido.",
+  "forbiddenRequires": "Requiere el permiso: {{action}}",
   "pageNotFound": "La página que busca no existe.",
   "goToDashboard": "Ir al Panel",
   "sessionExpiringSoon": "Su sesión se cerrará pronto por inactividad. Interactúe con la página para permanecer conectado.",
@@ -192,5 +208,14 @@
   },
   "hookConfig": {
     "redactExamplePlaceholder": "[REDACTED_<RULE_ID>]"
+  },
+  "validation": {
+    "configSchemaMismatch": "La configuración no coincide con el esquema: {{error}}",
+    "configMustBeObject": "La configuración debe ser un objeto JSON",
+    "invalidConfigJson": "JSON de configuración no válido",
+    "usernameRequired": "El nombre de usuario es obligatorio",
+    "passwordsDoNotMatch": "Las nuevas contraseñas no coinciden",
+    "passwordTooShort": "La nueva contraseña debe tener al menos {{count}} caracteres",
+    "currentPasswordRequired": "La contraseña actual es obligatoria"
   }
 }

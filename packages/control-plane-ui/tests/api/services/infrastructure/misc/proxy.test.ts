@@ -5,21 +5,17 @@ vi.mock('../../../../../src/api/client', () => ({ api: { get: vi.fn().mockResolv
 const m = api as unknown as Record<'get' | 'post' | 'put' | 'patch' | 'delete', ReturnType<typeof vi.fn>>;
 beforeEach(() => Object.values(m).forEach((f) => f.mockClear()));
 describe('proxyApi', () => {
-  it('status / connections / coverage / reject-config / hook-health / reject-stats', () => {
+  it('status / connections / coverage / hook-health / reject-stats', () => {
     proxyApi.getStatus();
     proxyApi.getConnections('host.example');
     proxyApi.getConnections();
     proxyApi.getComplianceCoverage('s', 'e');
-    proxyApi.getRejectConfig();
-    proxyApi.updateRejectConfig({} as never);
     proxyApi.getHookHealth('s', 'e');
     proxyApi.getRejectStats('s', 'e');
     expect(m.get).toHaveBeenCalledWith('/api/admin/proxy/health');
     expect(m.get).toHaveBeenCalledWith('/api/admin/proxy/connections?targetHost=host.example');
     expect(m.get).toHaveBeenCalledWith('/api/admin/proxy/connections');
     expect(m.get).toHaveBeenCalledWith('/api/admin/proxy/compliance/coverage?startTime=s&endTime=e');
-    expect(m.get).toHaveBeenCalledWith('/api/admin/proxy/reject-config');
-    expect(m.put).toHaveBeenCalledWith('/api/admin/proxy/reject-config', {});
     expect(m.get).toHaveBeenCalledWith('/api/admin/proxy/compliance/hook-health?startTime=s&endTime=e');
     expect(m.get).toHaveBeenCalledWith('/api/admin/proxy/compliance/reject-stats?startTime=s&endTime=e');
   });

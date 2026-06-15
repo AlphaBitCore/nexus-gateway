@@ -18,7 +18,6 @@ import {
 } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import '@testing-library/jest-dom/vitest';
 
 import { renderWithProviders } from '@/test/test-utils';
 import { hubApi, type ThingOverride } from '@/api/services/infrastructure/nodes/hub';

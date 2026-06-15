@@ -126,6 +126,7 @@ export function ConfigProvidersPage() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
         searchPlaceholder={t('pages:providers.searchPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}
@@ -159,7 +160,7 @@ export function ConfigProvidersPage() {
         />
       </Card>
 
-      <ListPagination offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
+      <ListPagination variant="plain" offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
 
       <AlertDialog
         open={!!deleting}

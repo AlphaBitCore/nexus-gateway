@@ -33,14 +33,14 @@
 .tableContainer {
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  overflow-x: auto;
+  overflow: hidden;
   background: var(--color-surface);
 }
 
 .tableContainerFrameless {
   border: none;
-  border-radius: 0;
-  overflow-x: auto;
+  border-radius: var(--g-radius-lg);
+  overflow: hidden;
 }
 
 .tableScroll {

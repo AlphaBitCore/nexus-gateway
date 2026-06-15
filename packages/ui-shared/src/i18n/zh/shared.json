@@ -28,24 +28,5 @@
     "1": "已注册",
     "2": "已关联",
     "3": "完全合规"
-  },
-  "inputStaging": {
-    "label": "输入暂存策略",
-    "recommendedBadge": "推荐",
-    "help": "控制对话超出模型上下文限制时如何在嵌入前进行截断。",
-    "strategies": {
-      "last_user": "仅最后一条用户消息",
-      "system_plus_last_user": "系统提示 + 最后用户消息",
-      "recent_turns": "最近对话轮次",
-      "head_plus_tail": "首尾拼接",
-      "full_truncated": "完整截断"
-    },
-    "tooltips": {
-      "last_user": "仅发送最后一条用户消息进行缓存查询。体积最小，速度最快。",
-      "system_plus_last_user": "系统提示词 + 最后一条用户消息。在角色上下文与查询精确性之间取得平衡。",
-      "recent_turns": "包含最近能容纳的对话轮次。最适合多轮对话场景。",
-      "head_plus_tail": "保留对话的首部和尾部。适用于开场设定与近期上下文均重要的场景。",
-      "full_truncated": "发送完整对话，如有需要从头部截断。旧版兼容模式。"
-    }
   }
 }

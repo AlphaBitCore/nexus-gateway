@@ -169,7 +169,14 @@ export function BreakdownTable({ title, nameLabel, extraLabel, groupByKey, timeP
           </Button>
         </div>
       </div>
-      <DataTable columns={columns} data={rows} pageSize={10} hideSearch emptyMessage={t('pages:traffic.noBreakdownData', { title: title.toLowerCase() })} />
+      <DataTable
+        columns={columns}
+        data={rows}
+        pageSize={10}
+        hideSearch
+        frameless
+        emptyMessage={t('pages:traffic.noBreakdownData', { title: title.toLowerCase() })}
+      />
     </Card>
   );
 }

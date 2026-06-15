@@ -14,7 +14,6 @@
 import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import '@testing-library/jest-dom/vitest';
 import { Routes, Route } from 'react-router-dom';
 
 import { renderWithRouter, server, http, HttpResponse } from '@/test/test-utils';

@@ -280,7 +280,6 @@ export const SHELL_ROUTES: ShellRouteConfig[] = [
   { path: 'compliance/compliance-report', LazyPage: L.LazyComplianceReportPage, allowedActions: ['admin:compliance-report.read'] },
   // Forward-proxy operational sub-pages (no nav — accessed from Compliance Overview).
   { path: 'proxy/status', LazyPage: L.LazyProxyStatusCompliancePage, allowedActions: ['admin:settings.read'] },
-  { path: 'proxy/reject-config', LazyPage: L.LazyRejectConfigPage, allowedActions: ['admin:settings.read'] },
 
   // ── Alerts ──
   {
@@ -347,7 +346,7 @@ export const SHELL_ROUTES: ShellRouteConfig[] = [
   { path: 'infrastructure/nodes/:id', LazyPage: L.LazyInfraNodeDetailPage, allowedActions: ['admin:node.read'] },
   { path: 'infrastructure/nodes/:id/setup', LazyPage: L.LazyInfraProxySetupPage, allowedActions: ['admin:node.read'] },
   { path: 'infrastructure/config-sync', LazyPage: L.LazyInfraConfigSyncPage, allowedActions: ['admin:settings.read'], nav: { sectionKey: 'infrastructure', labelKey: 'configSync', to: '/infrastructure/config-sync', allowedActions: ['admin:settings.read'], order: 1 } },
-  { path: 'infrastructure/overrides', LazyPage: L.LazyInfraOverridesPage, allowedActions: ['admin:node.write-override'], nav: { sectionKey: 'infrastructure', labelKey: 'overrides', to: '/infrastructure/overrides', allowedActions: ['admin:node.write-override'], order: 2 } },
+  { path: 'infrastructure/overrides', LazyPage: L.LazyInfraOverridesPage, allowedActions: ['admin:settings.read'], nav: { sectionKey: 'infrastructure', labelKey: 'overrides', to: '/infrastructure/overrides', allowedActions: ['admin:settings.read'], order: 2 } },
   { path: 'infrastructure/jobs', LazyPage: L.LazyInfraJobsPage, allowedActions: ['admin:settings.read'], nav: { sectionKey: 'infrastructure', labelKey: 'scheduledJobs', to: '/infrastructure/jobs', allowedActions: ['admin:settings.read'], order: 3 } },
   { path: 'infrastructure/jobs/:id', LazyPage: L.LazyInfraJobDetailPage, allowedActions: ['admin:settings.read'] },
   { path: 'infrastructure/errors', LazyPage: L.LazyInfraRecentErrorsPage, allowedActions: ['admin:observability.read'], nav: { sectionKey: 'infrastructure', labelKey: 'recentErrors', to: '/infrastructure/errors', allowedActions: ['admin:observability.read'], order: 4 } },

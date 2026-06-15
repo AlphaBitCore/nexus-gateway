@@ -43,8 +43,10 @@ export function ByProviderGrid({
 
   return (
     <>
-      <div className={styles.sectionHeading}>{t('pages:metrics.byProvider')}</div>
-      <p className={styles.sectionSubtitle}>{t('pages:metrics.byProviderSubtitle', 'Performance breakdown per AI provider')}</p>
+      <div className={styles.sectionHeaderBlock}>
+        <div className={styles.sectionHeading}>{t('pages:metrics.byProvider')}</div>
+        <p className={styles.sectionSubtitle}>{t('pages:metrics.byProviderSubtitle', 'Performance breakdown per AI provider')}</p>
+      </div>
 
       <div className={styles.byProviderGrid}>
         <ChartPanel

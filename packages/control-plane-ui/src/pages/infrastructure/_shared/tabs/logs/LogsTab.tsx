@@ -301,7 +301,7 @@ export function LogsTab({ thingId }: LogsTabProps) {
       <Card>
         <Stack gap="sm">
           {firstPage.error ? (
-            <ErrorBanner message={firstPage.error.message} onRetry={firstPage.refetch} />
+            <ErrorBanner error={firstPage.error} onRetry={firstPage.refetch} />
           ) : firstPage.loading && events.length === 0 ? (
             <LoadingSpinner />
           ) : events.length === 0 ? (

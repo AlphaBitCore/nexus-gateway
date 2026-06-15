@@ -2,46 +2,26 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { runChat, interruptChat, newSessionId, confirmDecision, listSessions, getSession, deleteSession, downloadFile, fileIdsIn, listModels } from './streamChat';
+import { runChat, interruptChat, newSessionId, listSessions, getSession, deleteSession, downloadFile, fileIdsIn, listModels } from './streamChat';
 import type { FileRef, ModelOption } from './streamChat';
-import type { ConfirmRequest, ConfirmResult, SessionMeta } from './streamChat';
+import type { SessionMeta } from './streamChat';
+import { routeSlashCommand } from './slashRouter';
+import { useConfirmFlow } from './useConfirmFlow';
 import { viewToRoute } from './viewRoutes';
 import { ConfirmCard } from './ConfirmCard';
 import { SessionHistory } from './SessionHistory';
 import { MessageList } from './MessageList';
 import { ModelPicker } from './ModelPicker';
 
-// confirmErrKey maps a failed confirm result to the right i18n message: another
-// instance owns the session (421), the pod restarted so re-issue (NFR-10), or a plain
-// expiry/timeout.
-function confirmErrKey(r: ConfirmResult): string {
-  if (r.misrouted) return 'common:assistant.confirmMisrouted';
-  if (r.reissue) return 'common:assistant.confirmReissue';
-  return 'common:assistant.confirmExpired';
-}
+export type { Msg, ToolChip } from './chatTypes';
+import { transcriptToMsgs } from './chatTypes';
+import type { Msg, ToolChip } from './chatTypes';
 
-export interface ToolChip {
-  name: string;
-  status: 'running' | 'ok' | 'error';
-  /** The resolved structured tool input (from the tool_start SSE event), shown when the
-   *  chip is expanded so the user can see exactly what the assistant ran. */
-  input?: unknown;
-}
-
-export interface Msg {
-  role: 'user' | 'assistant' | 'error';
-  text: string;
-  tools?: ToolChip[];
-  /** Sandbox files the assistant wrote this turn, from the structured `file` SSE event. */
-  files?: FileRef[];
-}
-
-// ChatWithNexus is the globally-present floating assistant widget. P3 walking
-// skeleton: a floating button + popup that streams a single read-only turn.
-// Non-modal by design (the background page stays interactive), so it uses a
-// labelled dialog WITHOUT aria-modal. Navigation directives (P4), confirm-gated
-// writes (P5), session history (P6) layer on later. reasoning deltas are
-// intentionally not rendered in P3 (display surface is a later phase).
+// ChatWithNexus is the globally-present floating assistant widget: a floating
+// button + popup that streams agent turns. Non-modal by design (the background
+// page stays interactive), so it uses a labelled dialog WITHOUT aria-modal.
+// Navigation directives, confirm-gated writes, and session history layer on
+// the same surface.
 export function ChatWithNexus() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -49,11 +29,6 @@ export function ChatWithNexus() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [pendingConfirm, setPendingConfirm] = useState<ConfirmRequest | null>(null);
-  // Set once the backend has issued a production second-confirm challenge token for
-  // the current pendingConfirm: the card then shows the second step and the next
-  // Allow echoes this token to actually execute the write (FR-9). null = first step.
-  const [confirmToken, setConfirmToken] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
@@ -113,7 +88,9 @@ export function ChatWithNexus() {
       safeSetMessages((prev) => {
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === 'assistant') {
+          // The condensed-briefing notice is system-authored — streamed text
+          // and artifact stamps belong to the model's reply, never to it.
+          if (copy[i].role === 'assistant' && copy[i].kind !== 'summary') {
             copy[i] = fn(copy[i]);
             break;
           }
@@ -124,59 +101,21 @@ export function ChatWithNexus() {
     [safeSetMessages],
   );
 
+  // Confirm-gated writes: card state + two-step prod resolution live in
+  // the hook; failures surface as error messages in the stream.
+  const onConfirmError = useCallback(
+    (key: string) => safeSetMessages((m) => [...m, { role: 'error', text: t(key) }]),
+    [safeSetMessages, t],
+  );
+  const { pendingConfirm, confirmToken, armConfirm, clearConfirm, decideConfirm } = useConfirmFlow(onConfirmError);
+
   const close = useCallback(() => {
     stopTurn(); // closing the popup interrupts the in-flight turn (stops VK billing)
     // Drop any parked confirm so reopening never resurrects a stale card / token
     // (the aborted turn already released the server-side entry).
-    setPendingConfirm(null);
-    setConfirmToken(null);
+    clearConfirm();
     setOpen(false);
-  }, [stopTurn]);
-
-  // Resolve a confirm-tier write. Deny (or a non-prod Allow) ends the card. A prod
-  // Allow is two-step (FR-9): the first Allow returns a challenge token and the card
-  // stays open in second-step mode; the next Allow echoes the token to execute. The
-  // turn, blocked server-side, resumes only once the write is actually resolved.
-  const decideConfirm = useCallback(
-    async (decision: boolean) => {
-      if (!pendingConfirm) return;
-      const { sessionId: sid, callId } = pendingConfirm;
-      if (!decision) {
-        setPendingConfirm(null);
-        setConfirmToken(null);
-        void confirmDecision(sid, callId, false);
-        return;
-      }
-      if (confirmToken) {
-        // Second step: echo the server-issued token to execute the prod write. Await
-        // it so we can tell the user the truth if the confirmation already expired
-        // (turn timed out) — otherwise the card would just close and they'd wrongly
-        // believe the production write ran.
-        setPendingConfirm(null);
-        setConfirmToken(null);
-        const second = await confirmDecision(sid, callId, true, confirmToken);
-        if (!second.ok) {
-          safeSetMessages((m) => [...m, { role: 'error', text: t(confirmErrKey(second)) }]);
-        }
-        return;
-      }
-      // First (or only) Allow. In prod the backend withholds execution and returns a
-      // one-time challenge token; keep the card open for the second confirm.
-      const result = await confirmDecision(sid, callId, true);
-      if (result.secondConfirmRequired && result.challengeToken) {
-        setConfirmToken(result.challengeToken);
-      } else {
-        setPendingConfirm(null);
-        // A non-prod single Allow that the backend rejected (expired/timed out, or a
-        // 421 affinity miss) did not run — surface the right reason rather than
-        // silently closing the card.
-        if (!result.ok) {
-          safeSetMessages((m) => [...m, { role: 'error', text: t(confirmErrKey(result)) }]);
-        }
-      }
-    },
-    [pendingConfirm, confirmToken, safeSetMessages, t],
-  );
+  }, [stopTurn, clearConfirm]);
 
   // Session history: list the caller's own conversations, load one back into the
   // view (re-rendering its transcript), delete one, or start fresh. All scoped
@@ -187,13 +126,36 @@ export function ChatWithNexus() {
     if (mountedRef.current) setSessions(list);
   }, []);
 
-  const loadSession = useCallback(async (id: string) => {
-    const s = await getSession(id);
-    if (!s || !mountedRef.current) return;
-    setMessages(s.messages.map((m): Msg => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text })));
-    setSessionId(id);
-    setShowHistory(false);
-  }, []);
+  const loadSession = useCallback(
+    async (id: string) => {
+      const s = await getSession(id);
+      if (!s || !mountedRef.current) return;
+      // The reload mapping (summary flag) lives in chatTypes — history
+      // re-renders what the live turn showed.
+      const msgs = transcriptToMsgs(s);
+      // The server verifies the session's trusted-audit chain on every load; a
+      // failed verdict is surfaced as its own bubble — the conversation still
+      // renders (never brick the surface), but the user sees the named problem.
+      if (s.integrity && (s.integrity.status === 'chain_broken' || s.integrity.status === 'content_mismatch')) {
+        msgs.push({ role: 'error', text: t('common:assistant.integrityWarning') });
+      }
+      setMessages(msgs);
+      setSessionId(id);
+      setShowHistory(false);
+    },
+    [t],
+  );
+
+  // attemptDownload surfaces a failed/expired file download as an error bubble —
+  // a silent no-op on click would read as a dead button.
+  const attemptDownload = useCallback(
+    async (id: string): Promise<boolean> => {
+      const ok = await downloadFile(id);
+      if (!ok) safeSetMessages((m) => [...m, { role: 'error', text: t('common:assistant.fileExpired') }]);
+      return ok;
+    },
+    [safeSetMessages, t],
+  );
 
   const removeSession = useCallback(async (id: string) => {
     if (!(await deleteSession(id)) || !mountedRef.current) return;
@@ -208,10 +170,23 @@ export function ChatWithNexus() {
     setShowHistory(false);
   }, [stopTurn]);
 
+  // runSlashCommand intercepts a "/" input as a LOCAL command (routing lives
+  // in slashRouter.ts). Returns true when the text was a command — nothing is
+  // sent to the assistant.
+  const runSlashCommand = useCallback(
+    (text: string): boolean =>
+      routeSlashCommand(text, {
+        notice: (key, vars) => safeSetMessages((m) => [...m, { role: 'assistant', text: t(key, vars) }]),
+        newChat,
+      }),
+    [newChat, safeSetMessages, t],
+  );
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || streaming) return; // no new command while a turn is in flight (also enforced server-side)
     setInput('');
+    if (runSlashCommand(text)) return;
     safeSetMessages((m) => [...m, { role: 'user', text }, { role: 'assistant', text: '' }]);
     setStreaming(true);
     const ac = new AbortController();
@@ -225,16 +200,35 @@ export function ChatWithNexus() {
       sid,
       text,
       {
-        onText: (d) => patchLastAssistant((m) => ({ ...m, text: m.text + d })),
+        onText: (d) =>
+          patchLastAssistant((m) => {
+            // Timeline: a text delta extends the trailing text segment,
+            // or opens a new one right after a tool call — the transcript
+            // grows in the order things actually happened.
+            const segments = (m.segments ?? []).slice();
+            const last = segments[segments.length - 1];
+            if (last && last.kind === 'text') {
+              segments[segments.length - 1] = { ...last, text: (last.text ?? '') + d };
+            } else {
+              segments.push({ kind: 'text', text: d });
+            }
+            return { ...m, text: m.text + d, segments };
+          }),
+        onReasoning: (d) => patchLastAssistant((m) => ({ ...m, reasoning: (m.reasoning ?? '') + d })),
         onToolStart: (name, input) =>
-          patchLastAssistant((m) => ({ ...m, tools: [...(m.tools ?? []), { name, status: 'running' as const, input }] })),
-        onToolEnd: (name, isError) =>
+          patchLastAssistant((m) => {
+            const tools = [...(m.tools ?? []), { name, status: 'running' as const, input }];
+            const segments = [...(m.segments ?? []), { kind: 'tool' as const, toolIdx: tools.length - 1 }];
+            return { ...m, tools, segments };
+          }),
+        onToolEnd: (name, isError, output) =>
           patchLastAssistant((m) => {
             const tools = (m.tools ?? []).slice();
             for (let i = tools.length - 1; i >= 0; i--) {
               if (tools[i].name === name && tools[i].status === 'running') {
-                // Preserve the captured input (spread) — only the status transitions.
-                tools[i] = { ...tools[i], status: isError ? 'error' : 'ok' };
+                // Preserve the captured input (spread) — the status transitions and the
+                // result text lands for the expanded chip's response section.
+                tools[i] = { ...tools[i], status: isError ? 'error' : 'ok', output };
                 break;
               }
             }
@@ -245,13 +239,25 @@ export function ChatWithNexus() {
             if ((m.files ?? []).some((x) => x.id === f.id)) return m; // de-dupe
             return { ...m, files: [...(m.files ?? []), f] };
           }),
+        // The kernel condensed older turns (auto-compact): the persisted
+        // transcript was durably rewritten, so say so in-stream — silence
+        // would make history change invisibly.
+        onCompact: () =>
+          setMessages((prev) => {
+            // Mid-turn compaction: the notice slots in BEFORE the in-flight
+            // reply bubble, so the model's streaming text keeps its own
+            // message instead of gluing onto the notice.
+            const notice: Msg = { role: 'assistant', text: t('common:assistant.compacted'), kind: 'summary' };
+            const last = prev[prev.length - 1];
+            if (last && last.role === 'assistant' && last.kind !== 'summary') {
+              return [...prev.slice(0, -1), notice, last];
+            }
+            return [...prev, notice];
+          }),
         // The agent drove the canvas → route to the matching CP-UI page (the
         // popup stays open, floating over the new page, so the conversation is
         // retained). Unknown views are ignored (viewToRoute returns null).
-        onConfirm: (req) => {
-          setConfirmToken(null); // new confirm → reset any prior second-step token
-          setPendingConfirm(req);
-        },
+        onConfirm: armConfirm,
         onNavigate: (d) => {
           const route = viewToRoute(d.view, { status: d.status, model: d.model, eventId: d.eventId });
           if (route) {
@@ -268,7 +274,7 @@ export function ChatWithNexus() {
         // the partial reply stays as-is.
         onAborted: () => {},
         // Capture the (possibly newly-created) session id so the next message
-        // continues the same conversation server-side (P6 multi-turn).
+        // continues the same conversation server-side (multi-turn).
         onDone: (sid) => {
           if (sid && mountedRef.current) setSessionId(sid);
         },
@@ -278,7 +284,7 @@ export function ChatWithNexus() {
     );
     activeSessionRef.current = null;
     if (mountedRef.current) setStreaming(false);
-  }, [input, streaming, sessionId, model, patchLastAssistant, safeSetMessages, navigate]);
+  }, [input, streaming, sessionId, model, patchLastAssistant, safeSetMessages, navigate, runSlashCommand, armConfirm]);
 
   return (
     <>
@@ -364,7 +370,7 @@ export function ChatWithNexus() {
               <MessageList
                 messages={messages}
                 streaming={streaming}
-                downloadFile={downloadFile}
+                downloadFile={attemptDownload}
                 fileIdsIn={fileIdsIn}
               />
             )}

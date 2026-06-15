@@ -1,0 +1,17 @@
+.justifyEnd {
+  justify-content: flex-end;
+}
+
+.rejectTextarea {
+  display: block;
+  width: 100%;
+  margin-top: var(--g-space-1);
+  padding: var(--g-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
+  resize: vertical;
+}

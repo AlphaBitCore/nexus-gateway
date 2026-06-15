@@ -12,6 +12,7 @@ import {
   listModels,
   confirmDecision,
 } from './streamChat';
+import { clearTokens, setTokens } from '@/auth/tokens/tokenStore';
 
 // sseStream builds a ReadableStream-bearing Response (the GET .../stream side).
 function sseStream(body: string): Response {
@@ -70,13 +71,18 @@ describe('runChat (command/data-stream split)', () => {
     vi.restoreAllMocks();
   });
 
-  it('starts the turn, then streams text deltas and signals done', async () => {
+  it('starts the turn, then streams text deltas and signals done with the turnId', async () => {
     const { calls } = mockSplit(
       'id: 1\nevent: text\ndata: {"delta":"All "}\n\nid: 2\nevent: text\ndata: {"delta":"good"}\n\nid: 3\nevent: done\ndata: {"sessionId":"s1"}\n\n',
     );
     let text = '';
     let doneSid: string | undefined;
-    await runChat('s1', 'hi', { onText: (d) => (text += d), onDone: (s) => (doneSid = s) });
+    await runChat('s1', 'hi', {
+      onText: (d) => (text += d),
+      onDone: (s) => {
+        doneSid = s;
+      },
+    });
     expect(text).toBe('All good');
     expect(doneSid).toBe('s1');
     // The POST starts the turn at the session path; the GET observes it.
@@ -352,3 +358,57 @@ describe('file sandbox helpers', () => {
     expect(createURL).toHaveBeenCalledWith(blob);
   });
 });
+
+describe('401 refresh-retry (mid-session token expiry)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    clearTokens();
+  });
+
+  it('runChat refreshes the token and retries the chat POST instead of failing the turn', async () => {
+    setTokens({ accessToken: 'at-stale', refreshToken: 'rt-fresh' });
+    const sse = 'id: 1\nevent: text\ndata: {"delta":"hi"}\n\nid: 2\nevent: done\ndata: {"sessionId":"s1"}\n\n';
+    const calls: { url: string; init?: RequestInit }[] = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.includes('/oauth/token')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at-new', refresh_token: 'rt-new', token_type: 'Bearer' }),
+        } as unknown as Response);
+      }
+      if (url.includes('/chat')) {
+        const auth = (init?.headers as Record<string, string>)?.Authorization;
+        if (auth !== 'Bearer at-new') {
+          return Promise.resolve({ ok: false, status: 401, json: async () => ({}) } as unknown as Response);
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 202,
+          json: async () => ({ sessionId: 's1', seq: 0 }),
+        } as unknown as Response);
+      }
+      return Promise.resolve(sseStream(sse)); // /stream
+    }) as unknown as typeof fetch;
+
+    let text = '';
+    let errored = '';
+    await runChat('s1', 'hello', {
+      onText: (d) => (text += d),
+      onError: (m) => (errored = m),
+    });
+
+    expect(errored).toBe('');
+    expect(text).toBe('hi');
+    // stale POST → token rotation → retried POST → stream
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/admin/assistant/sessions/s1/chat',
+      expect.stringContaining('/oauth/token'),
+      '/api/admin/assistant/sessions/s1/chat',
+      '/api/admin/assistant/sessions/s1/stream?lastSeq=0',
+    ]);
+  });
+});
+
+

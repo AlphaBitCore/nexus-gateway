@@ -21,11 +21,16 @@
 
 import { computeCodeChallenge, generateCodeVerifier, randomState } from '../pkce/pkce';
 import type { TokenPair } from '../tokens/tokenStore';
+import { withPrefix } from '@/lib/deploymentPrefix';
 
 export const OAUTH_CLIENT_ID = 'cp-ui';
 export const OAUTH_SCOPES = 'admin openid profile email';
 export const OAUTH_CALLBACK_PATH = '/auth/callback';
 const PKCE_STATE_KEY = 'nexus_pkce_state';
+
+function getCallbackUri(origin: string): string {
+  return origin + withPrefix(OAUTH_CALLBACK_PATH);
+}
 
 interface StoredPkceState {
   verifier: string;
@@ -63,10 +68,10 @@ function clearStoredState(): void {
 
 /** Build the /oauth/authorize URL for the current origin. Exported for tests. */
 export function buildAuthorizeUrl(params: { state: string; challenge: string; origin: string }): string {
-  const u = new URL('/oauth/authorize', params.origin);
+  const u = new URL(withPrefix('/oauth/authorize'), params.origin);
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('client_id', OAUTH_CLIENT_ID);
-  u.searchParams.set('redirect_uri', params.origin + OAUTH_CALLBACK_PATH);
+  u.searchParams.set('redirect_uri', getCallbackUri(params.origin));
   u.searchParams.set('scope', OAUTH_SCOPES);
   u.searchParams.set('state', params.state);
   u.searchParams.set('code_challenge', params.challenge);
@@ -120,9 +125,9 @@ async function exchangeCodeForTokens(args: {
   body.set('code', args.code);
   body.set('code_verifier', args.verifier);
   body.set('client_id', OAUTH_CLIENT_ID);
-  body.set('redirect_uri', args.origin + OAUTH_CALLBACK_PATH);
+  body.set('redirect_uri', getCallbackUri(args.origin));
 
-  const res = await fetch(new URL('/oauth/token', args.origin).toString(), {
+  const res = await fetch(new URL(withPrefix('/oauth/token'), args.origin).toString(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
