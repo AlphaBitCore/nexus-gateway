@@ -5,37 +5,91 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // ConnectRPCFrameExtractor is called with each decoded Connect-RPC frame
 // payload and returns the human-readable text it contains (empty if none).
 type ConnectRPCFrameExtractor func(framePayload []byte) string
 
+// MaxConnectRPCFrameLen caps a single Connect-RPC frame payload. The header's
+// 4-byte length field is untrusted input — captured bodies that are not
+// actually Connect-framed (or are truncated mid-frame) can spell lengths up
+// to 4GB, and allocating before validation lets a few-hundred-byte body force
+// a multi-GB allocation. Real chat frames are text deltas in the KB range;
+// 16MB leaves generous headroom while keeping the worst-case allocation safe.
+const MaxConnectRPCFrameLen = 16 << 20
+
+// ErrConnectRPCFrameTooLarge is returned when a frame header declares a
+// payload above MaxConnectRPCFrameLen. Callers treat it like any other
+// framing error: stop walking, fall back to non-framed handling.
+var ErrConnectRPCFrameTooLarge = errors.New("connect-rpc frame length exceeds cap")
+
+// Connect-RPC envelope flag bits. The flags byte is a bitset: the
+// least-significant bit marks a per-message gzip-compressed payload and the
+// next bit marks the end-of-stream (trailer) message. They are independent —
+// a single frame is never both, but both can appear across one stream (Cursor
+// /agent.v1.AgentService/Run sends compressed data frames flagged 0x01 and a
+// final empty trailer flagged 0x02).
+const (
+	ConnectFlagCompressed byte = 0x01
+	ConnectFlagEndStream  byte = 0x02
+)
+
 // ReadConnectRPCFrame reads a single Connect-RPC envelope frame from r.
 //
 // Connect-RPC envelope format:
 //
-//	Byte  0:    flags  (bit 0 set = end-of-stream message)
+//	Byte  0:    flags  (bit 0x01 = compressed payload, bit 0x02 = end-of-stream)
 //	Bytes 1–4:  message length (big-endian uint32)
-//	Bytes 5+:   protobuf message bytes
+//	Bytes 5+:   message bytes (gzip-compressed when the 0x01 flag is set)
 //
-// Returns (endOfStream=true, nil, nil) for zero-length end-of-stream frames.
-// Returns (false, nil, io.EOF) when the reader is cleanly exhausted.
-func ReadConnectRPCFrame(r io.Reader) (endOfStream bool, payload []byte, err error) {
+// Returns the raw flags byte so callers can decompress (ConnectFlagCompressed)
+// and detect the trailer (ConnectFlagEndStream) independently; the earlier
+// design conflated compression with end-of-stream and stopped after the first
+// compressed frame. Returns (flags, nil, nil) for zero-length frames and
+// (0, nil, io.EOF) when the reader is cleanly exhausted.
+func ReadConnectRPCFrame(r io.Reader) (flags byte, payload []byte, err error) {
 	var hdr [5]byte
 	if _, err = io.ReadFull(r, hdr[:]); err != nil {
-		return false, nil, err
+		return 0, nil, err
 	}
-	endOfStream = hdr[0]&0x01 != 0
+	flags = hdr[0]
 	length := binary.BigEndian.Uint32(hdr[1:])
 	if length == 0 {
-		return endOfStream, nil, nil
+		return flags, nil, nil
+	}
+	if length > MaxConnectRPCFrameLen {
+		return flags, nil, ErrConnectRPCFrameTooLarge
 	}
 	payload = make([]byte, length)
 	_, err = io.ReadFull(r, payload)
-	return endOfStream, payload, err
+	return flags, payload, err
+}
+
+// MaybeGunzipConnectFrame returns the decompressed payload when the frame's
+// ConnectFlagCompressed bit is set, else the payload unchanged. Decompression
+// is best-effort: a gzip error (corrupt or non-gzip body under the flag) yields
+// the original bytes rather than aborting extraction, and the output is bounded
+// by MaxConnectRPCFrameLen so a hostile gzip bomb cannot out-allocate the frame
+// it rode in on.
+func MaybeGunzipConnectFrame(flags byte, payload []byte) []byte {
+	if flags&ConnectFlagCompressed == 0 || len(payload) == 0 {
+		return payload
+	}
+	gr, err := gzip.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		return payload
+	}
+	defer func() { _ = gr.Close() }()
+	dec, err := io.ReadAll(io.LimitReader(gr, MaxConnectRPCFrameLen))
+	if err != nil {
+		return payload
+	}
+	return dec
 }
 
 // PassthroughWithConnectRPCExtract relays Connect-RPC frames from upstream to
@@ -46,9 +100,10 @@ func ReadConnectRPCFrame(r io.Reader) (endOfStream bool, payload []byte, err err
 // wire encoding it expects. Content extraction runs asynchronously on a side
 // goroutine so a slow or erroring extractor never blocks the relay.
 //
-// When payloadGzip is true the raw frame payloads are gzip-decompressed before
-// being passed to extractor. The bytes forwarded to the client are NOT
-// decompressed (the client owns decompression).
+// Frame payloads flagged ConnectFlagCompressed are gzip-decompressed before
+// being passed to extractor (per-frame, the Connect-protocol-authoritative
+// signal — a stream mixes compressed and uncompressed frames). The bytes
+// forwarded to the client are NOT decompressed (the client owns decompression).
 //
 // Returns the full accumulated text extracted from all frames and any relay
 // error. The relay error does not include extractor failures.
@@ -58,7 +113,6 @@ func PassthroughWithConnectRPCExtract(
 	client io.Writer,
 	captureBuf *CappedBuffer,
 	extractor ConnectRPCFrameExtractor,
-	payloadGzip bool,
 ) (accumulated string, err error) {
 	flusher, canFlush := client.(http.Flusher)
 
@@ -77,30 +131,24 @@ func PassthroughWithConnectRPCExtract(
 			extractDone <- ""
 			return
 		}
-		var all string
+		// strings.Builder so each frame's extracted text appends amortized
+		// O(1); naive `all += ...` per frame is O(n²) over the stream
+		// length.
+		var all strings.Builder
 		for {
-			eos, payload, ferr := ReadConnectRPCFrame(pr)
+			flags, payload, ferr := ReadConnectRPCFrame(pr)
 			if ferr != nil {
 				break
 			}
 			if len(payload) > 0 {
-				p := payload
-				if payloadGzip {
-					if gr, gerr := gzip.NewReader(bytes.NewReader(p)); gerr == nil {
-						if dec, rerr := io.ReadAll(gr); rerr == nil {
-							p = dec
-						}
-						_ = gr.Close()
-					}
-				}
-				all += extractor(p)
+				all.WriteString(extractor(MaybeGunzipConnectFrame(flags, payload)))
 			}
-			if eos {
+			if flags&ConnectFlagEndStream != 0 {
 				break
 			}
 		}
 		_, _ = io.Copy(io.Discard, pr)
-		extractDone <- all
+		extractDone <- all.String()
 	}()
 
 	buf := make([]byte, 32*1024)

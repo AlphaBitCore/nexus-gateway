@@ -3,6 +3,7 @@ package geminiweb
 import (
 	"context"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/extract"
 )
@@ -13,10 +14,11 @@ import (
 //  1. Google batchexecute envelope (f.req= form-urlencoded request /
 //     )]}'-prefixed chunked JSON response) — decoded by
 //     extract.BatchExecuteDetector.
-//  2. JSON-shape Gemini-API-compatible bodies — fallback via the
-//     gemini-generate spec.
+//  2. JSON-shape Gemini-API-compatible bodies — delegated to the shared
+//     full-fidelity Gemini codec with DetectedSpec re-stamped for
+//     per-host provenance.
 //  3. Anything else — ErrUnsupported, Coordinator falls to Tier 3.
-func (a *Adapter) Normalize(_ context.Context, raw []byte, meta normalize.Meta) (normalize.NormalizedPayload, error) {
+func (a *Adapter) Normalize(ctx context.Context, raw []byte, meta normalize.Meta) (normalize.NormalizedPayload, error) {
 	if len(raw) == 0 {
 		return normalize.NormalizedPayload{}, normalize.ErrUnsupported
 	}
@@ -37,14 +39,15 @@ func (a *Adapter) Normalize(_ context.Context, raw []byte, meta normalize.Meta) 
 	}
 
 	// JSON-shape Gemini-API-compatible fallback (defensive — if
-	// Gemini ever migrates the web client to a JSON body).
+	// Gemini ever migrates the web client to a JSON body). Decode
+	// failures propagate so the Coordinator falls through.
 	if looksLikeJSON(raw) {
-		return extract.NormalizeForAdapter(raw, meta, extract.AdapterSpecHint{
-			AdapterID:     adapterID,
-			ReqSpecIDs:    []string{"gemini-generate"},
-			RespSpecIDs:   []string{"gemini-generate-nonstream", "gemini-generate-sse"},
-			MinConfidence: 0.5,
-		})
+		p, err := codecs.SharedGeminiGenerate().Normalize(ctx, raw, meta)
+		if err != nil {
+			return p, err
+		}
+		p.DetectedSpec = adapterID
+		return p, nil
 	}
 
 	return normalize.NormalizedPayload{}, normalize.ErrUnsupported

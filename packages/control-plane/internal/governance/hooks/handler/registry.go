@@ -1,6 +1,9 @@
 package hooks
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/hooks/hookstore"
 )
 
@@ -51,6 +54,21 @@ var (
 	validHookTypes         = map[string]struct{}{"builtin": {}, "webhook": {}, "script": {}}
 )
 
+// KnownImplementationIDs returns the registered hook implementationIds in
+// sorted order. This is the single source of truth for "which implementationId
+// is an admin allowed to attach to a HookConfig row"; an unrecognized id means
+// PolicyResolver warn-logs-and-skips every row that uses it, so the hook would
+// silently never fire. Surfaced in the 400 error message so an admin who
+// mistypes (e.g. "web_hook" for "webhook-forward") sees the valid set.
+func KnownImplementationIDs() []string {
+	ids := make([]string, 0, len(HookImplRegistry))
+	for id := range HookImplRegistry {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // deref returns the pointee or "" if p is nil.
 func deref(p *string) string {
 	if p == nil {
@@ -62,31 +80,35 @@ func deref(p *string) string {
 // ValidateHookEnums checks the four enum-shaped fields on a hook config
 // payload. Empty strings are treated as "field omitted" and skipped — the
 // caller is expected to fill in defaults before calling this helper.
-// Returns a human-readable message suitable for a 400 response, or "" on ok.
+// Returns a human-readable message suitable for a 400 response plus a machine
+// error code, or ("", "") on ok. The unknown-implementationId case carries the
+// distinct code "unknown_implementation_id" (the rest use "validation_error")
+// so clients can branch on it and so the message enumerates the valid set.
 // Exported so the parent handler/ package's cross-domain registry test
 // (admin_hooks_registry_test.go) can drive it without re-implementing.
-func ValidateHookEnums(stage, failBehavior, hookType, implementationID string) string {
+func ValidateHookEnums(stage, failBehavior, hookType, implementationID string) (msg, code string) {
 	if stage != "" {
 		if _, ok := validHookStages[stage]; !ok {
-			return "stage must be 'request' or 'response'"
+			return "stage must be 'request' or 'response'", "validation_error"
 		}
 	}
 	if failBehavior != "" {
 		if _, ok := validHookFailBehaviors[failBehavior]; !ok {
-			return "failBehavior must be 'fail-open' or 'fail-closed'"
+			return "failBehavior must be 'fail-open' or 'fail-closed'", "validation_error"
 		}
 	}
 	if hookType != "" {
 		if _, ok := validHookTypes[hookType]; !ok {
-			return "type must be 'builtin', 'webhook', or 'script'"
+			return "type must be 'builtin', 'webhook', or 'script'", "validation_error"
 		}
 	}
 	if implementationID != "" {
 		if _, ok := HookImplRegistry[implementationID]; !ok {
-			return "implementationId " + implementationID + " is not registered — see GET /admin/hook-implementations"
+			return "implementationId must be one of: " + strings.Join(KnownImplementationIDs(), ", "),
+				"unknown_implementation_id"
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // hookClassification builds the classification object the UI expects.

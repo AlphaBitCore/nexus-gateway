@@ -42,17 +42,28 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 	var order []int
 	var usage *core.Usage
 	var sawAny bool
-	var lastErr error
+	// Frame coverage: recognized / total data frames ([DONE] and blank
+	// data lines are protocol sentinels, counted in neither). A frame is
+	// recognized when it carries generateContent structure (candidates,
+	// usageMetadata, or the modelVersion envelope); unparseable JSON —
+	// typically the cut-off final frame of a truncated capture — counts
+	// toward the total only, so a truncated stream folds to its
+	// decodable prefix with proportionally lower confidence instead of
+	// erroring.
+	var totalFrames, recognizedFrames int
 
 	consume := func(payload string) {
 		payload = strings.TrimSpace(payload)
 		if payload == "" || payload == "[DONE]" {
 			return
 		}
+		totalFrames++
 		var chunk geminiResponse
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			lastErr = err
 			return
+		}
+		if chunk.UsageMetadata != nil || len(chunk.Candidates) > 0 || chunk.ModelVersion != "" {
+			recognizedFrames++
 		}
 		if out.Model == "" && chunk.ModelVersion != "" {
 			out.Model = chunk.ModelVersion
@@ -135,7 +146,10 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 		consume(strings.TrimPrefix(line, "data:"))
 	}
 	if err := scanner.Err(); err != nil {
-		lastErr = err
+		// The scanner stopped before the end of the capture (oversized
+		// line); the unread tail is at least one frame we could not
+		// decode, so it weighs on the coverage like one.
+		totalFrames++
 	}
 
 	if !sawAny {
@@ -177,10 +191,9 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 	}
 
 	for _, idx := range order {
+		// order indices are appended exactly when the map entry is
+		// created with a non-nil state, so the lookup always hits.
 		st := candidates[idx]
-		if st == nil {
-			continue
-		}
 		role := st.role
 		if role == "" {
 			role = "model"
@@ -207,8 +220,8 @@ func (n *GeminiGenerateNormalizer) normalizeStreamResponse(raw []byte, meta core
 		}
 	}
 	out.Usage = usage
-	if lastErr != nil {
-		return out, fmt.Errorf("gemini-generate: stream parse incomplete: %w", lastErr)
+	if totalFrames > 0 {
+		out.Confidence = float64(recognizedFrames) / float64(totalFrames)
 	}
 	return out, nil
 }

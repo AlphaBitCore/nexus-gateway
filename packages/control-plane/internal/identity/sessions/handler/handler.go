@@ -5,6 +5,7 @@ package me
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -21,12 +22,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
 )
 
-// HubAPI is the narrow Hub surface me/ needs. The virtualkey
-// sub-package needs both InvalidateConfig + NotifyConfigChange for
-// per-VK hash invalidation; expose both.
+// HubAPI is the narrow Hub surface me/ needs. The virtualkey sub-package needs
+// NotifyConfigChange (per-VK hash invalidation) + InvalidateConfigE (fail-loud
+// approve/renew/revoke); expose both.
 type HubAPI interface {
-	InvalidateConfig(ctx context.Context, thingType, configKey string)
 	NotifyConfigChange(ctx context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error)
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 }
 
 // meUserStore is the narrow userstore surface that me/ handlers need.
@@ -38,7 +39,7 @@ type meUserStore interface {
 	CreateAdminAPIKey(ctx context.Context, p userstore.CreateAdminAPIKeyParams) (*userstore.AdminAPIKey, error)
 	GetAdminAPIKey(ctx context.Context, id string) (*userstore.AdminAPIKey, error)
 	DeleteAdminAPIKey(ctx context.Context, id string) error
-	RegenerateAdminAPIKey(ctx context.Context, id, keyHash, keyPrefix string) error
+	RegenerateAdminAPIKey(ctx context.Context, id, keyHash, keyVersion, keyPrefix string) error
 }
 
 // meIAMStore is the narrow iamstore surface that me/ handlers need.
@@ -88,9 +89,8 @@ func New(d Deps) *Handler {
 	return h
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{"error": map[string]any{"message": message, "type": errType, "code": code}}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 type Actor struct{ UserID, Name string }
 

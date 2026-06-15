@@ -18,12 +18,16 @@ import (
 // RegisterEmbeddingProbeRoutes registers the embedding probe endpoint on
 // the given Echo group.
 //
-// IAM: gated on the existing provider-test action (VerbRead on
-// ResourceProvider) — same guard as /providers/:id/test. No new IAM
-// resource is carved out.
+// IAM: the probe decrypts a STORED credential before forwarding it to the
+// gateway, so it is gated on BOTH provider:read AND credential:probe (two
+// chained iamMW middlewares = AND semantics) — the same dual guard as
+// /providers/:id/test and the credential-scoped sibling /credentials/:id/probe.
+// A read-only provider viewer holding only provider:read can no longer trigger a
+// credential decrypt.
 func (h *Handler) RegisterEmbeddingProbeRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
 	g.POST("/providers/:id/embedding-probe", h.ProviderEmbeddingProbe,
-		iamMW(iam.ResourceProvider.Action(iam.VerbRead)))
+		iamMW(iam.ResourceProvider.Action(iam.VerbRead)),
+		iamMW(iam.ResourceCredential.Action(iam.VerbProbe)))
 }
 
 // ProviderEmbeddingProbe issues a synthetic embedding call to the
@@ -111,6 +115,12 @@ func (h *Handler) ProviderEmbeddingProbe(c echo.Context) error {
 // forwardEmbeddingProbe forwards the probe to the AI Gateway internal
 // endpoint POST /internal/embedding-probe and passes the response body
 // back to the caller verbatim.
+//
+// Confidentiality note: the decrypted provider key rides in the request
+// body to the gateway. The /internal/* hop is INTERNAL_SERVICE_TOKEN-gated for
+// authn; in production it MUST additionally run over TLS so the key is never sent
+// in cleartext. See forwardProviderTest for the full rationale (ID-forwarding is
+// not used here because the gateway probe endpoint consumes a plaintext key).
 func (h *Handler) forwardEmbeddingProbe(c echo.Context,
 	providerID, modelID, modelName, providerModelID, baseURL, apiKey string,
 	dimension int,
@@ -141,6 +151,7 @@ func (h *Handler) forwardEmbeddingProbe(c echo.Context,
 		})
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.proxy.AIGatewayInternalToken)
 
 	resp, err := client.Do(req)
 	if err != nil {

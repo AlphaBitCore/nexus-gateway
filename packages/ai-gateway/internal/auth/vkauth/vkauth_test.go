@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"net/http"
 	"testing"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 )
 
 func TestExtractVKToken_Header(t *testing.T) {
@@ -76,25 +78,28 @@ func TestClassifyVKToken(t *testing.T) {
 }
 
 func TestHashKey_HMAC(t *testing.T) {
-	a := &Authenticator{hmacSecret: []byte("test-secret")}
-	hash := a.hashKey("nvk_testkey12345678")
+	a := NewAuthenticator(nil, mustKeyring("test-secret"), quietLogger())
 
-	// Verify independently.
-	mac := hmac.New(sha256.New, []byte("test-secret"))
+	// The authenticator derives the VK-domain sub-key per keyring version
+	// (SEC-W2-01) — NOT the raw master. Verify hashKeyWith under the stored
+	// current-version sub-key matches an independent derivation.
+	sub := keyderive.DeriveSubkey([]byte("test-secret"), keyderive.ClassAPIKeyVirtualKey)
+	mac := hmac.New(sha256.New, sub[:])
 	mac.Write([]byte("nvk_testkey12345678"))
 	want := hex.EncodeToString(mac.Sum(nil))
 
-	if hash != want {
-		t.Errorf("hash mismatch: got %s, want %s", hash, want)
+	got := hashKeyWith(a.vkHashKeys[0], "nvk_testkey12345678")
+	if got != want {
+		t.Errorf("hash mismatch: got %s, want %s", got, want)
 	}
 
 	// Deterministic.
-	if a.hashKey("nvk_testkey12345678") != hash {
+	if hashKeyWith(a.vkHashKeys[0], "nvk_testkey12345678") != got {
 		t.Error("hash should be deterministic")
 	}
 
 	// Different key → different hash.
-	if a.hashKey("nvk_otherkey") == hash {
+	if hashKeyWith(a.vkHashKeys[0], "nvk_otherkey") == got {
 		t.Error("different keys should produce different hashes")
 	}
 }

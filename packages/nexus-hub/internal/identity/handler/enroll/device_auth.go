@@ -2,7 +2,6 @@ package enroll
 
 import (
 	"crypto/subtle"
-	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -52,26 +51,17 @@ func DeviceOrServiceAuth(st *store.Store, serviceToken string) echo.MiddlewareFu
 				thingID = c.QueryParam("id")
 			}
 			if thingID == "" {
-				return c.JSON(http.StatusUnauthorized, ErrorResponse{
-					Error: "X-Thing-Id header required for device token auth",
-					Code:  "UNAUTHORIZED",
-				})
+				return unauthorized(c, "X-Thing-Id header required for device token auth")
 			}
 
 			tokenHash, err := agentca.HashDeviceToken(token)
 			if err != nil {
-				return c.JSON(http.StatusUnauthorized, ErrorResponse{
-					Error: "invalid token format",
-					Code:  "UNAUTHORIZED",
-				})
+				return unauthorized(c, "invalid token format")
 			}
 
 			thing, err := st.RegistryStore().ValidateDeviceToken(c.Request().Context(), thingID, tokenHash)
 			if err != nil {
-				return c.JSON(http.StatusUnauthorized, ErrorResponse{
-					Error: "invalid or revoked device token",
-					Code:  "UNAUTHORIZED",
-				})
+				return unauthorized(c, "invalid or revoked device token")
 			}
 
 			c.Set(thingContextKey, thing)

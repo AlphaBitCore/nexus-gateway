@@ -17,8 +17,8 @@ func TestClientStore_GetByID(t *testing.T) {
 	id := "test-client-" + time.Now().Format("150405.000000000")
 
 	_, err := pool.Exec(ctx,
-		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","requirePkce","updatedAt")
-		 VALUES ($1,$2,'public',$3,$4,TRUE,NOW())`,
+		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","updatedAt")
+		 VALUES ($1,$2,'public',$3,$4,NOW())`,
 		id, "Agent Desktop",
 		[]string{"http://127.0.0.1:*/callback"},
 		[]string{"traffic:write", "shadow:read"},
@@ -34,7 +34,7 @@ func TestClientStore_GetByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if c.Type != "public" || !c.RequirePKCE || len(c.RedirectURIs) != 1 {
+	if c.Type != "public" || len(c.RedirectURIs) != 1 {
 		t.Fatalf("unexpected client row: %+v", c)
 	}
 	if len(c.AllowedScopes) != 2 {

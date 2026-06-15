@@ -18,7 +18,7 @@ import (
 const (
 	providerUnavailableJobID          = "provider-unavailable-alerts"
 	providerUnavailableJobName        = "Provider Unavailable Alerts"
-	providerUnavailableJobDescription = "Raises provider.unavailable alerts for Providers whose ProviderHealth status is 'unavailable'; auto-resolves firing alerts when the provider recovers to healthy, recovering, or degraded."
+	providerUnavailableJobDescription = "Raises provider.unavailable alerts for Providers whose ProviderHealth status is 'unavailable'; auto-resolves firing alerts when the provider status transitions to healthy or degraded."
 
 	providerUnavailableRuleID = "provider.unavailable"
 	providerTargetKeyPrefix   = "provider:"
@@ -34,7 +34,7 @@ const (
 //   - Raise on every run for each provider with status='unavailable'.
 //     alerting.Raiser dedups via (ruleId, targetKey) advisory lock.
 //   - Resolve any previously-firing provider.unavailable alert whose provider
-//     has transitioned to status IN ('healthy', 'recovering', 'degraded').
+//     has transitioned to status IN ('healthy', 'degraded').
 //
 // Debounce: rule params minDownSec / recoverySec are applied by the gateway.
 // ai-gateway's underlying rolling window already
@@ -206,7 +206,7 @@ func (j *ProviderUnavailableAlertsJob) Run(ctx context.Context) error {
 
 // resolveRecovered walks currently firing provider.unavailable alerts and
 // resolves any whose provider is no longer in the shouldFireSet — meaning
-// the provider has transitioned to healthy, recovering, or degraded — AND
+// the provider has transitioned to healthy or degraded — AND
 // has stayed recovered for at least recoverySec.
 func (j *ProviderUnavailableAlertsJob) resolveRecovered(ctx context.Context, shouldFireSet map[string]bool, recoverySec float64, now time.Time) error {
 	rows, err := j.pool.Query(ctx, `

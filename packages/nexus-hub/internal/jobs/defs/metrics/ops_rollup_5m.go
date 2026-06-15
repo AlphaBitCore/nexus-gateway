@@ -131,7 +131,7 @@ func (j *OpsRollup5mJob) resolveCursor(ctx context.Context) (time.Time, bool, er
 	// processed bucket. Here cursor already IS the first processed bucket.
 	bootstrap := oldest.UTC().Truncate(opsBucketDur)
 
-	// Cold start, or a watermark seeded into the future (the d86ca4f6 NOW()
+	// Cold start, or a watermark seeded into the future (an earlier NOW()
 	// seed): the watermark is not a real "last committed bucket" marker, so
 	// advancing from it would strand the historical raw that predates the
 	// seed. Rewind to the hour containing the oldest surviving sample.

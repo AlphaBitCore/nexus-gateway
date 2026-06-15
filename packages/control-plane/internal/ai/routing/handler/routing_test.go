@@ -129,6 +129,110 @@ func TestCreateRoutingRule_ValidatesRetryPolicy_NoDB(t *testing.T) {
 	}
 }
 
+// TestCreateRoutingRule_RejectsUnknownStrategyType_NoDB ensures the handler
+// short-circuits an unrecognized strategyType with HTTP 400 before the DB
+// write + fleet-wide InvalidateConfig broadcast (F-0272b). The validator runs
+// after Bind and before any store call, so a nil DB never gets reached.
+func TestCreateRoutingRule_RejectsUnknownStrategyType_NoDB(t *testing.T) {
+	for _, st := range []string{"round-robin", "weighted", "Smart", "bogus"} {
+		t.Run(st, func(t *testing.T) {
+			h, hub, _ := newAdminHandlerWithHubSpy(t)
+			body := `{"name":"r","strategyType":"` + st + `","config":{"type":"single"}}`
+			rec := callCreate(t, h, body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d; want 400 (body=%s)", rec.Code, rec.Body.String())
+			}
+			assertErrorEnvelope(t, rec, "", "strategy_type_invalid")
+			if len(hub.invalidateCalls) != 0 {
+				t.Errorf("hub.InvalidateConfig called %d times; want 0 (rejected before broadcast)", len(hub.invalidateCalls))
+			}
+		})
+	}
+}
+
+// TestCreateRoutingRule_RejectsMalformedConfig_NoDB ensures a config payload
+// that cannot parse as a strategy object is rejected with HTTP 400 before the
+// DB write + broadcast (F-0272b).
+func TestCreateRoutingRule_RejectsMalformedConfig_NoDB(t *testing.T) {
+	cases := []struct{ name, config string }{
+		{"json array", `[{"type":"single"}]`},
+		{"json string", `"single"`},
+		{"wrong field type", `{"type":"single","providerId":123}`},
+		{"unknown node type", `{"type":"frobnicate"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, hub, _ := newAdminHandlerWithHubSpy(t)
+			body := `{"name":"r","strategyType":"single","config":` + tc.config + `}`
+			rec := callCreate(t, h, body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d; want 400 (body=%s)", rec.Code, rec.Body.String())
+			}
+			assertErrorEnvelope(t, rec, "", "strategy_config_invalid")
+			if len(hub.invalidateCalls) != 0 {
+				t.Errorf("hub.InvalidateConfig called %d times; want 0 (rejected before broadcast)", len(hub.invalidateCalls))
+			}
+		})
+	}
+}
+
+// TestUpdateRoutingRule_RejectsUnknownStrategyType_NoDB ensures the update
+// path rejects an unknown strategyType with HTTP 400. The existing-rule
+// lookup happens first, so this needs the DB-backed harness; the test is
+// skipped without DATABASE_URL like its sibling integration tests.
+func TestUpdateRoutingRule_RejectsUnknownStrategyType_NoDB(t *testing.T) {
+	db := openRoutingRuleHandlerTestDB(t)
+	h, _, _ := newRoutingHandlerForIT(t, db)
+
+	name := uniqueName(t, "rule-st-update")
+	createRec := callCreate(t, h, `{"name":"`+name+`","strategyType":"single","config":{"type":"single","providerId":"p","modelId":"m"}}`)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("seed create status = %d; body=%s", createRec.Code, createRec.Body.String())
+	}
+	id := decodeIDAndRegisterCleanup(t, db, createRec)
+
+	rec := callUpdate(t, h, id, `{"strategyType":"round-robin"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	assertErrorEnvelope(t, rec, "", "strategy_type_invalid")
+}
+
+// TestUpdateRoutingRule_RejectsMalformedConfig_NoDB ensures the update path
+// rejects a malformed config with HTTP 400 (F-0272b).
+func TestUpdateRoutingRule_RejectsMalformedConfig_NoDB(t *testing.T) {
+	db := openRoutingRuleHandlerTestDB(t)
+	h, _, _ := newRoutingHandlerForIT(t, db)
+
+	name := uniqueName(t, "rule-cfg-update")
+	createRec := callCreate(t, h, `{"name":"`+name+`","strategyType":"single","config":{"type":"single","providerId":"p","modelId":"m"}}`)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("seed create status = %d; body=%s", createRec.Code, createRec.Body.String())
+	}
+	id := decodeIDAndRegisterCleanup(t, db, createRec)
+
+	rec := callUpdate(t, h, id, `{"config":["not","an","object"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	assertErrorEnvelope(t, rec, "", "strategy_config_invalid")
+}
+
+// TestCreateRoutingRule_AcceptsValidStrategyAndConfig is the positive case:
+// a known strategyType with a well-shaped config persists (F-0272b).
+func TestCreateRoutingRule_AcceptsValidStrategyAndConfig(t *testing.T) {
+	db := openRoutingRuleHandlerTestDB(t)
+	h, _, _ := newRoutingHandlerForIT(t, db)
+
+	name := uniqueName(t, "rule-valid-create")
+	body := `{"name":"` + name + `","strategyType":"single","config":{"type":"single","providerId":"p","modelId":"m"}}`
+	rec := callCreate(t, h, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d; want 201 (body=%s)", rec.Code, rec.Body.String())
+	}
+	decodeIDAndRegisterCleanup(t, db, rec)
+}
+
 // DB-backed integration tests (require DATABASE_URL)
 
 func openRoutingRuleHandlerTestDB(t *testing.T) *pgxpool.Pool {

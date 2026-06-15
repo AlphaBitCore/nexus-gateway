@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"strings"
 )
 
@@ -14,8 +15,11 @@ import (
 //     default (their text is "internal model thinking" and is rarely
 //     what a compliance hook should match against; future per-hook
 //     config can opt-in via IncludeReasoning).
-//   - HTTP kinds: the BodyView.Text projection is returned as a single
-//     entry. Form fields are flattened to "key=value" lines.
+//   - HTTP kinds: BodyView.Text is returned as a single entry. Form
+//     fields are flattened to "key=value" lines. SSE frames project one
+//     entry per frame (verbatim DataText, or the re-marshaled Data tree)
+//     so content hooks scan stream payloads the same as inline bodies.
+//     A JSON tree projects as its compact re-marshaled document.
 //   - http-binary / unsupported / redacted payloads: empty slice.
 //
 // One projection serves every regex-based hook in shared/hooks; per-hook
@@ -101,6 +105,25 @@ func httpTextProjection(p *NormalizedPayload) []string {
 			out = append(out, k+"="+v)
 		}
 		return out
+	}
+	if len(bv.SSEFrames) > 0 {
+		out := make([]string, 0, len(bv.SSEFrames))
+		for _, f := range bv.SSEFrames {
+			switch {
+			case f.DataText != "":
+				out = append(out, f.DataText)
+			case f.Data != nil:
+				// Data is a decode product (json.Unmarshal output), so
+				// re-marshaling cannot fail; the error is structurally dead.
+				b, _ := json.Marshal(f.Data)
+				out = append(out, string(b))
+			}
+		}
+		return out
+	}
+	if bv.JSON != nil {
+		b, _ := json.Marshal(bv.JSON)
+		return []string{string(b)}
 	}
 	return nil
 }

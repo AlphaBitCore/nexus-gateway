@@ -9,7 +9,7 @@
 // embedding provider.  Smart-routing (packages/ai-gateway/internal/routing/llm)
 // and AI Guard (packages/ai-gateway/internal/policy/aiguard) also consume this
 // primitive — truncation policy is expressed once and surfaced uniformly in
-// the admin UI via the shared InputStagingSelector component.
+// the admin UI's input-staging strategy selector.
 //
 // # What this package does NOT do
 //

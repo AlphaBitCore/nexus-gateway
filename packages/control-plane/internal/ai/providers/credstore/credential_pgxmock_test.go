@@ -155,9 +155,11 @@ func TestGetCredentialEncrypted(t *testing.T) {
 
 func TestCreateCredential_Defaults(t *testing.T) {
 	s, m := newMock(t)
-	// keyID empty → "v1"; weight 0 → 100. Assert via WithArgs (args 6 and 10).
+	// keyID empty → "v1"; weight 0 → 100. The first arg is the app-side id —
+	// the store generates it when CreateCredentialParams.ID is empty (SEC-C1-02),
+	// so AnyArg; the rest are asserted by value.
 	m.ExpectQuery(`INSERT INTO "Credential"`).
-		WithArgs("cred", "p1", "ek", "iv", "tag", "v1", true, "none", (*time.Time)(nil), 100).
+		WithArgs(pgxmock.AnyArg(), "cred", "p1", "ek", "iv", "tag", "v1", true, "none", (*time.Time)(nil), 100).
 		WillReturnRows(pgxmock.NewRows(credCols).AddRow(credVals("c1")...))
 	c, err := s.CreateCredential(context.Background(), CreateCredentialParams{
 		Name: "cred", ProviderID: "p1", EncryptedKey: "ek", EncryptionIV: "iv", EncryptionTag: "tag",
@@ -169,7 +171,7 @@ func TestCreateCredential_Defaults(t *testing.T) {
 	if err := m.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet (defaults not applied?): %v", err)
 	}
-	m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("dup"))
+	m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(11)...).WillReturnError(errors.New("dup"))
 	if _, err := s.CreateCredential(context.Background(), CreateCredentialParams{EncryptionKeyID: "v2", SelectionWeight: 5}); err == nil {
 		t.Fatal("insert error should surface")
 	}
@@ -217,21 +219,32 @@ func TestCountCredentialsNotOnKey(t *testing.T) {
 
 func TestListCredentialsForRotation(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`FROM "Credential"\s+WHERE encryption_key_id != \$1`).WithArgs("v2", 50).
+	// First batch: no exclusions yet — a nil excludeIDs is normalized to an
+	// empty (non-nil) slice so `id <> ALL('{}')` matches every row.
+	m.ExpectQuery(`FROM "Credential"\s+WHERE encryption_key_id != \$1\s+AND id <> ALL\(\$2\)`).
+		WithArgs("v2", []string{}, 50).
 		WillReturnRows(pgxmock.NewRows(credEncCols).AddRow(credEncVals("c1")...).AddRow(credEncVals("c2")...))
-	creds, err := s.ListCredentialsForRotation(context.Background(), "v2", 50)
+	creds, err := s.ListCredentialsForRotation(context.Background(), "v2", nil, 50)
 	if err != nil || len(creds) != 2 || creds[0].EncryptedKey != "enc-key" {
 		t.Fatalf("ListCredentialsForRotation: %+v %v", creds, err)
 	}
-	m.ExpectQuery(`WHERE encryption_key_id !=`).WithArgs("v2", 50).WillReturnError(errors.New("boom"))
-	if _, err := s.ListCredentialsForRotation(context.Background(), "v2", 50); err == nil {
+	// Subsequent batch with a non-empty exclusion set: the stuck IDs are bound
+	// to $2 so those rows are never re-selected.
+	m.ExpectQuery(`WHERE encryption_key_id !=`).WithArgs("v2", []string{"stuck-1"}, 50).
+		WillReturnRows(pgxmock.NewRows(credEncCols).AddRow(credEncVals("c3")...))
+	creds, err = s.ListCredentialsForRotation(context.Background(), "v2", []string{"stuck-1"}, 50)
+	if err != nil || len(creds) != 1 || creds[0].ID != "c3" {
+		t.Fatalf("ListCredentialsForRotation excluded: %+v %v", creds, err)
+	}
+	m.ExpectQuery(`WHERE encryption_key_id !=`).WithArgs("v2", []string{}, 50).WillReturnError(errors.New("boom"))
+	if _, err := s.ListCredentialsForRotation(context.Background(), "v2", nil, 50); err == nil {
 		t.Fatal("query error should surface")
 	}
 	s2, m2 := newMock(t)
 	bad := credEncVals("c1")
 	bad[3] = "not-a-bool"
-	m2.ExpectQuery(`WHERE encryption_key_id !=`).WithArgs("v2", 50).WillReturnRows(pgxmock.NewRows(credEncCols).AddRow(bad...))
-	if _, err := s2.ListCredentialsForRotation(context.Background(), "v2", 50); err == nil {
+	m2.ExpectQuery(`WHERE encryption_key_id !=`).WithArgs("v2", []string{}, 50).WillReturnRows(pgxmock.NewRows(credEncCols).AddRow(bad...))
+	if _, err := s2.ListCredentialsForRotation(context.Background(), "v2", nil, 50); err == nil {
 		t.Fatal("scan error should surface")
 	}
 }

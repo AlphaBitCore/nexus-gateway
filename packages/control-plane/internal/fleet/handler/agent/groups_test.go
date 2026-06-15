@@ -29,7 +29,6 @@ func TestRegisterDeviceGroupRoutes_MountsAll(t *testing.T) {
 		"POST /api/admin/device-groups/preview-membership",
 		"PUT /api/admin/device-groups/:id/membership-query",
 		"POST /api/admin/device-groups/:id/force-refresh",
-		"POST /api/admin/device-groups/:id/rotate-cert",
 		"POST /api/admin/device-groups/:id/members",
 		"DELETE /api/admin/device-groups/:id/members/:deviceId",
 	}

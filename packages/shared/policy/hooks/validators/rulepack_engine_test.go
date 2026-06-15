@@ -151,13 +151,60 @@ func TestRulePackEngine_DisabledInstallIsSkipped(t *testing.T) {
 	}
 }
 
-func TestRulePackEngine_InvalidRegex_FactoryError(t *testing.T) {
+func TestRulePackEngine_InvalidRegex_SkippedNotFatal(t *testing.T) {
+	// F-0274 availability-first: a rule whose pattern fails to compile is
+	// skipped at construction time, not fatal. The factory still returns a
+	// usable engine so one bad rule degrades to "that rule off" rather than
+	// taking the entire pack (and therefore the pipeline) offline.
 	cfg := buildEngineConfig([]rulePackInstall{{
 		InstallID: "inst-x", PackName: "p", PackVersion: "v", Enabled: true,
 		Rules: []rulePackRule{{RuleID: "r-bad", Severity: "hard", Pattern: `(`}},
 	}})
-	if _, err := NewRulePackEngine(cfg); err == nil {
-		t.Fatal("expected factory error for invalid regex, got nil")
+	h, err := NewRulePackEngine(cfg)
+	if err != nil {
+		t.Fatalf("invalid regex must be skipped, not fatal: %v", err)
+	}
+	if h == nil {
+		t.Fatal("factory must return a usable engine even when a rule is dropped")
+	}
+	// The bad rule produces no compiled rule, so even text that the author
+	// intended to match yields APPROVE (the rule is simply absent).
+	res, err := h.Execute(context.Background(), &HookInput{
+		Normalized: PayloadFromTextSegments([]string{"anything ( here"}),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Decision != Approve {
+		t.Errorf("dropped rule must not block; got %s", res.Decision)
+	}
+}
+
+func TestRulePackEngine_InvalidRegex_GoodRuleSurvives(t *testing.T) {
+	// A bad rule alongside a good one drops only the bad one; the good rule
+	// still blocks. This proves the skip is per-rule, not per-pack.
+	cfg := buildEngineConfig([]rulePackInstall{{
+		InstallID: "inst-y", PackName: "p", PackVersion: "v", Enabled: true,
+		Rules: []rulePackRule{
+			{RuleID: "r-bad", Severity: "hard", Pattern: `(`},
+			{RuleID: "r-good", Category: "safety", Severity: "hard", Pattern: `\bsecret\b`},
+		},
+	}})
+	h, err := NewRulePackEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewRulePackEngine: %v", err)
+	}
+	res, err := h.Execute(context.Background(), &HookInput{
+		Normalized: PayloadFromTextSegments([]string{"this is secret"}),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Decision != RejectHard {
+		t.Errorf("good rule alongside a dropped bad rule must still block; got %s", res.Decision)
+	}
+	if res.BlockingRule == nil || res.BlockingRule.RuleID != "r-good" {
+		t.Errorf("blocking rule should be r-good; got %+v", res.BlockingRule)
 	}
 }
 

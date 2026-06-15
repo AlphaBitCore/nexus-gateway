@@ -336,6 +336,52 @@ func TestDrainOnce_MarkSyncedFailurePostUpload(t *testing.T) {
 	// No panic / no error escape — that's the contract.
 }
 
+// TestDrainOnce_ClearsBacklogAcrossBatchesInOneWake proves one drainOnce
+// call uploads a multi-batch backlog back-to-back (driven by full-batch
+// detection) instead of one batch per wake — the property that lifts the
+// old batch/interval throughput ceiling. 25 events, batch=10 → expect 3
+// upload calls (10,10,5) all within a single drainOnce.
+func TestDrainOnce_ClearsBacklogAcrossBatchesInOneWake(t *testing.T) {
+	q, _ := newTempQueue(t)
+	for i := range 25 {
+		if err := q.Record(makeEvent(fmt.Sprintf("bk-%02d", i))); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+	var uploads, uploaded int
+	q.drainOnce(10, func(events []event.Event) error {
+		uploads++
+		uploaded += len(events)
+		return nil
+	})
+	if uploads != 3 {
+		t.Errorf("expected 3 back-to-back upload calls (10,10,5) in one drainOnce, got %d", uploads)
+	}
+	if uploaded != 25 {
+		t.Errorf("expected all 25 events uploaded in one wake, got %d", uploaded)
+	}
+	if q.UnsyncedCount() != 0 {
+		t.Errorf("backlog not cleared: %d events still unsynced", q.UnsyncedCount())
+	}
+}
+
+// TestDrainOnce_StopsOnPartialBatch proves a single short batch ends the
+// cycle (no spin on empty reads): 5 events, batch=10 → exactly one upload.
+func TestDrainOnce_StopsOnPartialBatch(t *testing.T) {
+	q, _ := newTempQueue(t)
+	for i := range 5 {
+		_ = q.Record(makeEvent(fmt.Sprintf("pb-%d", i)))
+	}
+	var uploads int
+	q.drainOnce(10, func(events []event.Event) error {
+		uploads++
+		return nil
+	})
+	if uploads != 1 {
+		t.Errorf("partial batch should drain in exactly 1 upload, got %d", uploads)
+	}
+}
+
 // MarkSynced — partial-failure rollback branch
 
 // TestMarkSynced_AfterCloseFailsAtBegin pins that a DB.Close-induced

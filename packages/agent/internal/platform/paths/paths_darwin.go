@@ -20,11 +20,10 @@ func defaultPaths() Paths {
 		// System-wide path under /var/run/ so the root LaunchDaemon (write)
 		// and any logged-in user's tray binary (connect) can both reach it.
 		// The listen helper chmods the socket 0666 (world-connectable, the
-		// cross-UID cost of root-daemon ↔ user-GUI on macOS). There is no
-		// peer-credential check on the socket; instead the state-changing IPC
-		// commands (SHUTDOWN / PAUSE_PROTECTION / UNENROLL) are gated by the
-		// admin quitAllowed policy, so a no-quit fleet cannot be disabled over
-		// this socket. A LOCAL_PEERCRED / group-ACL transport check is future work.
+		// cross-UID cost of root-daemon ↔ user-GUI on macOS). handleConn
+		// enforces a LOCAL_PEERCRED UID check via GetsockoptXucred before
+		// processing any command, so only a process running as the same UID
+		// as the daemon can issue IPC requests (see statusapi_peercred_darwin.go).
 		SocketPath:       "/var/run/nexus-agent-status.sock",
 		FlagsDir:         flagsDir,
 		UserQuitFlagPath: flagsDir + "/user-quit",

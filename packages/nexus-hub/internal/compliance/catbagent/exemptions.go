@@ -15,7 +15,6 @@ import (
 // (ApplyShadowState):
 //
 //	{
-//	    "auto_exempt_cert_pinned": false,
 //	    "admin_exemptions": [host, ...],
 //	    "denylist":         [host, ...]
 //	}
@@ -31,10 +30,6 @@ import (
 // expresses "host the agent must NEVER auto-exempt"; the agent's
 // denylist today is local yaml. When CP grows a denylist surface,
 // project it here.
-//
-// `auto_exempt_cert_pinned` is read by the agent today but not
-// consumed at runtime (pending future pipeline wiring); ship the
-// default false until CP exposes a toggle.
 //
 // Per-agent scoping is intentionally not implemented yet: every
 // agent sees every active grant. The compliance_exemption_grant table
@@ -54,9 +49,8 @@ func NewAgentExemptionsLoader(db pgxQuerier, logger *slog.Logger) *AgentExemptio
 // agentExemptionsState mirrors the JSON shape exemption.Store.ApplyShadowState
 // parses. JSON tags MUST stay in sync with that struct.
 type agentExemptionsState struct {
-	AutoExemptCertPinned bool     `json:"auto_exempt_cert_pinned"`
-	AdminExemptions      []string `json:"admin_exemptions"`
-	Denylist             []string `json:"denylist"`
+	AdminExemptions []string `json:"admin_exemptions"`
+	Denylist        []string `json:"denylist"`
 }
 
 // agentExemptionsSelect returns the distinct target_host of every grant
@@ -110,9 +104,8 @@ func (l *AgentExemptionsLoader) Load(ctx context.Context, _ string) (any, int64,
 	}
 
 	state := agentExemptionsState{
-		AutoExemptCertPinned: false,
-		AdminExemptions:      admins,
-		Denylist:             []string{},
+		AdminExemptions: admins,
+		Denylist:        []string{},
 	}
 	return state, timestampVersion(maxUpdated), nil
 }

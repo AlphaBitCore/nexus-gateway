@@ -22,13 +22,8 @@ DEFINE_GUID(NEXUS_WFP_SUBLAYER_GUID,
 
 extern const GUID NEXUS_WFP_CALLOUT_REDIRECT_V4_GUID;
 extern const GUID NEXUS_WFP_CALLOUT_REDIRECT_V6_GUID;
-extern const GUID NEXUS_WFP_CALLOUT_AUTH_CONNECT_V4_GUID;
-extern const GUID NEXUS_WFP_CALLOUT_AUTH_CONNECT_V6_GUID;
-
 static UINT64 g_FilterIdRedirectV4   = 0;
 static UINT64 g_FilterIdRedirectV6   = 0;
-static UINT64 g_FilterIdAuthConnectV4 = 0;
-static UINT64 g_FilterIdAuthConnectV6 = 0;
 
 NTSTATUS NexusWfpFilterEngineOpen(VOID)
 {
@@ -68,6 +63,17 @@ VOID NexusWfpFilterEngineClose(VOID)
     }
 }
 
+// The dynamic-session engine is the lifecycle anchor for EVERY FWPM
+// object this driver creates (sublayer, filters, callout management
+// objects): closing it auto-deletes them all from the BFE store, so a
+// crashed or unloaded driver can never leave stale objects behind that
+// would make the next FwpmCalloutAdd0 fail and block reload until
+// reboot. Callouts.c borrows the handle through this accessor.
+HANDLE NexusWfpFilterEngineHandle(VOID)
+{
+    return g_EngineHandle;
+}
+
 static NTSTATUS AddOneFilter(
     _In_ const GUID*    LayerKey,
     _In_ const GUID*    CalloutKey,
@@ -104,18 +110,6 @@ NTSTATUS NexusWfpFilterAddAll(VOID)
                           &NEXUS_WFP_CALLOUT_REDIRECT_V6_GUID,
                           L"NexusWFP redirect filter v6",
                           &g_FilterIdRedirectV6);
-    if (!NT_SUCCESS(status)) return status;
-
-    status = AddOneFilter(&FWPM_LAYER_ALE_AUTH_CONNECT_V4,
-                          &NEXUS_WFP_CALLOUT_AUTH_CONNECT_V4_GUID,
-                          L"NexusWFP auth filter v4",
-                          &g_FilterIdAuthConnectV4);
-    if (!NT_SUCCESS(status)) return status;
-
-    status = AddOneFilter(&FWPM_LAYER_ALE_AUTH_CONNECT_V6,
-                          &NEXUS_WFP_CALLOUT_AUTH_CONNECT_V6_GUID,
-                          L"NexusWFP auth filter v6",
-                          &g_FilterIdAuthConnectV6);
     return status;
 }
 
@@ -123,14 +117,6 @@ VOID NexusWfpFilterRemoveAll(VOID)
 {
     if (g_EngineHandle == NULL) return;
 
-    if (g_FilterIdAuthConnectV6) {
-        FwpmFilterDeleteById0(g_EngineHandle, g_FilterIdAuthConnectV6);
-        g_FilterIdAuthConnectV6 = 0;
-    }
-    if (g_FilterIdAuthConnectV4) {
-        FwpmFilterDeleteById0(g_EngineHandle, g_FilterIdAuthConnectV4);
-        g_FilterIdAuthConnectV4 = 0;
-    }
     if (g_FilterIdRedirectV6) {
         FwpmFilterDeleteById0(g_EngineHandle, g_FilterIdRedirectV6);
         g_FilterIdRedirectV6 = 0;

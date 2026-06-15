@@ -1,10 +1,8 @@
 package auth
 
 import (
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 )
 
@@ -14,16 +12,9 @@ var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"ok":true}`))
 })
 
-func setTokenEnv(t *testing.T, tok string) {
-	t.Helper()
-	t.Setenv("COMPLIANCE_PROXY_API_TOKEN", tok)
-}
-
-func TestTokenAuth_NoToken(t *testing.T) {
-	setTokenEnv(t, "secret")
-	auth := NewTokenAuth(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-
-	handler := auth.Require(okHandler)
+func TestTokenAuth_NoAuthHeader(t *testing.T) {
+	a := NewTokenAuth("secret")
+	handler := a.Require(okHandler)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 
@@ -35,10 +26,8 @@ func TestTokenAuth_NoToken(t *testing.T) {
 }
 
 func TestTokenAuth_ValidToken(t *testing.T) {
-	setTokenEnv(t, "secret")
-	auth := NewTokenAuth(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-
-	handler := auth.Require(okHandler)
+	a := NewTokenAuth("secret")
+	handler := a.Require(okHandler)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -51,10 +40,8 @@ func TestTokenAuth_ValidToken(t *testing.T) {
 }
 
 func TestTokenAuth_InvalidToken(t *testing.T) {
-	setTokenEnv(t, "secret")
-	auth := NewTokenAuth(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-
-	handler := auth.Require(okHandler)
+	a := NewTokenAuth("secret")
+	handler := a.Require(okHandler)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer wrong-token")
 	rec := httptest.NewRecorder()
@@ -66,22 +53,20 @@ func TestTokenAuth_InvalidToken(t *testing.T) {
 	}
 }
 
-func TestTokenAuth_Disabled(t *testing.T) {
-	setTokenEnv(t, "")
-	auth := NewTokenAuth(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-
-	if !auth.disabled {
-		t.Fatal("expected auth to be disabled when env var is empty")
-	}
-
-	handler := auth.Require(okHandler)
+// TestTokenAuth_EmptyToken_FailClosed verifies the F-0070/F-0142 invariant:
+// an empty token must never open the runtime API surface — it must return
+// 503 so the mutating break-glass verb is unreachable without a credential.
+func TestTokenAuth_EmptyToken_FailClosed(t *testing.T) {
+	a := NewTokenAuth("") // boot validation prevents this in prod; defence-in-depth
+	handler := a.Require(okHandler)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer anything")
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200 (auth disabled), got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 (fail-closed on empty token), got %d", rec.Code)
 	}
 }
 

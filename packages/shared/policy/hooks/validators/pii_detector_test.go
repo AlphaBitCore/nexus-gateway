@@ -601,3 +601,172 @@ func TestPiiDetector_ScopeIncludeReasoning(t *testing.T) {
 		}
 	})
 }
+
+// TestPiiDetector_StorageOnlyRedact covers the "let the request flow but
+// redact what we persist" policy: inflightAction approve (or block) with
+// storageAction redact must yield TransformSpans + a self-stamped storage
+// action — the pipeline only stamps storage policy for non-Approve
+// decisions, and the audit writer's storage rewrite is span-driven, so
+// without both the persisted copy would silently keep the matched PII.
+func TestPiiDetector_StorageOnlyRedact(t *testing.T) {
+	emailPattern := map[string]any{
+		"id": "email", "regex": `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`,
+		"replacement": "[EMAIL]",
+	}
+
+	t.Run("approve_inflight_redact_storage_emits_spans", func(t *testing.T) {
+		cfg := makePiiConfig([]map[string]any{emailPattern}, "")
+		cfg.Config["onMatch"] = map[string]any{"inflightAction": "approve", "storageAction": "redact"}
+		hook, err := NewPiiDetector(cfg)
+		if err != nil {
+			t.Fatalf("NewPiiDetector: %v", err)
+		}
+		input := &HookInput{Normalized: PayloadFromTextSegments([]string{"reach me at leak@example.com today"})}
+		result, err := hook.Execute(context.Background(), input)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if result.Decision != Approve {
+			t.Errorf("decision = %s, want APPROVE (inflight untouched)", result.Decision)
+		}
+		if len(result.TransformSpans) != 1 {
+			t.Fatalf("spans = %d, want 1", len(result.TransformSpans))
+		}
+		s := result.TransformSpans[0]
+		if s.SourceID != "email" || s.Replacement != "[EMAIL]" || s.ContentAddress != "messages.0.content.0" {
+			t.Errorf("span = %+v, want email pattern at messages.0.content.0", s)
+		}
+		if string(result.StorageAction) != "redact" {
+			t.Errorf("storageAction = %q, want self-stamped redact", result.StorageAction)
+		}
+		if result.ReasonCode != "PII_DETECTED" {
+			t.Errorf("reasonCode = %q, want PII_DETECTED", result.ReasonCode)
+		}
+	})
+
+	t.Run("block_inflight_redact_storage_emits_spans", func(t *testing.T) {
+		cfg := makePiiConfig([]map[string]any{emailPattern}, "")
+		cfg.Config["onMatch"] = map[string]any{"inflightAction": "block-hard", "storageAction": "redact"}
+		hook, err := NewPiiDetector(cfg)
+		if err != nil {
+			t.Fatalf("NewPiiDetector: %v", err)
+		}
+		input := &HookInput{Normalized: PayloadFromTextSegments([]string{"reach me at leak@example.com today"})}
+		result, err := hook.Execute(context.Background(), input)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if result.Decision != RejectHard {
+			t.Errorf("decision = %s, want REJECT_HARD", result.Decision)
+		}
+		if len(result.TransformSpans) != 1 {
+			t.Errorf("spans = %d, want 1 (blocked requests still redact their audit copy)", len(result.TransformSpans))
+		}
+		if string(result.StorageAction) != "redact" {
+			t.Errorf("storageAction = %q, want redact", result.StorageAction)
+		}
+	})
+
+	t.Run("approve_inflight_drop_content_storage_stamps_action", func(t *testing.T) {
+		cfg := makePiiConfig([]map[string]any{emailPattern}, "")
+		cfg.Config["onMatch"] = map[string]any{"inflightAction": "approve", "storageAction": "drop-content"}
+		hook, err := NewPiiDetector(cfg)
+		if err != nil {
+			t.Fatalf("NewPiiDetector: %v", err)
+		}
+		input := &HookInput{Normalized: PayloadFromTextSegments([]string{"reach me at leak@example.com today"})}
+		result, err := hook.Execute(context.Background(), input)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if result.Decision != Approve {
+			t.Errorf("decision = %s, want APPROVE", result.Decision)
+		}
+		if string(result.StorageAction) != "drop-content" {
+			t.Errorf("storageAction = %q, want self-stamped drop-content", result.StorageAction)
+		}
+	})
+
+	t.Run("no_match_stamps_nothing", func(t *testing.T) {
+		cfg := makePiiConfig([]map[string]any{emailPattern}, "")
+		cfg.Config["onMatch"] = map[string]any{"inflightAction": "approve", "storageAction": "redact"}
+		hook, err := NewPiiDetector(cfg)
+		if err != nil {
+			t.Fatalf("NewPiiDetector: %v", err)
+		}
+		input := &HookInput{Normalized: PayloadFromTextSegments([]string{"perfectly clean text"})}
+		result, err := hook.Execute(context.Background(), input)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if result.Decision != Approve || result.StorageAction != "" || len(result.TransformSpans) != 0 {
+			t.Errorf("clean input must not stamp storage policy or spans: %+v", result)
+		}
+	})
+}
+
+// --- RedetectText: storage-time pattern re-scanning --------------------------
+
+func TestPiiDetector_RedetectText_FindsRequestedRulesOnly(t *testing.T) {
+	hook, err := NewPiiDetector(makePiiConfig(seedPiiPatterns(), "redact"))
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	pd := hook.(*PiiDetector)
+	text := "mail alice@example.com or call 555-123-4567"
+
+	got := pd.RedetectText(text, []string{"email"})
+	if len(got) != 1 {
+		t.Fatalf("want only the email match, got %v", got)
+	}
+	m := got[0]
+	if m.RuleID != "email" {
+		t.Errorf("ruleID = %q, want email", m.RuleID)
+	}
+	if text[m.Start:m.End] != "alice@example.com" {
+		t.Errorf("match range = %q, want the email", text[m.Start:m.End])
+	}
+	if m.Replacement != "[REDACTED_EMAIL]" {
+		t.Errorf("replacement = %q, want [REDACTED_EMAIL]", m.Replacement)
+	}
+
+	both := pd.RedetectText(text, []string{"email", "phone"})
+	if len(both) != 2 {
+		t.Errorf("want email+phone matches, got %v", both)
+	}
+}
+
+func TestPiiDetector_RedetectText_EmptyInputs(t *testing.T) {
+	hook, err := NewPiiDetector(makePiiConfig(seedPiiPatterns(), "redact"))
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	pd := hook.(*PiiDetector)
+	if got := pd.RedetectText("", []string{"email"}); got != nil {
+		t.Errorf("empty text → nil, got %v", got)
+	}
+	if got := pd.RedetectText("alice@example.com", nil); got != nil {
+		t.Errorf("no rule ids → nil, got %v", got)
+	}
+	if got := pd.RedetectText("no pii here", []string{"email"}); got != nil {
+		t.Errorf("no match → nil, got %v", got)
+	}
+}
+
+func TestPiiDetector_RedetectText_LuhnFilterApplies(t *testing.T) {
+	patterns := []map[string]any{
+		{"id": "credit_card", "regex": `\b(?:\d{4}[-\s]?){3}\d{4}\b`, "flags": "g", "luhn": true},
+	}
+	hook, err := NewPiiDetector(makePiiConfig(patterns, "redact"))
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	pd := hook.(*PiiDetector)
+	// 4111111111111111 passes Luhn; 1234567812345678 does not.
+	if got := pd.RedetectText("card 4111-1111-1111-1111", []string{"credit_card"}); len(got) != 1 {
+		t.Errorf("Luhn-valid card must match, got %v", got)
+	}
+	if got := pd.RedetectText("card 1234-5678-1234-5678", []string{"credit_card"}); got != nil {
+		t.Errorf("Luhn-invalid card must not match, got %v", got)
+	}
+}

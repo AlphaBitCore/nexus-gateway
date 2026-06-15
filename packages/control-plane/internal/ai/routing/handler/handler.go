@@ -7,6 +7,7 @@ package routing
 import (
 	"context"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -20,16 +21,20 @@ import (
 )
 
 // HubInvalidator is the narrow Hub surface routing/ needs:
-// fire-and-forget InvalidateConfig on every CUD path (ai-gateway
-// reads routing rules from DB on every request — invalidation just
-// wakes its short-TTL cache).
+// error-returning InvalidateConfigE on every CUD path. Routing rules
+// gate which credential/model a request resolves to, so a dropped push
+// leaves the data plane routing on stale rules — every CUD path fails
+// loud (HTTP 502) instead of fire-and-forget.
 type HubInvalidator interface {
-	InvalidateConfig(ctx context.Context, thingType, configKey string)
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 }
 
 // ProxyConfig is the BFF proxy snapshot routing-simulate needs.
 type ProxyConfig struct {
 	AIGatewayURL string
+	// AIGatewayInternalToken is the shared internal-service bearer token
+	// presented on the CP→ai-gateway /internal/routing-simulate call.
+	AIGatewayInternalToken string
 }
 
 // Deps is the construction-time arg shape.
@@ -61,15 +66,8 @@ func New(d Deps) *Handler {
 	return h
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 func internalServerError(c echo.Context, msg string) error {
 	return c.JSON(http.StatusInternalServerError, errJSON(msg, "server_error", ""))

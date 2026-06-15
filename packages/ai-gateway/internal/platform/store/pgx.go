@@ -9,11 +9,23 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// PoolConfig holds optional pgx pool tuning applied on top of the values
+// parsed from the connection string. Mirrors the control-plane
+// internal/platform/pgx.PoolConfig convention so every service tunes the
+// pool the same way; each field is applied only when > 0 so a zero value
+// keeps the pgx/connection-string default.
+type PoolConfig struct {
+	MaxConns        int32
+	MinConns        int32
+	MaxConnLifetime time.Duration
+}
 
 // PgxPool is the minimum pgx pool surface store methods need. The
 // concrete *pgxpool.Pool satisfies it in production; pgxmock's
@@ -46,11 +58,26 @@ type DB struct {
 	rcOnce sync.Once
 }
 
-// New creates a DB from a PostgreSQL connection string.
-func New(ctx context.Context, connString string) (*DB, error) {
+// New creates a DB from a PostgreSQL connection string with optional pool
+// tuning. When a PoolConfig is supplied, its non-zero fields override the
+// pgx defaults so the AI Gateway's hot-path pool is sized for concurrency
+// instead of the pgx fallback of max(4, NumCPU).
+func New(ctx context.Context, connString string, opts ...PoolConfig) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse config: %w", err)
+	}
+	if len(opts) > 0 {
+		o := opts[0]
+		if o.MaxConns > 0 {
+			cfg.MaxConns = o.MaxConns
+		}
+		if o.MinConns > 0 {
+			cfg.MinConns = o.MinConns
+		}
+		if o.MaxConnLifetime > 0 {
+			cfg.MaxConnLifetime = o.MaxConnLifetime
+		}
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

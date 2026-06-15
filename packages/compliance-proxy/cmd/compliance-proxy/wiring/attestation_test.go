@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/cmd/compliance-proxy/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/tlsbump"
@@ -78,7 +79,8 @@ func TestFetchAttestationPubKey_HappyPath(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"agentId":"agent-1","publicKey":"` + base64.StdEncoding.EncodeToString(pub) + `"}`))
+		_, _ = w.Write([]byte(`{"agentId":"agent-1","publicKey":"` + base64.StdEncoding.EncodeToString(pub) +
+			`","certExpiresAt":"2099-01-02T03:04:05Z"}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -87,8 +89,14 @@ func TestFetchAttestationPubKey_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if string(got) != string(pub) {
+	if string(got.Key) != string(pub) {
 		t.Error("public key bytes differ from server response")
+	}
+	// SEC-M4-01: the cert expiry must be parsed off the wire so the verifier can
+	// reject an expired key.
+	want, _ := time.Parse(time.RFC3339, "2099-01-02T03:04:05Z")
+	if !got.CertExpiresAt.Equal(want) {
+		t.Errorf("CertExpiresAt = %v; want %v", got.CertExpiresAt, want)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
+	"sync"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
@@ -12,18 +14,66 @@ import (
 // Engine is the new hierarchical quota enforcement engine.
 // It checks quota limits across multiple levels (VK, user/project,
 // organization hierarchy) using cached policies and Redis-backed usage counters.
+//
+// FAIL-OPEN POSTURE (deliberate availability tradeoff). When the
+// usage-cache (Redis) read fails during Check, the engine skips that level
+// rather than rejecting the request: a cache outage degrades the gateway to
+// *unmetered* rather than *down*. The cost of that choice is that during a
+// Redis outage cost caps are not enforced and spend is unbounded. The cost is
+// METERED, not silent: every fail-open skip increments
+// quota_check_failopen_total{reason="redis_error"} so ops can alert on the
+// window. The authoritative counter reconciles on the next Backfill once Redis
+// recovers, so the discrepancy is transient.
+//
+// SOFT-RESERVATION / POST-SUCCESS SETTLEMENT MODEL. Check is a
+// READ-ONLY pre-check: it reads currentCents and compares currentCents +
+// estimate against the limit, but it does NOT reserve the estimate. The usage
+// counter advances only in Reconcile, after the upstream call succeeds. The
+// consequence is that N requests arriving concurrently all read the same
+// currentCents, all pass the pre-check, and all dispatch — so the cap can be
+// overshot. The overshoot is BOUNDED by (in-flight concurrency × per-request
+// cost), not unbounded: once Reconcile settles the in-flight batch, subsequent
+// requests see the advanced counter and trip the cap. This is not a hole — it
+// is an availability/accuracy tradeoff. A reserve-then-settle design (decrement
+// a reservation on dispatch, refund on failure) would tighten the bound to
+// exactly the limit but adds a distributed reservation-ledger with refund and
+// crash-recovery semantics; that redesign is out of scope here. The bounded
+// post-success model is documented and intentional.
 type Engine struct {
 	policyCache *PolicyCache
 	usageCache  *UsageCache
 	logger      *slog.Logger
+	metrics     *Metrics // nil-safe: nil = no observability (sibling-package tests)
+
+	// carry holds the sub-cent reconcile remainder so sub-cent-per-call
+	// models (mini/flash/haiku-class, embeddings) still advance the cent
+	// counter instead of truncating to zero every Reconcile. Keyed by
+	// "targetType:targetID"; the value tracks the active period plus the
+	// 0..999 milli-cent remainder not yet committed as a whole cent. The
+	// map is bounded by the active-subject working set (one entry per VK /
+	// user / project / org that has reconciled) — not multiplied by period,
+	// since a period rollover resets the entry in place. A reset drops at
+	// most <1 cent of residual, which is negligible against a cost cap.
+	carryMu sync.Mutex
+	carry   map[string]carryEntry
 }
 
-// NewEngine creates an Engine with the given caches.
-func NewEngine(policyCache *PolicyCache, usageCache *UsageCache, logger *slog.Logger) *Engine {
+// carryEntry is the per-subject sub-cent reconcile remainder.
+type carryEntry struct {
+	periodKey string // the period the remainder belongs to
+	milli     int64  // 0..999 milli-cents not yet rolled into a whole cent
+}
+
+// NewEngine creates an Engine with the given caches. metrics may be nil
+// (observability disabled — used by sibling-package tests that do not stand up
+// a Prometheus registry); production wiring passes a registered *Metrics.
+func NewEngine(policyCache *PolicyCache, usageCache *UsageCache, logger *slog.Logger, metrics *Metrics) *Engine {
 	return &Engine{
 		policyCache: policyCache,
 		usageCache:  usageCache,
 		logger:      logger,
+		metrics:     metrics,
+		carry:       make(map[string]carryEntry),
 	}
 }
 
@@ -54,9 +104,19 @@ func (e *Engine) VKLimit(ctx context.Context, vkMeta *vkauth.VKMeta) (limitCents
 	if override != nil {
 		limitCents = override.CostLimitCents
 		pType = override.PeriodType
-		if pType == "" {
+		// A blank cost or period on the override inherits from the matching
+		// policy rather than shadowing it — mirrors Check so the /v1/usage
+		// quota block and the request-time headers stay consistent (doc §7,
+		// §10). Without the cost fallback a blank-cost override reports
+		// hasLimit=false while Check still enforces the policy cap.
+		if limitCents <= 0 || pType == "" {
 			if policy := e.policyCache.FindPolicy("virtual_key", vkMeta.OrganizationID, vkMeta.VKType); policy != nil {
-				pType = policy.PeriodType
+				if limitCents <= 0 {
+					limitCents = policy.CostLimitCents
+				}
+				if pType == "" {
+					pType = policy.PeriodType
+				}
 			}
 		}
 	} else {
@@ -71,7 +131,18 @@ func (e *Engine) VKLimit(ctx context.Context, vkMeta *vkauth.VKMeta) (limitCents
 		return 0, 0, "", false
 	}
 	periodKey = CurrentPeriodKey(pType)
-	currentCents, _ = e.usageCache.GetUsage(ctx, "virtual_key", vkMeta.ID, periodKey)
+	// Fail-open on a usage-cache (Redis) read error: report currentCents=0
+	// rather than fail the usage query. The discrepancy is bounded and the
+	// rollup reconciles the authoritative counter; we log at warn so a cache
+	// outage is observable instead of being swallowed silently.
+	currentCents, err := e.usageCache.GetUsage(ctx, "virtual_key", vkMeta.ID, periodKey)
+	if err != nil {
+		e.logger.Warn("quota: usage-cache read failed; reporting current usage as 0 (deliberate fail-open)",
+			"error", err,
+			"target", "virtual_key:"+vkMeta.ID,
+			"periodKey", periodKey)
+		currentCents = 0
+	}
 	return limitCents, currentCents, periodKey, true
 }
 
@@ -125,6 +196,24 @@ func (e *Engine) Check(ctx context.Context, chain []CheckLevel, estimate CostEst
 		Levels:  chain,
 	}
 
+	// If the policy cache never loaded (a boot-time DB failure left
+	// it empty), every level below resolves no limit and we allow unconditionally
+	// — a silent, persistent fail-open. Emit the alertable fail-open counter so
+	// the unenforced window is visible to ops (the empty cache itself self-heals
+	// via the background reload started in InitQuota). This is distinct from a
+	// legitimately empty (no-policies) config, which leaves loaded=true.
+	if !e.policyCache.Loaded() {
+		e.metrics.observeCheckFailOpen("policy_cache_unloaded")
+	}
+
+	// vkMeta is dereferenced below to resolve org/VK-scoped policies. A nil
+	// vkMeta has no policy context to enforce against, so allow rather than
+	// panic — mirrors VKLimit's nil guard.
+	if vkMeta == nil {
+		e.metrics.observeDecision(decision.Action)
+		return decision
+	}
+
 	estimatedCents := int64(estimate.EstimatedCost() * 100)
 
 	for i, level := range chain {
@@ -142,10 +231,17 @@ func (e *Engine) Check(ctx context.Context, chain []CheckLevel, estimate CostEst
 			periodType = override.PeriodType
 			quotaID = "override:" + override.ID
 
-			// Inherit from policy if override doesn't specify enforcement or period.
-			if enforcementMode == "" || periodType == "" {
+			// Inherit any unspecified field from the matching policy. A blank
+			// cost, enforcement mode, or period on the override must fall back
+			// to the policy — a blank cost especially must NOT shadow the
+			// policy's cost cap (doc §7), which would silently disable cost
+			// enforcement at this level.
+			if limitCents <= 0 || enforcementMode == "" || periodType == "" {
 				policy := e.policyCache.FindPolicy(level.TargetType, vkMeta.OrganizationID, vkMeta.VKType)
 				if policy != nil {
+					if limitCents <= 0 {
+						limitCents = policy.CostLimitCents
+					}
 					if enforcementMode == "" {
 						enforcementMode = policy.EnforcementMode
 					}
@@ -177,10 +273,14 @@ func (e *Engine) Check(ctx context.Context, chain []CheckLevel, estimate CostEst
 		// 2. Get current usage from cache.
 		currentCents, err := e.usageCache.GetUsage(ctx, level.TargetType, level.TargetID, periodKey)
 		if err != nil {
+			// Fail open on cache errors (deliberate — see the package-level
+			// FAIL-OPEN POSTURE note on Engine). Metered via the counter so the
+			// unenforced window is alertable instead of silent.
+			e.metrics.observeCheckFailOpen("redis_error")
 			e.logger.Error("get usage cache",
 				"error", err,
 				"target", level.TargetType+":"+level.TargetID)
-			continue // Fail open on cache errors.
+			continue
 		}
 
 		// Stamp the resolved limit + current usage onto the level so callers
@@ -211,22 +311,81 @@ func (e *Engine) Check(ctx context.Context, chain []CheckLevel, estimate CostEst
 		decision.PeriodKey = CurrentPeriodKey("monthly")
 	}
 
+	e.metrics.observeDecision(decision.Action)
 	return decision
 }
 
 // Reconcile updates usage counters for all levels after a request completes.
+//
+// Each level is incremented under its OWN stamped period key (Check stamps a
+// per-level PeriodKey; a mixed-period chain — e.g. VK monthly + org daily —
+// must advance each counter under its own period or a level silently stops
+// enforcing). Levels with no matching policy/override (unstamped period) fall
+// back to the decision-wide period so their measurement counter still moves.
+//
+// Cost is converted to milli-cents and a per-subject remainder is carried
+// across calls so sub-cent-per-call costs accumulate into whole cents instead
+// of truncating to zero every reconcile.
 func (e *Engine) Reconcile(ctx context.Context, decision *Decision, actual ActualUsage) {
-	costCents := int64(actual.ActualCost() * 100)
-	if costCents <= 0 {
+	costMilliCents := int64(math.Round(actual.ActualCost() * 100_000))
+	if costMilliCents <= 0 {
 		return
 	}
 
-	levels := make([]UsageLevel, len(decision.Levels))
-	for i, l := range decision.Levels {
-		levels[i] = UsageLevel{TargetType: l.TargetType, TargetID: l.TargetID}
+	// Resolve per-level whole-cent commits under each level's own period,
+	// carrying the sub-cent remainder per subject. Levels that commit the
+	// same whole-cent amount under the same period collapse into a single
+	// IncrMulti pipeline call (the common case: a single-period chain with
+	// aligned remainders); divergent periods or remainders split into
+	// separate buckets.
+	type bucketKey struct {
+		periodKey string
+		cents     int64
 	}
+	buckets := make(map[bucketKey][]UsageLevel)
 
-	if err := e.usageCache.IncrMulti(ctx, levels, decision.PeriodKey, costCents); err != nil {
-		e.logger.Error("reconcile usage", "error", err)
+	e.carryMu.Lock()
+	for _, l := range decision.Levels {
+		periodKey := l.PeriodKey
+		if periodKey == "" {
+			periodKey = decision.PeriodKey
+		}
+
+		subjectKey := l.TargetType + ":" + l.TargetID
+		entry := e.carry[subjectKey]
+		if entry.periodKey != periodKey {
+			// Period rolled over (or first sight) — start a fresh remainder.
+			entry = carryEntry{periodKey: periodKey}
+		}
+		total := entry.milli + costMilliCents
+		cents := total / 1000
+		entry.milli = total % 1000
+		e.carry[subjectKey] = entry
+
+		if cents > 0 {
+			k := bucketKey{periodKey: periodKey, cents: cents}
+			buckets[k] = append(buckets[k], UsageLevel{TargetType: l.TargetType, TargetID: l.TargetID})
+		}
+	}
+	e.carryMu.Unlock()
+
+	for k, levels := range buckets {
+		err := e.usageCache.IncrMulti(ctx, levels, k.periodKey, k.cents)
+		if err != nil {
+			// One bounded retry before giving up: a transient Redis blip
+			// (failover, brief network hiccup) often clears within a tick, and
+			// a lost reconcile increment is permanent until the next boot
+			// Backfill — so a single cheap retry meaningfully cuts counter drift
+			// without unbounded retry machinery.
+			time.Sleep(100 * time.Millisecond)
+			err = e.usageCache.IncrMulti(ctx, levels, k.periodKey, k.cents)
+		}
+		if err != nil {
+			// Increment permanently lost until the next Backfill. Meter it so
+			// ops can alert on counter drift instead of discovering it only at
+			// reboot.
+			e.metrics.observeReconcileFailed()
+			e.logger.Error("reconcile usage", "error", err, "periodKey", k.periodKey)
+		}
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -189,6 +190,18 @@ func (h *Handler) PutConfig(c echo.Context) error {
 		if in.ExternalURL == nil || *in.ExternalURL == "" {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error": "externalUrl required for external_url",
+			})
+		}
+		// Require https for the external judge endpoint. The
+		// external backend authenticates via operator-supplied CustomHeaders
+		// (its only auth channel — no provider Credential is ever attached),
+		// so a plaintext http:// URL would leak that operator token on the
+		// wire. Rejecting non-https is cheap defence-in-depth against an
+		// on-path attacker and the most common SSRF-to-internal-service
+		// misconfiguration (http://169.254.169.254/...).
+		if u, perr := url.Parse(*in.ExternalURL); perr != nil || u.Scheme != "https" || u.Host == "" {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error": "externalUrl must be a valid https:// URL",
 			})
 		}
 	default:

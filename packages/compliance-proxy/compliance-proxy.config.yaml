@@ -1,6 +1,22 @@
 # Nexus Gateway — Compliance Proxy Configuration
 # This file configures the Go compliance-proxy process (separate from gateway.config.yaml).
 
+# REQUIRED. Externally-reachable base URL for this service; startup
+# validation fails when empty. Env COMPLIANCE_PROXY_PUBLIC_URL overrides.
+# publicURL: "https://compliance.example.com:3128"
+
+# Also REQUIRED at startup (validation fails when empty); set here or via
+# env MQ_DRIVER / NATS_URL / NEXUS_HUB_URL:
+# mq:
+#   driver: "nats"
+#   nats:
+#     # url is the only per-service knob; NATS server-side limits (max_payload,
+#     # max_connections) live in the appliance
+#     # (nexus-ami/scripts/install-nats.sh) and docker-compose.yml.
+#     url: "nats://localhost:4222"
+# registry:
+#   nexusHubUrl: "http://127.0.0.1:3060"
+
 listener:
   # Address to listen for CONNECT requests (host:port or :port)
   address: ":3128"
@@ -8,13 +24,39 @@ listener:
 ca:
   # Path to enterprise sub-CA certificate (PEM)
   certPath: "/etc/compliance-proxy/ca.crt"
-  # Path to enterprise sub-CA private key (PEM, ECDSA)
+  # Path to enterprise sub-CA private key (PEM, ECDSA). Required in local mode;
+  # unused in remote signing mode (the key never leaves the KMS).
   keyPath: "/etc/compliance-proxy/ca.key"
+  # Optional KMS envelope. All fields below are argv only (non-secret); KMS
+  # credentials are ambient to the process (e.g. instance role / AWS_* env).
+  # See docs/developers/architecture/services/compliance-proxy/
+  # compliance-proxy-tls-cert-architecture.md §3 / §3a.
+  # kms:
+  #   # signingMode "local" (default): unwrap the on-disk CA key into memory
+  #   # via `command` (KMS decrypt). "remote": the CA key never leaves KMS;
+  #   # every signature shells out to `signCommand`, and the cert-cache key is
+  #   # a self-bootstrapped KMS-wrapped DEK stored in Redis at
+  #   # nexus:proxy:cert-cache-dek (delete that key to rotate).
+  #   signingMode: "remote"
+  #   timeoutSec: 10
+  #   # KMS decrypt argv ({file} = ciphertext temp path; stdout = plaintext).
+  #   # Local mode: unwraps the CA key. Remote mode: unwraps the DEK. grant kms:Decrypt
+  #   command: ["aws-kms-decrypt.sh", "{file}"]
+  #   # KMS encrypt argv — REQUIRED in remote mode to wrap the fresh DEK. grant kms:Encrypt
+  #   encryptCommand: ["aws-kms-encrypt.sh", "{file}"]
+  #   # Remote-signer argv ({file} = digest temp path; stdout = DER signature). grant kms:Sign
+  #   signCommand: ["aws-kms-sign.sh", "{file}"]
 
 # PostgreSQL connection. Env override: DATABASE_URL. Used for hook
 # configs, rule packs, and audit writes (replaces the legacy
 # audit.database.dsn nested key).
 database:
+  # NOTE: this DB handle is CONFIG-ONLY (hook configs + rule-pack reads,
+  # cached with a 2-minute TTL) — it is NOT on the per-request intercept
+  # path, so it deliberately stays a tiny pool (4 open / 2 idle, set in
+  # code) and needs no high-concurrency tuning. The proxy's actual
+  # request concurrency is governed by `connections.*` and `upstream.*`
+  # below (maxConcurrentTunnels / maxStreamsPerConnection / maxConnsPerHost).
   url: ""
 
 redis:
@@ -111,20 +153,19 @@ metrics:
   address: ":9090"
 
 runtimeApi:
-  listenAddress: "127.0.0.1:3002"
+  listenAddress: "127.0.0.1:3040"
 
 compliance:
   enabled: true
   perHookTimeoutMs: 5000
   totalTimeoutMs: 15000
   parallelHooks: false
-  # streamingMode YAML field deleted in #115. Admin sets the global
+  # streamingMode YAML field removed — admin sets the global
   # streaming policy via CP admin UI / API (lands in
   # system_metadata['streaming_compliance.config'].default_mode);
   # CP picks it up at startup + on every shadow push. Three-service
   # alignment — agent + ai-gateway use the same admin policy.
   checkpointChars: 500
-  redactionRulesPath: ""   # path to YAML; empty = use built-in defaults
   rejectResponse:
     defaultLevel: 1
     contactInfo: "Contact IT Security: security@example.com"
@@ -152,27 +193,14 @@ compliance:
         types: ["email", "phone", "ssn", "credit_card"]
         action: "reject_hard"
 
+# Alerting channel, threshold and custom-check state are authoritative in
+# Hub shadow; only the evaluator toggles below live in YAML.
 alerting:
   enabled: true
   evalIntervalSec: 30
-  webhook:
-    url: ""          # Set to Slack/Teams/PagerDuty webhook URL
-    headers: {}      # Optional auth headers
-    timeoutSec: 10
   cooldown:
     fireMinutes: 5
     resolveMinutes: 5
-  # S39 — file-backed persistence for runtime channel + threshold
-  # mutations. When set, every Create/Update/Delete on the alerting
-  # channels list and every PUT /alerts/thresholds writes through to
-  # JSON files under this directory, so the state survives restart.
-  # Empty (the default) keeps the legacy in-memory-only behaviour.
-  # Files written:
-  #   <persistenceDir>/alerting-channels.json
-  #   <persistenceDir>/alerting-thresholds.json
-  # The directory is created with mode 0700 (channel headers may
-  # contain secrets, so it must not be world-readable).
-  persistenceDir: ""
 
 # SIEM forwarding is centralized in Nexus Hub's traffic/siem bridge.
 # Compliance-proxy publishes every audit event to nexus.event.compliance
@@ -186,27 +214,10 @@ audit:
   batch:
     # Records per batch INSERT
     size: 10
-    # Fixed flush interval in milliseconds (used when adaptiveFlush is false)
+    # Flush interval in milliseconds
     flushIntervalMs: 500
     # Channel buffer capacity (overflow goes to NDJSON)
     channelBufferSize: 1000
-    # S25 adaptive flush: when true, the writer scales the flush interval
-    # between flushIntervalMinMs (queue full → drain fast) and
-    # flushIntervalMaxMs (queue empty → batch more aggressively).
-    # The fixed flushIntervalMs above is ignored when this is enabled.
-    adaptiveFlush: false
-    flushIntervalMinMs: 500
-    flushIntervalMaxMs: 10000
-    # S34 adaptive batch size: when true, the writer scales the per-flush
-    # row threshold between batchSizeMin (queue empty → small fast
-    # batches, latency-optimised) and batchSizeMax (queue full → large
-    # batches, throughput-optimised via Postgres COPY amortisation).
-    # The fixed `size` above is ignored when this is enabled.
-    # Composes with adaptiveFlush: at low load you get a long interval
-    # AND a small batch; at high load a short interval AND a large batch.
-    adaptiveBatchSize: false
-    batchSizeMin: 10
-    batchSizeMax: 500
   ndjson:
     enabled: true
     # Spool directory for NDJSON fallback files

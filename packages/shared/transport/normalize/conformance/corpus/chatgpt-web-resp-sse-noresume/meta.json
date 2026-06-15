@@ -1,0 +1,5 @@
+{
+  "adapterType": "chatgpt-web",
+  "direction": "response",
+  "stream": true
+}

@@ -146,6 +146,15 @@ fi
 # 5. Copy Go binary into the bundle
 cp "$BUILD_DIR/nexus-agent" "$APP_DIR/Contents/MacOS/nexus-agent"
 
+# 5b. Embed the SMAppService daemon plist at Contents/Library/LaunchDaemons/.
+# The menu app registers this with SMAppService.daemon(plistName:) on first
+# launch — the registration is bundle-tied, so the daemon is no longer staged
+# to /Library/LaunchDaemons by the pkg (package.sh) and deleting the app
+# deregisters it. The plist is data, covered by the app's code signature.
+mkdir -p "$APP_DIR/Contents/Library/LaunchDaemons"
+cp "$DARWIN_DIR/installer/LaunchDaemon.plist" \
+    "$APP_DIR/Contents/Library/LaunchDaemons/com.nexus-gateway.agent.plist"
+
 # 6. Copy Info.plist + AppIcon.icns into the .app bundle.
 # Info.plist declares CFBundleIconFile=AppIcon, so the icon file MUST
 # be present at Contents/Resources/AppIcon.icns. Without it the

@@ -13,6 +13,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/shadow"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 )
 
@@ -83,6 +84,12 @@ func InitCompliance(cfg ComplianceConfig, logger *slog.Logger) ComplianceBundle 
 
 	// Register shared-hooks regex cache counters on the default registerer.
 	core.RegisterRegexCacheMetrics(prometheus.DefaultRegisterer)
+	// Register the compliance pipeline metric set (hook decisions /
+	// durations / fail-opens, storage-redaction outcomes) under the nexus
+	// namespace so the pipeline's package-level metrics record into the
+	// default registry (the agent's ops-metrics registry reads it) instead
+	// of their isolated no-op defaults.
+	pipeline.RegisterDefaultMetrics("nexus")
 
 	// Payload capture Store (the UPLOAD gate on the agent). Boots with the
 	// zero-risk default (all-off) — the first Hub shadow push of

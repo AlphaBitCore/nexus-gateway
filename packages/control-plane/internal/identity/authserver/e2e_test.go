@@ -92,8 +92,8 @@ func TestE2E_LocalIdPFlow(t *testing.T) {
 	clientID := "e2e-test-client-" + suffix
 	redirectURI := "http://127.0.0.1:1/callback"
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","requirePkce","accessTtlSeconds","refreshTtlSeconds","updatedAt")
-		 VALUES ($1,$2,'public',$3,$4,TRUE,3600,86400,NOW())`,
+		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","accessTtlSeconds","refreshTtlSeconds","updatedAt")
+		 VALUES ($1,$2,'public',$3,$4,3600,86400,NOW())`,
 		clientID, "E2E Test Client", []string{redirectURI}, []string{"openid"},
 	); err != nil {
 		t.Fatalf("seed oauth client: %v", err)

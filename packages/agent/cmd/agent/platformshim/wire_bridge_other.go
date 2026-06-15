@@ -9,6 +9,7 @@ import (
 
 	agentcompliance "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/attestation"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/backpressure"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/api"
@@ -34,6 +35,7 @@ type DarwinBridgeArgs struct {
 	StreamingPolicyStore *streampolicy.Store
 	NormalizeRegistry    *normalizecore.Registry
 	AttestationSigner    *attestation.Signer
+	Keystore             keystore.Store
 }
 
 // wireDarwinBackpressure is a no-op on non-darwin: linux/windows

@@ -163,6 +163,17 @@ func ParseAttestationHeader(raw string) (*AttestationFields, error) {
 // attestation where no inner body has been emitted yet. Equivalent to
 // `"sha256:" + hex(sha256(""))`. Exposed as a constant-time helper so
 // both signer and verifier read the same source.
+//
+// Attestation v1 scope (intentional, not a gap): the Ed25519 signature
+// covers (version, ts, nonce, sha256(""), agent_id) — see
+// SignatureInput. The empty-body hash is deliberate: this header
+// authorizes the AGENT'S IDENTITY at CONNECT time, not a specific
+// request body. The body is not yet on the wire when the agent emits the
+// header, so committing to sha256("") is the only honest value at v1.
+// Replay protection is the verifier's per-(ts,nonce) LRU; the staleness
+// bound is the ±5-minute ts window. Body-bound attestation (hashing the
+// real inner request) is the deferred v2 strict_mode where attestation
+// attaches to the inner HTTP request rather than the CONNECT line.
 func HashEmptyBody() string {
 	return "sha256:" + EmptyBodySHA256Hex
 }

@@ -45,10 +45,10 @@ func (a *fakeAdapter) Execute(ctx context.Context, req provcore.Request) (*provc
 func (a *fakeAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore.ProbeResult, error) {
 	return &provcore.ProbeResult{OK: true}, nil
 }
-func (a *fakeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, error) {
-	return req.Body, nil, nil
+func (a *fakeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
+	return req.Body, nil, "", nil
 }
-func (a *fakeAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, _ []string) (*provcore.Response, error) {
+func (a *fakeAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, _ []string, _ string) (*provcore.Response, error) {
 	req.Body = body
 	return a.Execute(ctx, req)
 }

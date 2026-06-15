@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,8 +38,11 @@ func makeUser(id, email, status string) *userstore.NexusUserSafe {
 		DisplayName: "Test User " + id,
 		Email:       &e,
 		Status:      status,
-		CreatedAt:   nowTime(),
-		UpdatedAt:   nowTime(),
+		// SCIM-managed test users are source="scim"; the per-user ownership guard
+		// (SEC-M6-04) rejects mutation of non-scim (admin-managed) accounts.
+		Source:    "scim",
+		CreatedAt: nowTime(),
+		UpdatedAt: nowTime(),
 	}
 }
 
@@ -74,9 +78,13 @@ type stubUserStore struct {
 	// "no organizations exist" guard.
 	defaultOrgID  string
 	defaultOrgErr error
+	// lastListParams captures the params of the most recent ListNexusUsers call
+	// so the SEC-M6-04 IdP-scoping test can assert the filter was applied.
+	lastListParams userstore.NexusUserListParams
 }
 
-func (s *stubUserStore) ListNexusUsers(_ context.Context, _ userstore.NexusUserListParams) ([]userstore.NexusUserSafe, int, error) {
+func (s *stubUserStore) ListNexusUsers(_ context.Context, p userstore.NexusUserListParams) ([]userstore.NexusUserSafe, int, error) {
+	s.lastListParams = p
 	return s.users, s.total, s.listErr
 }
 func (s *stubUserStore) GetNexusUserSafe(_ context.Context, _ string) (*userstore.NexusUserSafe, error) {
@@ -144,6 +152,8 @@ type stubScimStore struct {
 	groupSrc       string
 	groupIdpID     *string
 	groupSrcErr    error
+	userOwned      bool
+	userOwnedErr   error
 }
 
 func (s *stubScimStore) GetScimTokenByHash(_ context.Context, _ string) (*scimstore.ScimToken, error) {
@@ -164,6 +174,9 @@ func (s *stubScimStore) CreateIdpGroupMapping(_ context.Context, _ scimstore.Cre
 }
 func (s *stubScimStore) GetIamGroupSource(_ context.Context, _ string) (string, *string, error) {
 	return s.groupSrc, s.groupIdpID, s.groupSrcErr
+}
+func (s *stubScimStore) UserOwnedByIdP(_ context.Context, _, _ string) (bool, error) {
+	return s.userOwned, s.userOwnedErr
 }
 
 // validScimStore returns a scimTokenStore stub that passes authentication.
@@ -521,7 +534,7 @@ func TestReplaceUser_NotFound_Returns404(t *testing.T) {
 
 func TestReplaceUser_Success_Returns200(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "active")
-	us := &stubUserStore{updateResult: updated}
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	active := true
 	body, _ := json.Marshal(map[string]any{"userName": "u1@example.com", "active": active})
@@ -537,7 +550,7 @@ func TestReplaceUser_Success_Returns200(t *testing.T) {
 }
 
 func TestReplaceUser_StoreError_Returns500(t *testing.T) {
-	us := &stubUserStore{updateErr: errors.New("db")}
+	us := &stubUserStore{updateErr: errors.New("db"), getSafeResult: makeUser("u1", "u1@example.com", "active")}
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	body, _ := json.Marshal(map[string]any{"userName": "u@example.com"})
 	c, rec := echoCtxWithToken(http.MethodPut, "/Users/u1", body, &scimstore.ScimToken{ID: "t1"})
@@ -553,7 +566,7 @@ func TestReplaceUser_StoreError_Returns500(t *testing.T) {
 
 func TestPatchUser_ActiveFalse_SuspendsUser(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
-	us := &stubUserStore{updateResult: updated}
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	body, _ := json.Marshal(map[string]any{
 		"schemas": []string{scimSchemaPatch},
@@ -592,7 +605,7 @@ func TestPatchUser_NotFound_Returns404(t *testing.T) {
 
 func TestDeleteUser_Success_Returns204(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
-	us := &stubUserStore{updateResult: updated}
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	c, rec := echoCtxWithToken(http.MethodDelete, "/Users/u1", nil, &scimstore.ScimToken{ID: "t1"})
 	c.SetParamNames("id")
@@ -606,7 +619,7 @@ func TestDeleteUser_Success_Returns204(t *testing.T) {
 }
 
 func TestDeleteUser_StoreError_Returns500(t *testing.T) {
-	us := &stubUserStore{updateErr: errors.New("db error")}
+	us := &stubUserStore{updateErr: errors.New("db error"), getSafeResult: makeUser("u1", "u1@example.com", "active")}
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	c, rec := echoCtxWithToken(http.MethodDelete, "/Users/u1", nil, &scimstore.ScimToken{ID: "t1"})
 	c.SetParamNames("id")
@@ -1182,7 +1195,7 @@ func TestCreateUser_WithIdPToken_NoExternalID_UsesUserName(t *testing.T) {
 func TestReplaceUser_ActiveNilTreatedAsActive(t *testing.T) {
 	// active=nil → treated as true, status="active"
 	updated := makeUser("u1", "u1@example.com", "active")
-	us := &stubUserStore{updateResult: updated}
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	// No "active" field in the body → body.Active == nil
 	body, _ := json.Marshal(map[string]any{"userName": "u1@example.com"})
@@ -1199,7 +1212,7 @@ func TestReplaceUser_ActiveNilTreatedAsActive(t *testing.T) {
 
 func TestReplaceUser_ActiveFalse_Suspends(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "suspended")
-	us := &stubUserStore{updateResult: updated}
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	activeFalse := false
 	body, _ := json.Marshal(map[string]any{"userName": "u1@example.com", "active": activeFalse})
@@ -1216,7 +1229,7 @@ func TestReplaceUser_ActiveFalse_Suspends(t *testing.T) {
 
 func TestPatchUser_AddOp_AppliesUpdate(t *testing.T) {
 	updated := makeUser("u1", "u1@example.com", "active")
-	us := &stubUserStore{updateResult: updated}
+	us := &stubUserStore{updateResult: updated, getSafeResult: updated} // SEC-M6-04: assertScimUser loads the target
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	body, _ := json.Marshal(map[string]any{
 		"schemas": []string{scimSchemaPatch},
@@ -1236,7 +1249,7 @@ func TestPatchUser_AddOp_AppliesUpdate(t *testing.T) {
 }
 
 func TestPatchUser_StoreError_Returns500(t *testing.T) {
-	us := &stubUserStore{updateErr: errors.New("db error")}
+	us := &stubUserStore{updateErr: errors.New("db error"), getSafeResult: makeUser("u1", "u1@example.com", "active")}
 	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
 	body, _ := json.Marshal(map[string]any{
 		"schemas":    []string{scimSchemaPatch},
@@ -1637,5 +1650,147 @@ func TestCreateGroup_NewGroupWithMembers(t *testing.T) {
 	}
 	if rec.Code != http.StatusCreated {
 		t.Errorf("status = %d; want 201 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// --- SEC-M6-04: SCIM per-IdP user ownership scoping regression ---
+
+func idpToken(idpID string) *scimstore.ScimToken {
+	return &scimstore.ScimToken{ID: "tok-1", IdentityProviderID: &idpID}
+}
+
+// TestGetUser_CrossIdP_Returns403: a token for IdP-A cannot read a user the link
+// table says it does not own (provisioned by IdP-B).
+func TestGetUser_CrossIdP_Returns403(t *testing.T) {
+	us := &stubUserStore{getSafeResult: makeUser("u1", "u1@example.com", "active")}
+	ss := &stubScimStore{userOwned: false} // UserOwnedByIdP -> not owned by this token's IdP
+	h := buildHandler(us, &stubIAMStore{}, ss)
+	c, rec := echoCtxWithToken(http.MethodGet, "/Users/u1", nil, idpToken("idp-A"))
+	c.SetParamNames("id")
+	c.SetParamValues("u1")
+	if err := h.GetUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "does not own this user") {
+		t.Errorf("body missing ownership message: %s", rec.Body)
+	}
+}
+
+// TestGetUser_SameIdP_Returns200: the owning IdP's token reads its own user.
+func TestGetUser_SameIdP_Returns200(t *testing.T) {
+	us := &stubUserStore{getSafeResult: makeUser("u1", "u1@example.com", "active")}
+	ss := &stubScimStore{userOwned: true}
+	h := buildHandler(us, &stubIAMStore{}, ss)
+	c, rec := echoCtxWithToken(http.MethodGet, "/Users/u1", nil, idpToken("idp-A"))
+	c.SetParamNames("id")
+	c.SetParamValues("u1")
+	if err := h.GetUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestPatchUser_CrossIdP_Returns403 is the core takeover block: IdP-A's token
+// cannot rewrite (re-email / suspend) a user owned by another IdP.
+func TestPatchUser_CrossIdP_Returns403(t *testing.T) {
+	us := &stubUserStore{
+		updateResult:  makeUser("victim", "victim@corp.com", "active"),
+		getSafeResult: makeUser("victim", "victim@corp.com", "active"),
+	}
+	ss := &stubScimStore{userOwned: false}
+	h := buildHandler(us, &stubIAMStore{}, ss)
+	body, _ := json.Marshal(map[string]any{
+		"schemas": []string{scimSchemaPatch},
+		"Operations": []map[string]any{
+			{"op": "replace", "path": "userName", "value": "attacker@evil.com"},
+		},
+	})
+	c, rec := echoCtxWithToken(http.MethodPatch, "/Users/victim", body, idpToken("idp-A"))
+	c.SetParamNames("id")
+	c.SetParamValues("victim")
+	if err := h.PatchUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403 (cross-IdP email rewrite blocked); body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestDeleteUser_CrossIdP_Returns403: IdP-A's token cannot deprovision another
+// IdP's user (mass-DoS lockout block).
+func TestDeleteUser_CrossIdP_Returns403(t *testing.T) {
+	us := &stubUserStore{getSafeResult: makeUser("u1", "u1@example.com", "active")}
+	ss := &stubScimStore{userOwned: false}
+	h := buildHandler(us, &stubIAMStore{}, ss)
+	c, rec := echoCtxWithToken(http.MethodDelete, "/Users/u1", nil, idpToken("idp-A"))
+	c.SetParamNames("id")
+	c.SetParamValues("u1")
+	if err := h.DeleteUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestPatchUser_LocalAdmin_Returns403: a SCIM token cannot touch a local /
+// admin-managed account (Source != "scim"), even with a matching-looking IdP.
+func TestPatchUser_LocalAdmin_Returns403(t *testing.T) {
+	local := makeUser("admin1", "admin@corp.com", "active")
+	local.Source = "local"
+	us := &stubUserStore{getSafeResult: local, updateResult: local}
+	ss := &stubScimStore{userOwned: true} // even if "owned", source guard must block
+	h := buildHandler(us, &stubIAMStore{}, ss)
+	body, _ := json.Marshal(map[string]any{
+		"schemas":    []string{scimSchemaPatch},
+		"Operations": []map[string]any{{"op": "replace", "path": "active", "value": false}},
+	})
+	c, rec := echoCtxWithToken(http.MethodPatch, "/Users/admin1", body, idpToken("idp-A"))
+	c.SetParamNames("id")
+	c.SetParamValues("admin1")
+	if err := h.PatchUser(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403 (admin-managed account); body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "admin-managed") {
+		t.Errorf("body missing admin-managed message: %s", rec.Body)
+	}
+}
+
+// TestListUsers_ScopedToTokenIdP: enumeration is filtered to the token's IdP so
+// it cannot harvest users owned by other IdPs / local admins.
+func TestListUsers_ScopedToTokenIdP(t *testing.T) {
+	us := &stubUserStore{users: []userstore.NexusUserSafe{*makeUser("u1", "u1@example.com", "active")}, total: 1}
+	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
+	c, rec := echoCtxWithToken(http.MethodGet, "/Users", nil, idpToken("idp-A"))
+	if err := h.ListUsers(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200", rec.Code)
+	}
+	if us.lastListParams.OwnedByIdP == nil || *us.lastListParams.OwnedByIdP != "idp-A" {
+		t.Errorf("ListUsers did not scope to the token's IdP; OwnedByIdP=%v", us.lastListParams.OwnedByIdP)
+	}
+}
+
+// TestListUsers_GlobalToken_Unscoped: a token with no IdP (admin/global) is not
+// restricted, mirroring assertScimGroup's nil-IdP behaviour.
+func TestListUsers_GlobalToken_Unscoped(t *testing.T) {
+	us := &stubUserStore{users: nil, total: 0}
+	h := buildHandler(us, &stubIAMStore{}, &stubScimStore{})
+	c, _ := echoCtxWithToken(http.MethodGet, "/Users", nil, &scimstore.ScimToken{ID: "tok-global"})
+	if err := h.ListUsers(c); err != nil {
+		t.Fatal(err)
+	}
+	if us.lastListParams.OwnedByIdP != nil {
+		t.Errorf("global token must not be IdP-scoped; OwnedByIdP=%v", *us.lastListParams.OwnedByIdP)
 	}
 }

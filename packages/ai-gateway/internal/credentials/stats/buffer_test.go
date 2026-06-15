@@ -320,6 +320,58 @@ func TestRecordAttempt_StatsHashShape(t *testing.T) {
 	}
 }
 
+// TestRecordAttempt_FailReasonTruncated is the F-0098 regression guard:
+// an oversized upstream error string must be capped at maxFailReasonLen
+// before it is written to the per-credential Redis hash, so a hostile or
+// verbose provider error (full HTML page, stack trace) cannot bloat Redis.
+func TestRecordAttempt_FailReasonTruncated(t *testing.T) {
+	mini, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mini.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	b := New(rdb, nil, nil, nil)
+	ctx := context.Background()
+
+	credID := "long-err-cred"
+	longMsg := strings.Repeat("x", 5000)
+	b.RecordAttempt(credID, 401, longMsg)
+
+	got, err := rdb.HGet(ctx, credstate.StatsKey(credID), credstate.StatsFieldFailReason).Result()
+	if err != nil {
+		t.Fatalf("HGet fail_reason: %v", err)
+	}
+	if len(got) != maxFailReasonLen {
+		t.Errorf("fail_reason length = %d, want %d (truncated)", len(got), maxFailReasonLen)
+	}
+	if got != longMsg[:maxFailReasonLen] {
+		t.Errorf("fail_reason content is not the leading prefix of the input")
+	}
+}
+
+// TestRecordAttempt_FailReasonNotTruncatedWhenShort confirms a sub-cap error
+// string is stored verbatim (the cap only trims the overflow tail).
+func TestRecordAttempt_FailReasonNotTruncatedWhenShort(t *testing.T) {
+	mini, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mini.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	b := New(rdb, nil, nil, nil)
+	ctx := context.Background()
+
+	credID := "short-err-cred"
+	msg := "invalid api key"
+	b.RecordAttempt(credID, 403, msg)
+
+	got, _ := rdb.HGet(ctx, credstate.StatsKey(credID), credstate.StatsFieldFailReason).Result()
+	if got != msg {
+		t.Errorf("fail_reason = %q, want %q (no truncation under cap)", got, msg)
+	}
+}
+
 // TestRecordAttempt_5xxStatsOnlyNoCircuit: 5xx (and 0=network) record
 // stats but do NOT alter the circuit hash.
 func TestRecordAttempt_5xxStatsOnlyNoCircuit(t *testing.T) {

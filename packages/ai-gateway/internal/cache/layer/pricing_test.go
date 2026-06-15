@@ -20,7 +20,7 @@ func newLayerWithModels(models map[string]store.Model) *Layer {
 // TestLookupCachePricing_NilSnapshot returns nil before any models load.
 func TestLookupCachePricing_NilSnapshot(t *testing.T) {
 	l := &Layer{}
-	if got := l.LookupCachePricing("openai", "p1", "gpt-4o"); got != nil {
+	if got := l.LookupCachePricing("gpt-4o"); got != nil {
 		t.Errorf("nil snapshot must return nil; got %+v", got)
 	}
 }
@@ -30,7 +30,7 @@ func TestLookupCachePricing_ModelMissing(t *testing.T) {
 	l := newLayerWithModels(map[string]store.Model{
 		"gpt-4o": {Code: "gpt-4o", InputPricePM: f64ptr(2.5)},
 	})
-	if got := l.LookupCachePricing("openai", "p1", "claude-opus"); got != nil {
+	if got := l.LookupCachePricing("claude-opus"); got != nil {
 		t.Errorf("missing code must return nil; got %+v", got)
 	}
 }
@@ -41,7 +41,7 @@ func TestLookupCachePricing_InputPriceMissing(t *testing.T) {
 	l := newLayerWithModels(map[string]store.Model{
 		"x": {Code: "x"},
 	})
-	if got := l.LookupCachePricing("openai", "p1", "x"); got != nil {
+	if got := l.LookupCachePricing("x"); got != nil {
 		t.Errorf("nil InputPricePM must return nil; got %+v", got)
 	}
 }
@@ -57,7 +57,7 @@ func TestLookupCachePricing_AllPricesPresent(t *testing.T) {
 			CachedInputWritePricePM: f64ptr(18.75),
 		},
 	})
-	got := l.LookupCachePricing("anthropic", "p1", "claude-opus-4-1")
+	got := l.LookupCachePricing("claude-opus-4-1")
 	if got == nil {
 		t.Fatal("want non-nil for fully-priced model")
 	}
@@ -80,7 +80,7 @@ func TestLookupCachePricing_NullCacheFallsBackToInput(t *testing.T) {
 			// CachedInputReadPricePM / CachedInputWritePricePM: nil
 		},
 	})
-	got := l.LookupCachePricing("moonshot", "p1", "moonshot-v1-8k")
+	got := l.LookupCachePricing("moonshot-v1-8k")
 	if got == nil {
 		t.Fatal("expected non-nil even with NULL cache prices")
 	}

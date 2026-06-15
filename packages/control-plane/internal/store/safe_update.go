@@ -69,12 +69,6 @@ var RoutingRuleUpdateColumns = map[string]string{
 	"fallbackChain": `"fallbackChain"`,
 }
 
-var QuotaUpdateColumns = map[string]string{
-	"tokenLimit": `"tokenLimit"`, "costLimitUsd": `"costLimitUsd"`,
-	"enforcementMode": `"enforcementMode"`, "periodType": `"periodType"`,
-	"resetAt": `"resetAt"`,
-}
-
 var HookConfigUpdateColumns = map[string]string{
 	"name": "name", "type": "type", "implementationId": `"implementationId"`,
 	"stage": "stage", "category": "category", "endpoint": "endpoint",

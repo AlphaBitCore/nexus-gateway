@@ -12,7 +12,10 @@
 package estimator_test
 
 import (
+	"bytes"
+	"log/slog"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/estimator"
@@ -127,35 +130,6 @@ func TestRegisterFormula_overridesBuiltin(t *testing.T) {
 	}
 }
 
-// TestCostForUnits_cacheAware verifies the full-accounting costForUnits
-// path that threads CachedTokens through metrics.CalculateCost.
-// This function is the hook point for future cache-cost extensions that need
-// cache-aware cost calculation from BillableUnits.
-func TestCostForUnits_cacheAware(t *testing.T) {
-	inPM := 2.5         // $2.50 / 1M input
-	outPM := 10.0       // $10.00 / 1M output
-	cacheReadPM := 1.25 // 50% discount
-	prices := metrics.ModelPrices{
-		InputUsdPerM:           &inPM,
-		OutputUsdPerM:          &outPM,
-		CachedInputReadUsdPerM: &cacheReadPM,
-	}
-	units := estimator.BillableUnits{
-		PromptTokens:     1000, // total prompt
-		CachedTokens:     200,  // subset served from cache
-		CompletionTokens: 100,
-	}
-	cost := estimator.CostForUnitsExported(units, prices)
-	// uncached input = 1000 - 200 = 800 tokens at $2.50/M = 0.002
-	// cache read     = 200 tokens at $1.25/M = 0.00025
-	// completion     = 100 tokens at $10.00/M = 0.001
-	// total = 0.00325
-	want := 0.00325
-	if math.Abs(cost.Total-want) > 1e-9 {
-		t.Errorf("costForUnits total = %.10f, want %.10f", cost.Total, want)
-	}
-}
-
 // TestLookup_chatCostMatchesEstimatedCostUSD validates that the chat
 // formula produces the same result as the previous estimatedCostUSD
 // helper so no regression in existing chat cost stamping.
@@ -178,5 +152,60 @@ func TestLookup_chatCostMatchesEstimatedCostUSD(t *testing.T) {
 	})
 	if math.Abs(cost.Total-want) > 1e-10 {
 		t.Errorf("chat formula = %.10f, want %.10f (regression vs estimatedCostUSD)", cost.Total, want)
+	}
+}
+
+// TestLookup_unregisteredEndpoint_WarnsOnce is the F-0234 visibility
+// assertion: an unregistered endpoint must (a) still resolve to a usable
+// (chat) formula and (b) emit exactly one WARN log naming the endpoint, no
+// matter how many times it is looked up — so the silent token-mispricing
+// fallback becomes observable without flooding the log.
+func TestLookup_unregisteredEndpoint_WarnsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// A unique endpoint string so the process-lifetime dedup map has not
+	// already recorded it from another test.
+	const ep = "_f0234_unregistered_endpoint_probe"
+
+	for range 5 {
+		formula := estimator.Lookup(ep)
+		if formula == nil {
+			t.Fatalf("Lookup(%q) returned nil; expected chat-formula fallback", ep)
+		}
+		// Fallback must price like the chat formula (prompt + completion).
+		inPM, outPM := 2.0, 4.0
+		cost := formula(estimator.BillableUnits{PromptTokens: 1000, CompletionTokens: 500}, metrics.ModelPrices{
+			InputUsdPerM:  &inPM,
+			OutputUsdPerM: &outPM,
+		})
+		want := 1000*inPM/1e6 + 500*outPM/1e6
+		if math.Abs(cost.Total-want) > 1e-10 {
+			t.Errorf("fallback cost = %.10f, want chat-formula %.10f", cost.Total, want)
+		}
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, ep) {
+		t.Errorf("expected a WARN naming endpoint %q; log was: %q", ep, logged)
+	}
+	if got := strings.Count(logged, ep); got != 1 {
+		t.Errorf("expected exactly 1 WARN for endpoint %q across 5 lookups, got %d; log was: %q", ep, got, logged)
+	}
+}
+
+// TestBillableUnits_OnlyTokenFields locks the F-0234 trim: BillableUnits
+// carries exactly the two live token fields and the chat formula prices from
+// both. If a dead unit field is re-added without a live setter, this test's
+// surrounding contract (and the doc comment on BillableUnits) flags it.
+func TestBillableUnits_OnlyTokenFields(t *testing.T) {
+	u := estimator.BillableUnits{PromptTokens: 10, CompletionTokens: 20}
+	inPM, outPM := 1000.0, 2000.0
+	cost := estimator.Lookup("chat")(u, metrics.ModelPrices{InputUsdPerM: &inPM, OutputUsdPerM: &outPM})
+	want := 10*inPM/1e6 + 20*outPM/1e6
+	if math.Abs(cost.Total-want) > 1e-12 {
+		t.Errorf("BillableUnits chat cost = %.12f, want %.12f", cost.Total, want)
 	}
 }

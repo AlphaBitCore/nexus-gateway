@@ -36,6 +36,13 @@ type Transport struct {
 
 	cacheMu sync.Mutex
 	cache   map[string]*tokenCacheEntry
+	// mintMu serializes the OAuth mint PER cache key, so when a token
+	// expires the N concurrent requests for that service account collapse
+	// to a single mint (the rest hit the just-filled cache) instead of a
+	// thundering herd hammering Google's OAuth endpoint. Different keys
+	// never block each other. Created lazily; bounded by the number of
+	// distinct service accounts.
+	mintMu map[string]*sync.Mutex
 }
 
 // NewTransport builds a Transport.
@@ -48,7 +55,20 @@ func NewTransport(log *slog.Logger) *Transport {
 		probe:  specutil.NewProbeClient(),
 		log:    log,
 		cache:  make(map[string]*tokenCacheEntry),
+		mintMu: make(map[string]*sync.Mutex),
 	}
+}
+
+// keyMint returns the per-key mint mutex, creating it on first use.
+func (t *Transport) keyMint(key string) *sync.Mutex {
+	t.cacheMu.Lock()
+	defer t.cacheMu.Unlock()
+	m, ok := t.mintMu[key]
+	if !ok {
+		m = &sync.Mutex{}
+		t.mintMu[key] = m
+	}
+	return m
 }
 
 // BuildURL assembles the `aiplatform.googleapis.com` publisher URL.
@@ -108,7 +128,7 @@ func (t *Transport) ApplyAuth(r *http.Request, target provcore.CallTarget) error
 }
 
 // Do delegates to the shared HTTP client.
-func (t *Transport) Do(ctx context.Context, r *http.Request) (*http.Response, error) {
+func (t *Transport) Do(ctx context.Context, r *http.Request, _ provcore.CallTarget) (*http.Response, error) {
 	return t.client.Do(r.WithContext(ctx))
 }
 
@@ -169,8 +189,24 @@ func (t *Transport) token(ctx context.Context, target provcore.CallTarget) (stri
 	}
 	key := email + "|" + target.Get("gcp.projectId")
 
+	// Fast path: a warm cache needs no mint and no per-key lock.
 	t.cacheMu.Lock()
 	entry, ok := t.cache[key]
+	t.cacheMu.Unlock()
+	if ok && time.Until(entry.expires) > 60*time.Second {
+		return entry.token.AccessToken, nil
+	}
+
+	// Cold/expired: serialize the mint for this key so concurrent
+	// requests collapse to one OAuth round-trip.
+	mm := t.keyMint(key)
+	mm.Lock()
+	defer mm.Unlock()
+
+	// Re-check under the mint lock: another goroutine may have just
+	// minted while we waited.
+	t.cacheMu.Lock()
+	entry, ok = t.cache[key]
 	t.cacheMu.Unlock()
 	if ok && time.Until(entry.expires) > 60*time.Second {
 		return entry.token.AccessToken, nil
@@ -182,6 +218,7 @@ func (t *Transport) token(ctx context.Context, target provcore.CallTarget) (stri
 	}
 	tok, err := cfg.TokenSource(ctx).Token()
 	if err != nil {
+		// Not cached: the next request re-mints (no negative caching).
 		return "", fmt.Errorf("vertex: mint oauth2 token: %w", err)
 	}
 

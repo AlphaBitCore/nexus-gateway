@@ -32,68 +32,90 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// DefaultMaxDecompressedBytes bounds the expanded output of Decompress when
+// the caller passes maxDecompressed <= 0. It defends against a decompression
+// bomb: Go's http.Transport does not auto-decompress br / zstd, so a malicious
+// or compromised upstream can ship a small (≤10 MiB) body that an unbounded
+// io.ReadAll(decoder) would expand to multiple GB and OOM the data-plane
+// service. 50 MiB leaves generous headroom over the 10 MiB compressed-read cap
+// (payloadcapture DefaultMaxRequestBytes / DefaultMaxResponseBytes) so a
+// legitimately large body — e.g. a batch-embedding response — still decodes,
+// while a GB-scale bomb is rejected. Kept as a package-local constant so this
+// package stays import-free except for stdlib + the two codec libraries.
+const DefaultMaxDecompressedBytes int64 = 50 * 1024 * 1024 // 50 MiB
+
 // Decompress returns a decompressed copy of body when the response
 // carried a Content-Encoding that Go's http.Transport did not already
 // unwrap. Idempotent: when resp.Uncompressed is true (transport
 // already decompressed gzip) or body is empty, returns body unchanged.
 //
+// maxDecompressed bounds the expanded output: every decoder is wrapped in an
+// io.LimitReader so a decompression bomb can never allocate more than
+// maxDecompressed+1 bytes. When the expanded output would exceed
+// maxDecompressed, Decompress returns the ORIGINAL (still-compressed) body and
+// truncated=true — the safe fallback that stores opaque, debuggable bytes
+// rather than a partial/corrupt decompressed buffer, matching the
+// corrupt-stream contract below. maxDecompressed <= 0 uses
+// DefaultMaxDecompressedBytes so a caller that forgets to set it still gets a
+// bound rather than an unbounded read.
+//
 // On decompression failure (corrupt stream, partial bytes) returns the
-// original body — caller decides whether to treat as opaque or
-// surface an error. The fallback prevents a single decoder hiccup
+// original body with truncated=false — caller decides whether to treat as
+// opaque or surface an error. The fallback prevents a single decoder hiccup
 // from dropping an audit row to NULL silently; the stored bytes will
 // look like base64-encoded binary downstream, which is debuggable.
 //
 // Supports gzip / deflate / br / zstd — the four Content-Encoding
 // values Cloudflare / nginx / AWS ALB / Anthropic / OpenAI use in
 // production. Unknown encodings return body unchanged.
-func Decompress(body []byte, resp *http.Response) []byte {
+func Decompress(body []byte, resp *http.Response, maxDecompressed int64) (out []byte, truncated bool) {
 	if resp == nil || resp.Uncompressed || len(body) == 0 {
-		return body
+		return body, false
+	}
+	if maxDecompressed <= 0 {
+		maxDecompressed = DefaultMaxDecompressedBytes
 	}
 	enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
 	switch enc {
 	case "gzip":
 		r, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return body
+			return body, false
 		}
 		defer func() { _ = r.Close() }()
-		out, err := io.ReadAll(r)
-		if err != nil {
-			return body
-		}
-		return out
+		return readBounded(r, body, maxDecompressed)
 	case "deflate":
 		r := flate.NewReader(bytes.NewReader(body))
 		defer func() { _ = r.Close() }()
-		out, err := io.ReadAll(r)
-		if err != nil {
-			return body
-		}
-		return out
+		return readBounded(r, body, maxDecompressed)
 	case "br":
-		out, err := io.ReadAll(brotli.NewReader(bytes.NewReader(body)))
-		if err != nil {
-			return body
-		}
-		return out
+		return readBounded(brotli.NewReader(bytes.NewReader(body)), body, maxDecompressed)
 	case "zstd":
 		r, err := zstd.NewReader(bytes.NewReader(body))
 		if err != nil {
-			// Defensive: zstd.NewReader only errors on invalid decoder
-			// options, never on input bytes (data errors surface on Read
-			// below), so with a fixed nil-option call this branch is not
-			// reachable from a unit test. Kept so a future option change
-			// can't silently panic. Corrupt/truncated streams are covered
-			// via the io.ReadAll path.
-			return body
+			return body, false
 		}
 		defer r.Close()
-		out, err := io.ReadAll(r)
-		if err != nil {
-			return body
-		}
-		return out
+		return readBounded(r, body, maxDecompressed)
 	}
-	return body
+	return body, false
+}
+
+// readBounded drains r into a buffer capped at maxDecompressed+1 bytes so a
+// decompression bomb cannot allocate without limit. It returns:
+//   - (decompressed, false) on success;
+//   - (original, false) on a read error (corrupt/truncated stream) — the
+//     opaque-bytes fallback;
+//   - (original, true) when the expanded output exceeds maxDecompressed (bomb)
+//     — the original compressed bytes are returned so no partial buffer leaks
+//     downstream as if it were valid.
+func readBounded(r io.Reader, original []byte, maxDecompressed int64) (out []byte, truncated bool) {
+	decoded, err := io.ReadAll(io.LimitReader(r, maxDecompressed+1))
+	if err != nil {
+		return original, false
+	}
+	if int64(len(decoded)) > maxDecompressed {
+		return original, true
+	}
+	return decoded, false
 }

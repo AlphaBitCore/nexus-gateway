@@ -36,11 +36,11 @@ func (f *fakeAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore
 	return &provcore.ProbeResult{OK: true}, nil
 }
 
-func (f *fakeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, error) {
-	return req.Body, nil, nil
+func (f *fakeAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
+	return req.Body, nil, "", nil
 }
 
-func (f *fakeAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, _ []string) (*provcore.Response, error) {
+func (f *fakeAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, _ []string, _ string) (*provcore.Response, error) {
 	req.Body = body
 	return f.Execute(ctx, req)
 }

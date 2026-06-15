@@ -28,6 +28,7 @@ type FlowMsg struct {
 	RemotePort int    `json:"remotePort,omitempty"` // destination port
 	LocalPort  int    `json:"localPort,omitempty"`  // source port
 	PID        int    `json:"pid,omitempty"`        // source process PID
+	BundleID   string `json:"bundleId,omitempty"`   // kernel-attested source-app signing identifier (preferred over PID lookup)
 	Protocol   string `json:"protocol,omitempty"`   // "tcp" | "udp"
 	BytesIn    int64  `json:"bytesIn,omitempty"`    // set on flow_closed
 	BytesOut   int64  `json:"bytesOut,omitempty"`   // set on flow_closed

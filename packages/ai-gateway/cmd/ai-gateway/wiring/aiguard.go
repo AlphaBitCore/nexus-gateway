@@ -20,7 +20,6 @@ import (
 
 	"github.com/google/uuid"
 
-	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
@@ -46,7 +45,6 @@ type LiveClassifier struct {
 	Cache         *aiguard.Cache
 	Sink          aiguard.TrafficSink
 	ConfigCache   *aiguard.ConfigCache
-	CredentialMgr *credmanager.Manager
 	Adapters      *provcore.Registry
 	Resolver      provtarget.Resolver
 	DB            AIGuardModelLookup
@@ -127,14 +125,13 @@ func (l *LiveClassifier) buildBackend(ctx context.Context, cfg *configstore.AIGu
 		if cfg.ExternalURL == nil || *cfg.ExternalURL == "" {
 			return nil, fmt.Errorf("aiguard: external_url missing externalUrl")
 		}
-		apiKey := ""
-		if cfg.ExternalCredentialID != nil && *cfg.ExternalCredentialID != "" {
-			key, err := l.CredentialMgr.GetDecrypted(ctx, *cfg.ExternalCredentialID)
-			if err != nil {
-				return nil, fmt.Errorf("aiguard: external credential: %w", err)
-			}
-			apiKey = key
-		}
+		// The external judge is the operator's OWN service and
+		// authenticates only via CustomHeaders. No stored Credential is
+		// resolved here — a Credential is always a real upstream provider
+		// key, and forwarding one to an operator-chosen URL was a
+		// key-exfiltration path. configured_provider mode is the only path
+		// that touches a provider credential, and there it reaches its own
+		// provider.
 		headers := map[string]string{}
 		for k, v := range cfg.CustomHeaders {
 			if s, ok := v.(string); ok {
@@ -153,7 +150,6 @@ func (l *LiveClassifier) buildBackend(ctx context.Context, cfg *configstore.AIGu
 		}
 		return &aiguard.ExternalBackend{
 			URL:           *cfg.ExternalURL,
-			APIKey:        apiKey,
 			Model:         model,
 			CustomHeaders: headers,
 			HTTPClient:    l.ExtHTTPClient,
@@ -196,6 +192,11 @@ func (s *WriterBackedTrafficSink) Emit(ctx context.Context, e aiguard.TrafficEve
 		// ON CONFLICT (id) DO NOTHING, so two ai-guard rows sharing an
 		// empty id silently lose all but the first.
 		RequestID: uuid.NewString(),
+		// TraceID carries the triggering user request's correlation id so
+		// this ai-guard cost row (fresh RequestID, internal_purpose='ai-guard')
+		// is joinable back to the user-traffic row that invoked the hook.
+		// Empty when the classify call carried no request id on its context.
+		TraceID: e.TraceID,
 		// status_code=200 so the rollup's isSuccess check passes and
 		// aiGuardCostUsd folds into MetricBilledCostUSD when the operator
 		// hasn't excluded internal-ops via yaml. Without this, the classify
@@ -213,9 +214,12 @@ func (s *WriterBackedTrafficSink) Emit(ctx context.Context, e aiguard.TrafficEve
 		CompletionTokens: int64(e.CompletionTokens),
 		TotalTokens:      int64(e.PromptTokens + e.CompletionTokens),
 		// AIGuardCostUsd lands on the classify-call's own row (the row
-		// where internal_purpose='ai-guard'). The user-traffic row that
-		// triggered the hook keeps NULL — joining the two via trace_id
-		// gives admins both views.
+		// where internal_purpose='ai-guard', with a fresh uuid id). The
+		// user-traffic row that triggered the hook keeps NULL. The ai-guard
+		// row carries the triggering request's trace_id (set above), so the
+		// two ARE per-request joinable on trace_id — ai-guard cost can be
+		// attributed to the user request, and is still excluded from billable
+		// totals via internal_purpose='ai-guard'.
 		AIGuardCostUsd: e.CostUsd,
 		Metadata: map[string]any{
 			"detectorType": e.DetectorType,

@@ -27,13 +27,14 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/siem"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
 )
 
-// InitConsumerManager wires the MQ consumer manager (traffic + audit + SIEM
-// forwarders). Returns nil when cfg.Consumers.Enabled is false or mqConsumer
-// is nil.
+// InitConsumerManager wires the MQ consumer manager (traffic + admin-audit +
+// exemption consumers). Returns nil when cfg.Consumers.Enabled is false or
+// mqConsumer is nil.
 func InitConsumerManager(
 	cfg *config.HubConfig,
 	pool *pgxpool.Pool,
@@ -84,35 +85,6 @@ func InitConsumerManager(
 	)
 	consumers = append(consumers, consumer.NamedConsumer{Name: "exemption-consumer", Consumer: ec})
 
-	// SIEMForwarder — all 4 event queues → external SIEM
-	if cfg.Consumers.SIEM.Enabled && cfg.Consumers.SIEM.URL != "" {
-		formatter := siem.NewFormatter(cfg.Consumers.SIEM.Format)
-		sink, err := siem.NewHTTPSink(cfg.Consumers.SIEM.URL, cfg.Consumers.SIEM.Headers, formatter)
-		if err != nil {
-			logger.Error("SIEM sink init failed, skipping SIEM forwarder", "error", err)
-		} else {
-			batchSize := cfg.Consumers.SIEM.BatchSize
-			if batchSize <= 0 {
-				batchSize = 200
-			}
-			flushInterval := cfg.Consumers.SIEM.FlushInterval
-			if flushInterval <= 0 {
-				flushInterval = cfg.Consumers.FlushInterval
-			}
-			sf := consumer.NewSIEMForwarder(
-				mqConsumer, sink,
-				consumer.SIEMForwarderConfig{
-					Enabled:       true,
-					BatchSize:     batchSize,
-					FlushInterval: flushInterval,
-					EventTypes:    cfg.Consumers.SIEM.EventTypes,
-				},
-				logger, opsReg,
-			)
-			consumers = append(consumers, consumer.NamedConsumer{Name: "siem-forwarder", Consumer: sf})
-		}
-	}
-
 	return consumer.NewManager(consumers, logger, opsReg)
 }
 
@@ -128,6 +100,7 @@ func InitScheduler(
 	mqProducer mq.Producer,
 	st *store.Store,
 	mgr *fleetmgr.Manager,
+	spill spillstore.SpillStore,
 	opsReg *sharedops.Registry,
 	alertStore *alerting.Store,
 	raiser *alerting.Raiser,
@@ -141,7 +114,8 @@ func InitScheduler(
 	jobStore := jobstore.New(pool)
 	sched := scheduler.New(logger).
 		WithJobStore(jobStore).
-		WithReplicaID(cfg.Hub.ID)
+		WithReplicaID(cfg.Hub.ID).
+		WithMetrics(prometheus.DefaultRegisterer)
 
 	sched.Register(defjobs_drift.NewDriftDetector(st, mgr, redisClient, cfg.Scheduler.DriftCheckInterval, opsReg, logger))
 	sched.Register(defjobs_expiry.NewOverrideExpiry(st, mgr, cfg.Scheduler.OverrideExpiryInterval, opsReg, logger))
@@ -156,13 +130,13 @@ func InitScheduler(
 	// traffic_event_normalized rows with NULL request/response_normalized.
 	// 5-min interval matches the consumer-recovery cadence: a one-time
 	// hiccup recovers before the operator opens the Traffic drawer.
-	sched.Register(defjobs_audit.NewNormalizeBackfill(pool, normalize.BuildRegistry(), 5*time.Minute, opsReg, logger))
+	sched.Register(defjobs_audit.NewNormalizeBackfill(pool, normalize.BuildRegistry(), spill, 5*time.Minute, opsReg, logger))
 	sched.Register(defjobs_drift.NewIdentityEnricher(st, cfg.Scheduler.IdentityEnrichInterval, opsReg, logger))
 	sched.Register(defjobs_expiry.NewAuthCleanup(st.AuthStore(), time.Hour, logger))
 	sched.Register(defjobs_expiry.NewEnrollmentTokenCleanup(st, time.Hour, logger))
-	sched.Register(defjobs_drift.NewStaleThingJob(st.RegistryStore(), 30*time.Second, logger, defjobs_drift.StaleThingConfig{
-		ServiceThreshold: 60 * time.Second,
-	}))
+	// ServiceThreshold left at its default (90s = 3x the 30s ping interval) so a
+	// single jittered/missed ping cannot flap a healthy service offline.
+	sched.Register(defjobs_drift.NewStaleThingJob(st.RegistryStore(), 30*time.Second, logger, defjobs_drift.StaleThingConfig{}))
 	sched.Register(defjobs_retention.NewJobRetention(jobStore, 24*time.Hour, 100, logger))
 	sched.Register(defjobs_drift.NewExemptionGC(pool, mgr, cfg.Scheduler.Intervals.ExemptionGC, logger))
 
@@ -193,11 +167,20 @@ func InitScheduler(
 
 	// Per-Thing rollup pipeline. Independent watermarks; EnableAgentRollup
 	// gates whether source=agent rows are aggregated.
-	sched.Register(defjobs_rollup.NewThingRollup5m(pool, cfg.Scheduler.Intervals.Rollup5m, logger, cfg.Scheduler.EnableAgentRollup, cfg.Scheduler.ExcludeInternalOpsFromBilledCost))
-	sched.Register(defjobs_rollup.NewThingRollupMerge1h(pool, cfg.Scheduler.Intervals.Merge1h, logger))
-	sched.Register(defjobs_rollup.NewThingRollupMerge1d(pool, cfg.Scheduler.Intervals.Merge1d, logger))
-	sched.Register(defjobs_rollup.NewThingRollupMerge1mo(pool, cfg.Scheduler.Intervals.Merge1mo, logger))
-	sched.Register(defjobs_rollup.NewRollupCorrection(rollup5m, merge1h, merge1d, merge1mo, cfg.Scheduler.Intervals.RollupCorrection, logger))
+	thingRollup5m := defjobs_rollup.NewThingRollup5m(pool, cfg.Scheduler.Intervals.Rollup5m, logger, cfg.Scheduler.EnableAgentRollup, cfg.Scheduler.ExcludeInternalOpsFromBilledCost)
+	thingMerge1h := defjobs_rollup.NewThingRollupMerge1h(pool, cfg.Scheduler.Intervals.Merge1h, logger)
+	thingMerge1d := defjobs_rollup.NewThingRollupMerge1d(pool, cfg.Scheduler.Intervals.Merge1d, logger)
+	thingMerge1mo := defjobs_rollup.NewThingRollupMerge1mo(pool, cfg.Scheduler.Intervals.Merge1mo, logger)
+	sched.Register(thingRollup5m)
+	sched.Register(thingMerge1h)
+	sched.Register(thingMerge1d)
+	sched.Register(thingMerge1mo)
+	// lookbackDays = 0 → default (correctionLookbackDays) so late events up to
+	// the agent offline-buffer horizon are still folded into the rollups.
+	sched.Register(defjobs_rollup.NewRollupCorrection(rollup5m, merge1h, merge1d, merge1mo, 0, cfg.Scheduler.Intervals.RollupCorrection, logger))
+	// Per-Thing correction sibling — without it late events whose per-Thing 5m
+	// bucket already sealed are never re-aggregated.
+	sched.Register(defjobs_rollup.NewThingRollupCorrection(thingRollup5m, thingMerge1h, thingMerge1d, thingMerge1mo, 0, cfg.Scheduler.Intervals.RollupCorrection, logger))
 
 	sched.Register(defjobs_metrics.NewOpsRollup5m(pool, cfg.Scheduler.Intervals.OpsRollup5m, logger))
 	sched.Register(defjobs_metrics.NewOpsRollup1h(pool, cfg.Scheduler.Intervals.OpsRollup1h, logger))

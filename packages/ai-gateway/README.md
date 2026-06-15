@@ -16,7 +16,16 @@ that every other AI Gateway feature builds on.
 | **DB** | PostgreSQL (`traffic_event`, `traffic_event_normalized`, `RoutingRule`, `Provider`, `Credential`) |
 | **Cache** | Redis (response cache, quota counters, rate limit) |
 | **Upstream** | Every AI provider listed under `internal/providers/spec_*` |
-| **Registers as Thing** | `type=ai-gateway`; receives config shadows for `routing`, `hook_config`, `observability`, `kill_switch` |
+| **Registers as Thing** | `type=ai-gateway`; receives config shadows for `routing_rules`, `hooks`, `observability`, `cache`, `models`, `providers`, `credentials`, `virtual_keys`, and the quota/cache tuning keys (full list in `packages/shared/schemas/configkey/validation.go`) |
+
+> **No kill switch on the AI Gateway.** The emergency kill switch covers the
+> interception nodes (compliance-proxy + agent), which are in-path TLS-bumping
+> MITM proxies — see `kill-switch-architecture.md` §9. The AI Gateway is a
+> reverse proxy, not an interceptor; its emergency brake is **emergency
+> passthrough** (`gateway_passthrough` shadow), which bypasses hooks/cache while
+> still relaying traffic. `kill_switch` is therefore NOT in
+> `ValidByThingType["ai-gateway"]` and the CP Kill Switch page does not affect
+> an ai-gateway-only deployment.
 
 ## Build
 

@@ -503,6 +503,17 @@ func (s *Server) Stop() {
 
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close() //nolint:errcheck
+	// On macOS the socket is 0666 (world-connectable) so the root daemon and
+	// the per-user GUI can communicate across UIDs. checkPeerUID uses
+	// LOCAL_PEERCRED to admit only root (the daemon itself) and the current
+	// console user (the GUI session that owns the menu-bar app and Dashboard);
+	// any other local account is rejected before it can read or write a single
+	// byte. On other platforms the socket is owner-scoped and the check is a
+	// no-op.
+	if err := checkPeerUID(conn); err != nil {
+		slog.Warn("status API: rejected connection due to UID mismatch", "error", err)
+		return
+	}
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 64*1024), statusapiMaxLineBytes)
 	for {
@@ -608,6 +619,14 @@ func (s *Server) dispatch(cmd string) any {
 		return s.runtimeFn(ctx)
 
 	case "AUTHENTICATE":
+		// NOT gated by quitAllowed. quitAllowed governs whether the user may
+		// QUIT the agent — it has nothing to do with signing in. Sign-in /
+		// enrollment is an identity operation, not a quit. Gating it here was a
+		// conflation that left a locked (quitAllowed=false) device permanently
+		// stuck at the enrollment screen: it could never complete its initial
+		// SSO sign-in and therefore could never start protection. If a fleet
+		// ever needs to forbid re-enrollment specifically, that is a separate
+		// policy, not quitAllowed.
 		if s.authenticateFn == nil {
 			return map[string]any{"success": false, "error": "enterprise login not configured"}
 		}
@@ -627,6 +646,8 @@ func (s *Server) dispatch(cmd string) any {
 		return result
 
 	case "AUTHENTICATE CONFIRM":
+		// Not gated by quitAllowed (see AUTHENTICATE): completing a sign-in is
+		// an identity operation, not a quit.
 		if s.confirmAuthFn == nil {
 			return map[string]any{"success": false, "error": "no pending authentication"}
 		}

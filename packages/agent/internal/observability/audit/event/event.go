@@ -114,6 +114,15 @@ type Event struct {
 	NormalizedRequest  json.RawMessage `json:"normalizedRequest,omitempty"`
 	NormalizedResponse json.RawMessage `json:"normalizedResponse,omitempty"`
 
+	// RequestRedactionSpans / ResponseRedactionSpans — redaction spans
+	// relocated to their offsets inside the (storage-redacted) normalized
+	// payloads above. Stamped by the shared audit emitter when a hook's
+	// storageAction=redact governed the copies; nil for unredacted rows.
+	// Stored as TEXT alongside the normalized columns and uploaded to Hub
+	// so traffic_event_normalized.*_redaction_spans populate for agent rows.
+	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`
+	ResponseRedactionSpans json.RawMessage `json:"responseRedactionSpans,omitempty"`
+
 	// Latency phase breakdown. Populated by cmd/agent/main.go's
 	// OnFlowComplete from a traffic.PhaseSink and from the hook pipeline's
 	// per-hook latency. Nil pointers stay NULL on the wire / DB column;

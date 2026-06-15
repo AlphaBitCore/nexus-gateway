@@ -300,7 +300,7 @@ func TestDetectResponseUsage_EmptyBody(t *testing.T) {
 	}
 }
 
-// Normalize — Tier-1 spec hint dispatch. Copilot Chat advertises the
+// Normalize — Tier-1 codec delegation. Copilot Chat advertises the
 // openai-chat wire format so an openai-shape body must claim Tier-1 with
 // DetectedSpec=github-copilot.
 

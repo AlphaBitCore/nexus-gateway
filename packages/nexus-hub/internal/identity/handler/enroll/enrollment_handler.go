@@ -1,6 +1,7 @@
 package enroll
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
@@ -18,8 +19,11 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/agentca"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/enrollment"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/identity/store/enrollstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillupload"
+	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // enrollRandReader is the entropy source for resolveThingID's random ID
@@ -33,6 +37,11 @@ var enrollRandReader io.Reader = rand.Reader
 // failing function to exercise the token-generation error branch; production
 // code never reassigns it.
 var deviceTokenGenFn = agentca.GenerateDeviceToken
+
+// timeNow is the clock used to stamp device-token expiry. A package-level seam
+// so tests can pin the issue time and assert the computed expiry deterministically;
+// production code never reassigns it.
+var timeNow = time.Now
 
 // extractAttestationPublicKeyBytes parses the PEM-encoded attestation
 // certificate and returns the raw 32-byte Ed25519 public key. The
@@ -71,11 +80,17 @@ type EnrollmentAPI struct {
 	// mark-used). nil falls back to slog.Default.
 	Logger *slog.Logger
 
-	// jtiSeen is the in-memory JTI replay guard for enrollment JWTs.
-	// Entries auto-expire at the JWT's own `exp` claim and are swept
-	// every minute (see jti_cache.go). Hub restarts clear the cache,
-	// which is acceptable (in-flight enrollments are invalidated, not
-	// replayed) at single-Hub scope.
+	// JTIDedup is the optional Redis SETNX one-shot consumer that backs the
+	// enrollment-JWT replay guard across Hub restarts and multi-Hub HA.
+	// Wired from the shared Redis dedup (the same primitive the
+	// spill-upload flow uses). nil → the in-memory L1 guard only (legacy
+	// single-Hub-uptime behaviour).
+	JTIDedup spillupload.Dedup
+
+	// jtiSeen is the JTI replay guard for enrollment JWTs: an in-process L1
+	// (auto-expiring at the JWT's `exp`, swept every minute) in front of the
+	// optional Redis L2 (JTIDedup). With the L2 wired, a captured JWT can no
+	// longer be replayed across a Hub restart.
 	jtiSeen *jtiCache
 }
 
@@ -84,7 +99,7 @@ type EnrollmentAPI struct {
 // serving traffic so the JTI cache's sweep goroutine is running.
 func (h *EnrollmentAPI) Init() {
 	if h.jtiSeen == nil {
-		h.jtiSeen = newJTICache()
+		h.jtiSeen = newJTICache(h.JTIDedup, h.logger())
 	}
 }
 
@@ -103,11 +118,16 @@ func (h *EnrollmentAPI) logger() *slog.Logger {
 }
 
 // EnrollRequest is the body for agent enrollment.
+//
+// There is deliberately NO caller-supplied thing ID: the Hub always assigns
+// the thing ID server-side (random mint, or reuse of an existing row matched by
+// DeviceFingerprint). A client-chosen ID would let any holder of a valid
+// enrollment credential name — and overwrite — an existing Thing, taking over
+// another agent or a service identity. Legitimate clients never need to choose
+// an ID; re-enrollment from the same host is handled by DeviceFingerprint.
 type EnrollRequest struct {
 	ThingType string `json:"thingType"`
-	ThingID   string `json:"thingId"`
 	Version   string `json:"version"`
-	CsrPEM    string `json:"csrPem"`
 	Hostname  string `json:"hostname"`
 	OS        string `json:"os"`
 	OSVersion string `json:"osVersion"`
@@ -117,13 +137,12 @@ type EnrollRequest struct {
 	// builds that pre-date this field send "" and fall back to the
 	// always-mint-new behaviour.
 	DeviceFingerprint string `json:"deviceFingerprint"`
-	// AttestationCsrPem is the optional Ed25519 CSR the agent ships
-	// alongside the mTLS P-256 CSR for traffic attestation. Hub signs it
-	// via agentca.SignAttestationCSR (Ed25519-only, no ClientAuth EKU) and
-	// returns the cert in AttestationCertPem on the response. Empty when
-	// re-enrolling from an older agent build; Hub tolerates absence and the
-	// agent runs without attestation until the next re-enroll picks up an
-	// updated build.
+	// AttestationCsrPem is the optional Ed25519 CSR the agent ships for
+	// traffic attestation. Hub signs it via agentca.SignAttestationCSR
+	// (Ed25519-only, no ClientAuth EKU) and returns the cert in
+	// AttestationCertPem on the response. Empty when re-enrolling from an
+	// older agent build; Hub tolerates absence and the agent runs without
+	// attestation until the next re-enroll picks up an updated build.
 	AttestationCsrPem string `json:"attestationCsrPem,omitempty"`
 }
 
@@ -144,7 +163,7 @@ const (
 //   - "JWT_INVALID"      — bad sig, wrong aud/iss/purpose, expired, missing jti
 //   - "JWT_REPLAYED"     — JTI already used
 //   - "JWKS_UNAVAILABLE" — cache empty (CP unreachable since Hub started)
-func (h *EnrollmentAPI) verifyEnrollmentJWT(tokenStr string) (userID, email string, retErr error) {
+func (h *EnrollmentAPI) verifyEnrollmentJWT(ctx context.Context, tokenStr string) (userID, email string, retErr error) {
 	var claims enrollmentJWTClaims
 	parserOpts := []jwt.ParserOption{
 		jwt.WithAudience(enrollAudience),
@@ -189,12 +208,18 @@ func (h *EnrollmentAPI) verifyEnrollmentJWT(tokenStr string) (userID, email stri
 
 	// Replay guard: MarkSeen is atomic; false means the JTI was already
 	// used in a previous request and we must reject.
+	//
+	// Fail CLOSED when the cache is uninitialised. A nil jtiSeen
+	// means Init() was never called — a wiring bug, never a legitimate
+	// runtime state. Proceeding without the replay guard would silently
+	// accept replayed enrollment JWTs, so we reject the request outright
+	// rather than degrade to no protection. The handler surfaces this as a
+	// 503 (see enrollWithJWT) so operators see the misconfiguration.
 	if h.jtiSeen == nil {
-		// Defensive: callers that forgot to invoke Init still get a
-		// safe fallback. Drops replay protection on this request only;
-		// log so the misconfiguration is visible.
-		h.logger().Error("jti cache uninitialised; allowing JWT without replay guard")
-	} else if !h.jtiSeen.MarkSeen(claims.ID, claims.ExpiresAt.Time) {
+		h.logger().Error("jti replay store unavailable; rejecting enrollment (Init not called)")
+		return "", "", fmt.Errorf("JTI_STORE_UNAVAILABLE")
+	}
+	if !h.jtiSeen.MarkSeen(ctx, claims.ID, claims.ExpiresAt.Time) {
 		return "", "", fmt.Errorf("JWT_REPLAYED")
 	}
 
@@ -211,9 +236,6 @@ func (h *EnrollmentAPI) Enroll(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return badRequest(c, "invalid request body")
 	}
-	if req.CsrPEM == "" {
-		return badRequest(c, "csrPem is required")
-	}
 
 	authHeader := c.Request().Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
@@ -222,31 +244,40 @@ func (h *EnrollmentAPI) Enroll(c echo.Context) error {
 
 	enrollToken := c.Request().Header.Get("X-Enrollment-Token")
 	if enrollToken == "" {
-		return c.JSON(http.StatusUnauthorized, ErrorResponse{
-			Error: "Authorization: Bearer or X-Enrollment-Token header required",
-			Code:  "UNAUTHORIZED",
-		})
+		return unauthorized(c, "Authorization: Bearer or X-Enrollment-Token header required")
 	}
 	return h.enrollWithToken(c, enrollToken, req)
 }
 
-// enrollWithToken is the existing X-Enrollment-Token path (unchanged logic).
+// enrollWithToken is the X-Enrollment-Token path.
+//
+// Single-use is enforced consume-FIRST: the token is atomically
+// transitioned pending→used before any enrollment work. The prior
+// validate-then-(enroll)-then-mark order let two concurrent requests both pass
+// the SELECT and both fully enroll before either marked the token used.
+// ConsumeToken makes the row write the race arbiter, so exactly one request
+// wins; the rest get ErrAlreadyUsed → 401. The token id is linked to the minted
+// thing afterward (best-effort; the token is already spent).
 func (h *EnrollmentAPI) enrollWithToken(c echo.Context, enrollToken string, req EnrollRequest) error {
 	ctx := c.Request().Context()
 
-	token, valid := h.Enrollment.ValidateToken(ctx, enrollToken)
-	if !valid {
-		return c.JSON(http.StatusUnauthorized, ErrorResponse{
-			Error: "invalid, expired, or already used enrollment token",
-			Code:  "UNAUTHORIZED",
-		})
+	token, err := h.Enrollment.ConsumeToken(ctx, enrollToken)
+	if err != nil {
+		if errors.Is(err, enrollment.ErrAlreadyUsed) {
+			return unauthorized(c, "invalid, expired, or already used enrollment token")
+		}
+		return internalError(c, "enrollment token consume failed")
 	}
 
-	thingType := req.ThingType
+	// The enrollment token's ThingType is authoritative: a token issued for an
+	// `agent` must not be usable to enroll as `ai-gateway` (or any other type)
+	// by setting req.ThingType. Only fall back to the request when the token
+	// does not pin a type.
+	thingType := token.ThingType
 	if thingType == "" {
-		thingType = token.ThingType
+		thingType = req.ThingType
 	}
-	thingID, err := h.resolveThingID(thingType, req.ThingID)
+	thingID, err := h.resolveThingID(thingType)
 	if err != nil {
 		return internalError(c, "thing id generation failed")
 	}
@@ -259,8 +290,10 @@ func (h *EnrollmentAPI) enrollWithToken(c echo.Context, enrollToken string, req 
 	// No DeviceAssignment in this path → trust_level stays at level 1.
 	resp["trustLevel"] = h.Mgr.ComputeAndStoreTrustLevel(ctx, thingID, "active", "")
 
-	if err := h.Enrollment.MarkUsed(ctx, token.ID, thingID); err != nil {
-		h.logger().Warn("mark enrollment token used failed", "thing_id", thingID, "error", err)
+	// Record the binding on the already-consumed token row. Non-fatal: the
+	// token is single-use-spent regardless of whether the link succeeds.
+	if err := h.Enrollment.LinkThing(ctx, token.ID, thingID); err != nil {
+		h.logger().Warn("link enrollment token thing failed", "thing_id", thingID, "error", err)
 	}
 
 	return c.JSON(http.StatusOK, resp)
@@ -269,37 +302,50 @@ func (h *EnrollmentAPI) enrollWithToken(c echo.Context, enrollToken string, req 
 // enrollWithJWT is the Bearer enrollment JWT path (enterprise-login mode).
 func (h *EnrollmentAPI) enrollWithJWT(c echo.Context, tokenStr string, req EnrollRequest) error {
 	if h.JWKSCache == nil {
-		return c.JSON(http.StatusServiceUnavailable, ErrorResponse{
-			Error: "enrollment JWT verification not configured (cpJWKSURL missing)",
-			Code:  "JWKS_UNAVAILABLE",
-		})
+		return c.JSON(http.StatusServiceUnavailable, nexushttperr.ErrJSON("enrollment JWT verification not configured (cpJWKSURL missing)", "service_unavailable", "JWKS_UNAVAILABLE"))
 	}
 
-	userID, email, err := h.verifyEnrollmentJWT(tokenStr)
+	userID, email, err := h.verifyEnrollmentJWT(c.Request().Context(), tokenStr)
 	if err != nil {
 		errStr := err.Error()
 		switch errStr {
 		case "JWKS_UNAVAILABLE":
-			return c.JSON(http.StatusServiceUnavailable, ErrorResponse{Error: errStr, Code: "JWKS_UNAVAILABLE"})
+			return c.JSON(http.StatusServiceUnavailable, nexushttperr.ErrJSON(errStr, "service_unavailable", "JWKS_UNAVAILABLE"))
+		case "JTI_STORE_UNAVAILABLE":
+			return c.JSON(http.StatusServiceUnavailable, nexushttperr.ErrJSON("enrollment replay guard unavailable", "service_unavailable", "JTI_STORE_UNAVAILABLE"))
 		case "JWT_REPLAYED":
-			return c.JSON(http.StatusUnauthorized, ErrorResponse{Error: errStr, Code: "JWT_REPLAYED"})
+			return c.JSON(http.StatusUnauthorized, nexushttperr.ErrJSON(errStr, "auth_error", "JWT_REPLAYED"))
 		default:
-			return c.JSON(http.StatusUnauthorized, ErrorResponse{Error: errStr, Code: "JWT_INVALID"})
+			return c.JSON(http.StatusUnauthorized, nexushttperr.ErrJSON(errStr, "auth_error", "JWT_INVALID"))
 		}
 	}
 
-	thingType := req.ThingType
-	if thingType == "" {
-		// The whole platform's convention is `agent` for end-user desktop
-		// agents — configreconcile Watch entries, Hub's ThingRollup5mJob,
-		// admin_thing_overrides RBAC, IAM ResourceDeviceEnrollment all key
-		// on this string. An earlier default of "agent-desktop" silently
-		// orphaned newly-enrolled things from every config-push pipeline
-		// (the configreconcile SQL `WHERE type='agent'` filtered them out),
-		// so things enrolled via SSO never received agent_settings updates.
-		// See [[agent-desktop-type-mismatch-bug]].
-		thingType = "agent"
+	// The Bearer enrollment JWT is a DEVICE-enrollment grant — it is
+	// authorized by the device verb admin:device-enrollment.enroll (the grant a
+	// normal user holds to enroll their own desktop agent) and carries no
+	// authorized thingType. It must NOT be usable to mint a privileged
+	// service-type Thing (ai-gateway / compliance-proxy / control-plane): such a
+	// Thing inherits that service tier's entire desired state on registration
+	// (providers / credentials / virtual_keys / routing_rules / response_cache /
+	// ...) and would receive every future service-config invalidation push.
+	// Service Things enroll ONLY via the operator-issued enrollment-token path,
+	// whose token row pins the type (the enrollWithToken invariant above).
+	// Mirror that pin here: the authorized type for this path is
+	// always `agent`. Reject a caller-supplied non-agent thingType with 403 (so
+	// a spoof attempt is explicit and auditable) rather than silently overriding.
+	if req.ThingType != "" && req.ThingType != "agent" {
+		return c.JSON(http.StatusForbidden, nexushttperr.ErrJSON(
+			"enrollment JWT authorizes agent enrollment only; service-type Things require an operator-issued enrollment token",
+			"auth_error", "ENROLL_TYPE_FORBIDDEN"))
 	}
+	// The whole platform's convention is `agent` for end-user desktop agents —
+	// configreconcile Watch entries, Hub's ThingRollup5mJob, admin_thing_overrides
+	// RBAC, IAM ResourceDeviceEnrollment all key on this string. An earlier
+	// default of "agent-desktop" silently orphaned newly-enrolled things from
+	// every config-push pipeline (the configreconcile SQL `WHERE type='agent'`
+	// filtered them out), so things enrolled via SSO never received agent_settings
+	// updates. See [[agent-desktop-type-mismatch-bug]].
+	thingType := "agent"
 
 	// physical_id dedupe: if the client sent a hardware-stable
 	// fingerprint AND we already have an agent thing carrying it as
@@ -310,16 +356,49 @@ func (h *EnrollmentAPI) enrollWithJWT(c echo.Context, tokenStr string, req Enrol
 	// silently falls through. Lookup hits the indexed `physical_id`
 	// column directly — no more jsonb#>> scan.
 	var thingID string
-	if req.DeviceFingerprint != "" && req.ThingID == "" && thingType == "agent" {
+	if req.DeviceFingerprint != "" && thingType == "agent" {
 		if existing, lookupErr := h.Mgr.Store().RegistryStore().FindAgentByPhysicalID(c.Request().Context(), req.DeviceFingerprint); lookupErr == nil && existing != "" {
-			thingID = existing
-			h.logger().Info("sso enroll: reusing existing thing_id by physical_id",
-				"thing_id", thingID, "physical_id", req.DeviceFingerprint)
+			// DeviceFingerprint is an attacker-controllable request field,
+			// so a fingerprint match alone must NOT rebind a device that belongs to
+			// another user. Reuse the existing thing only when it is unowned or
+			// already owned by THIS SSO user; a match to another user's device is
+			// refused (not silently rebound — that would be a cross-user takeover).
+			assignment, asgErr := h.Mgr.Store().EnrollStore().GetActiveDeviceAssignment(c.Request().Context(), existing)
+			switch {
+			case asgErr != nil:
+				// Fail closed: don't reuse on an ownership-check error.
+				return internalError(c, "device ownership check failed")
+			case assignment != nil && assignment.UserID == userID:
+				// Same SSO user re-enrolling their own device — safe to dedup
+				// onto the existing thing_id (.pkg reinstall / repeat enroll).
+				thingID = existing
+				h.logger().Info("sso enroll: reusing existing thing_id by physical_id",
+					"thing_id", thingID, "physical_id", req.DeviceFingerprint)
+			case assignment != nil:
+				// Owned by a DIFFERENT user — refuse rebind.
+				h.logger().Warn("sso enroll: physical_id matches a device owned by another user; refusing rebind",
+					"thing_id", existing, "owner", assignment.UserID, "enrolling_user", userID)
+				return c.JSON(http.StatusConflict, nexushttperr.ErrJSON("this device is already enrolled to another user", "conflict", "DEVICE_OWNED_BY_ANOTHER_USER"))
+			default:
+				// assignment == nil — the existing thing is UNOWNED
+				// (e.g. enrolled via X-Enrollment-Token, trust level 1, no
+				// DeviceAssignment). A world-readable DeviceFingerprint
+				// (SHA-256 over /etc/machine-id + serial + MAC) is an
+				// IDENTIFIER, not an AUTHENTICATOR. Reusing this thing_id would
+				// (a) overwrite the existing device's token hash → DoS the
+				// victim node's WS auth, and (b) rebind + trust-elevate it to
+				// the enrolling user → cross-node takeover. So do NOT claim it
+				// by fingerprint alone: leave thingID empty so a NEW thing_id
+				// is minted below. A deliberate token→SSO transfer must be
+				// admin-mediated, not driven by a guessable fingerprint.
+				h.logger().Warn("sso enroll: physical_id matches an unowned/token-enrolled thing; minting a new thing_id (fingerprint is not an authenticator)",
+					"existing_thing_id", existing, "physical_id", req.DeviceFingerprint, "enrolling_user", userID)
+			}
 		}
 	}
 	if thingID == "" {
 		var err error
-		thingID, err = h.resolveThingID(thingType, req.ThingID)
+		thingID, err = h.resolveThingID(thingType)
 		if err != nil {
 			return internalError(c, "thing id generation failed")
 		}
@@ -409,11 +488,10 @@ func (h *EnrollmentAPI) enrollWithJWT(c echo.Context, tokenStr string, req Enrol
 // replaced by Store.FindAgentByPhysicalID against the indexed
 // `physical_id` column. See migration 20260521000000_thing_physical_id_column.
 
-// resolveThingID returns the provided thingID or generates a random one.
-func (h *EnrollmentAPI) resolveThingID(thingType, thingID string) (string, error) {
-	if thingID != "" {
-		return thingID, nil
-	}
+// resolveThingID generates a fresh server-assigned thing ID. The caller never
+// supplies one (see EnrollRequest): the ID is always minted here so a holder of
+// a valid enrollment credential cannot name or overwrite an existing Thing.
+func (h *EnrollmentAPI) resolveThingID(thingType string) (string, error) {
 	b := make([]byte, 8)
 	if _, err := io.ReadFull(enrollRandReader, b); err != nil {
 		return "", err
@@ -421,9 +499,9 @@ func (h *EnrollmentAPI) resolveThingID(thingType, thingID string) (string, error
 	return fmt.Sprintf("%s-%x", thingType, b), nil
 }
 
-// doEnroll signs the CSR, registers the thing, and stores credentials.
-// It returns the response payload to write back to the client but
-// does NOT write it: callers are expected to attach the final
+// doEnroll mints the device token, registers the thing, and stores
+// credentials. It returns the response payload to write back to the
+// client but does NOT write it: callers are expected to attach the final
 // trust_level (which depends on whether a DeviceAssignment was
 // created in this transaction) before serialising.
 //
@@ -433,15 +511,6 @@ func (h *EnrollmentAPI) resolveThingID(thingType, thingID string) (string, error
 // rendering.
 func (h *EnrollmentAPI) doEnroll(c echo.Context, req EnrollRequest, thingID, thingType string) (map[string]any, error) {
 	ctx := c.Request().Context()
-
-	certResult, err := h.CA.SignCSR(req.CsrPEM, fmt.Sprintf("device-%s", thingID))
-	if err != nil {
-		_ = c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: fmt.Sprintf("CSR signing failed: %s", err.Error()),
-			Code:  "BAD_REQUEST",
-		})
-		return nil, fmt.Errorf("doEnroll: CSR signing failed: %w", err)
-	}
 
 	plainToken, hashedToken, err := deviceTokenGenFn()
 	if err != nil {
@@ -460,59 +529,39 @@ func (h *EnrollmentAPI) doEnroll(c echo.Context, req EnrollRequest, thingID, thi
 		return nil, fmt.Errorf("doEnroll: thing registration: %w", err)
 	}
 
-	if err := h.Mgr.Store().RegistryStore().StoreDeviceTokenHash(ctx, thingID, hashedToken); err != nil {
+	deviceTokenExpiresAt := agentca.DeviceTokenExpiry(timeNow())
+	if err := h.Mgr.Store().RegistryStore().StoreDeviceTokenHash(ctx, thingID, hashedToken, deviceTokenExpiresAt); err != nil {
 		_ = internalError(c, "device token storage failed")
 		return nil, fmt.Errorf("doEnroll: device token storage: %w", err)
 	}
 
 	if err := h.Mgr.Store().RegistryStore().UpdateThingAgent(ctx, store.UpsertThingAgentParams{
-		ThingID:       thingID,
-		Hostname:      req.Hostname,
-		OS:            req.OS,
-		OSVersion:     req.OSVersion,
-		CertSerial:    certResult.Serial,
-		CertExpiresAt: &certResult.ExpiresAt,
+		ThingID:   thingID,
+		Hostname:  req.Hostname,
+		OS:        req.OS,
+		OSVersion: req.OSVersion,
 	}); err != nil {
 		h.logger().Warn("thing_agent upsert failed", "thing_id", thingID, "error", err)
-	}
-
-	// physical_id is the dedupe key going forward. RegisterThing has
-	// already written it into thing.physical_id via the UpsertThing
-	// path (UpsertThingParams.PhysicalID); this branch is a defensive
-	// re-stamp for legacy code paths that bypass that struct field
-	// (none today, but it's cheap insurance against a missed call site
-	// re-introducing the original bug).
-	if req.DeviceFingerprint != "" {
-		if err := h.Mgr.Store().RegistryStore().SetPhysicalID(ctx, thingID, req.DeviceFingerprint); err != nil {
-			h.logger().Warn("set physical_id failed",
-				"thing_id", thingID, "physical_id", req.DeviceFingerprint, "error", err)
-		}
 	}
 
 	resp := map[string]any{
 		"id":                   thingID,
 		"deviceToken":          plainToken,
-		"certPem":              certResult.CertPEM,
-		"caCertPem":            certResult.CaCertPEM,
-		"certSerial":           certResult.Serial,
-		"certExpiresAt":        certResult.ExpiresAt,
+		"deviceTokenExpiresAt": deviceTokenExpiresAt.Format(time.RFC3339),
 		"heartbeatIntervalSec": 30,
 		"desired":              regResp.Desired,
 		"desiredVer":           regResp.DesiredVer,
 	}
 
-	// Attestation cert (optional). The agent ships an Ed25519 CSR
-	// alongside the mTLS P-256 CSR; when present, Hub signs it with
-	// SignAttestationCSR (Ed25519-only + DigitalSignature KeyUsage,
-	// no ClientAuth EKU — enforces the key-separation invariant from
-	// the architecture doc) and returns the cert. The public-key bytes
-	// are stamped into thing_agent.sysinfo so the compliance-proxy can
-	// look them up at verify time via /api/internal/things/:id/
-	// attestation-pubkey. Failures here are non-fatal: we log + skip
-	// so an Ed25519 issuance error never breaks the mTLS enrollment
-	// the agent depends on. The signer ships the cert ONLY when the
-	// surrounding mTLS enrollment succeeded, so callers can't observe
-	// a half-enrolled state.
+	// Attestation cert (optional). The agent ships an Ed25519 CSR; when
+	// present, Hub signs it with SignAttestationCSR (Ed25519-only +
+	// DigitalSignature KeyUsage, no ClientAuth EKU — enforces the
+	// key-separation invariant from the architecture doc) and returns the
+	// cert. The public-key bytes are stamped into thing_agent.sysinfo so
+	// the compliance-proxy can look them up at verify time via
+	// /api/internal/things/:id/attestation-pubkey. Failures here are
+	// non-fatal: we log + skip so an Ed25519 issuance error never breaks
+	// the device-token enrollment the agent depends on.
 	if req.AttestationCsrPem != "" {
 		if attCert, err := h.CA.SignAttestationCSR(req.AttestationCsrPem, thingID); err == nil {
 			resp["attestationCertPem"] = attCert.CertPEM

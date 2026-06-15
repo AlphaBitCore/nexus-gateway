@@ -11,8 +11,8 @@
 // the anthropic adapter for parsing while attributing traffic to the
 // developer-console surface separately.
 //
-// Per the session policy that every vendor / surface gets its own
-// adapter ID even when the wire is shared.
+// Convention (provider-adapter-architecture.md §3a): every vendor / surface
+// gets its own adapter ID even when the wire protocol is shared.
 package anthropicconsoleweb
 
 import (

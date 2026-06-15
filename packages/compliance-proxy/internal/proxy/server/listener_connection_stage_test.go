@@ -220,6 +220,42 @@ func TestServeHTTP_ConnectionStage_NoConnectionHooks_PassThrough(t *testing.T) {
 	}
 }
 
+// TestServeHTTP_ConnectionStage_StrictFailClosed_UnbuildableRefuses is the
+// F-0371 consumer regression for the CONNECT site. The ProxyServer passes
+// strictFailClosed=true into BuildPipeline; a mandatory (fail-closed)
+// connection-stage hook whose implementationId is unregistered makes
+// BuildPipeline ERROR. The handler MUST refuse the CONNECT with 403 rather than
+// failing open into the tunnel phase (which the 500-no-hijacker marker would
+// indicate). The agent NE host path never reaches this code.
+func TestServeHTTP_ConnectionStage_StrictFailClosed_UnbuildableRefuses(t *testing.T) {
+	// Empty registry → the fail-closed hook's impl is unknown → unbuildable.
+	registry := core.NewHookRegistry()
+	resolver := compliance.NewPolicyResolver([]core.HookConfig{
+		{
+			ID:                "enforcer",
+			ImplementationID:  "no-such-impl",
+			Name:              "mandatory-connection-enforcer",
+			Stage:             "connection",
+			Enabled:           true,
+			FailBehavior:      "fail-closed",
+			ApplicableIngress: []string{"ALL"},
+		},
+	}, registry, discardLogger())
+
+	p := &ProxyServer{
+		logger:             discardLogger(),
+		compliancePipeline: resolver,
+	}
+
+	req := newConnectRequest("example.com:443")
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 — an unbuildable fail-closed connection hook under strict MUST refuse the CONNECT, not fail open (500 tunnel marker)", w.Code)
+	}
+}
+
 // TestServeHTTP_ConnectionStage_Approve_PassThrough asserts that when the
 // connection-stage hook returns Approve, control flows past the gate into
 // the tunnel phase. The hook must run; the response must not be 403.

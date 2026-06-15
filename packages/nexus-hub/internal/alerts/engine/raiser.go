@@ -239,11 +239,65 @@ func (r *Raiser) Raise(ctx context.Context, in RaiseInput) error {
 	return nil
 }
 
-// Resolve clears all FIRING and ACKNOWLEDGED rows for the given (ruleID,
-// targetKey). It is used by producers whose condition has cleared (e.g. a
-// provider came back online) and by manual operator-driven resolves that
-// target a whole alert stream rather than a single row.
+// Resolve clears the open alerts for the given (ruleID, targetKey). It is used
+// by producers whose condition has cleared (e.g. a provider came back online)
+// and by manual operator-driven resolves that target a whole alert stream
+// rather than a single row.
+//
+// The set of rows cleared depends on the rule's requiresAck flag:
+//
+//   - requiresAck=false (default): both FIRING and ACKNOWLEDGED rows are
+//     resolved — the cleared condition fully closes the alert.
+//   - requiresAck=true: only ACKNOWLEDGED rows are resolved. A FIRING row that
+//     no human has triaged is deliberately left open; the rule contract says a
+//     human must acknowledge before the alert can clear, so an automatic
+//     "condition cleared" signal must not silently resolve it.
+//
+// If the rule cannot be loaded (unknown id or a transient lookup error) the
+// method falls back to the requiresAck=false behaviour (resolve both states).
+// That is the safe default: auto-resolve clears noise rather than leaving a
+// stale FIRING row that the producer believes is gone.
 func (r *Raiser) Resolve(ctx context.Context, ruleID, targetKey, reason string) error {
+	requiresAck := false
+	rule, err := r.store.GetRule(ctx, ruleID)
+	switch {
+	case err == nil:
+		requiresAck = rule.RequiresAck
+	case errors.Is(err, ErrNotFound):
+		// Unknown rule — fall back to resolve-both (safe default).
+		if r.logger != nil {
+			r.logger.Warn("resolve: rule not found, defaulting to resolve-both",
+				"ruleId", ruleID,
+				"targetKey", targetKey,
+			)
+		}
+	default:
+		return fmt.Errorf("resolve: load rule %q: %w", ruleID, err)
+	}
+
+	if requiresAck {
+		// Count FIRING rows we are about to skip so the log makes the
+		// "left open pending human ack" decision visible.
+		skipped, err := r.store.CountFiringByRuleTarget(ctx, ruleID, targetKey)
+		if err != nil {
+			return fmt.Errorf("resolve: %w", err)
+		}
+		n, err := r.store.ResolveByRuleTargetIfAcknowledged(ctx, ruleID, targetKey, reason)
+		if err != nil {
+			return fmt.Errorf("resolve: %w", err)
+		}
+		if r.logger != nil && (n > 0 || skipped > 0) {
+			r.logger.Info("alert resolved (requiresAck)",
+				"ruleId", ruleID,
+				"targetKey", targetKey,
+				"reason", reason,
+				"resolvedAcknowledged", n,
+				"skippedFiring", skipped,
+			)
+		}
+		return nil
+	}
+
 	n, err := r.store.ResolveByRuleTarget(ctx, ruleID, targetKey, reason)
 	if err != nil {
 		return fmt.Errorf("resolve: %w", err)

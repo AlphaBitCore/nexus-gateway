@@ -108,6 +108,71 @@ func TestHandleFetchFailure_ClearsCacheAfterGrace(t *testing.T) {
 	t.Errorf("cache should have been cleared after grace expired; Get still returns a key")
 }
 
+// TestRefresh_ZeroKey200RetainsStaleCache covers F-0248: a 200 response
+// carrying an empty "keys" array must be treated as a soft fetch failure —
+// the previously-installed key must survive (stale-grace), NOT be wiped, and
+// fetchedAt must NOT advance (otherwise the grace window would reset on every
+// empty fetch and the cache could never expire). Before the fix the swap was
+// unconditional, so one empty 200 emptied the cache and every enrollment 503'd.
+func TestRefresh_ZeroKey200RetainsStaleCache(t *testing.T) {
+	var serveValid atomic.Bool
+	serveValid.Store(true)
+	priv := generateTestRSA(t)
+	jwksBody := encodeRSAJWKS("k1", priv)
+	emptyBody := []byte(`{"keys":[]}`)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if serveValid.Load() {
+			_, _ = w.Write(jwksBody)
+			return
+		}
+		_, _ = w.Write(emptyBody) // 200 OK with zero keys
+	}))
+	defer srv.Close()
+
+	c := newWithGrace(srv.URL, slog.Default(), 50*time.Millisecond)
+	defer c.Close()
+
+	if !waitForKey(c, "k1", 500*time.Millisecond) {
+		t.Fatal("initial fetch never installed k1")
+	}
+	fetchedBefore := c.lastFetchedAt()
+
+	// Flip to empty-200 and refresh within the grace window. The stale key
+	// must still be served and fetchedAt must not move.
+	serveValid.Store(false)
+	c.refresh()
+
+	if _, err := c.Get("k1"); err != nil {
+		t.Fatalf("empty-200 wiped the cache (F-0248 regression): %v", err)
+	}
+	if got := c.lastFetchedAt(); !got.Equal(fetchedBefore) {
+		t.Errorf("fetchedAt advanced on empty-200 fetch: before=%v after=%v", fetchedBefore, got)
+	}
+
+	// Past the grace window an empty 200 must let the stale cache expire,
+	// proving it went through the soft-failure path rather than a silent swap.
+	time.Sleep(75 * time.Millisecond)
+	c.refresh()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := c.Get("k1"); errors.Is(err, ErrCacheEmpty) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Error("stale cache should have expired after grace on repeated empty-200")
+}
+
+// lastFetchedAt exposes fetchedAt for the zero-key test. Kept in the test file
+// (same package) so production code carries no test-only accessor.
+func (c *Cache) lastFetchedAt() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.fetchedAt
+}
+
 // waitForKey polls Get(kid) until it succeeds or the deadline expires.
 func waitForKey(c *Cache, kid string, within time.Duration) bool {
 	deadline := time.Now().Add(within)

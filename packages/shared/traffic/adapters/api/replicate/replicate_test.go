@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // Configure — no-op.
@@ -236,44 +235,7 @@ func TestRewriteResponseBody_Unsupported(t *testing.T) {
 }
 
 // Normalize — Tier-1 dispatch via the unified extract helper. The adapter
-// claims the openai-chat spec; a chat-shaped body should normalise.
-
-func TestNormalize_OpenAIChatShape(t *testing.T) {
-	body := []byte(`{
-		"model":"meta/llama-3-70b-instruct",
-		"messages":[
-			{"role":"user","content":"hello replicate"}
-		]
-	}`)
-	a := &Adapter{}
-	payload, err := a.Normalize(context.Background(), body, normalize.Meta{
-		AdapterType:  "replicate",
-		Direction:    normalize.DirectionRequest,
-		ContentType:  "application/json",
-		EndpointPath: "/v1/predictions",
-	})
-	if err != nil {
-		t.Fatalf("Normalize err=%v", err)
-	}
-	if payload.Kind != normalize.KindAIChat {
-		t.Errorf("Kind=%v want ai-chat", payload.Kind)
-	}
-	if payload.DetectedSpec != "replicate" {
-		t.Errorf("DetectedSpec=%q want replicate", payload.DetectedSpec)
-	}
-}
-
-func TestNormalize_UnrecognisedShape_FallsThrough(t *testing.T) {
-	a := &Adapter{}
-	_, err := a.Normalize(context.Background(), []byte(`{"foo":"bar"}`), normalize.Meta{
-		AdapterType: "replicate",
-		Direction:   normalize.DirectionRequest,
-		ContentType: "application/json",
-	})
-	if !errors.Is(err, normalize.ErrUnsupported) {
-		t.Errorf("err=%v want ErrUnsupported", err)
-	}
-}
+// is decoded by the shared OpenAI Chat codec via the registry key.
 
 func TestAdapter_ID(t *testing.T) {
 	a := &Adapter{}

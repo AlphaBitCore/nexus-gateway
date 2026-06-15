@@ -28,10 +28,10 @@ func TestEmailSender_SendsComposedMIME(t *testing.T) {
 	e := &Email{sender: fake}
 
 	ch := alerting.Channel{Type: "email", Config: map[string]any{
-		"host": "smtp.example.com",
-		"port": 587,
-		"from": "alerts@example.com",
-		"to":   "a@example.com, b@example.com",
+		"smtpHost": "smtp.example.com",
+		"smtpPort": 587,
+		"smtpFrom": "alerts@example.com",
+		"smtpTo":   "a@example.com, b@example.com",
 	}}
 	a := alerting.Alert{
 		RuleID: "quota.threshold", TargetLabel: "Org X",
@@ -63,9 +63,70 @@ func TestEmailSender_SendsComposedMIME(t *testing.T) {
 	}
 }
 
+// TestEmailSender_StripsCRLFFromTargetLabel verifies F-0246: a TargetLabel
+// carrying embedded CR/LF cannot inject additional RFC822 headers or smuggle
+// body content. The composed message must contain exactly one Subject header
+// and the injected header must not appear.
+func TestEmailSender_StripsCRLFFromTargetLabel(t *testing.T) {
+	var gotMsg []byte
+	fake := func(_ string, _ smtp.Auth, _ string, _ []string, msg []byte) error {
+		gotMsg = msg
+		return nil
+	}
+	e := &Email{sender: fake}
+	ch := alerting.Channel{Type: "email", Config: map[string]any{
+		"smtpHost": "h", "smtpPort": 25, "smtpFrom": "f@example.com", "smtpTo": "t@example.com",
+	}}
+	a := alerting.Alert{
+		RuleID:      "quota.threshold",
+		TargetLabel: "Org X\r\nBcc: attacker@evil.com\r\nX-Injected: 1",
+		Severity:    alerting.SeverityHigh,
+		Message:     "body\r\nContent-Type: text/html",
+	}
+	if _, err := e.Send(context.Background(), ch, a); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	msgStr := string(gotMsg)
+	// The security property: the injected header names must NOT appear at the
+	// START of any line (which would make them real headers). The same text
+	// appearing INSIDE the de-CRLF'd Subject value is harmless.
+	for _, line := range strings.Split(msgStr, "\r\n") {
+		if strings.HasPrefix(line, "Bcc:") || strings.HasPrefix(line, "X-Injected:") {
+			t.Fatalf("CRLF injection created a new header line: %q", line)
+		}
+	}
+	// Header section ends at the first blank line; exactly one Subject header,
+	// living entirely on one line.
+	headerSection := msgStr
+	if i := strings.Index(msgStr, "\r\n\r\n"); i >= 0 {
+		headerSection = msgStr[:i]
+	}
+	if strings.Count(headerSection, "Subject:") != 1 {
+		t.Fatalf("expected exactly one Subject header, got: %q", headerSection)
+	}
+	if !strings.Contains(headerSection, "Subject: [HIGH] quota.threshold: Org XBcc: attacker@evil.comX-Injected: 1") {
+		t.Fatalf("subject must contain the de-CRLF'd label on one line: %q", headerSection)
+	}
+}
+
+// TestEmailSender_RejectsMalformedFromAddress verifies the From/To headers are
+// validated via net/mail so a control-character address is rejected rather than
+// concatenated raw into the header (F-0246).
+func TestEmailSender_RejectsMalformedFromAddress(t *testing.T) {
+	e := &Email{sender: func(string, smtp.Auth, string, []string, []byte) error { return nil }}
+	ch := alerting.Channel{Type: "email", Config: map[string]any{
+		"smtpHost": "h", "smtpPort": 25,
+		"smtpFrom": "bad\r\nBcc: x@y.com",
+		"smtpTo":   "t@example.com",
+	}}
+	if _, err := e.Send(context.Background(), ch, alerting.Alert{Severity: alerting.SeverityHigh}); err == nil {
+		t.Fatal("expected error for malformed from address with CRLF")
+	}
+}
+
 func TestEmailSender_MissingConfigIsError(t *testing.T) {
 	e := NewEmail()
-	ch := alerting.Channel{Type: "email", Config: map[string]any{"host": "x"}}
+	ch := alerting.Channel{Type: "email", Config: map[string]any{"smtpHost": "x"}}
 	_, err := e.Send(context.Background(), ch, alerting.Alert{})
 	if err == nil {
 		t.Fatal("expected error for missing to/from/port")
@@ -78,7 +139,7 @@ func TestEmailSender_SenderFailurePropagates(t *testing.T) {
 	}
 	e := &Email{sender: fake}
 	ch := alerting.Channel{Type: "email", Config: map[string]any{
-		"host": "h", "port": 25, "from": "f@x", "to": "t@x",
+		"smtpHost": "h", "smtpPort": 25, "smtpFrom": "f@x", "smtpTo": "t@x",
 	}}
 	sc, err := e.Send(context.Background(), ch, alerting.Alert{})
 	if err == nil {

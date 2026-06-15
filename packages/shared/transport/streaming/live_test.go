@@ -67,6 +67,7 @@ func TestLivePipeline_AllApproved(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	if result.Decision != core.Approve {
 		t.Errorf("expected APPROVE, got %s", result.Decision)
@@ -125,6 +126,7 @@ func TestLivePipeline_RejectAtCheckpoint(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	if result.Decision != core.RejectHard {
 		t.Errorf("expected REJECT_HARD, got %s", result.Decision)
@@ -161,6 +163,7 @@ func TestLivePipeline_FinalCheckpoint(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	if result.Decision != core.Approve {
 		t.Errorf("expected APPROVE, got %s", result.Decision)

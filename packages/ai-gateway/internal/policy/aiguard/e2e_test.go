@@ -35,7 +35,7 @@ func TestE2E_HappyPathThenCacheHit(t *testing.T) {
 	cache := NewCache(rdb)
 	sink := &stubTrafficSink{}
 	backend := &ExternalBackend{
-		URL: upstream.URL, APIKey: "sk-test", Model: "gpt-4o-mini",
+		URL: upstream.URL, Model: "gpt-4o-mini",
 		HTTPClient: &http.Client{Timeout: 3 * time.Second},
 	}
 	cfg := &RuntimeConfig{
@@ -98,7 +98,7 @@ func TestE2E_OpenAIJSONModeHintPresent(t *testing.T) {
 	defer upstream.Close()
 
 	backend := &ExternalBackend{
-		URL: upstream.URL, APIKey: "k", Model: "m",
+		URL: upstream.URL, Model: "m",
 		HTTPClient: &http.Client{Timeout: time.Second},
 	}
 	_, err := backend.Call(context.Background(), "test prompt")
@@ -128,7 +128,7 @@ func TestE2E_DifferentFingerprintPartitionsCache(t *testing.T) {
 
 	cache := NewCache(rdb)
 	sink := &stubTrafficSink{}
-	backend := &ExternalBackend{URL: upstream.URL, APIKey: "k", Model: "m", HTTPClient: &http.Client{Timeout: time.Second}}
+	backend := &ExternalBackend{URL: upstream.URL, Model: "m", HTTPClient: &http.Client{Timeout: time.Second}}
 
 	cfgA := &RuntimeConfig{BackendMode: "external_url", BackendFingerprint: "fp-A", PromptTemplate: DefaultPrompt, TimeoutMs: 2000, CacheTTLSeconds: 60}
 	cfgB := &RuntimeConfig{BackendMode: "external_url", BackendFingerprint: "fp-B", PromptTemplate: DefaultPrompt, TimeoutMs: 2000, CacheTTLSeconds: 60}

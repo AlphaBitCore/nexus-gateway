@@ -152,49 +152,75 @@ func TestCheckUpdate_ReturnsAvailable(t *testing.T) {
 	}
 }
 
-func TestRenewCert_SendsThingIdAndCSR(t *testing.T) {
-	var gotBody map[string]string
+func TestRenewDeviceToken_AuthenticatesAndReturnsRotatedToken(t *testing.T) {
+	var gotAuth, gotThingID string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/internal/things/renew-cert" {
+		if r.URL.Path != "/api/internal/things/renew-token" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(RenewCertResponse{
-			Certificate: "cert-pem",
-			GatewayCA:   "ca-pem",
-			ExpiresAt:   time.Now().Add(365 * 24 * time.Hour).Format(time.RFC3339),
-			Serial:      "serial-1",
+		gotAuth = r.Header.Get("Authorization")
+		gotThingID = r.Header.Get("X-Thing-Id")
+		_ = json.NewEncoder(w).Encode(RenewTokenResponse{
+			DeviceToken:          "new-token",
+			DeviceTokenExpiresAt: "2026-07-07T00:00:00Z",
 		})
 	}))
 	defer srv.Close()
 
-	c := newTestClient(t, srv.URL)
-	resp, err := c.RenewCert(context.Background(), "dev-1", "-----BEGIN CERTIFICATE REQUEST-----\nfake\n-----END CERTIFICATE REQUEST-----")
+	// The current token + thing id must ride on the rotation call (the call
+	// authenticates with the still-valid token — F-0202 refresh-while-valid).
+	c, err := NewClient(Config{
+		HubURL:        srv.URL,
+		Timeout:       5 * time.Second,
+		MaxRetries:    0,
+		DeviceTokenFn: func() string { return "current-token" },
+		ThingIDFn:     func() string { return "agent-9" },
+	})
 	if err != nil {
-		t.Fatalf("RenewCert: %v", err)
+		t.Fatalf("NewClient: %v", err)
 	}
-	if resp.Certificate != "cert-pem" || resp.Serial != "serial-1" {
+	resp, err := c.RenewDeviceToken(context.Background())
+	if err != nil {
+		t.Fatalf("RenewDeviceToken: %v", err)
+	}
+	if resp.DeviceToken != "new-token" || resp.DeviceTokenExpiresAt != "2026-07-07T00:00:00Z" {
 		t.Errorf("unexpected response: %+v", resp)
 	}
-	if gotBody["thingId"] != "dev-1" {
-		t.Errorf("expected thingId=dev-1, got %q", gotBody["thingId"])
+	if gotAuth != "Bearer current-token" {
+		t.Errorf("expected Bearer current-token, got %q", gotAuth)
 	}
-	if !strings.Contains(gotBody["csr"], "CERTIFICATE REQUEST") {
-		t.Errorf("expected csr in body, got %q", gotBody["csr"])
+	if gotThingID != "agent-9" {
+		t.Errorf("expected X-Thing-Id=agent-9, got %q", gotThingID)
 	}
 }
 
-func TestRenewCert_ErrorResponse(t *testing.T) {
+func TestRenewDeviceToken_ErrorResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"invalid csr"}`))
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid or revoked device token"}`))
 	}))
 	defer srv.Close()
 
 	c := newTestClient(t, srv.URL)
-	_, err := c.RenewCert(context.Background(), "dev-1", "bad")
+	_, err := c.RenewDeviceToken(context.Background())
 	if err == nil {
-		t.Fatal("expected error on 400")
+		t.Fatal("expected error on 401")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error should mention status 401: %v", err)
+	}
+}
+
+func TestRenewDeviceToken_MalformedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL)
+	_, err := c.RenewDeviceToken(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "decode renew device token") {
+		t.Fatalf("expected decode error, got %v", err)
 	}
 }
 

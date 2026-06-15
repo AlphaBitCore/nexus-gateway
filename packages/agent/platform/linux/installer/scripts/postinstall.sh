@@ -41,14 +41,16 @@ fi
 
 # ─── 3. Device CA + OS trust store ──────────────────────────────
 # Generates /var/lib/nexus-agent/device-ca.{pem,key} (0644 / 0600)
-# and installs the .pem to /usr/local/share/ca-certificates/, then
-# runs update-ca-certificates so host HTTPS clients trust
-# intercepted TLS. Idempotent: re-running on upgrade loads the
-# existing CA rather than regenerating. Failure here is fatal
-# because the agent's MITM relay can't function without OS trust.
+# and installs the cert into the OS trust store, then runs the distro's
+# refresh tool so host HTTPS clients trust intercepted TLS. install-ca
+# auto-detects the trust-store layout — Debian/Ubuntu
+# (update-ca-certificates), RHEL/Fedora/Amazon Linux (update-ca-trust),
+# Arch, Alpine — so no per-distro path is passed here. Idempotent:
+# re-running on upgrade loads the existing CA rather than regenerating.
+# Failure here is fatal because the agent's MITM relay can't function
+# without OS trust.
 /usr/lib/nexus-agent/nexus-agent install-ca \
-    --device-ca-out=/var/lib/nexus-agent/device-ca \
-    --trust-store-path=/usr/local/share/ca-certificates
+    --device-ca-out=/var/lib/nexus-agent/device-ca
 
 # Re-chown after install-ca writes (it runs as root and chmod
 # already sets the right modes, but the owner needs to be

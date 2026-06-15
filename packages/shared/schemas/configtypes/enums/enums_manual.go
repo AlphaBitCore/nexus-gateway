@@ -12,10 +12,9 @@ package enums
 type BumpStatus string
 
 const (
-	BumpStatusSuccess                BumpStatus = "BUMP_SUCCESS"
-	BumpStatusFailedPassthrough      BumpStatus = "BUMP_FAILED_PASSTHROUGH"
-	BumpStatusExemptConfigured       BumpStatus = "BUMP_EXEMPT_CONFIGURED"
-	BumpStatusExemptPinned           BumpStatus = "BUMP_EXEMPT_PINNED"
-	BumpStatusDisabledEmergency      BumpStatus = "BUMP_DISABLED_EMERGENCY"
-	BumpStatusDisabledEmergencyForce BumpStatus = "BUMP_DISABLED_EMERGENCY_FORCE"
+	BumpStatusSuccess           BumpStatus = "BUMP_SUCCESS"
+	BumpStatusFailedPassthrough BumpStatus = "BUMP_FAILED_PASSTHROUGH"
+	BumpStatusExemptConfigured  BumpStatus = "BUMP_EXEMPT_CONFIGURED"
+	BumpStatusExemptPinned      BumpStatus = "BUMP_EXEMPT_PINNED"
+	BumpStatusDisabledEmergency BumpStatus = "BUMP_DISABLED_EMERGENCY"
 )

@@ -454,7 +454,13 @@ func buildTrafficEventWhere(p TrafficEventListParams) (string, []any, int) {
 	where := fmt.Sprintf("WHERE a.source IN (%s)", strings.Join(placeholders, ","))
 
 	if p.Provider != "" {
-		where += fmt.Sprintf(` AND a.provider_name = $%d`, argIdx)
+		// Filter by the provider that actually SERVED the request (routed),
+		// falling back to the requested provider for non-ai-gateway rows. The
+		// requested provider_name is NULL for OpenAI-style / "auto" traffic, so
+		// matching it would drop exactly the rows the served provider handled —
+		// and it would disagree with the analytics layer, which attributes by
+		// routed_provider.
+		where += fmt.Sprintf(` AND COALESCE(a.routed_provider_name, a.provider_name) = $%d`, argIdx)
 		args = append(args, p.Provider)
 		argIdx++
 	}
@@ -494,7 +500,10 @@ func buildTrafficEventWhere(p TrafficEventListParams) (string, []any, int) {
 		argIdx++
 	}
 	if p.ModelUsed != "" {
-		where += fmt.Sprintf(` AND a.model_name ILIKE $%d`, argIdx)
+		// Match the served model first (what cost/usage attribute to), falling
+		// back to the requested literal so a search still finds rows where
+		// routing did not substitute.
+		where += fmt.Sprintf(` AND COALESCE(a.routed_model_name, a.model_name) ILIKE $%d`, argIdx)
 		args = append(args, "%"+escapeILIKE(p.ModelUsed)+"%")
 		argIdx++
 	}

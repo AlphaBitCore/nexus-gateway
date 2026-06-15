@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -272,13 +271,16 @@ func TestLoadCheckpoint_NoRow_Returns24hAgo(t *testing.T) {
 		WithArgs(checkpointKey).
 		WillReturnError(pgx.ErrNoRows)
 
-	ts, err := b.loadCheckpoint(context.Background(), checkpointKey)
+	cp, err := b.loadCheckpoint(context.Background(), checkpointKey)
 	if err != nil {
 		t.Fatalf("loadCheckpoint: %v", err)
 	}
-	since := time.Since(ts)
+	since := time.Since(cp.TS)
 	if since < 23*time.Hour || since > 25*time.Hour {
 		t.Errorf("expected ~24h ago, got delta %v", since)
+	}
+	if cp.ID != "" {
+		t.Errorf("cold-start cursor id = %q, want empty", cp.ID)
 	}
 }
 
@@ -296,12 +298,12 @@ func TestLoadCheckpoint_QueryError_Wrapped(t *testing.T) {
 	}
 }
 
-// TestLoadCheckpoint_BareStringForm parses the canonical format
-// saveCheckpoint writes.
-func TestLoadCheckpoint_BareStringForm(t *testing.T) {
+// TestLoadCheckpoint_KeysetForm parses the canonical keyset-cursor object
+// saveCheckpoint writes ({"ts":...,"id":...}) and round-trips both fields.
+func TestLoadCheckpoint_KeysetForm(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
-	want := time.Date(2026, 5, 17, 12, 30, 0, 0, time.UTC)
-	value, _ := json.Marshal(want.Format(time.RFC3339Nano))
+	wantTS := time.Date(2026, 5, 17, 12, 30, 0, 0, time.UTC)
+	value, _ := json.Marshal(bridgeCheckpoint{TS: wantTS, ID: "evt-42"})
 	mock.ExpectQuery(`SELECT value FROM system_metadata`).
 		WithArgs(checkpointKey).
 		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(json.RawMessage(value)))
@@ -310,27 +312,8 @@ func TestLoadCheckpoint_BareStringForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadCheckpoint: %v", err)
 	}
-	if !got.Equal(want) {
-		t.Errorf("loadCheckpoint = %v, want %v", got, want)
-	}
-}
-
-// TestLoadCheckpoint_LegacyObjectForm covers the back-compat branch for
-// rows written by older code as {"lastForwardedAt": "..."}.
-func TestLoadCheckpoint_LegacyObjectForm(t *testing.T) {
-	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
-	want := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
-	legacy := fmt.Sprintf(`{"lastForwardedAt": "%s"}`, want.Format(time.RFC3339Nano))
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).
-		WithArgs(checkpointKey).
-		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(json.RawMessage(legacy)))
-
-	got, err := b.loadCheckpoint(context.Background(), checkpointKey)
-	if err != nil {
-		t.Fatalf("loadCheckpoint: %v", err)
-	}
-	if !got.Equal(want) {
-		t.Errorf("loadCheckpoint = %v, want %v", got, want)
+	if !got.TS.Equal(wantTS) || got.ID != "evt-42" {
+		t.Errorf("loadCheckpoint = %+v, want ts=%v id=evt-42", got, wantTS)
 	}
 }
 
@@ -342,47 +325,28 @@ func TestLoadCheckpoint_Unparseable_Resets24h(t *testing.T) {
 		WithArgs(checkpointKey).
 		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(json.RawMessage(`12345`)))
 
-	ts, err := b.loadCheckpoint(context.Background(), checkpointKey)
+	cp, err := b.loadCheckpoint(context.Background(), checkpointKey)
 	if err != nil {
 		t.Fatalf("loadCheckpoint: %v", err)
 	}
-	since := time.Since(ts)
+	since := time.Since(cp.TS)
 	if since < 23*time.Hour || since > 25*time.Hour {
 		t.Errorf("unparseable row should default to ~24h ago, got %v", since)
 	}
 }
 
-// TestLoadCheckpoint_LegacyObject_BadTimestamp falls through to the 24h
-// default when the legacy object's timestamp string itself can't be parsed.
-func TestLoadCheckpoint_LegacyObject_BadTimestamp(t *testing.T) {
-	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
-	legacy := `{"lastForwardedAt": "not-a-timestamp"}`
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).
-		WithArgs(checkpointKey).
-		WillReturnRows(pgxmock.NewRows([]string{"value"}).AddRow(json.RawMessage(legacy)))
-
-	ts, err := b.loadCheckpoint(context.Background(), checkpointKey)
-	if err != nil {
-		t.Fatalf("loadCheckpoint: %v", err)
-	}
-	since := time.Since(ts)
-	if since < 23*time.Hour || since > 25*time.Hour {
-		t.Errorf("legacy bad-timestamp should default to ~24h ago, got %v", since)
-	}
-}
-
 // TestSaveCheckpoint_Success pins the upsert SQL shape + that the persisted
-// value is the bare RFC3339Nano string (canonical form).
+// value is the keyset-cursor JSON object (canonical form).
 func TestSaveCheckpoint_Success(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
-	ts := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
-	expectedValue, _ := json.Marshal(ts.UTC().Format(time.RFC3339Nano))
+	cp := bridgeCheckpoint{TS: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC), ID: "evt-7"}
+	expectedValue, _ := json.Marshal(cp)
 
 	mock.ExpectExec(`INSERT INTO system_metadata`).
 		WithArgs(checkpointKey, expectedValue).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 
-	if err := b.saveCheckpoint(context.Background(), checkpointKey, ts); err != nil {
+	if err := b.saveCheckpoint(context.Background(), checkpointKey, cp); err != nil {
 		t.Fatalf("saveCheckpoint: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -394,12 +358,12 @@ func TestSaveCheckpoint_Success(t *testing.T) {
 // Poll caller (so it can log without retrying out of order).
 func TestSaveCheckpoint_ExecError_Wrapped(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
-	ts := time.Now().UTC()
+	cp := bridgeCheckpoint{TS: time.Now().UTC(), ID: "evt-x"}
 	mock.ExpectExec(`INSERT INTO system_metadata`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("deadlock detected"))
 
-	err := b.saveCheckpoint(context.Background(), checkpointKey, ts)
+	err := b.saveCheckpoint(context.Background(), checkpointKey, cp)
 	if err == nil || !strings.Contains(err.Error(), "save checkpoint") {
 		t.Errorf("expected wrapped save error, got: %v", err)
 	}
@@ -462,18 +426,18 @@ func TestQueryEvents_SecurityMode(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
 	since := time.Date(2026, 5, 17, 9, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`request_hook_decision = 'block'`).
-		WithArgs(since, 50).
+		WithArgs(since, "", 50).
 		WillReturnRows(trafficRowsTwo())
 
-	events, lastTS, err := b.queryEvents(context.Background(), since, 50)
+	events, next, err := b.queryEvents(context.Background(), bridgeCheckpoint{TS: since}, 50)
 	if err != nil {
 		t.Fatalf("queryEvents: %v", err)
 	}
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
 	}
-	if lastTS.IsZero() {
-		t.Errorf("lastTS should be set from last row")
+	if next.TS.IsZero() {
+		t.Errorf("next cursor TS should be set from last row")
 	}
 	// Row 1 — allowed: no request/response hook fields present
 	if _, ok := events[0]["hookDecision"]; ok {
@@ -538,10 +502,10 @@ func TestQueryEvents_ResponseHookOverridesRequest(t *testing.T) {
 		[]string(nil), (*json.RawMessage)(nil), (*string)(nil),
 	)
 	mock.ExpectQuery(`request_hook_decision = 'block'`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 
-	events, _, err := b.queryEvents(context.Background(), time.Now(), 10)
+	events, _, err := b.queryEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 10)
 	if err != nil {
 		t.Fatalf("queryEvents: %v", err)
 	}
@@ -582,10 +546,10 @@ func TestQueryEvents_InvalidDetailsJSON(t *testing.T) {
 		[]string(nil), &badDetails, (*string)(nil),
 	)
 	mock.ExpectQuery(`request_hook_decision = 'block'`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 
-	events, _, err := b.queryEvents(context.Background(), time.Now(), 10)
+	events, _, err := b.queryEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 10)
 	if err != nil {
 		t.Fatalf("queryEvents: %v", err)
 	}
@@ -598,10 +562,10 @@ func TestQueryEvents_InvalidDetailsJSON(t *testing.T) {
 func TestQueryEvents_QueryError_Wrapped(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("relation does not exist"))
 
-	_, _, err := b.queryEvents(context.Background(), time.Now(), 10)
+	_, _, err := b.queryEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 10)
 	if err == nil || !strings.Contains(err.Error(), "query traffic_event") {
 		t.Errorf("expected wrapped query err, got: %v", err)
 	}
@@ -614,10 +578,10 @@ func TestQueryEvents_ScanError_Wrapped(t *testing.T) {
 	// Only 2 columns when the bridge expects 21 — scan must fail.
 	rows := pgxmock.NewRows([]string{"id", "source"}).AddRow("evt", "src")
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 
-	_, _, err := b.queryEvents(context.Background(), time.Now(), 10)
+	_, _, err := b.queryEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 10)
 	if err == nil || !strings.Contains(err.Error(), "scan traffic_event") {
 		t.Errorf("expected wrapped scan err, got: %v", err)
 	}
@@ -645,10 +609,10 @@ func TestQueryEvents_RowsErr_Wrapped(t *testing.T) {
 		[]string(nil), (*json.RawMessage)(nil), (*string)(nil),
 	).CloseError(errors.New("network blip post-iteration"))
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 
-	_, _, err := b.queryEvents(context.Background(), time.Now(), 10)
+	_, _, err := b.queryEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 10)
 	if err == nil || !strings.Contains(err.Error(), "rows iteration") {
 		t.Errorf("expected wrapped rows iteration err, got: %v", err)
 	}
@@ -696,10 +660,10 @@ func TestQueryAdminEvents_PopulatesFields(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
 	since := time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(since, 100).
+		WithArgs(since, "", 100).
 		WillReturnRows(adminRowsTwo())
 
-	events, lastTS, err := b.queryAdminEvents(context.Background(), since, 100)
+	events, next, err := b.queryAdminEvents(context.Background(), bridgeCheckpoint{TS: since}, 100)
 	if err != nil {
 		t.Fatalf("queryAdminEvents: %v", err)
 	}
@@ -731,8 +695,8 @@ func TestQueryAdminEvents_PopulatesFields(t *testing.T) {
 	if _, ok := events[1]["via"]; ok {
 		t.Errorf("row 2 via should be omitted (human write, was NULL)")
 	}
-	if lastTS.IsZero() {
-		t.Errorf("lastTS should be set")
+	if next.TS.IsZero() {
+		t.Errorf("next cursor TS should be set")
 	}
 	// source field is unconditionally stamped to "admin".
 	if events[0]["source"] != "admin" {
@@ -757,10 +721,10 @@ func TestQueryAdminEvents_InvalidStateJSON(t *testing.T) {
 		&bad, &bad, (*string)(nil),
 	)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 
-	events, _, err := b.queryAdminEvents(context.Background(), time.Now(), 100)
+	events, _, err := b.queryAdminEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 100)
 	if err != nil {
 		t.Fatalf("queryAdminEvents: %v", err)
 	}
@@ -776,10 +740,10 @@ func TestQueryAdminEvents_InvalidStateJSON(t *testing.T) {
 func TestQueryAdminEvents_QueryError_Wrapped(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("conn closed"))
 
-	_, _, err := b.queryAdminEvents(context.Background(), time.Now(), 100)
+	_, _, err := b.queryAdminEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 100)
 	if err == nil || !strings.Contains(err.Error(), "query AdminAuditLog") {
 		t.Errorf("expected wrapped err, got: %v", err)
 	}
@@ -790,10 +754,10 @@ func TestQueryAdminEvents_ScanError_Wrapped(t *testing.T) {
 	b, mock := newBridgeForTest(t, nil, BridgeConfig{})
 	rows := pgxmock.NewRows([]string{"id", "timestamp"}).AddRow("a", time.Now())
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 
-	_, _, err := b.queryAdminEvents(context.Background(), time.Now(), 100)
+	_, _, err := b.queryAdminEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 100)
 	if err == nil || !strings.Contains(err.Error(), "scan AdminAuditLog") {
 		t.Errorf("expected wrapped scan err, got: %v", err)
 	}
@@ -815,10 +779,10 @@ func TestQueryAdminEvents_RowsErr_Wrapped(t *testing.T) {
 		(*json.RawMessage)(nil), (*json.RawMessage)(nil), (*string)(nil),
 	).CloseError(errors.New("iter blip post-iteration"))
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 
-	_, _, err := b.queryAdminEvents(context.Background(), time.Now(), 100)
+	_, _, err := b.queryAdminEvents(context.Background(), bridgeCheckpoint{TS: time.Now()}, 100)
 	if err == nil || !strings.Contains(err.Error(), "rows iteration (AdminAuditLog)") {
 		t.Errorf("expected wrapped rows iteration err, got: %v", err)
 	}
@@ -831,6 +795,7 @@ func TestQueryAdminEvents_RowsErr_Wrapped(t *testing.T) {
 // HTTPSink Reload built — verified via httptest), and both checkpoint
 // saves.
 func TestPoll_FullSuccessCycle(t *testing.T) {
+	allowLoopbackSink(t)
 	// Capture every Send the Reload-built HTTPSink delivers.
 	var sendCount int32
 	var capturedBody []byte
@@ -862,7 +827,7 @@ func TestPoll_FullSuccessCycle(t *testing.T) {
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	// Traffic query — security-mode SQL (block / rate-limited / budget-exceeded).
 	mock.ExpectQuery(`request_hook_decision = 'block'`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(trafficRowsTwo())
 
 	// Admin checkpoint — first call, no row.
@@ -870,7 +835,7 @@ func TestPoll_FullSuccessCycle(t *testing.T) {
 		WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 	// Admin query — return 2 admin events.
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(adminRowsTwo())
 
 	// Two saveCheckpoint upserts — one per non-empty event set.
@@ -947,13 +912,13 @@ func TestPoll_ReloadError_KeepsPreviousSink(t *testing.T) {
 		[]string(nil), (*json.RawMessage)(nil), (*string)(nil),
 	)
 	mock.ExpectQuery(`request_hook_decision = 'block'`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(rows)
 	// Admin checkpoint + admin query (empty result).
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "timestamp",
 			"actorId", "actorLabel", "actorRole",
@@ -1012,7 +977,7 @@ func TestPoll_TrafficQueryError_AbortsCycle(t *testing.T) {
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("query exploded"))
 
 	b.Poll(context.Background())
@@ -1033,7 +998,7 @@ func TestPoll_AdminCheckpointError_AbortsCycle(t *testing.T) {
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(emptyTrafficRows())
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(adminCheckpointKey).WillReturnError(errors.New("permission denied"))
@@ -1056,12 +1021,12 @@ func TestPoll_AdminQueryError_AbortsCycle(t *testing.T) {
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(emptyTrafficRows())
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("admin query down"))
 
 	b.Poll(context.Background())
@@ -1086,12 +1051,12 @@ func TestPoll_AllEventsFiltered_NoSend(t *testing.T) {
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(trafficRowsTwo())
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(adminRowsTwo())
 
 	b.Poll(context.Background())
@@ -1116,12 +1081,12 @@ func TestPoll_SendFailure_NoCheckpointSave(t *testing.T) {
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(trafficRowsTwo())
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(adminRowsTwo())
 	// No saveCheckpoint expectations — Poll must abort before them.
 
@@ -1147,12 +1112,12 @@ func TestPoll_SaveCheckpointError_LoggedNotPropagated(t *testing.T) {
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(trafficRowsTwo())
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(adminRowsTwo())
 	// Traffic save fails; admin save still runs.
 	mock.ExpectExec(`INSERT INTO system_metadata`).
@@ -1181,12 +1146,12 @@ func TestPoll_AdminSaveCheckpointError_LoggedNotPropagated(t *testing.T) {
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM traffic_event`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(trafficRowsTwo())
 	mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 		WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery(`FROM "AdminAuditLog"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(adminRowsTwo())
 	mock.ExpectExec(`INSERT INTO system_metadata`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -1256,8 +1221,50 @@ func TestHTTPSink_Name(t *testing.T) {
 }
 
 // TestHTTPSink_Send_2xx_OK asserts a 2xx response returns nil and that the
+// allowLoopbackSink disables the production SSRF dial guard for the duration of
+// a test so an in-process httptest server (which binds to 127.0.0.1) stays
+// reachable. The guard's own block behaviour is covered by
+// TestHTTPSink_RejectsPrivateURL; these tests target Send formatting / status
+// handling, not the guard. The prior value is restored on cleanup.
+func allowLoopbackSink(t *testing.T) {
+	t.Helper()
+	prev := httpSinkDialControl
+	httpSinkDialControl = nil
+	t.Cleanup(func() { httpSinkDialControl = prev })
+}
+
+// TestHTTPSink_RejectsPrivateURL is the SEC-M6-01 egress regression: with the
+// production guard in force (no allowLoopbackSink), a sink whose URL resolves to
+// a loopback / private address must fail to deliver — the dial is refused before
+// any byte of the audit stream leaves the Hub. Without the guard this 127.0.0.1
+// server would happily receive the batch.
+func TestHTTPSink_RejectsPrivateURL(t *testing.T) {
+	var delivered int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&delivered, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s, err := NewHTTPSink(srv.URL, nil, &JSONFormatter{})
+	if err != nil {
+		t.Fatalf("NewHTTPSink: %v", err)
+	}
+	err = s.Send(context.Background(), []Event{{"id": "secret-audit-row"}})
+	if err == nil {
+		t.Fatal("Send to a loopback URL must fail — the SSRF guard did not block it")
+	}
+	if !strings.Contains(err.Error(), "ssrf-guard") {
+		t.Errorf("error = %v; want it to cite the ssrf-guard refusal", err)
+	}
+	if atomic.LoadInt32(&delivered) != 0 {
+		t.Errorf("audit batch reached the loopback server %d time(s) — guard breached", delivered)
+	}
+}
+
 // server saw the configured headers + Content-Type + JSON body.
 func TestHTTPSink_Send_2xx_OK(t *testing.T) {
+	allowLoopbackSink(t)
 	var capturedHeader http.Header
 	var capturedBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1290,6 +1297,7 @@ func TestHTTPSink_Send_2xx_OK(t *testing.T) {
 // TestHTTPSink_Send_NonJSONFormatter_ContentType pins that the CEFFormatter
 // drives Content-Type=text/plain on the wire.
 func TestHTTPSink_Send_NonJSONFormatter_ContentType(t *testing.T) {
+	allowLoopbackSink(t)
 	var ct string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ct = r.Header.Get("Content-Type")
@@ -1309,6 +1317,7 @@ func TestHTTPSink_Send_NonJSONFormatter_ContentType(t *testing.T) {
 // TestHTTPSink_Send_3xx_Errors asserts any 3xx+ status is surfaced as an
 // error — the bridge logs + skips the checkpoint save on this branch.
 func TestHTTPSink_Send_3xx_Errors(t *testing.T) {
+	allowLoopbackSink(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -1324,6 +1333,7 @@ func TestHTTPSink_Send_3xx_Errors(t *testing.T) {
 // TestHTTPSink_Send_NetworkError pins the transport-failure branch by
 // pointing at a closed server.
 func TestHTTPSink_Send_NetworkError(t *testing.T) {
+	allowLoopbackSink(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	srv.Close() // immediately closed — Do() should fail.
 
@@ -1374,41 +1384,63 @@ func (failFormatter) FormatBatch(_ []Event) ([]byte, error) { return nil, errors
 
 // Formatter — close the remaining cefSeverity / syslogSeverity gaps
 
-// TestCEFSeverity_AllBranches drives every switch arm in cefSeverity so
-// CEF severity numbers stay pinned to the policy table.
-func TestCEFSeverity_AllBranches(t *testing.T) {
+// TestCEFSeverity_FromTaxonomy drives cefSeverity on the CANONICAL eventTypes
+// the classifier actually emits (F-0191). The old table keyed on invented
+// prefixes ("iam.", "config.", "proxy.") the classifier never produces, so
+// every privilege/kill-switch/node mutation fell through to the lowest default
+// severity. These cases pin the taxonomy-derived mapping — and specifically
+// that an IAM-policy change scores >= 6 (the finding's named regression).
+func TestCEFSeverity_FromTaxonomy(t *testing.T) {
 	cases := []struct {
 		in   string
 		want int
 	}{
-		{"auth.login_failure", 7},
-		{"iam.policy_update", 6},
-		{"credential.export", 6},
-		{"proxy.request", 5},
-		{"config.update", 4},
-		{"traffic.allowed", 3}, // default
-		{"", 3},                // default for empty
+		{"auth.login_failure", 7}, // authentication failure
+		{"auth.login_success", 5}, // login success (audit)
+		{"kill-switch.toggle", 9}, // safety-critical
+		{"passthrough.emergency-enable", 9},
+		{"iam-policy.create", 6},   // IAM service — privilege
+		{"iam-group.delete", 6},    // IAM service
+		{"user.update", 6},         // IAM service
+		{"node.write-override", 6}, // platform service — config override
+		{"settings.update", 6},     // platform service
+		{"credential.create", 6},   // secret management (cross-service override)
+		{"hook.create", 5},         // compliance config
+		{"provider.create", 4},     // gateway data-plane config
+		{"traffic.request_blocked", 5},
+		{"traffic.rate_limited", 4},
+		{"traffic.allowed", 3}, // routine
+		{"unknown-resource.frob", 3},
+		{"", 3}, // default for empty
 	}
 	for _, tc := range cases {
 		if got := cefSeverity(tc.in); got != tc.want {
 			t.Errorf("cefSeverity(%q) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
+	// Named regression guard: a privilege-escalating IAM change must never be
+	// exported as low-severity noise.
+	if got := cefSeverity("iam-policy.update"); got < 6 {
+		t.Errorf("cefSeverity(iam-policy.update) = %d, want >= 6 (F-0191)", got)
+	}
 }
 
-// TestSyslogSeverity_AllBranches drives every switch arm in syslogSeverity.
-func TestSyslogSeverity_AllBranches(t *testing.T) {
+// TestSyslogSeverity_FromTaxonomy mirrors the CEF test on the syslog scale
+// (0 emerg … 7 debug; lower = more severe).
+func TestSyslogSeverity_FromTaxonomy(t *testing.T) {
 	cases := []struct {
 		in   string
 		want int
 	}{
-		{"auth.login_failure", 4}, // warning
-		{"iam.policy_update", 5},  // notice
-		{"credential.export", 5},  // notice
-		{"config.update", 5},      // notice
-		{"proxy.request", 4},      // warning
-		{"traffic.allowed", 6},    // info
-		{"", 6},                   // default info
+		{"auth.login_failure", 4},  // warning
+		{"kill-switch.toggle", 2},  // critical
+		{"iam-policy.create", 5},   // notice
+		{"node.write-override", 5}, // notice
+		{"credential.create", 5},   // notice
+		{"hook.create", 5},         // notice (compliance)
+		{"provider.create", 6},     // info (gateway)
+		{"traffic.allowed", 6},     // info
+		{"", 6},                    // default info
 	}
 	for _, tc := range cases {
 		if got := syslogSeverity(tc.in); got != tc.want {
@@ -1547,12 +1579,12 @@ func TestPoll_SerializedByMutex_NoRace(t *testing.T) {
 		mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 			WithArgs(checkpointKey).WillReturnError(pgx.ErrNoRows)
 		mock.ExpectQuery(`FROM traffic_event`).
-			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(emptyTrafficRows())
 		mock.ExpectQuery(`SELECT value FROM system_metadata WHERE key = \$1`).
 			WithArgs(adminCheckpointKey).WillReturnError(pgx.ErrNoRows)
 		mock.ExpectQuery(`FROM "AdminAuditLog"`).
-			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{
 				"id", "timestamp",
 				"actorId", "actorLabel", "actorRole",

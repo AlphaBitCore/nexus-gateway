@@ -447,3 +447,42 @@ func TestClassify_AlignsWithT33PerRequestModel(t *testing.T) {
 		})
 	}
 }
+
+// TestQueueWriter_GovernedCopiesAndSpansPersist — the emitter hands the
+// writer storage-governed normalized copies plus relocated redaction
+// spans; both must land on the SQLite row so the local detail view and
+// the Hub upload carry the governed (never the raw) content.
+func TestQueueWriter_GovernedCopiesAndSpansPersist(t *testing.T) {
+	q := newWriterAdapterTestQueue(t)
+	w := NewQueueWriter(q)
+	defer func() { _ = w.Close(context.Background()) }()
+
+	governedReq := `{"kind":"ai-chat","messages":[{"role":"user","content":[{"type":"text","text":"[EMAIL-REDACTED]"}]}]}`
+	reqSpans := `[{"start":0,"end":16,"replacement":"[EMAIL-REDACTED]","contentAddress":"messages.0.content.0"}]`
+	ev := sharedaudit.AuditEvent{
+		ID:                    "evt-redacted",
+		Timestamp:             time.Now().UTC(),
+		TargetHost:            "api.openai.com",
+		RequestHookDecision:   "APPROVE",
+		RequestNormalized:     json.RawMessage(governedReq),
+		RequestRedactionSpans: json.RawMessage(reqSpans),
+	}
+	w.Enqueue(ev)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	got, err := q.EventByID("evt-redacted")
+	if err != nil || got == nil {
+		t.Fatalf("EventByID: %v %v", got, err)
+	}
+	if string(got.NormalizedRequest) != governedReq {
+		t.Errorf("NormalizedRequest = %q, want governed copy", got.NormalizedRequest)
+	}
+	if string(got.RequestRedactionSpans) != reqSpans {
+		t.Errorf("RequestRedactionSpans = %q, want %q", got.RequestRedactionSpans, reqSpans)
+	}
+	if got.ResponseRedactionSpans != nil {
+		t.Errorf("response spans must stay nil when emitter stamped none")
+	}
+}

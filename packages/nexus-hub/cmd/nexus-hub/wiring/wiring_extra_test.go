@@ -559,29 +559,6 @@ func TestInitOTEL_Enabled_BadEndpoint(t *testing.T) {
 	}
 }
 
-// InitConsumerManager — SIEM batch/flush default-fill branches (zero values)
-
-func TestInitConsumerManager_SIEMDefaults(t *testing.T) {
-	cfg := minimalHubConfig()
-	cfg.Consumers.Enabled = true
-	cfg.Consumers.BatchSize = 10
-	cfg.Consumers.FlushInterval = 100 * time.Millisecond
-	cfg.Consumers.SIEM.Enabled = true
-	cfg.Consumers.SIEM.URL = "http://localhost:9999/siem"
-	cfg.Consumers.SIEM.Format = "json"
-	// Leave BatchSize and FlushInterval at zero → default-fill branches run.
-	cfg.Consumers.SIEM.BatchSize = 0
-	cfg.Consumers.SIEM.FlushInterval = 0
-
-	fakeConsumer := &fakeMQConsumer{}
-	opsReg := newIsolatedOpsReg()
-	mgr := InitConsumerManager(cfg, nil, fakeConsumer, opsReg, testLogger())
-	if mgr == nil {
-		t.Error("expected non-nil manager with SIEM defaults")
-	}
-	mgr.Stop()
-}
-
 // ws.Pool and ws.Server construction — verify helpers used in tests compile
 
 func TestWSPoolAndServerConstruction(t *testing.T) {

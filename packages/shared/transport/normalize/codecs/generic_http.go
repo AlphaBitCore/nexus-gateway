@@ -23,8 +23,14 @@ import (
 // without a routed adapter type, etc.) by projecting the captured bytes
 // into one of the http-* NormalizedPayload kinds.
 //
-// Routing by Content-Type:
+// Routing by byte sniff first, then Content-Type:
 //
+//   - SSE framing (leading `event:` / `data:`) → core.KindHTTPSSE,
+//     HTTPBodyView.SSEFrames structured per frame.
+//   - NDJSON (two+ independently complete JSON lines) → core.KindHTTPJSON,
+//     HTTPBodyView.JSON as an array of the decoded lines.
+//   - valid JSON document (first non-ws byte `{` or `[`) → core.KindHTTPJSON,
+//     HTTPBodyView.JSON populated — regardless of declared Content-Type.
 //   - application/json* → core.KindHTTPJSON, HTTPBodyView.JSON populated.
 //   - application/x-www-form-urlencoded → core.KindHTTPForm, HTTPBodyView.Form.
 //   - multipart/* → core.KindHTTPMultipart, HTTPBodyView.Form (field-by-field
@@ -64,7 +70,24 @@ func (n *GenericHTTPNormalizer) ID() string { return "generic-http" }
 // container, or with no Content-Type at all. Trusting the header alone
 // would route an SSE event stream into json.Unmarshal and fail on the
 // first `event:` byte; the byte-sniff guards against that.
+//
+// Provenance: every payload this normalizer emits — including partial
+// payloads on decode-error paths — is stamped DetectedSpec="generic-http"
+// and Confidence=1.0. The 1.0 means full confidence in the PROJECTION:
+// a structural projection (JSON tree / SSE frames / form map / text /
+// binary digest) is always a faithful rendering of what it claims to
+// be. It makes zero claim about AI semantics — "no AI spec identified"
+// is carried by the DetectedSpec value, not by a lowered confidence.
 func (n *GenericHTTPNormalizer) Normalize(_ context.Context, raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
+	payload, err := n.normalize(raw, meta)
+	payload.DetectedSpec = "generic-http"
+	payload.Confidence = 1.0
+	return payload, err
+}
+
+// normalize holds the routing switch; Normalize wraps it so the
+// provenance stamp covers every return path exactly once.
+func (n *GenericHTTPNormalizer) normalize(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	maxText := n.MaxInlineTextBytes
 	if maxText <= 0 {
 		maxText = defaultMaxInlineTextBytes
@@ -100,6 +123,27 @@ func (n *GenericHTTPNormalizer) Normalize(_ context.Context, raw []byte, meta co
 
 	case looksLikeNDJSON(raw):
 		return n.normalizeNDJSON(raw)
+
+	// JSON byte-sniff, ahead of the declared-Content-Type switch: a
+	// body whose first non-ws byte opens a JSON document AND that
+	// validates as JSON gets the structured tree regardless of what the
+	// producer declared. Capture-side traffic routinely arrives with no
+	// Content-Type at all (or a text/* mis-stamp), and trusting the
+	// header alone would dump a perfectly parseable JSON body as a flat
+	// text blob. Invalid JSON never enters here — it falls to the
+	// declared-CT switch, where a declared-JSON body keeps the explicit
+	// decode-error path (text or binary projection + surfaced error).
+	case looksLikeJSONDocument(raw):
+		return n.normalizeJSON(raw)
+
+	// Declared SSE outranks the remaining CT arms: a producer that says
+	// text/event-stream gets the frame projection even when the leading
+	// bytes defeated the sniff (a comment-heavy preamble longer than the
+	// probe window) — landing a declared event stream in the flat text
+	// projection would hide its structure from the operator and from
+	// content-scanning hooks alike.
+	case mediaType == "text/event-stream":
+		return n.normalizeSSE(raw)
 
 	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
 		return n.normalizeJSON(raw)
@@ -149,60 +193,25 @@ func (n *GenericHTTPNormalizer) normalizeJSON(raw []byte) (core.NormalizedPayloa
 	var decoded any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		// The audit envelope said "application/json" but the bytes
-		// disagree. Try the shapes that real-world producers most
-		// often mis-stamp as JSON before giving up:
+		// disagree. Only the declared-CT route can land here: the JSON
+		// byte-sniff route (looksLikeJSONDocument) already validated the
+		// whole body, and SSE / NDJSON mis-stamps were byte-sniffed away
+		// before the Content-Type switch. What remains:
 		//
-		//   1. SSE — Content-Type forwarded from the request side
-		//      onto a streaming response container (chatgpt-web,
-		//      claude-web). Tested above in Normalize() but a
-		//      future caller might invoke normalizeJSON directly.
-		//   2. NDJSON — one JSON object per line, common for
-		//      bulk-export endpoints and some Gemini streaming
-		//      formats.
-		//   3. Plain UTF-8 text — server actually returned HTML,
-		//      a stack trace, or other prose under a JSON CT.
-		//
-		// Each fallback produces a coherent Kind/BodyView pair so
-		// the UI's per-kind renderer can show readable content;
-		// the previous code left Kind=http-json with only Text
-		// populated, which the UI rendered as "(empty)".
-		if looksLikeSSE(raw) {
-			return n.normalizeSSE(raw)
-		}
-		if looksLikeNDJSON(raw) {
-			return n.normalizeNDJSON(raw)
-		}
+		//   - Plain UTF-8 text — server actually returned HTML, a
+		//     stack trace, or other prose under a JSON CT → readable
+		//     text projection so the UI never renders "(empty)".
+		//   - Genuinely unparseable bytes claiming to be JSON — keep
+		//     the original partial behaviour: surface the error,
+		//     preserve raw bytes as binary ref so the row is not lossy.
 		if looksLikeUTF8Text(raw) {
 			return n.normalizeText(raw)
 		}
-		// Genuinely unparseable bytes claiming to be JSON — keep
-		// the original partial behaviour: surface the error,
-		// preserve raw bytes as binary ref so the row is not lossy.
 		ref := n.binaryRef(raw, "application/json")
 		return ref, fmt.Errorf("generic-http: json decode: %w", err)
 	}
 	out.HTTP = &core.HTTPPayload{BodyView: &core.HTTPBodyView{JSON: decoded}}
 	return out, nil
-}
-
-// normalizeSSE projects a Server-Sent Events stream into a verbatim
-// text view. Per [[feedback_compliance_proxy_text_first]] consumer-LLM
-// surfaces (chatgpt.com, claude.ai web, cursor) lack a stable wire
-// schema, so we deliberately do NOT extract assistant text / tool
-// calls / usage from the event stream here — that's the AI-protocol
-// normalizers' job (openai_chat.go, anthropic_messages.go, …). For
-// the generic case the raw SSE dump is the most-readable, lowest-
-// brittleness projection: the operator scrolls the events and sees
-// what the user said + what the model replied, no schema gymnastics.
-func (n *GenericHTTPNormalizer) normalizeSSE(raw []byte) (core.NormalizedPayload, error) {
-	return core.NormalizedPayload{
-		Kind:             core.KindHTTPText,
-		NormalizeVersion: core.SchemaVersion,
-		Protocol:         "generic-http",
-		HTTP: &core.HTTPPayload{
-			BodyView: &core.HTTPBodyView{Text: string(raw)},
-		},
-	}, nil
 }
 
 // normalizeNDJSON decodes newline-delimited JSON into a JSON array
@@ -238,16 +247,11 @@ func (n *GenericHTTPNormalizer) normalizeNDJSON(raw []byte) (core.NormalizedPayl
 	if err := scanner.Err(); err != nil {
 		return n.normalizeText(raw)
 	}
-	if len(items) < 2 {
-		// Single-line valid JSON is not NDJSON — it's just JSON.
-		// Re-route through the JSON path so the body is presented
-		// as a single decoded object instead of a one-element array.
-		if len(items) == 1 {
-			out.HTTP = &core.HTTPPayload{BodyView: &core.HTTPBodyView{JSON: items[0]}}
-			return out, nil
-		}
-		return n.normalizeText(raw)
-	}
+	// items always holds >= 2 entries here: the only route into this
+	// function is Normalize's looksLikeNDJSON sniff, which demands two
+	// independently complete JSON lines (same scanner limit, same
+	// blank-line skipping), and any line failing to re-parse above
+	// already fell through to the text projection.
 	out.HTTP = &core.HTTPPayload{BodyView: &core.HTTPBodyView{JSON: items}}
 	return out, nil
 }
@@ -394,18 +398,44 @@ func looksLikeUTF8Text(raw []byte) bool {
 	return true
 }
 
-// looksLikeSSE reports whether the first non-whitespace bytes match a
-// Server-Sent Events frame header (`event:` or `data:`). 64 bytes is
-// plenty — every real-world SSE stream begins with one of those two
-// tokens on the first line. Whitespace tolerance covers producers
-// that emit a leading blank line before the first event.
+// looksLikeSSE reports whether the leading lines match a Server-Sent
+// Events stream: the first non-whitespace, non-comment line opens with
+// `event:` or `data:`. SSE comment lines (leading `:`) are skipped —
+// real-world streams open with keep-alive comments like `:ok`
+// (stream.wikimedia.org) or `: ping`, and a probe that only looked at
+// the first line dumped those streams into the text projection. The
+// probe window is 256 bytes so a few comment lines cannot push the
+// first frame header out of view.
 func looksLikeSSE(raw []byte) bool {
 	probe := raw
-	if len(probe) > 64 {
-		probe = probe[:64]
+	if len(probe) > 256 {
+		probe = probe[:256]
 	}
 	s := strings.TrimLeft(string(probe), " \r\n\t")
+	for strings.HasPrefix(s, ":") {
+		nl := strings.IndexByte(s, '\n')
+		if nl < 0 {
+			return false
+		}
+		s = strings.TrimLeft(s[nl+1:], " \r\n\t")
+	}
 	return strings.HasPrefix(s, "event:") || strings.HasPrefix(s, "data:")
+}
+
+// looksLikeJSONDocument reports whether the body IS one complete JSON
+// document: the first non-whitespace byte opens an object or array AND
+// the whole (trimmed) body validates. The full json.Valid scan — not
+// just a prefix probe — is deliberate: this sniff overrides the
+// declared Content-Type, so it must never claim a body that would then
+// fail the JSON decode (an HTML error page starting with a brace, a
+// truncated capture). The scan is a single O(n) pass over bytes the
+// JSON path would parse anyway.
+func looksLikeJSONDocument(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return false
+	}
+	return json.Valid(trimmed)
 }
 
 // looksLikeNDJSON reports whether the body is plausibly newline-

@@ -86,7 +86,7 @@ func TestDiscovery_ReturnsConfigurationForIssuer(t *testing.T) {
 	if want := []string{"authorization_code", "refresh_token"}; !reflect.DeepEqual(body.GrantTypesSupported, want) {
 		t.Errorf("grant_types_supported=%v, want %v", body.GrantTypesSupported, want)
 	}
-	if want := []string{"none", "client_secret_basic"}; !reflect.DeepEqual(body.TokenEndpointAuthMethodsSupported, want) {
+	if want := []string{"none", "client_secret_basic", "client_secret_post"}; !reflect.DeepEqual(body.TokenEndpointAuthMethodsSupported, want) {
 		t.Errorf("token_endpoint_auth_methods_supported=%v, want %v", body.TokenEndpointAuthMethodsSupported, want)
 	}
 	if want := []string{"S256"}; !reflect.DeepEqual(body.CodeChallengeMethodsSupported, want) {

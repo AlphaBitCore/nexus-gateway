@@ -7,51 +7,12 @@ import (
 	"sync"
 	"time"
 
+	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
-
-// auditMetrics owns the audit-pipeline opsmetrics counters. Names use the
-// shared dotted convention (audit.mq_*) and are not part of the spec
-// catalog (§6.3) — they are AI-Gateway-specific MQ-pipeline counters that
-// stay observable on /metrics and are also pushed to Hub via the registry.
-type auditMetrics struct {
-	enqueueTotal  *opsmetrics.CounterPin
-	enqueueErrors *opsmetrics.CounterPin
-	dropped       *opsmetrics.CounterPin
-}
-
-func newAuditMetrics(reg *opsmetrics.Registry) *auditMetrics {
-	if reg == nil {
-		return nil
-	}
-	// No labels today — single audit pipeline per process. The pin pattern
-	// still applies; With() with zero values returns a CounterPin bound to
-	// the empty label set.
-	return &auditMetrics{
-		enqueueTotal:  reg.NewCounter("audit.mq_enqueue_total", nil).With(),
-		enqueueErrors: reg.NewCounter("audit.mq_enqueue_errors_total", nil).With(),
-		dropped:       reg.NewCounter("audit.mq_dropped_total", nil).With(),
-	}
-}
-
-func (m *auditMetrics) incEnqueueTotal() {
-	if m != nil {
-		m.enqueueTotal.Inc()
-	}
-}
-func (m *auditMetrics) incEnqueueErrors() {
-	if m != nil {
-		m.enqueueErrors.Inc()
-	}
-}
-func (m *auditMetrics) incDropped() {
-	if m != nil {
-		m.dropped.Inc()
-	}
-}
 
 // Writer buffers audit records and publishes them to MQ in batches.
 type Writer struct {
@@ -75,6 +36,15 @@ type Writer struct {
 	// inline-only behaviour. Set via WithSpillStore.
 	spill spillstore.SpillStore
 
+	// ndjsonSpill is the durable on-disk fallback for whole audit records.
+	// When the in-memory buffer is full after the backpressure window (or a
+	// re-buffer on MQ failure cannot fit), Enqueue/publishRecord write the
+	// record here instead of dropping it. Nil disables the fallback — then a
+	// genuine overflow is a loud, counted drop. Set via WithNDJSONSpill.
+	// Distinct from `spill` above, which stores oversized request/response
+	// BODIES out-of-band; this stores entire records on transport failure.
+	ndjsonSpill *sharedndjson.Writer
+
 	// payloadCapture is the runtime payload-capture config snapshot
 	// store. recordToMessage pulls MaxInlineBodyBytes from here on each
 	// flush so admin-driven shadow updates take effect without a
@@ -92,6 +62,12 @@ type Writer struct {
 	mu  sync.Mutex
 	buf []*Record
 
+	// flushSignal carries a size-triggered flush request from Enqueue to
+	// the flush loop. Buffered (cap 1) and sent non-blocking, so a burst
+	// of Enqueues coalesces into at most one pending wakeup and never
+	// blocks the request path.
+	flushSignal chan struct{}
+
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 }
@@ -101,12 +77,13 @@ type Writer struct {
 // If reg is nil, MQ-pipeline metrics are silently skipped (test-only path).
 func NewWriter(producer mq.Producer, queue string, reg *opsmetrics.Registry, logger *slog.Logger) *Writer {
 	w := &Writer{
-		producer: producer,
-		queue:    queue,
-		logger:   logger,
-		metrics:  newAuditMetrics(reg),
-		buf:      make([]*Record, 0, defaultBatchSize),
-		stopCh:   make(chan struct{}),
+		producer:    producer,
+		queue:       queue,
+		logger:      logger,
+		metrics:     newAuditMetrics(reg),
+		buf:         make([]*Record, 0, defaultBatchSize),
+		flushSignal: make(chan struct{}, 1),
+		stopCh:      make(chan struct{}),
 	}
 	w.wg.Add(1)
 	go w.flushLoop()
@@ -165,29 +142,6 @@ type NormalizeFn func(direction, contentType, adapterType, model, path string, s
 func (w *Writer) WithNormalizer(fn NormalizeFn) *Writer {
 	w.normalize = fn
 	return w
-}
-
-// Enqueue adds an audit record to the write queue. Non-blocking; drops
-// the record if the queue is full (logs a warning).
-func (w *Writer) Enqueue(rec *Record) {
-	if rec == nil {
-		return
-	}
-	// Authoritative coerce for embedding rows. Every producer emits
-	// through this entry point (proxy live + cache, ai-guard sink), so
-	// running the coerce here is the single source of truth — a codec bug
-	// that populates a chat-only field gets warned + zeroed uniformly.
-	if rec.EndpointType == EndpointTypeEmbeddings {
-		coerceEmbeddingRow(rec, w.logger)
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if len(w.buf) >= maxQueueSize {
-		w.logger.Warn("audit queue full, dropping record", "requestId", rec.RequestID)
-		w.metrics.incDropped()
-		return
-	}
-	w.buf = append(w.buf, rec)
 }
 
 // closeShutdownDeadline bounds how long Close() spends draining the
@@ -256,6 +210,8 @@ func (w *Writer) flushLoop() {
 		select {
 		case <-ticker.C:
 			w.flush()
+		case <-w.flushSignal:
+			w.flush()
 		case <-w.stopCh:
 			return
 		}
@@ -276,27 +232,55 @@ func (w *Writer) flush() {
 		return
 	}
 
+	// Fan the per-record work (normalize + spill + marshal + one
+	// JetStream publish-and-ack) across a bounded pool: the per-record
+	// cost is the drain ceiling, and these records are independent.
+	// flush() is only ever called from the single flush loop (or from
+	// Close after that loop has stopped), so there is never more than one
+	// flush in flight — the pool here is the only concurrency.
+	sem := make(chan struct{}, publishConcurrency)
+	var wg sync.WaitGroup
 	for _, rec := range batch {
-		msg := w.recordToMessage(rec)
-		data, err := json.Marshal(msg)
-		if err != nil {
-			w.logger.Error("audit: marshal failed", "requestId", rec.RequestID, "error", err)
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := w.producer.Enqueue(ctx, w.queue, data); err != nil {
-			w.logger.Error("audit: MQ enqueue failed", "requestId", rec.RequestID, "error", err)
-			w.metrics.incEnqueueErrors()
-			w.mu.Lock()
-			if len(w.buf) < maxQueueSize {
-				w.buf = append(w.buf, rec)
-			} else {
-				w.metrics.incDropped()
-			}
-			w.mu.Unlock()
-		} else {
-			w.metrics.incEnqueueTotal()
-		}
-		cancel()
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(rec *Record) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			w.publishRecord(rec)
+		}(rec)
 	}
+	wg.Wait()
+}
+
+// publishRecord normalizes, marshals and publishes one audit record. On a
+// transient producer failure the record is re-buffered (bounded by
+// maxQueueSize) so the next flush retries it; if the buffer is already full it
+// spills to the durable NDJSON sink rather than dropping. On a hard marshal
+// failure it is dropped (it can never succeed). Safe for concurrent use across
+// the flush worker pool — buffer mutation is under w.mu and the metrics pins +
+// producer are concurrency-safe.
+func (w *Writer) publishRecord(rec *Record) {
+	msg := w.recordToMessage(rec)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		w.logger.Error("audit: marshal failed", "requestId", rec.RequestID, "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := w.producer.Enqueue(ctx, w.queue, data); err != nil {
+		w.logger.Error("audit: MQ enqueue failed", "requestId", rec.RequestID, "error", err)
+		w.metrics.incEnqueueErrors()
+		w.mu.Lock()
+		reBuffered := len(w.buf) < maxQueueSize
+		if reBuffered {
+			w.buf = append(w.buf, rec)
+		}
+		w.mu.Unlock()
+		if !reBuffered && !w.spillRecord(rec) {
+			w.metrics.incDropped()
+		}
+		return
+	}
+	w.metrics.incEnqueueTotal()
 }

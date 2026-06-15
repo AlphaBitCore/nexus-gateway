@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
 
@@ -188,6 +192,57 @@ func TestPipeline_FailOpen(t *testing.T) {
 	}
 	if result.HookResults[0].ReasonCode != "HOOK_ERROR_FAIL_OPEN" {
 		t.Fatalf("expected reason code HOOK_ERROR_FAIL_OPEN, got %q", result.HookResults[0].ReasonCode)
+	}
+}
+
+// TestPipeline_FailOpen_IncrementsCounter verifies that a hook error resolved
+// as fail-open bumps compliance_hook_fail_open_total{hook=<name>}, and that a
+// fail-closed error does NOT bump it (the counter tracks silently-degraded
+// hooks specifically). Uses an isolated registry so the global metric set is
+// untouched.
+func TestPipeline_FailOpen_IncrementsCounter(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	c := promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "test_hook_fail_open_total",
+		Help: "test",
+	}, []string{"hook"})
+
+	// Swap the package-level convenience var for the duration of the test so
+	// pipeline.go increments our isolated counter, then restore it.
+	prev := HookFailOpenTotal
+	HookFailOpenTotal = c
+	defer func() { HookFailOpenTotal = prev }()
+
+	// fail-open hook: error must increment the counter by 1.
+	openHooks := []boundHook{
+		{hook: &stubHook{err: errors.New("guard backend down")}, config: &core.HookConfig{
+			ID: "h1", Name: "pii-detector", Priority: 1, FailBehavior: "fail-open",
+		}},
+	}
+	p := NewPipeline(openHooks, 5*time.Second, 30*time.Second, false, testLogger())
+	if got := p.Execute(context.Background(), &core.HookInput{}); got.Decision != core.Approve {
+		t.Fatalf("expected APPROVE (fail-open), got %s", got.Decision)
+	}
+	if v := testutil.ToFloat64(c.WithLabelValues("pii-detector")); v != 1 {
+		t.Fatalf("expected fail_open_total{pii-detector}=1, got %v", v)
+	}
+
+	// fail-closed hook erroring must NOT increment the fail-open counter.
+	closedHooks := []boundHook{
+		{hook: &stubHook{err: errors.New("guard backend down")}, config: &core.HookConfig{
+			ID: "h2", Name: "block-on-secret", Priority: 1, FailBehavior: "fail-closed",
+		}},
+	}
+	pc := NewPipeline(closedHooks, 5*time.Second, 30*time.Second, false, testLogger())
+	if got := pc.Execute(context.Background(), &core.HookInput{}); got.Decision != core.RejectHard {
+		t.Fatalf("expected REJECT_HARD (fail-closed), got %s", got.Decision)
+	}
+	if v := testutil.ToFloat64(c.WithLabelValues("block-on-secret")); v != 0 {
+		t.Fatalf("expected fail_open_total{block-on-secret}=0 on fail-closed, got %v", v)
+	}
+	// And the original hook's count is unchanged by the second pipeline.
+	if v := testutil.ToFloat64(c.WithLabelValues("pii-detector")); v != 1 {
+		t.Fatalf("expected fail_open_total{pii-detector} still 1, got %v", v)
 	}
 }
 

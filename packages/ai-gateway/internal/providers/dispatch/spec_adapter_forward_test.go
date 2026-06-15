@@ -24,7 +24,7 @@ func (n *noopTransport) BuildURL(_ CallTarget, endpoint typology.WireShape, stre
 
 func (n *noopTransport) ApplyAuth(_ *http.Request, _ CallTarget) error { return nil }
 
-func (n *noopTransport) Do(_ context.Context, r *http.Request) (*http.Response, error) {
+func (n *noopTransport) Do(_ context.Context, r *http.Request, _ CallTarget) (*http.Response, error) {
 	n.captured = r.Header.Clone()
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -43,7 +43,7 @@ func (noopCodec) EncodeRequest(endpoint typology.WireShape, body []byte, _ CallT
 	return EncodeResult{Body: body, ContentType: "application/json"}, nil
 }
 
-func (noopCodec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string) (DecodeResult, error) {
+func (noopCodec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, _ DecodeContext) (DecodeResult, error) {
 	return DecodeResult{CanonicalBody: nativeBody}, nil
 }
 

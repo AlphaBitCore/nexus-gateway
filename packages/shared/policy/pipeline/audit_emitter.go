@@ -17,6 +17,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 )
 
 // spillEmitTimeout caps how long buildEvent will wait for a spillstore
@@ -24,6 +25,14 @@ import (
 // typical S3 PutObject latency but short enough that an unreachable spill
 // backend cannot stall the proxy indefinitely.
 const spillEmitTimeout = 5 * time.Second
+
+// spillRetainCap bounds a single spilled body re-attached in memory for
+// the flush-time normalize pass (see buildEvent). 2 MiB covers the
+// realistic spilled AI request/response that still normalizes usefully;
+// a larger body stays ref-only and is healed off the hot path by the
+// hub backfill's spill-fetch. Worst-case retained memory is therefore
+// ~queue-cap × 2 × spillRetainCap rather than × the 10 MiB body ceiling.
+const spillRetainCap = 2 << 20
 
 // nullableString converts an empty string into a nil *string so the audit
 // row's response_hook_decision column ends up SQL NULL when no response
@@ -93,16 +102,30 @@ type AuditInfo struct {
 	// AuditEvent so agent SQLite can persist the normalized shape and
 	// the Agent UI Event Details Normalized tab can render without a
 	// Hub round-trip. Empty json.RawMessage = no AI adapter matched.
+	// buildEvent applies the stage result's StorageAction to these bytes
+	// before they reach the AuditEvent — consumers always receive the
+	// storage-governed copy.
 	RequestNormalized  json.RawMessage
 	ResponseNormalized json.RawMessage
+
+	// RequestBodyRedacted / ResponseBodyRedacted carry the redacted
+	// wire-shape copy of the body — the adapter Rewrite*Body output
+	// produced when a hook's redaction was applied inflight. Under
+	// storageAction=redact the raw payload store persists ONLY this copy;
+	// absent → the raw copy is dropped (the redacted normalized payload +
+	// spans still carry the content, and an unredactable raw copy would
+	// make the audit store the leak).
+	RequestBodyRedacted  []byte
+	ResponseBodyRedacted []byte
 }
 
 // AuditEmitter maps compliance pipeline results to audit events and enqueues them.
 type AuditEmitter struct {
-	writer         audit.Writer
-	logger         *slog.Logger
-	spill          spillstore.SpillStore
-	payloadCapture *payloadcapture.Store
+	writer             audit.Writer
+	logger             *slog.Logger
+	spill              spillstore.SpillStore
+	payloadCapture     *payloadcapture.Store
+	retainSpilledBytes bool
 }
 
 // WithSpillStore wires an out-of-band body backend so captured bodies
@@ -111,6 +134,18 @@ type AuditEmitter struct {
 // chaining.
 func (e *AuditEmitter) WithSpillStore(store spillstore.SpillStore) *AuditEmitter {
 	e.spill = store
+	return e
+}
+
+// WithPreSpillNormalize opts this emitter into retaining a spilled
+// body's in-memory bytes (bounded by spillRetainCap) so the writer's
+// flush-time normalize pass can project it without a spill-store fetch.
+// ONLY a service whose writer actually runs a flush-time normalizer (the
+// compliance proxy's applyNormalize) should set this — for a writer that
+// normalizes inline before emit (the agent) the retention is pure memory
+// cost with no consumer. Returns the receiver for chaining.
+func (e *AuditEmitter) WithPreSpillNormalize() *AuditEmitter {
+	e.retainSpilledBytes = true
 	return e
 }
 
@@ -239,6 +274,20 @@ func (e *AuditEmitter) buildEvent(
 	if e.payloadCapture != nil {
 		threshold = e.payloadCapture.Get().MaxInlineBodyBytes
 	}
+	// Storage policy governs every persisted copy before any byte leaves
+	// the process. RAW captured bodies: "redact" persists only the
+	// adapter-rewritten copy (absent → nothing), "drop-content" persists
+	// nothing. NORMALIZED copies: "redact" applies the stage's transform
+	// spans (degrading to the drop-content placeholder when spans cannot
+	// be applied precisely), "drop-content" stores the placeholder. The
+	// post-redact span offsets ride along so audit UIs can mark each
+	// redaction inline.
+	reqStorageAction := storageActionOf(requestResult)
+	respStorageAction := storageActionOf(responseResult)
+	requestBody = redact.StorageRawBody(requestBody, info.RequestBodyRedacted, reqStorageAction)
+	responseBody = redact.StorageRawBody(responseBody, info.ResponseBodyRedacted, respStorageAction)
+	requestNormalized, requestRedactionSpans := applyStorageToNormalized(info.RequestNormalized, requestResult, reqStorageAction)
+	responseNormalized, responseRedactionSpans := applyStorageToNormalized(info.ResponseNormalized, responseResult, respStorageAction)
 	// Bound by spillEmitTimeout: spillstore.EmitBody can issue network I/O
 	// (S3 PutObject) and must not stall the proxy indefinitely. On timeout
 	// EmitBody returns an inline-only container flagged truncated.
@@ -250,6 +299,28 @@ func (e *AuditEmitter) buildEvent(
 	requestCT := headerLookup(info.Headers, "Content-Type")
 	requestBodyContainer := spillstore.EmitBody(ctx, e.spill, threshold, requestBody, requestCT, eventID, "request", false, e.logger)
 	responseBodyContainer := spillstore.EmitBody(ctx, e.spill, threshold, responseBody, info.ResponseContentType, eventID, "response", false, e.logger)
+	// Re-attach the in-memory bytes to spilled containers so the writer's
+	// flush-time normalize pass sees the content without a spill-store
+	// round-trip. InlineBytes is excluded from the wire form for non-inline
+	// kinds (Body.MarshalJSON switches on Kind), so the persisted shape is
+	// unchanged. Two guards bound the memory cost (the audit queue holds up
+	// to ~1000 events until flush, so unconditional retention of 10 MiB
+	// bodies would pin gigabytes under MQ backpressure — the OOM family of
+	// the 2026-06-10 hub incident):
+	//   - retainSpilledBytes is opt-in: only a service whose writer runs a
+	//     flush-time normalizer (the compliance proxy) sets it; the agent,
+	//     which normalizes inline before emit, gets zero retention cost.
+	//   - spillRetainCap bounds a single retained body; a larger spilled
+	//     body stays ref-only and is healed off the hot path by the hub
+	//     backfill's spill-fetch (Lane A, 64 MiB read cap).
+	if e.retainSpilledBytes {
+		if requestBodyContainer.Kind == audit.BodySpill && len(requestBody) <= spillRetainCap {
+			requestBodyContainer.InlineBytes = requestBody
+		}
+		if responseBodyContainer.Kind == audit.BodySpill && len(responseBody) <= spillRetainCap {
+			responseBodyContainer.InlineBytes = responseBody
+		}
+	}
 
 	// Latency phase fields. Hook aggregates derive from per-hook latency_ms
 	// in the JSONB pipelines. Upstream phase fields come from the PhaseSink
@@ -314,11 +385,37 @@ func (e *AuditEmitter) buildEvent(
 		SourceProcess:          info.SourceProcess,
 		SourceProcessBundle:    info.SourceProcessBundle,
 		// V2 (#58) — pre-normalized payload JSON forwarded from
-		// forward_handler's runtimeNormalize. nil/empty for non-AI traffic
-		// and non-bumped flows.
-		RequestNormalized:  info.RequestNormalized,
-		ResponseNormalized: info.ResponseNormalized,
+		// forward_handler's runtimeNormalize, with the stage's storage
+		// policy already applied. nil/empty for non-AI traffic and
+		// non-bumped flows.
+		RequestNormalized:      requestNormalized,
+		ResponseNormalized:     responseNormalized,
+		RequestRedactionSpans:  requestRedactionSpans,
+		ResponseRedactionSpans: responseRedactionSpans,
 	}
+}
+
+// storageActionOf returns the stage result's storage policy, or "" (keep)
+// when the stage never ran.
+func storageActionOf(r *CompliancePipelineResult) string {
+	if r == nil {
+		return ""
+	}
+	return string(r.StorageAction)
+}
+
+// applyStorageToNormalized applies a stage's storage policy to its
+// normalized payload copy and serializes the relocated post-redact spans
+// for the wire. Rule attribution for the drop-content placeholder comes
+// from the stage's transform spans; the stage's Redetect closure lets the
+// storage rewrite re-locate spans whose hook-time addresses do not
+// resolve on this payload.
+func applyStorageToNormalized(raw json.RawMessage, r *CompliancePipelineResult, action string) (json.RawMessage, json.RawMessage) {
+	if r == nil {
+		return raw, nil
+	}
+	governed, spans := redact.ApplyStorageAction(raw, action, r.TransformSpans, redact.CollectRuleIDs(r.TransformSpans), r.Redetect)
+	return governed, redact.MarshalSpans(spans)
 }
 
 // sumHooksPipelineLatencyMs walks the hooks_pipeline JSONB blob (an array

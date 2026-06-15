@@ -28,7 +28,7 @@ const maxFileBytes = 5 << 20 // 5 MiB
 const maxFileNameLen = 255
 
 // maxUserFileBytes caps the TOTAL sandbox footprint of one user across all their
-// sessions (e90-s6 T6). Without it a user could accumulate unbounded artifacts in
+// sessions. Without it a user could accumulate unbounded artifacts in
 // the shared spill backend even though each file is individually small. A fixed,
 // generous default (no per-deployment knob, per less-is-more) — the assistant
 // produces text reports, not media — and it degrades safely: over-quota writes are
@@ -51,7 +51,7 @@ type fileMeta struct {
 }
 
 // fileStore is the per-user/session file-sandbox seam the write_file/read_file
-// tools use. Like dbStore it is bound to one authenticated userId (I3); content
+// tools use. Like dbStore it is bound to one authenticated userId; content
 // lives in the shared spillstore, metadata + ref in the AssistantFile table.
 type fileStore interface {
 	Write(name, content, contentType string) (fileMeta, error)
@@ -117,9 +117,9 @@ func (f *webFileStore) Write(name, content, contentType string) (fileMeta, error
 	if len(content) > maxFileBytes {
 		return fileMeta{}, fmt.Errorf("file exceeds the %d-byte sandbox limit", maxFileBytes)
 	}
-	// Per-user total-storage quota (e90-s6 T6). Checked BEFORE spilling content so an
+	// Per-user total-storage quota. Checked BEFORE spilling content so an
 	// over-quota write leaves no orphaned spill object. SUM is scoped to this caller's
-	// userId (I3) across all their sessions.
+	// userId across all their sessions.
 	var used int64
 	if err := f.pool.QueryRow(f.ctx,
 		`SELECT COALESCE(SUM(size), 0) FROM "AssistantFile" WHERE "userId" = $1`,

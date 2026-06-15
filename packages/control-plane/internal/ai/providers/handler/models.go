@@ -9,6 +9,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/modelstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -157,7 +158,10 @@ func (h *Handler) UpdateModel(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "models")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "models"); err != nil {
+			h.logger.Error("update model: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceModel, iam.VerbUpdate)
@@ -185,7 +189,10 @@ func (h *Handler) DeleteModel(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "models")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "models"); err != nil {
+			h.logger.Error("delete model: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceModel, iam.VerbDelete)

@@ -6,23 +6,21 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 
-	"golang.org/x/crypto/hkdf"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keycheck"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keymap"
 )
 
 // VaultConfig holds the parameters needed to initialize the credential vault.
 type VaultConfig struct {
-	EncryptionKey        string
-	EncryptionPassphrase string
-	EncryptionSalt       string
-	Production           bool // true when running in production mode
+	EncryptionKey string
+	Production    bool // true when running in production mode
 }
 
 const (
@@ -44,9 +42,27 @@ var newGCM = func(block cipher.Block) (cipher.AEAD, error) {
 	return cipher.NewGCMWithTagSize(block, tagLength)
 }
 
-// Vault holds the AES-256-GCM master key and provides encrypt/decrypt.
+// Vault holds the provider-credential AES-256-GCM sub-key and provides
+// encrypt/decrypt. The sub-key is HKDF-derived from the configured master at
+// construction: the raw master is NEVER used as an AEAD key
+// directly, so the provider-credential domain is cryptographically separated
+// from the other class (alert-channel secrets) that shares the same master env
+// value. Every Encrypt/Decrypt also binds row-identity AAD.
 type Vault struct {
-	masterKey []byte
+	key []byte // HKDF(master, ClassProviderCredential) — NOT the raw master
+}
+
+// newProviderVault derives the provider-credential sub-key from a validated
+// 32-byte master and returns a Vault. Centralizes the derivation so every
+// construction path (InitVault / NewVault / NewMultiVault) is identical.
+func newProviderVault(master []byte) (*Vault, error) {
+	sub, err := keyderive.DeriveKey32(master, keyderive.ClassProviderCredential)
+	if err != nil {
+		return nil, fmt.Errorf("derive provider-credential key: %w", err)
+	}
+	dst := make([]byte, 32)
+	copy(dst, sub[:])
+	return &Vault{key: dst}, nil
 }
 
 // EncryptResult holds hex-encoded ciphertext, IV, and authentication tag.
@@ -58,28 +74,24 @@ type EncryptResult struct {
 
 // InitVault initializes the credential vault from the provided config.
 // Returns (nil, nil) when encryption is unavailable in non-production mode.
+//
+// Key custody (KMS/HSM): the AES-256-GCM master credential key is loaded from
+// the CREDENTIAL_ENCRYPTION_KEY env variable. Generate a key with:
+//
+//	openssl rand -hex 32
+//
+// There is intentionally no KMS/HSM integration (no AWS KMS / GCP Cloud KMS /
+// Azure Key Vault / PKCS#11 HSM) wired here: the key lives in process memory,
+// sourced from the environment. Operators running in production must supply
+// CREDENTIAL_ENCRYPTION_KEY from a secrets manager / systemd EnvironmentFile /
+// K8s Secret rather than a checked-in value.
 func InitVault(vcfg VaultConfig, logger *slog.Logger) (*Vault, error) {
 	keyHex := vcfg.EncryptionKey
 
 	if keyHex == "" {
-		// Try HKDF derivation from passphrase
-		passphrase := vcfg.EncryptionPassphrase
-		if passphrase != "" {
-			salt := vcfg.EncryptionSalt
-			if salt == "" {
-				salt = "nexus-gateway-default-salt"
-			}
-			derived, err := deriveKey(passphrase, salt)
-			if err != nil {
-				return nil, fmt.Errorf("derive encryption key: %w", err)
-			}
-			logger.Info("Credential encryption key derived via HKDF from passphrase")
-			return &Vault{masterKey: derived}, nil
-		}
-
 		if vcfg.Production {
 			return nil, errors.New(
-				"CREDENTIAL_ENCRYPTION_KEY or CREDENTIAL_ENCRYPTION_PASSPHRASE is required in production",
+				"CREDENTIAL_ENCRYPTION_KEY is required in production",
 			)
 		}
 		logger.Warn("CREDENTIAL_ENCRYPTION_KEY not set — credential vault unavailable")
@@ -97,24 +109,33 @@ func InitVault(vcfg VaultConfig, logger *slog.Logger) (*Vault, error) {
 	if len(key) != 32 {
 		return nil, errors.New("CREDENTIAL_ENCRYPTION_KEY decoded to wrong length; must be 32 bytes")
 	}
+	// Refuse an obviously weak/known key (all-zeros, a committed
+	// example, a degenerate byte set) at boot, so a misconfigured deployment
+	// fails closed instead of encrypting every credential under a guessable key.
+	if err := keycheck.ValidateMasterKey(key); err != nil {
+		return nil, fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY rejected: %w", err)
+	}
 
 	logger.Info("Credential encryption key loaded successfully")
-	return &Vault{masterKey: key}, nil
+	return newProviderVault(key)
 }
 
-// NewVault creates a Vault from a raw 32-byte key (for testing).
+// NewVault creates a Vault from a raw 32-byte master key (for testing). The
+// provider-credential sub-key is HKDF-derived from it, same as production.
 func NewVault(key []byte) (*Vault, error) {
 	if len(key) != 32 {
 		return nil, errors.New("key must be exactly 32 bytes")
 	}
-	dst := make([]byte, 32)
-	copy(dst, key)
-	return &Vault{masterKey: dst}, nil
+	return newProviderVault(key)
 }
 
 // Encrypt encrypts plaintext and returns hex-encoded ciphertext, IV, and tag.
-func (v *Vault) Encrypt(plaintext string) (*EncryptResult, error) {
-	block, err := aes.NewCipher(v.masterKey)
+// aad binds the ciphertext to its row identity — e.g.
+// keyderive.ProviderCredentialAAD(credentialID, providerID). It MUST be passed
+// identically to Decrypt or GCM authentication fails. A nil/empty aad is
+// permitted only for callers with no row identity (none on the credential path).
+func (v *Vault) Encrypt(plaintext string, aad []byte) (*EncryptResult, error) {
+	block, err := aes.NewCipher(v.key)
 	if err != nil {
 		return nil, fmt.Errorf("create cipher: %w", err)
 	}
@@ -129,8 +150,8 @@ func (v *Vault) Encrypt(plaintext string) (*EncryptResult, error) {
 		return nil, fmt.Errorf("generate IV: %w", err)
 	}
 
-	// Seal appends ciphertext+tag
-	sealed := aead.Seal(nil, iv, []byte(plaintext), nil)
+	// Seal appends ciphertext+tag; aad is authenticated but not encrypted.
+	sealed := aead.Seal(nil, iv, []byte(plaintext), aad)
 
 	// Split: ciphertext is everything except the last tagLength bytes
 	ct := sealed[:len(sealed)-tagLength]
@@ -143,8 +164,11 @@ func (v *Vault) Encrypt(plaintext string) (*EncryptResult, error) {
 	}, nil
 }
 
-// Decrypt decrypts hex-encoded ciphertext using the given IV and tag.
-func (v *Vault) Decrypt(ciphertextHex, ivHex, tagHex string) (string, error) {
+// Decrypt decrypts hex-encoded ciphertext using the given IV and tag. aad must
+// match the value passed to Encrypt (the row-identity binding); a
+// mismatch (e.g. a ciphertext swapped from another credential's row) fails GCM
+// authentication and returns an error instead of yielding the wrong plaintext.
+func (v *Vault) Decrypt(ciphertextHex, ivHex, tagHex string, aad []byte) (string, error) {
 	ct, err := hex.DecodeString(ciphertextHex)
 	if err != nil {
 		return "", fmt.Errorf("decode ciphertext: %w", err)
@@ -170,7 +194,7 @@ func (v *Vault) Decrypt(ciphertextHex, ivHex, tagHex string) (string, error) {
 		return "", fmt.Errorf("invalid tag length: got %d bytes, want %d", len(tag), tagLength)
 	}
 
-	block, err := aes.NewCipher(v.masterKey)
+	block, err := aes.NewCipher(v.key)
 	if err != nil {
 		return "", fmt.Errorf("create cipher: %w", err)
 	}
@@ -185,7 +209,7 @@ func (v *Vault) Decrypt(ciphertextHex, ivHex, tagHex string) (string, error) {
 	copy(sealed, ct)
 	copy(sealed[len(ct):], tag)
 
-	plaintext, err := aead.Open(nil, iv, sealed, nil)
+	plaintext, err := aead.Open(nil, iv, sealed, aad)
 	if err != nil {
 		return "", fmt.Errorf("decrypt: %w", err)
 	}
@@ -200,62 +224,77 @@ type MultiVault struct {
 }
 
 // NewMultiVault parses a comma-separated key map of "id:hexkey" pairs and
-// returns a MultiVault. The last entry in the map becomes the current key
-// used for new encryptions.
+// returns a MultiVault.
+//
+// Current-key selection: the key used for NEW encryptions is
+// chosen explicitly by prefixing exactly one entry's id with "*", e.g.
+//
+//	CREDENTIAL_KEY_MAP="v1:<hex>,*v2:<hex>,v3:<hex>"  → current = v2
+//
+// This decouples "which key is active" from the textual ordering, so an
+// operator can prepend or append rotation keys without silently changing the
+// encryption key. If NO entry is marked "*", the LAST entry wins (documented
+// fallback, preserves the historical default for single-key and append-only
+// maps). Marking more than one entry "*" is a configuration error.
 func NewMultiVault(keyMap string, logger *slog.Logger) (*MultiVault, error) {
-	mv := &MultiVault{keys: make(map[string]*Vault)}
-	for _, pair := range strings.Split(keyMap, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid key map entry: %q", pair)
-		}
-		id, hexKey := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	// Delegate the "[*]id:hexkey" wire parse + current-key selection (the
+	// "*"-strip, single-"*", dup-id, empty-map, last-wins-fallback rules) to the
+	// shared leaf keymap.Parse. The credential vault's value rule — exactly 64
+	// hex chars, valid hex, not a degenerate/known-weak master (SEC-M2-02) — is
+	// supplied as the validator so a malformed key reports the same per-id error
+	// at parse time. The same leaf parses CREDENTIAL_KEY_MAP on the AI Gateway
+	// open side (creddecrypt.NewMultiDecryptor), so both stamp/strip the id
+	// identically — the [MUST MATCH] contract (F-0390).
+	entries, current, _, currentExplicit, err := keymap.Parse(keyMap, func(_, hexKey string) error {
 		if len(hexKey) != 64 {
-			return nil, fmt.Errorf("key %q must be 64 hex chars", id)
+			return fmt.Errorf("must be 64 hex chars")
 		}
-		key, err := hex.DecodeString(hexKey)
-		if err != nil {
-			return nil, fmt.Errorf("key %q: invalid hex: %w", id, err)
+		key, derr := hex.DecodeString(hexKey)
+		if derr != nil {
+			return fmt.Errorf("invalid hex: %w", derr)
 		}
-		mv.keys[id] = &Vault{masterKey: key}
-		mv.current = id
+		// Reject a degenerate master before deriving from it.
+		if verr := keycheck.ValidateMasterKey(key); verr != nil {
+			return fmt.Errorf("rejected: %w", verr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if len(mv.keys) == 0 {
-		return nil, errors.New("empty key map")
+	mv := &MultiVault{current: current, keys: make(map[string]*Vault, len(entries))}
+	for id, hexKey := range entries {
+		// hex.DecodeString cannot fail here — the validator already proved the
+		// value decodes; re-decode to build the per-key vault.
+		key, _ := hex.DecodeString(hexKey)
+		vault, verr := newProviderVault(key)
+		if verr != nil {
+			return nil, fmt.Errorf("key %q: %w", id, verr)
+		}
+		mv.keys[id] = vault
 	}
-	logger.Info("multi-key vault loaded", "keyCount", len(mv.keys), "current", mv.current)
+	logger.Info("multi-key vault loaded", "keyCount", len(mv.keys), "current", mv.current, "currentExplicit", currentExplicit)
 	return mv, nil
 }
 
 // Encrypt encrypts plaintext using the current key and returns the result
-// along with the key ID used.
-func (mv *MultiVault) Encrypt(plaintext string) (*EncryptResult, string, error) {
+// along with the key ID used. aad binds the ciphertext to its row identity
+// (see Vault.Encrypt).
+func (mv *MultiVault) Encrypt(plaintext string, aad []byte) (*EncryptResult, string, error) {
 	v := mv.keys[mv.current]
-	result, err := v.Encrypt(plaintext)
+	result, err := v.Encrypt(plaintext, aad)
 	return result, mv.current, err
 }
 
-// Decrypt decrypts ciphertext using the key identified by keyID.
-func (mv *MultiVault) Decrypt(keyID, ciphertextHex, ivHex, tagHex string) (string, error) {
+// Decrypt decrypts ciphertext using the key identified by keyID. aad must match
+// the value passed to Encrypt (the row-identity binding).
+func (mv *MultiVault) Decrypt(keyID, ciphertextHex, ivHex, tagHex string, aad []byte) (string, error) {
 	v, ok := mv.keys[keyID]
 	if !ok {
 		return "", fmt.Errorf("unknown encryption key ID: %q", keyID)
 	}
-	return v.Decrypt(ciphertextHex, ivHex, tagHex)
+	return v.Decrypt(ciphertextHex, ivHex, tagHex, aad)
 }
 
 // CurrentKeyID returns the ID of the key used for new encryptions.
 func (mv *MultiVault) CurrentKeyID() string { return mv.current }
-
-func deriveKey(passphrase, salt string) ([]byte, error) {
-	r := hkdf.New(sha256.New, []byte(passphrase), []byte(salt), []byte("nexus-credential-vault"))
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(r, key); err != nil {
-		return nil, err
-	}
-	return key, nil
-}

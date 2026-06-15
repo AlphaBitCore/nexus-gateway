@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -232,20 +233,28 @@ func (l *LivePipeline) Process(
 		defer close(approvedChan)
 
 		var (
-			pendingEvents  []*SSEEvent
-			accumulatedAll string // full text accumulated so far (for checkpoint content)
-			pendingText    string // text since last checkpoint
+			pendingEvents []*SSEEvent
+			// accumulatedAll is the full text accumulated so far (fed to every
+			// checkpoint). pendingText is the text since the last checkpoint.
+			// Both use strings.Builder so appending each SSE delta is amortized
+			// O(1); naive `s += delta` in this per-event loop is O(n²) over the
+			// length of a long stream. pendingLen tracks the
+			// builder's current length so the checkpoint threshold check stays a
+			// cheap int compare instead of len(pendingText.String()).
+			accumulatedAll strings.Builder
+			pendingText    strings.Builder
+			pendingLen     int
 			totalBytes     int
 			allResults     []core.HookResult
 			hasSoftReject  bool // tracks whether any checkpoint returned BlockSoft
 		)
 
 		flushCheckpoint := func() core.Decision {
-			if len(pendingEvents) == 0 && pendingText == "" {
+			if len(pendingEvents) == 0 && pendingLen == 0 {
 				return core.Approve
 			}
 
-			checkpointInput := buildCheckpointInput(baseInput, accumulatedAll)
+			checkpointInput := buildCheckpointInput(baseInput, accumulatedAll.String())
 
 			// #90 — let caller swap in a Registry-normalized payload so
 			// hooks see structured chat content (model name, tool_calls,
@@ -279,11 +288,10 @@ func (l *LivePipeline) Process(
 				case <-ctx.Done():
 				}
 				cancel()
-				// PR #24 follow-up R-1: same wedge as writer-error and
-				// overflow branches — cancel alone doesn't unblock a
-				// reader sitting in upstream.Read. ai-gateway's RejectHard
-				// branch already does this; shared was the symmetric gap
-				// the 2nd-round architect review flagged.
+				// cancel alone doesn't unblock a reader sitting in
+				// upstream.Read — close the upstream so the reader
+				// goroutine exits and wg.Wait() can return (same wedge
+				// as the writer-error and overflow branches).
 				CloseUpstreamOnExit(upstream)
 				return core.RejectHard
 
@@ -295,7 +303,8 @@ func (l *LivePipeline) Process(
 					return core.BlockSoft
 				}
 				pendingEvents = nil
-				pendingText = ""
+				pendingText.Reset()
+				pendingLen = 0
 				return core.BlockSoft
 
 			default:
@@ -306,7 +315,8 @@ func (l *LivePipeline) Process(
 					return core.Approve
 				}
 				pendingEvents = nil
-				pendingText = ""
+				pendingText.Reset()
+				pendingLen = 0
 				return core.Approve
 			}
 		}
@@ -326,20 +336,21 @@ func (l *LivePipeline) Process(
 				case <-ctx.Done():
 				}
 				cancel()
-				// PR #24 follow-up S1-code: same wedge as the writer-error
-				// path — cancel doesn't unblock a slow upstream.Read.
-				// Close upstream so the reader goroutine exits and
-				// wg.Wait() can return.
+				// cancel doesn't unblock a slow upstream.Read — close
+				// the upstream so the reader goroutine exits and
+				// wg.Wait() can return (same wedge as the writer-error
+				// path).
 				CloseUpstreamOnExit(upstream)
 				return
 			}
 
 			pendingEvents = append(pendingEvents, evt)
-			pendingText += deltaText
-			accumulatedAll += deltaText
+			pendingText.WriteString(deltaText)
+			accumulatedAll.WriteString(deltaText)
+			pendingLen += len(deltaText)
 
 			// Check if we've reached the checkpoint threshold.
-			if len(pendingText) >= l.config.CheckpointChars {
+			if pendingLen >= l.config.CheckpointChars {
 				decision := flushCheckpoint()
 				if decision == core.RejectHard {
 					return
@@ -385,8 +396,8 @@ func (l *LivePipeline) Process(
 			if err := WriteSSEEvent(client, evt); err != nil {
 				writerErr = err
 				cancel()
-				// PR #24 follow-up S1-code: cancel alone does NOT unblock
-				// a reader goroutine sitting inside upstream.Read. If
+				// cancel alone does NOT unblock a reader goroutine
+				// sitting inside upstream.Read. If
 				// upstream is a slow / hung connection, the reader stays
 				// blocked until upstream actually delivers bytes or the
 				// caller's outer defer Close() runs — but Process can't

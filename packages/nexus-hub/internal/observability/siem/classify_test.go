@@ -67,6 +67,72 @@ func TestClassifyAdminEvent(t *testing.T) {
 	}
 }
 
+// TestClassifyAdminEvent_LoginAndOverrideAreCataloged is the F-0192 regression.
+// Before the fix, a login-failure row (Action="admin.login.failed", no
+// EntityType) classified to "" and an override row (EntityType="thing",
+// Action="thing_override_set") classified to the non-cataloged
+// "thing.thing_override_set" — both dropped by any SIEM whitelist and absent
+// from the picker. They must now map to their canonical cataloged identities.
+func TestClassifyAdminEvent_LoginAndOverrideAreCataloged(t *testing.T) {
+	cases := []struct {
+		name string
+		evt  Event
+		want string
+	}{
+		{
+			// Exactly the shape control-plane/identity/authserver/login/password.go emits.
+			name: "login failure (no entityType) maps to auth.login_failure",
+			evt:  Event{"action": "admin.login.failed", "actorLabel": "attacker@example.com"},
+			want: "auth.login_failure",
+		},
+		{
+			name: "login success maps to auth.login_success",
+			evt:  Event{"action": "admin.login.succeeded", "entityType": "user", "entityId": "u-1"},
+			want: "auth.login_success",
+		},
+		{
+			// Exactly the shape nexus-hub fleet override.go / break_glass.go emit.
+			name: "node override maps to node.write-override",
+			evt:  Event{"action": "thing_override_set", "entityType": "thing", "entityId": "thing-1"},
+			want: "node.write-override",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ClassifyAdminEvent(tc.evt); got != tc.want {
+				t.Errorf("ClassifyAdminEvent(%v) = %q; want %q", tc.evt, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClassifyAdminEvent_CatalogedEventsSurviveWhitelist proves the end-to-end
+// F-0192 outcome: once classified, login + override events match an
+// explicit SIEM whitelist instead of being silently dropped. The whitelist uses
+// the same canonical strings the admin picker now offers.
+func TestClassifyAdminEvent_CatalogedEventsSurviveWhitelist(t *testing.T) {
+	raw := []Event{
+		{"action": "admin.login.failed", "actorLabel": "x"},
+		{"action": "thing_override_set", "entityType": "thing", "entityId": "t-1"},
+		{"action": "create", "entityType": "provider"}, // ordinary, not in whitelist
+	}
+	for i := range raw {
+		raw[i]["eventType"] = ClassifyAdminEvent(raw[i])
+	}
+	whitelist := []string{"auth.login_failure", "node.write-override"}
+	got := FilterByEventTypes(raw, whitelist)
+	if len(got) != 2 {
+		t.Fatalf("whitelisted events = %d, want 2 (login + override must survive)", len(got))
+	}
+	seen := map[string]bool{}
+	for _, e := range got {
+		seen[e["eventType"].(string)] = true
+	}
+	if !seen["auth.login_failure"] || !seen["node.write-override"] {
+		t.Errorf("whitelist dropped a cataloged event: got %v", seen)
+	}
+}
+
 func TestFilterByEventTypes(t *testing.T) {
 	events := []Event{
 		{"eventType": "session.login"},

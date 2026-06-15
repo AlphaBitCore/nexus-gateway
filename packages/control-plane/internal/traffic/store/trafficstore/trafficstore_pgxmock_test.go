@@ -141,12 +141,17 @@ func TestGetTrafficEventNormalized(t *testing.T) {
 	s, m := newMock(t)
 	normCols := []string{"traffic_event_id", "request_normalized", "response_normalized",
 		"request_status", "response_status", "request_error_reason", "response_error_reason",
-		"request_redaction_spans", "response_redaction_spans", "normalize_version", "created_at"}
+		"request_redaction_spans", "response_redaction_spans",
+		"normalize_version", "created_at"}
+	reqSpans := []byte(`[{"contentAddress":"messages.0.content.0","start":0,"end":10}]`)
 	m.ExpectQuery(`FROM traffic_event_normalized`).WithArgs("evt1").
-		WillReturnRows(pgxmock.NewRows(normCols).AddRow("evt1", []byte(`{}`), []byte(`{}`), sp("ok"), sp("ok"), nil, nil, nil, nil, "1", tNow))
+		WillReturnRows(pgxmock.NewRows(normCols).AddRow("evt1", []byte(`{}`), []byte(`{}`), sp("ok"), sp("ok"), nil, nil, reqSpans, nil, "1", tNow))
 	got, err := s.GetTrafficEventNormalized(context.Background(), "evt1")
 	if err != nil || got == nil || got.TrafficEventID != "evt1" || got.NormalizeVersion != "1" {
 		t.Fatalf("GetTrafficEventNormalized: %+v %v", got, err)
+	}
+	if string(got.RequestRedactionSpans) != string(reqSpans) || got.ResponseRedactionSpans != nil {
+		t.Fatalf("redaction spans not scanned through: req=%s resp=%v", got.RequestRedactionSpans, got.ResponseRedactionSpans)
 	}
 	m.ExpectQuery(`traffic_event_normalized`).WithArgs("gone").WillReturnError(pgx.ErrNoRows)
 	if got, err := s.GetTrafficEventNormalized(context.Background(), "gone"); err != nil || got != nil {
@@ -160,11 +165,11 @@ func TestGetTrafficEventNormalized(t *testing.T) {
 
 var adminAuditCols = []string{"id", "sequenceNumber", "timestamp", "actorId", "actorLabel", "actorRole",
 	"sourceIp", "action", "entityType", "entityId", "beforeState", "afterState",
-	"nexusRequestId", "clientRequestId", "clientUserId", "clientSessionId"}
+	"nexusRequestId"}
 
 func adminAuditRow() []any {
 	return []any{"a1", 7, tNow, "u1", "Alice", sp("admin"), sp("1.2.3.4"), "update", "VirtualKey", sp("vk1"),
-		[]byte(`{}`), []byte(`{}`), sp("nr1"), sp("cr1"), sp("cu1"), sp("cs1")}
+		[]byte(`{}`), []byte(`{}`), sp("nr1")}
 }
 
 func TestListAdminAuditLogs(t *testing.T) {

@@ -128,6 +128,14 @@ func AuditEventToMap(e auditevent.Event) map[string]any {
 	if len(e.NormalizedResponse) > 0 {
 		m["normalizedResponse"] = e.NormalizedResponse
 	}
+	// Redaction spans for the storage-governed normalized copies above —
+	// Hub forwards them onto traffic_event_normalized.*_redaction_spans.
+	if len(e.RequestRedactionSpans) > 0 {
+		m["requestRedactionSpans"] = e.RequestRedactionSpans
+	}
+	if len(e.ResponseRedactionSpans) > 0 {
+		m["responseRedactionSpans"] = e.ResponseRedactionSpans
+	}
 	if e.UpstreamTtfbMs != nil {
 		m["upstreamTtfbMs"] = *e.UpstreamTtfbMs
 	}

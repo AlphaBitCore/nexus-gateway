@@ -180,8 +180,8 @@ func TestRewriteResponseBody_DelegatedThrough(t *testing.T) {
 // Normalize (Tier-1 spec dispatch)
 
 // TestNormalize_RequestGeminiShape pins that a gemini-generate-shaped
-// request body claims Tier 1 via the gemini-generate spec and stamps
-// DetectedSpec = "google-ai-studio-web" (the adapter ID baked into
+// request body claims Tier 1 via the shared Gemini codec and stamps
+// DetectedSpec = "google-aistudio-web" (the adapter ID baked into
 // normalize.go).
 func TestNormalize_RequestGeminiShape(t *testing.T) {
 	body := []byte(`{
@@ -202,8 +202,8 @@ func TestNormalize_RequestGeminiShape(t *testing.T) {
 	if payload.Kind != normalize.KindAIChat {
 		t.Errorf("Kind=%v want ai-chat", payload.Kind)
 	}
-	if payload.DetectedSpec != "google-ai-studio-web" {
-		t.Errorf("DetectedSpec=%q want google-ai-studio-web", payload.DetectedSpec)
+	if payload.DetectedSpec != "google-aistudio-web" {
+		t.Errorf("DetectedSpec=%q want google-aistudio-web", payload.DetectedSpec)
 	}
 	if payload.Confidence < 0.5 {
 		t.Errorf("Confidence=%v want >= 0.5", payload.Confidence)
@@ -211,7 +211,7 @@ func TestNormalize_RequestGeminiShape(t *testing.T) {
 }
 
 // TestNormalize_ResponseNonStream pins response-side scoring against
-// the gemini-generate-nonstream spec listed in the adapter's spec hint.
+// the shared Gemini codec the adapter delegates to.
 func TestNormalize_ResponseNonStream(t *testing.T) {
 	body := []byte(`{
 		"candidates":[
@@ -232,8 +232,8 @@ func TestNormalize_ResponseNonStream(t *testing.T) {
 	if payload.Kind != normalize.KindAIChat {
 		t.Errorf("Kind=%v want ai-chat", payload.Kind)
 	}
-	if payload.DetectedSpec != "google-ai-studio-web" {
-		t.Errorf("DetectedSpec=%q want google-ai-studio-web", payload.DetectedSpec)
+	if payload.DetectedSpec != "google-aistudio-web" {
+		t.Errorf("DetectedSpec=%q want google-aistudio-web", payload.DetectedSpec)
 	}
 }
 

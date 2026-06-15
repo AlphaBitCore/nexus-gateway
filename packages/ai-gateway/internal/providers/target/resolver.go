@@ -22,9 +22,6 @@ import (
 // ResolveHints lets callers influence target selection when more than
 // one option exists. All fields are optional.
 type ResolveHints struct {
-	// CredentialID, when non-empty, forces the resolver to pick the
-	// named credential on the provider. Used by tenant-scoped keys.
-	CredentialID string
 	// StickyKey is a discriminator (typically the virtual key ID) used for
 	// consistent hashing when multiple credentials are available, so the same
 	// caller always routes to the same credential and maximises provider-side
@@ -93,8 +90,10 @@ type CredentialCandidate struct {
 // CredentialStore resolves credentials for a provider.
 type CredentialStore interface {
 	// ResolveForProvider returns the decrypted API key and identity for the
-	// given credential. When credentialID is non-empty it resolves that
-	// specific credential; otherwise it resolves the single default.
+	// credential identified by credentialID. credentialID must be a non-empty
+	// credential UUID belonging to providerID — passing an empty string falls
+	// back to the single-default path and is used only internally by
+	// resolveCredential when ListForProvider returns no candidates.
 	ResolveForProvider(ctx context.Context, providerID, credentialID string) (apiKey string, credID string, credName string, err error)
 	// ListForProvider returns all eligible candidates for pool selection.
 	// Implementors should filter to enabled + active + weight > 0.
@@ -178,14 +177,9 @@ func (r *PgResolver) Resolve(ctx context.Context, providerID, modelID string, hi
 }
 
 // resolveCredential picks a credential for providerID according to hints.
-// When hints.CredentialID is set it resolves that specific credential.
-// Otherwise it lists all eligible candidates, applies circuit-state from Redis,
+// It lists all eligible candidates, applies circuit-state from Redis,
 // and uses credpool.Select with hints.StickyKey for consistent routing.
 func (r *PgResolver) resolveCredential(ctx context.Context, providerID string, hints ResolveHints) (apiKey, credID, credName string, err error) {
-	if hints.CredentialID != "" {
-		return r.Credentials.ResolveForProvider(ctx, providerID, hints.CredentialID)
-	}
-
 	candidates, err := r.Credentials.ListForProvider(ctx, providerID)
 	if err != nil || len(candidates) == 0 {
 		// Fall back to single-credential path on error or empty list.

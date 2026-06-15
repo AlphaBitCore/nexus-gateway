@@ -60,6 +60,18 @@ type Snapshot struct {
 // Reason attribute to the most specific active tier so the audit log
 // surfaces who actually triggered the bypass.
 //
+// Merge semantics are STRICTLY ADDITIVE (union of bypasses). A more
+// specific tier can only ADD a bypass, never subtract one: there is no
+// per-provider "re-enforce" that overrides a global bypass. Concretely,
+// a global tier with BypassCache=true plus a provider tier with
+// BypassCache=false still yields BypassCache=true for that provider —
+// the provider tier's false is simply not OR'd in, it does not veto the
+// global true. This is intentional: passthrough is a safety release
+// valve, and a narrower scope must never silently re-arm a layer an
+// operator deliberately bypassed fleet-wide. To carve out one provider
+// from a global bypass, the operator narrows or disables the global tier
+// rather than adding a "disable" at the provider tier.
+//
 // Returns nil when no tier is active for this (provider, adapter)
 // pair. Nil is the correct "no bypass" value downstream — both
 // AnyBypassActive and Flags are nil-safe (S2).

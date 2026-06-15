@@ -25,10 +25,9 @@ func (h *Handler) RegisterDeviceGroupRoutes(g *echo.Group, iamMW func(action str
 	g.POST("/device-groups/preview-membership", h.PreviewMembership, iamMW(iam.ResourceDeviceGroup.Action(iam.VerbRead)))
 	g.PUT("/device-groups/:id/membership-query", h.SetGroupMembershipQuery, iamMW(iam.ResourceDeviceGroup.Action(iam.VerbUpdate)))
 	// Bulk-by-group admin ops. Fans out to per-device admin handlers
-	// (force-refresh / rotate-cert) with bounded parallelism; returns
-	// per-device {ok, error} for partial-success rendering.
+	// (force-refresh) with bounded parallelism; returns per-device
+	// {ok, error} for partial-success rendering.
 	g.POST("/device-groups/:id/force-refresh", h.BulkForceRefreshGroup, iamMW(iam.ResourceDeviceGroup.Action(iam.VerbUpdate)))
-	g.POST("/device-groups/:id/rotate-cert", h.BulkRotateCertGroup, iamMW(iam.ResourceDeviceGroup.Action(iam.VerbUpdate)))
 	g.POST("/device-groups/:id/members", h.AddGroupMember, iamMW(iam.ResourceDeviceGroup.Action(iam.VerbUpdate)))
 	g.DELETE("/device-groups/:id/members/:deviceId", h.RemoveGroupMember, iamMW(iam.ResourceDeviceGroup.Action(iam.VerbUpdate)))
 }

@@ -24,6 +24,7 @@ type Response = core.Response
 type Usage = core.Usage
 type EncodeResult = core.EncodeResult
 type DecodeResult = core.DecodeResult
+type DecodeContext = core.DecodeContext
 type StreamSession = core.StreamSession
 type Chunk = core.Chunk
 type ToolCallDelta = core.ToolCallDelta

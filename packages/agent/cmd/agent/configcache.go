@@ -9,7 +9,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/shadow"
@@ -59,6 +61,25 @@ func cachePersist(key string, inner rawApply, getCache func() *shadow.Cache, log
 // or the offline cache would drift from the enforced in-memory policy.
 func isNoopShadowState(raw []byte) bool {
 	return len(raw) == 0 || string(raw) == "null" || string(raw) == "{}"
+}
+
+// openAndRestoreConfigCache opens the offline config cache on db (the audit
+// queue's SQLCipher DB, so applied policy is encrypted at rest alongside the
+// audit log), publishes it through configCache so the loader's per-key
+// persist wrappers mirror every subsequent apply, and replays the cached
+// entries through their live appliers. Replaying now brings enforcement up
+// immediately — well before platform interception starts and before the
+// first Hub pull; a reachable Hub supersedes it via the config-startup
+// refresh, while an unreachable Hub leaves the agent on last-known policy
+// (stale but enforced — never fail-closed). An open failure only disables
+// offline restore.
+func openAndRestoreConfigCache(ctx context.Context, db *sql.DB, configCache *atomic.Pointer[shadow.Cache], appliers map[string]rawApply, logger *slog.Logger) {
+	if cache, cacheErr := shadow.NewCache(db); cacheErr != nil {
+		logger.Warn("config_cache open failed; offline restore disabled", "error", cacheErr)
+	} else {
+		configCache.Store(cache)
+		restoreCachedConfig(ctx, cache, appliers, logger)
+	}
 }
 
 // restoreCachedConfig replays the last-known config persisted to

@@ -71,16 +71,17 @@ func TestEstimatedCostUSD(t *testing.T) {
 
 // staticCachePricing is a test double for CachePricingLookup that returns a
 // fixed ProviderPricing regardless of adapter/provider/model.
-type staticCachePricing struct{ p *store.ProviderPricing }
+type staticCachePricing struct{ p *store.CachePricing }
 
-func (s *staticCachePricing) LookupCachePricing(_, _, _ string) *store.ProviderPricing {
+func (s *staticCachePricing) LookupCachePricing(_ string) *store.CachePricing {
 	return s.p
 }
 
 // TestComputeCacheCosts verifies that EstimatedCostUsd is computed from scratch
-// using provider_pricing consistently, so a price mismatch between the models
-// table (quotaInPrice) and provider_pricing (p.InputUSDPerM) can never produce
-// a negative cost.
+// using the Model-snapshot prices consistently. Because the base cost and the
+// cache cost/savings now read the same four numbers (the single pricing source
+// of truth), the two-source divergence that historically produced a negative
+// cost can no longer occur.
 //
 // The normalizer sums uncached + cache_read + cache_creation into
 // PromptTokens at codec time (see anthropic_messages.go), so PromptTokens
@@ -89,7 +90,7 @@ func (s *staticCachePricing) LookupCachePricing(_, _, _ string) *store.ProviderP
 // The regression test below pins the claude-opus-4-1 case that surfaced
 // the original double-count bug.
 func TestComputeCacheCosts(t *testing.T) {
-	pricing := &store.ProviderPricing{
+	pricing := &store.CachePricing{
 		InputUSDPerM:      0.25,
 		OutputUSDPerM:     1.25,
 		CacheReadUSDPerM:  0.03,
@@ -113,7 +114,7 @@ func TestComputeCacheCosts(t *testing.T) {
 		// Optional per-case pricing override. nil = use the shared
 		// `pricing` defined above. Set this on cases that need to
 		// reproduce production pricing (e.g., claude-opus-4 regression).
-		pricingOverride *store.ProviderPricing
+		pricingOverride *store.CachePricing
 	}{
 		{
 			name:         "openai: prompt total = uncached + cache_read",
@@ -161,7 +162,7 @@ func TestComputeCacheCosts(t *testing.T) {
 		},
 		{
 			// Regression for the Anthropic double-count bug:
-			// claude-opus-4-1 provider_pricing (input=$15, output=$75,
+			// claude-opus-4-1 Model-snapshot prices (input=$15, output=$75,
 			// cache_read=$1.5, cache_write=$18.75). Tokens:
 			// prompt=10082 (= uncached 908 + cache_read 8823 + cache_write 351),
 			// completion=1024. Pre-fix cost was $0.247846 (2.25× over).
@@ -177,7 +178,7 @@ func TestComputeCacheCosts(t *testing.T) {
 			wantReadSavings:     8823 * (15.0 - 1.5) / 1e6,
 			wantWriteCost:       351 * 18.75 / 1e6,
 			wantNetSavings:      8823*(15.0-1.5)/1e6 - 351*18.75/1e6,
-			pricingOverride: &store.ProviderPricing{
+			pricingOverride: &store.CachePricing{
 				InputUSDPerM:      15.0,
 				OutputUSDPerM:     75.0,
 				CacheReadUSDPerM:  1.5,

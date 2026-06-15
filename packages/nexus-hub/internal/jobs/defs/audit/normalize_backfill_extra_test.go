@@ -15,6 +15,7 @@ import (
 
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // TestNewNormalizeBackfill_DefaultIntervalAndCounters pins the constructor's
@@ -25,7 +26,7 @@ import (
 // no method call happens until Run, which the test does not invoke.
 func TestNewNormalizeBackfill_DefaultIntervalAndCounters(t *testing.T) {
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
-	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, 0, reg, silentLogger())
+	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, nil, 0, reg, silentLogger())
 	if job.interval != 5*time.Minute {
 		t.Errorf("default interval = %v, want 5m", job.interval)
 	}
@@ -47,7 +48,7 @@ func TestNewNormalizeBackfill_DefaultIntervalAndCounters(t *testing.T) {
 // opsReg leaves all counter fields nil so the runtime's nil-guards take
 // over (matches the pattern in audit_freshness_check.go).
 func TestNewNormalizeBackfill_NilRegistry(t *testing.T) {
-	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, 2*time.Minute, nil, silentLogger())
+	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, nil, 2*time.Minute, nil, silentLogger())
 	if job.scanned != nil || job.filled != nil || job.skipped != nil || job.errors != nil {
 		t.Error("counters should stay nil when opsReg is nil")
 	}
@@ -68,10 +69,12 @@ func TestNormalizeBackfill_UpsertExecError(t *testing.T) {
 		"id", "path", "adapter_type", "model",
 		"request_content_type", "response_content_type",
 		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
 	}).AddRow(
 		"evt-err", "/v1/chat/completions", "openai", "gpt-4o",
 		ptrStr("application/json"), ptrStr("application/json"),
 		inlineBodyEnvelope(t, rawReq), nil,
+		nil, nil,
 	)
 	expectScan(mock, rows)
 	mock.ExpectExec(`INSERT INTO traffic_event_normalized`).
@@ -83,7 +86,7 @@ func TestNormalizeBackfill_UpsertExecError(t *testing.T) {
 		WillReturnError(errors.New("23505 duplicate key"))
 
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
-	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, 5*time.Minute, reg, silentLogger())
+	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, nil, 5*time.Minute, reg, silentLogger())
 	// Swap in mock pool for the call. The constructor stored nil; replace
 	// directly via the field since this is white-box testing.
 	job.pool = mock
@@ -175,11 +178,11 @@ func TestNormalizeBackfill_ScanRowError(t *testing.T) {
 	// (9 destinations expected; only 1 column supplied) — Scan must error.
 	rows := pgxmock.NewRows([]string{"only_one"}).AddRow("oops")
 	mock.ExpectQuery(`FROM traffic_event te`).
-		WithArgs(normalizeBackfillBatchSize).
+		WithArgs(normalizeBackfillBatchSize, normcore.SchemaVersion).
 		WillReturnRows(rows)
 
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
-	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, 5*time.Minute, reg, silentLogger())
+	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{}, nil, 5*time.Minute, reg, silentLogger())
 	job.pool = mock
 
 	err := job.Run(context.Background())

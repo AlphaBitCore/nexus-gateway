@@ -139,16 +139,82 @@ func TestLoadRollupCosts_CacheHit(t *testing.T) {
 	}
 }
 
+// TestLoadRollupCosts_TrailingWindowOnly covers the branch where the whole
+// requested window sits inside the last two hours (start newer than the
+// previous full hour): the 1h base read is skipped and only the 5m tail read
+// fires. The end is set in the future to also exercise the clamp-to-now (F-0164).
+func TestLoadRollupCosts_TrailingWindowOnly(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	now := time.Now().UTC()
+	start := now.Add(-30 * time.Minute)
+	end := now.Add(time.Hour) // future → clamped to now
+
+	// Exactly one query (the 5m tail). A second expectation would fail if the
+	// base read were not skipped.
+	mock.ExpectQuery(`FROM "metric_rollup_`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}).AddRow("r1", start, "billed_cost_usd", "user=u1", "", 12.0, []byte("{}"), now))
+
+	j := &QuotaAlertCheckJob{pool: mock, logger: testLogger()}
+	costs, err := j.loadRollupCosts(context.Background(), map[string]map[string]float64{}, "user", start, end)
+	if err != nil {
+		t.Fatalf("loadRollupCosts: %v", err)
+	}
+	if costs["u1"] != 12.0 {
+		t.Errorf("u1 = %v, want 12.0", costs["u1"])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("base read must be skipped for a trailing-only window: %v", err)
+	}
+}
+
+// TestLoadRollupCosts_PastWindowBaseOnly covers the branch where the window
+// ends more than an hour in the past, so base1hEnd clamps to effectiveEnd and
+// only the base read fires (no trailing 5m top-up).
+func TestLoadRollupCosts_PastWindowBaseOnly(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	now := time.Now().UTC()
+	start := now.Add(-5 * time.Hour)
+	end := now.Add(-3 * time.Hour)
+
+	mock.ExpectQuery(`FROM "metric_rollup_`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}).AddRow("r1", start, "billed_cost_usd", "user=u1", "", 8.0, []byte("{}"), now))
+
+	j := &QuotaAlertCheckJob{pool: mock, logger: testLogger()}
+	costs, err := j.loadRollupCosts(context.Background(), map[string]map[string]float64{}, "user", start, end)
+	if err != nil {
+		t.Fatalf("loadRollupCosts: %v", err)
+	}
+	if costs["u1"] != 8.0 {
+		t.Errorf("u1 = %v, want 8.0", costs["u1"])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("only the base read should fire for a fully-past window: %v", err)
+	}
+}
+
 func TestLoadRollupCosts_QueryError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 	sentinel := errors.New("rollup query err")
-	// The rollup query hits the 5m table for a ~24h range.
-	// args: start, end, "billed_cost_usd", "user=%"
+	// loadRollupCosts now splits into a 1h base read + a 5m tail read (F-0164);
+	// the base read fires first, so its error short-circuits before the tail.
+	// Times are runtime-derived (base end = prev full hour), so use AnyArg.
 	start := time.Now().UTC().Add(-24 * time.Hour)
 	end := time.Now().UTC()
 	mock.ExpectQuery(`FROM "metric_rollup_`).
-		WithArgs(start, end, "billed_cost_usd", "user=%").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
 		WillReturnError(sentinel)
 
 	j := &QuotaAlertCheckJob{pool: mock, logger: testLogger()}
@@ -167,19 +233,24 @@ func TestLoadRollupCosts_HappyPath_AggregatesEntityCosts(t *testing.T) {
 	start := now.Add(-24 * time.Hour)
 	end := now
 
-	// QueryRollup returns rows with dimensionKey = "user=<entityID>" and value.
-	// Two rows for the same entity (u1) should be summed.
-	// args: start, end, "billed_cost_usd", "user=%"
-	mock.ExpectQuery(`FROM "metric_rollup_`).
-		WithArgs(start, end, "billed_cost_usd", "user=%").
-		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
-			"value", "metadata", "updatedAt",
-		}).
-			AddRow("r1", start, "billed_cost_usd", "user=u1", "", 30.0, []byte("{}"), now).
-			AddRow("r2", start, "billed_cost_usd", "user=u1", "", 20.0, []byte("{}"), now).
-			AddRow("r3", start, "billed_cost_usd", "user=u2", "", 10.0, []byte("{}"), now).
-			AddRow("r4", start, "billed_cost_usd", "vk=vk1", "", 5.0, []byte("{}"), now)) // wrong prefix, skipped
+	mergeCols := []string{
+		"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+		"value", "metadata", "updatedAt",
+	}
+	// F-0164: loadRollupCosts reads the stable base from the 1h tier and tops up
+	// the trailing window from the 5m tier. The two reads are additive — a
+	// dimension's spend split across base and tail must sum. u1 = 25 (base) +
+	// 25 (tail) = 50; u2 = 10 (base only). The wrong-prefix vk row is skipped.
+	mock.ExpectQuery(`FROM "metric_rollup_`). // base (1h tier)
+							WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
+							WillReturnRows(pgxmock.NewRows(mergeCols).
+								AddRow("r1", start, "billed_cost_usd", "user=u1", "", 25.0, []byte("{}"), now).
+								AddRow("r3", start, "billed_cost_usd", "user=u2", "", 10.0, []byte("{}"), now).
+								AddRow("r4", start, "billed_cost_usd", "vk=vk1", "", 5.0, []byte("{}"), now)) // wrong prefix, skipped
+	mock.ExpectQuery(`FROM "metric_rollup_`). // tail (5m tier)
+							WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
+							WillReturnRows(pgxmock.NewRows(mergeCols).
+								AddRow("r2", now, "billed_cost_usd", "user=u1", "", 25.0, []byte("{}"), now))
 
 	j := &QuotaAlertCheckJob{pool: mock, logger: testLogger()}
 	cache := make(map[string]map[string]float64)
@@ -188,7 +259,7 @@ func TestLoadRollupCosts_HappyPath_AggregatesEntityCosts(t *testing.T) {
 		t.Fatalf("loadRollupCosts: %v", err)
 	}
 	if costs["u1"] != 50.0 {
-		t.Errorf("u1 = %v, want 50.0 (two rows summed)", costs["u1"])
+		t.Errorf("u1 = %v, want 50.0 (base 25 + tail 25 stitched across tiers)", costs["u1"])
 	}
 	if costs["u2"] != 10.0 {
 		t.Errorf("u2 = %v, want 10.0", costs["u2"])
@@ -220,13 +291,20 @@ func TestRun_WithOverrideCostLimit_RaisesAlert(t *testing.T) {
 	mock.ExpectQuery(`FROM "QuotaPolicy"`).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "scope", "organizationId", "costLimitUsd", "alertThresholds"}))
 
-	// loadRollupCosts → QueryRollup for "user" dim; use AnyArg for time values.
+	// loadRollupCosts → 1h base read (the spend) + 5m tail read (empty) per the
+	// F-0164 two-tier stitch; use AnyArg for time values.
 	mock.ExpectQuery(`FROM "metric_rollup_`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
 			"value", "metadata", "updatedAt",
 		}).AddRow("r1", periodStart, "billed_cost_usd", "user=u1", "", 90.0, []byte("{}"), now))
+	mock.ExpectQuery(`FROM "metric_rollup_`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}))
 
 	// resolveStale → SELECT firing alerts → empty.
 	mock.ExpectQuery(`SELECT "targetKey"\s+FROM "Alert"`).WithArgs(quotaThresholdRuleID).
@@ -264,13 +342,19 @@ func TestRun_WithPolicyCostLimit_RaisesAlert(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id", "scope", "organizationId", "costLimitUsd", "alertThresholds"}).
 			AddRow("policy-1", "user", (*string)(nil), &costLimit, json.RawMessage(thresholds)))
 
-	// loadRollupCosts for "user" dim: u2 has $45 (90% of $50).
+	// loadRollupCosts for "user" dim: u2 has $45 (90% of $50). 1h base + 5m tail (empty).
 	mock.ExpectQuery(`FROM "metric_rollup_`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
 			"value", "metadata", "updatedAt",
 		}).AddRow("r2", periodStart, "billed_cost_usd", "user=u2", "", 45.0, []byte("{}"), now))
+	mock.ExpectQuery(`FROM "metric_rollup_`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}))
 
 	// resolveStale SELECT → empty.
 	mock.ExpectQuery(`SELECT "targetKey"\s+FROM "Alert"`).WithArgs(quotaThresholdRuleID).
@@ -285,6 +369,139 @@ func TestRun_WithPolicyCostLimit_RaisesAlert(t *testing.T) {
 	// 90% crosses 80% → one alert.
 	if raiser.raiseCount() != 1 {
 		t.Errorf("raises = %d, want 1", raiser.raiseCount())
+	}
+}
+
+// TestRun_ProjectOverride_ReadsProjectDimension is the F-0150 regression
+// guard for Phase A. A project-scoped override must read spend from the
+// `project=<uuid>` rollup dimension. Before the fix, scopeToDimension mapped
+// project→organization, so costs[o.TargetID] looked a project UUID up in the
+// org-keyed cost map → 0 → the threshold was never crossed and no alert fired.
+func TestRun_ProjectOverride_ReadsProjectDimension(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	costLimit := 100.0
+	projID := "proj-abc"
+	now := time.Now().UTC()
+	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	// One project-scoped override, costLimit=$100.
+	mock.ExpectQuery(`FROM "QuotaOverride"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "targetType", "targetId", "costLimitUsd"}).
+			AddRow("override-proj", "project", projID, &costLimit))
+	mock.ExpectQuery(`FROM "QuotaPolicy"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "scope", "organizationId", "costLimitUsd", "alertThresholds"}))
+
+	// The rollup must be queried for the "project" dimension (prefix
+	// "project=%"). Project proj-abc has spent $90 (90% of $100). An
+	// organization= row carrying unrelated org-wide spend must be ignored —
+	// it would never be returned by a "project=%" query in production, but
+	// asserting the WithArgs prefix here proves we read the project dimension.
+	mock.ExpectQuery(`FROM "metric_rollup_`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "project=%").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}).AddRow("r1", periodStart, "billed_cost_usd", "project="+projID, "", 90.0, []byte("{}"), now))
+	mock.ExpectQuery(`FROM "metric_rollup_`). // 5m tail (empty)
+							WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "project=%").
+							WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}))
+
+	mock.ExpectQuery(`SELECT "targetKey"\s+FROM "Alert"`).WithArgs(quotaThresholdRuleID).
+		WillReturnRows(pgxmock.NewRows([]string{"targetKey"}))
+
+	raiser := &fakeRaiser{}
+	j := &QuotaAlertCheckJob{pool: mock, raiser: raiser, logger: testLogger()}
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if raiser.raiseCount() != 1 {
+		t.Fatalf("raises = %d, want 1 (project spend $90 crosses 80%%)", raiser.raiseCount())
+	}
+	r := raiser.raises[0]
+	if r.Details["targetType"] != "project" {
+		t.Errorf("targetType = %v, want project", r.Details["targetType"])
+	}
+	if r.Details["targetId"] != projID {
+		t.Errorf("targetId = %v, want %q", r.Details["targetId"], projID)
+	}
+	if r.Details["currentCostUsd"].(float64) != 90.0 {
+		t.Errorf("currentCostUsd = %v, want 90.0 (the project's own spend)", r.Details["currentCostUsd"])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations: %v", err)
+	}
+}
+
+// TestRun_ProjectPolicy_ComparesProjectSpendToProjectLimit is the F-0150
+// regression guard for Phase B. A project-scoped policy must compare each
+// project's own spend (from the project= dimension) against the project
+// limit, and the resulting alert's targetType must be "project" (via
+// dimensionToTargetType). Before the fix the policy fired org-keyed alerts
+// comparing org-wide spend to the project limit.
+func TestRun_ProjectPolicy_ComparesProjectSpendToProjectLimit(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	costLimit := 200.0
+	thresholds, _ := json.Marshal([]int{80})
+	now := time.Now().UTC()
+	periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(`FROM "QuotaOverride"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "targetType", "targetId", "costLimitUsd"}))
+	// Project-scoped policy, $200 limit, no org filter.
+	mock.ExpectQuery(`FROM "QuotaPolicy"`).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "scope", "organizationId", "costLimitUsd", "alertThresholds"}).
+			AddRow("policy-proj", "project", (*string)(nil), &costLimit, json.RawMessage(thresholds)))
+
+	// Two projects: p-hot at $180 (90% of $200 → crosses 80%), p-cold at
+	// $20 (10% → no alert). Read from the project= dimension.
+	mock.ExpectQuery(`FROM "metric_rollup_`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "project=%").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}).
+			AddRow("r1", periodStart, "billed_cost_usd", "project=p-hot", "", 180.0, []byte("{}"), now).
+			AddRow("r2", periodStart, "billed_cost_usd", "project=p-cold", "", 20.0, []byte("{}"), now))
+	mock.ExpectQuery(`FROM "metric_rollup_`). // 5m tail (empty)
+							WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "project=%").
+							WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}))
+
+	mock.ExpectQuery(`SELECT "targetKey"\s+FROM "Alert"`).WithArgs(quotaThresholdRuleID).
+		WillReturnRows(pgxmock.NewRows([]string{"targetKey"}))
+
+	raiser := &fakeRaiser{}
+	j := &QuotaAlertCheckJob{pool: mock, raiser: raiser, logger: testLogger()}
+	if err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if raiser.raiseCount() != 1 {
+		t.Fatalf("raises = %d, want 1 (only p-hot crosses 80%%)", raiser.raiseCount())
+	}
+	r := raiser.raises[0]
+	if r.Details["targetType"] != "project" {
+		t.Errorf("targetType = %v, want project (via dimensionToTargetType)", r.Details["targetType"])
+	}
+	if r.Details["targetId"] != "p-hot" {
+		t.Errorf("targetId = %v, want p-hot", r.Details["targetId"])
+	}
+	if r.Details["currentCostUsd"].(float64) != 180.0 {
+		t.Errorf("currentCostUsd = %v, want 180.0 (p-hot's own project spend)", r.Details["currentCostUsd"])
+	}
+	if r.TargetKey != policyTargetKey("policy-proj", "project", "p-hot", now.Format("2006-01")) {
+		t.Errorf("targetKey = %q, want project-keyed policy key", r.TargetKey)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("mock expectations: %v", err)
 	}
 }
 
@@ -392,6 +609,12 @@ func TestRun_PolicyWithOrgFilter_MatchAndSkip(t *testing.T) {
 		}).
 			AddRow("r1", periodStart, "billed_cost_usd", "organization=org-a", "", 90.0, []byte("{}"), now).
 			AddRow("r2", periodStart, "billed_cost_usd", "organization=org-b", "", 90.0, []byte("{}"), now))
+	mock.ExpectQuery(`FROM "metric_rollup_`). // 5m tail (empty)
+							WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "organization=%").
+							WillReturnRows(pgxmock.NewRows([]string{
+			"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
+			"value", "metadata", "updatedAt",
+		}))
 
 	mock.ExpectQuery(`SELECT "targetKey"\s+FROM "Alert"`).WithArgs(quotaThresholdRuleID).
 		WillReturnRows(pgxmock.NewRows([]string{"targetKey"}))

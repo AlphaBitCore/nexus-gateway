@@ -131,3 +131,94 @@ func TestPauser_AutoResumeRaceWithManualResume(t *testing.T) {
 	// Cleanup
 	p.Resume()
 }
+
+// F-0129 coverage: admin-engage survives user Resume.
+func TestPauser_AdminEngageSurvivesUserResume(t *testing.T) {
+	p, ks := newPauserForTest(t)
+
+	// Admin engages first.
+	p.EngageAdmin("hub-shadow")
+	if !ks.IsEngaged() {
+		t.Fatal("killswitch must be engaged after EngageAdmin")
+	}
+	if !p.IsAdminEngaged() {
+		t.Fatal("IsAdminEngaged must be true after EngageAdmin")
+	}
+
+	// User also pauses.
+	p.Pause(0)
+	if !p.IsUserPaused() {
+		t.Fatal("IsUserPaused must be true after Pause")
+	}
+
+	// User resumes — admin brake must keep kill switch engaged.
+	p.Resume()
+	if p.IsUserPaused() {
+		t.Error("IsUserPaused must be false after Resume")
+	}
+	if !p.IsAdminEngaged() {
+		t.Error("IsAdminEngaged must remain true after user Resume")
+	}
+	if !ks.IsEngaged() {
+		t.Error("killswitch must remain engaged: admin brake still active")
+	}
+}
+
+// F-0129 coverage: user-pause survives admin Disengage.
+func TestPauser_UserPauseSurvivesAdminDisengage(t *testing.T) {
+	p, ks := newPauserForTest(t)
+
+	// User pauses first.
+	p.Pause(0)
+	if !ks.IsEngaged() {
+		t.Fatal("killswitch must be engaged after Pause")
+	}
+
+	// Admin also engages.
+	p.EngageAdmin("hub-shadow")
+
+	// Admin disengages — user pause must keep kill switch engaged.
+	p.DisengageAdmin("hub-shadow")
+	if p.IsAdminEngaged() {
+		t.Error("IsAdminEngaged must be false after DisengageAdmin")
+	}
+	if !p.IsUserPaused() {
+		t.Error("IsUserPaused must remain true after admin Disengage")
+	}
+	if !ks.IsEngaged() {
+		t.Error("killswitch must remain engaged: user pause still active")
+	}
+
+	// Cleanup.
+	p.Resume()
+}
+
+// F-0129 coverage: both clear = disengaged.
+func TestPauser_BothClearLeadsToDisengage(t *testing.T) {
+	p, ks := newPauserForTest(t)
+
+	// Both engage.
+	p.EngageAdmin("hub-shadow")
+	p.Pause(0)
+	if !ks.IsEngaged() {
+		t.Fatal("killswitch must be engaged when both admin and user are active")
+	}
+
+	// Clear admin first — user pause keeps it engaged.
+	p.DisengageAdmin("hub-shadow")
+	if !ks.IsEngaged() {
+		t.Error("killswitch must remain engaged (user pause still active)")
+	}
+
+	// Clear user pause — now both are clear, kill switch must disengage.
+	p.Resume()
+	if ks.IsEngaged() {
+		t.Error("killswitch must be disengaged when both admin and user are cleared")
+	}
+	if p.IsAdminEngaged() {
+		t.Error("IsAdminEngaged must be false")
+	}
+	if p.IsUserPaused() {
+		t.Error("IsUserPaused must be false")
+	}
+}

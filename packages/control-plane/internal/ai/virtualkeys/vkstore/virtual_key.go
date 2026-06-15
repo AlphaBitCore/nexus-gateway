@@ -152,8 +152,14 @@ func (store *Store) GetVirtualKey(ctx context.Context, id string) (*VirtualKey, 
 
 // CreateVirtualKeyParams holds fields for creating a virtual key.
 type CreateVirtualKeyParams struct {
-	Name                        string
-	KeyHash                     string
+	Name    string
+	KeyHash string
+	// KeyVersion is the HMAC keyring version that produced KeyHash —
+	// auth.CurrentKeyVersion() at issue time. Stamped so the
+	// key_version column reports which version sealed each VK. VKs are NOT
+	// lazy-migrated (the ai-gw admission path is read-only); they ride
+	// try-all-versions and are pruned by re-issue/expiry.
+	KeyVersion                  string
 	KeyPrefix                   string
 	ProjectID                   *string
 	SourceApp                   *string
@@ -178,15 +184,15 @@ func (store *Store) CreateVirtualKey(ctx context.Context, p CreateVirtualKeyPara
 		vkStatus = "active"
 	}
 	q := fmt.Sprintf(`
-		INSERT INTO "VirtualKey" (id, name, "keyHash", "keyPrefix", "projectId", "sourceApp",
+		INSERT INTO "VirtualKey" (id, name, "keyHash", "key_version", "keyPrefix", "projectId", "sourceApp",
 			enabled, "rateLimitRpm", "compareEndpointRateLimitRpm",
 			"allowedModels", "ownerId",
 			"expiresAt", "vkType", "vkStatus", "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 		RETURNING %s
 	`, vkColumns)
 	v, err := scanVK(store.pool.QueryRow(ctx, q,
-		p.Name, p.KeyHash, p.KeyPrefix, p.ProjectID, p.SourceApp,
+		p.Name, p.KeyHash, p.KeyVersion, p.KeyPrefix, p.ProjectID, p.SourceApp,
 		p.Enabled, p.RateLimitRpm, p.CompareEndpointRateLimitRpm,
 		p.AllowedModels, p.OwnerID,
 		p.ExpiresAt, vkType, vkStatus,
@@ -238,11 +244,14 @@ func (store *Store) UpdateVirtualKey(ctx context.Context, id string, p UpdateVir
 	return v, nil
 }
 
-// RegenerateVirtualKeyHash updates a virtual key's hash and prefix.
-func (store *Store) RegenerateVirtualKeyHash(ctx context.Context, id, keyHash, keyPrefix string) error {
+// RegenerateVirtualKeyHash updates a virtual key's hash and prefix. keyVersion
+// is the HMAC keyring version that produced keyHash
+// (auth.CurrentKeyVersion()): a regenerate rewrites the hash under the current
+// secret, so the key_version column is stamped current alongside it.
+func (store *Store) RegenerateVirtualKeyHash(ctx context.Context, id, keyHash, keyVersion, keyPrefix string) error {
 	_, err := store.pool.Exec(ctx, `
-		UPDATE "VirtualKey" SET "keyHash" = $2, "keyPrefix" = $3, "updatedAt" = NOW() WHERE id = $1
-	`, id, keyHash, keyPrefix)
+		UPDATE "VirtualKey" SET "keyHash" = $2, "key_version" = $3, "keyPrefix" = $4, "updatedAt" = NOW() WHERE id = $1
+	`, id, keyHash, keyVersion, keyPrefix)
 	return err
 }
 

@@ -47,16 +47,16 @@ func TestGenerateNonce_RandReaderError(t *testing.T) {
 	}
 }
 
-// TestGenerateCSR_EcdsaGenerateKeyError covers flow.go:304-306 — when
+// TestGenerateSSODeviceIdentity_EcdsaGenerateKeyError — when
 // ecdsa.GenerateKey fails (entropy starved) the function must surface
 // "generate key:" rather than return a partially-populated PEM block.
-func TestGenerateCSR_EcdsaGenerateKeyError(t *testing.T) {
+func TestGenerateSSODeviceIdentity_EcdsaGenerateKeyError(t *testing.T) {
 	want := errors.New("ecdsa: no entropy")
 	orig := ssoRandReader
 	ssoRandReader = ssoFailReader{err: want}
 	t.Cleanup(func() { ssoRandReader = orig })
 
-	keyPEM, csrPEM, err := generateCSR("h")
+	keyPEM, certPEM, err := generateSSODeviceIdentity("h")
 	if err == nil {
 		t.Fatal("expected error when ecdsa.GenerateKey fails")
 	}
@@ -66,8 +66,8 @@ func TestGenerateCSR_EcdsaGenerateKeyError(t *testing.T) {
 	if !errors.Is(err, want) {
 		t.Errorf("err %q should wrap sentinel", err.Error())
 	}
-	if keyPEM != nil || csrPEM != nil {
-		t.Errorf("PEM outputs should be nil on entropy error; got keyPEM=%d csrPEM=%d", len(keyPEM), len(csrPEM))
+	if keyPEM != nil || certPEM != nil {
+		t.Errorf("PEM outputs should be nil on entropy error; got keyPEM=%d certPEM=%d", len(keyPEM), len(certPEM))
 	}
 }
 
@@ -95,50 +95,48 @@ func (f *failAfterNReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// TestGenerateCSR_CreateCertReqError covers flow.go:312-314 — after the
-// keypair is minted but before CSR signing, an entropy hiccup must
-// surface as "create CSR:" not a panic.
-func TestGenerateCSR_CreateCertReqError(t *testing.T) {
-	want := errors.New("entropy gone mid-CSR")
-	// Empirically ecdsa.GenerateKey for P-256 reads ~33 bytes (32 byte
-	// scalar + 1 byte rejection-sampling tail); x509.CreateCertificateRequest
-	// then needs another ~32 for the ECDSA signature nonce. Budget 40
-	// bytes — enough for keygen, NOT enough for signing — so the
-	// CreateCertificateRequest call hits the sentinel and exercises the
-	// "create CSR" error arm. Direct probe in /tmp/csrtest.go confirms
-	// keygen leaves 7 bytes, signing then consumes them and errors.
+// TestGenerateSSODeviceIdentity_CreateCertError — after the keypair and
+// serial are minted but before the self-signed cert is created, an entropy
+// hiccup during signing must surface as "create device cert:" not a panic.
+func TestGenerateSSODeviceIdentity_CreateCertError(t *testing.T) {
+	want := errors.New("entropy gone mid-cert")
+	// ecdsa.GenerateKey for P-256 reads ~33 bytes; rand.Int for the 128-bit
+	// serial reads ~16; x509.CreateCertificate then needs another ~32 for
+	// the ECDSA signature nonce. Budget 60 bytes — enough for keygen +
+	// serial, NOT enough for signing — so CreateCertificate hits the
+	// sentinel and exercises the "create device cert" error arm.
 	orig := ssoRandReader
-	ssoRandReader = &failAfterNReader{src: rand.Reader, left: 40, err: want}
+	ssoRandReader = &failAfterNReader{src: rand.Reader, left: 60, err: want}
 	t.Cleanup(func() { ssoRandReader = orig })
 
-	keyPEM, csrPEM, err := generateCSR("h")
+	keyPEM, certPEM, err := generateSSODeviceIdentity("h")
 	if err == nil {
-		t.Fatal("expected error when CSR creation entropy fails")
+		t.Fatal("expected error when cert creation entropy fails")
 	}
-	if !strings.Contains(err.Error(), "create CSR") {
-		t.Errorf("err %q should mention 'create CSR'", err.Error())
+	if !strings.Contains(err.Error(), "create device cert") {
+		t.Errorf("err %q should mention 'create device cert'", err.Error())
 	}
 	if !errors.Is(err, want) {
 		t.Errorf("err %q should wrap sentinel", err.Error())
 	}
-	if keyPEM != nil || csrPEM != nil {
-		t.Errorf("PEM outputs should be nil; got keyPEM=%d csrPEM=%d", len(keyPEM), len(csrPEM))
+	if keyPEM != nil || certPEM != nil {
+		t.Errorf("PEM outputs should be nil; got keyPEM=%d certPEM=%d", len(keyPEM), len(certPEM))
 	}
 }
 
-// TestGenerateCSR_MarshalECPrivKeyError covers flow.go:318-320 — when
-// x509.MarshalECPrivateKey fails (corrupted key fields after CSR signing
-// succeeded), the function must surface "marshal key:" instead of writing
-// an unparseable PEM block to disk on the next step. Production never
-// fails here on a valid P-256 key; the seam exists so the error arm is
-// pinned for the day someone swaps the curve.
-func TestGenerateCSR_MarshalECPrivKeyError(t *testing.T) {
+// TestGenerateSSODeviceIdentity_MarshalECPrivKeyError — when
+// x509.MarshalECPrivateKey fails (corrupted key fields after the cert was
+// signed), the function must surface "marshal key:" instead of writing an
+// unparseable PEM block to disk on the next step. Production never fails
+// here on a valid P-256 key; the seam exists so the error arm is pinned
+// for the day someone swaps the curve.
+func TestGenerateSSODeviceIdentity_MarshalECPrivKeyError(t *testing.T) {
 	want := errors.New("marshal: corrupted curve params")
 	orig := ssoMarshalECPrivKey
 	ssoMarshalECPrivKey = func(_ *ecdsa.PrivateKey) ([]byte, error) { return nil, want }
 	t.Cleanup(func() { ssoMarshalECPrivKey = orig })
 
-	keyPEM, csrPEM, err := generateCSR("h")
+	keyPEM, certPEM, err := generateSSODeviceIdentity("h")
 	if err == nil {
 		t.Fatal("expected error when MarshalECPrivateKey fails")
 	}
@@ -148,10 +146,11 @@ func TestGenerateCSR_MarshalECPrivKeyError(t *testing.T) {
 	if !errors.Is(err, want) {
 		t.Errorf("err %q should wrap sentinel", err.Error())
 	}
-	// CSR may have been built before the marshal fault — but generateCSR
-	// must NOT return it because the matching key is undefined.
-	if keyPEM != nil || csrPEM != nil {
-		t.Errorf("PEM outputs should be nil on marshal error; got keyPEM=%d csrPEM=%d", len(keyPEM), len(csrPEM))
+	// The cert may have been built before the marshal fault — but
+	// generateSSODeviceIdentity must NOT return it because the matching
+	// key is undefined.
+	if keyPEM != nil || certPEM != nil {
+		t.Errorf("PEM outputs should be nil on marshal error; got keyPEM=%d certPEM=%d", len(keyPEM), len(certPEM))
 	}
 }
 

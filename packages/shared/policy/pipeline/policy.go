@@ -13,6 +13,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
 
+// errFailClosedUnbuildable is the sentinel wrapped when a fail-closed hook
+// cannot be built and the caller requested strict fail-closed handling. It lets
+// callers (and tests) distinguish "mandatory enforcer unbuildable, must refuse"
+// from arbitrary factory errors via errors.Is.
+var errFailClosedUnbuildable = fmt.Errorf("fail-closed compliance hook could not be built; refusing to proceed")
+
 // PolicyResolver determines which hooks apply to a given transaction.
 //
 // The hook config snapshot is held behind an atomic.Pointer so Swap can
@@ -132,13 +138,35 @@ func (r *PolicyResolver) snapshot() []core.HookConfig {
 
 // ResolveHooks returns hooks to run for the given stage and ingress type, sorted
 // by priority. Filters by: applicableIngress, stage, enabled=true.
-// Unknown implementationId entries are silently skipped with a log warning.
-func (r *PolicyResolver) ResolveHooks(stage, ingressType string) ([]boundHook, error) {
-	return r.resolve(stage, ingressType)
+//
+// strictFailClosed controls how an UNBUILDABLE hook (unknown implementationId,
+// factory build error, connection-stage-incompatible) is handled when that hook
+// is configured FailBehavior=="fail-closed":
+//   - strictFailClosed=true  → such a hook returns an error instead of being
+//     skipped, so a mandatory enforcer that cannot be built refuses the request
+//     rather than silently becoming a no-op. Used by callers that can SAFELY
+//     refuse: the ai-gateway reverse proxy ("refuse" = a 500 to an API client)
+//     AND the compliance-proxy forward-proxy appliance (it already
+//     returns 403 for disallowed CONNECTs, so refusing an uninspectable request
+//     is safe and honours the admin's fail-closed intent).
+//   - strictFailClosed=false → the historical skip+log fail-open behavior is
+//     preserved for EVERY hook regardless of FailBehavior. REQUIRED ONLY for the
+//     genuine host-outbound-packet-path caller: the agent NE proxy (AGENT
+//     ingress via tlsbump). There a build error must never refuse/close, which
+//     would take down the host's DNS/DHCP/outbound networking. NOTE: tlsbump is
+//     shared by both the agent NE proxy and the compliance-proxy; the strictness
+//     is now threaded per-caller via tlsbump.WithStrictFailClosed (set by the
+//     compliance-proxy, unset by the agent), so "compliance-proxy" is no longer
+//     lumped in with the host-path exemption.
+//
+// Fail-open hooks (and all hooks when strictFailClosed=false) are still skipped
+// with a log warning, preserving availability-first graceful degradation.
+func (r *PolicyResolver) ResolveHooks(stage, ingressType string, strictFailClosed bool) ([]boundHook, error) {
+	return r.resolve(stage, ingressType, strictFailClosed)
 }
 
 // resolve filters configs by stage, ingress, and enabled, then instantiates core.
-func (r *PolicyResolver) resolve(stage, ingressType string) ([]boundHook, error) {
+func (r *PolicyResolver) resolve(stage, ingressType string, strictFailClosed bool) ([]boundHook, error) {
 	var out []boundHook
 
 	// Capture the current snapshot once so that a concurrent Swap does
@@ -165,6 +193,10 @@ func (r *PolicyResolver) resolve(stage, ingressType string) ([]boundHook, error)
 
 		factory := r.registry.Get(cfg.ImplementationID)
 		if factory == nil {
+			if strictFailClosed && strings.EqualFold(cfg.FailBehavior, "fail-closed") {
+				return nil, fmt.Errorf("hook %q (impl %q): unknown implementationId (no factory registered) and FailBehavior=fail-closed: %w",
+					cfg.ID, cfg.ImplementationID, errFailClosedUnbuildable)
+			}
 			r.warnUnknownImpl(cfg.ImplementationID, cfg.ID, cfg.Name)
 			continue
 		}
@@ -191,17 +223,34 @@ func (r *PolicyResolver) resolve(stage, ingressType string) ([]boundHook, error)
 		hook, err := factory(cfg)
 		if err != nil {
 			r.hookMu.Unlock()
-			return nil, fmt.Errorf("compliance/policy: failed to create hook %q (impl=%s): %w",
-				cfg.Name, cfg.ImplementationID, err)
+			if strictFailClosed && strings.EqualFold(cfg.FailBehavior, "fail-closed") {
+				return nil, fmt.Errorf("hook %q (impl %q): factory build error and FailBehavior=fail-closed: %w",
+					cfg.ID, cfg.ImplementationID, err)
+			}
+			// Availability-first graceful degradation: a single hook whose
+			// factory fails (bad config, uncompilable rule pattern, etc.) is
+			// skipped+logged rather than aborting the entire pipeline build.
+			// Aborting would degrade ALL compliance to off (or 500-storm the
+			// data plane) for one broken rule; skipping degrades only "that
+			// hook off". Mirrors the unknown-implementationId continue above
+			// and the per-hook fail-open posture in pipeline.executeOneHook.
+			r.warnSkippedHook(cfg.ImplementationID, cfg.ID, cfg.Name, err)
+			continue
 		}
 
 		if strings.EqualFold(cfg.Stage, "connection") {
 			if _, ok := hook.(core.ConnectionStageCompatible); !ok {
 				r.hookMu.Unlock()
-				return nil, fmt.Errorf(
-					"compliance/policy: hook %q (impl=%s) is not connection-stage compatible; connection stage forbids MODIFY-capable hooks",
-					cfg.Name, cfg.ImplementationID,
-				)
+				if strictFailClosed && strings.EqualFold(cfg.FailBehavior, "fail-closed") {
+					return nil, fmt.Errorf("hook %q (impl %q): not connection-stage compatible (connection stage forbids MODIFY-capable hooks) and FailBehavior=fail-closed: %w",
+						cfg.ID, cfg.ImplementationID, errFailClosedUnbuildable)
+				}
+				// Same availability-first posture: a connection-stage hook that
+				// is not connection-compatible is a misconfiguration of one
+				// hook, not grounds to take down the connection-stage pipeline.
+				r.warnSkippedHook(cfg.ImplementationID, cfg.ID, cfg.Name,
+					fmt.Errorf("not connection-stage compatible; connection stage forbids MODIFY-capable hooks"))
+				continue
 			}
 		}
 
@@ -264,15 +313,26 @@ func (r *PolicyResolver) matchesIngress(cfg *core.HookConfig, ingressType string
 // endpoint). Pass nil/empty modalities to skip the modality gate. Hooks that do
 // not support the endpoint or modality are excluded and PipelineSkippedTotal is
 // incremented.
+//
+// strictFailClosed is forwarded to ResolveHooks: pass true for dedicated-proxy
+// callers that can safely REFUSE uninspectable traffic — the reverse-proxy
+// ai-gateway (refuses with a 500) and the compliance-proxy forward-proxy
+// appliance (refuses the CONNECT / request / response with a 403/451) — so a
+// fail-closed hook that cannot be built returns an error rather than silently
+// degrading to a no-op. Pass false ONLY for host-network in-path callers (agent
+// NE proxy, and tlsbump when driven by that path) where a build error must stay
+// fail-open to avoid taking down host networking (CLAUDE.md NE safety rule).
+// See ResolveHooks for the full contract.
 func (r *PolicyResolver) BuildPipeline(
 	stage, ingressType string,
 	endpointType core.EndpointType,
 	modalities []core.Modality,
 	perHookTimeout, totalTimeout time.Duration,
 	parallel bool,
+	strictFailClosed bool,
 	logger *slog.Logger,
 ) (*Pipeline, error) {
-	candidates, err := r.ResolveHooks(stage, ingressType)
+	candidates, err := r.ResolveHooks(stage, ingressType, strictFailClosed)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +408,33 @@ func (r *PolicyResolver) warnUnknownImpl(implID, hookID, hookName string) {
 		"implementationId", implID,
 		"hookId", hookID,
 		"hookName", hookName,
+	)
+}
+
+// warnSkippedHook logs that a hook was skipped during pipeline build because
+// its factory failed or it was stage-incompatible. Deduplicated per hookId
+// per reload epoch (Swap resets the dedup set) so a persistently-broken hook
+// logs once per reload instead of once per resolve() call. This is the
+// availability-first degradation path: the offending hook is dropped; the
+// rest of the pipeline still builds and runs.
+func (r *PolicyResolver) warnSkippedHook(implID, hookID, hookName string, cause error) {
+	r.warnedMu.Lock()
+	dedupKey := "skip:" + hookID
+	if _, seen := r.warnedUnknown[dedupKey]; seen {
+		r.warnedMu.Unlock()
+		return
+	}
+	if r.warnedUnknown == nil {
+		r.warnedUnknown = make(map[string]struct{})
+	}
+	r.warnedUnknown[dedupKey] = struct{}{}
+	r.warnedMu.Unlock()
+
+	r.logger.Warn("compliance hook skipped during pipeline build (degrading to this hook off)",
+		"implementationId", implID,
+		"hookId", hookID,
+		"hookName", hookName,
+		"error", cause,
 	)
 }
 

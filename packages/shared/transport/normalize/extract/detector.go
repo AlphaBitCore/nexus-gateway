@@ -87,7 +87,10 @@ type detectorSignalSpec struct {
 }
 
 // scoreDetectorSignals applies the unified Tier-2 rubric described in
-// the NonJSONDetector docstring above.
+// the NonJSONDetector docstring above. The [0.50, 1.00] range holds by
+// construction — required contributes at most +0.30, the bonus is
+// capped at +0.10, and the unknown penalty is at most −0.10 (unknownSeen
+// ≤ observedTotal in every caller) — so no terminal clamp is needed.
 func scoreDetectorSignals(s detectorSignalSpec) float64 {
 	score := 0.60
 	if s.requiredTotal > 0 {
@@ -102,12 +105,6 @@ func scoreDetectorSignals(s detectorSignalSpec) float64 {
 	score += bonus
 	if s.observedTotal > 0 {
 		score -= 0.10 * float64(s.unknownSeen) / float64(s.observedTotal)
-	}
-	if score < 0.50 {
-		score = 0.50
-	}
-	if score > 1.00 {
-		score = 1.00
 	}
 	return score
 }
@@ -265,17 +262,18 @@ func (ConnectRPCProtobufDetector) decodeResponse(body []byte) (ChatDetection, bo
 	frames := 0
 	var assistantText strings.Builder
 	for {
-		eos, payload, err := streaming.ReadConnectRPCFrame(r)
+		flags, payload, err := streaming.ReadConnectRPCFrame(r)
 		if err != nil {
 			break
 		}
 		if len(payload) > 0 {
-			if t := parseStreamChatResponseFieldOne(payload); t != "" {
+			p := streaming.MaybeGunzipConnectFrame(flags, payload)
+			if t := parseStreamChatResponseFieldOne(p); t != "" {
 				assistantText.WriteString(t)
 				frames++
 			}
 		}
-		if eos {
+		if flags&streaming.ConnectFlagEndStream != 0 {
 			break
 		}
 	}

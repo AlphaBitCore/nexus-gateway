@@ -107,15 +107,24 @@ func (s *Service) ListTokens(ctx context.Context) ([]Token, error) {
 	return result, nil
 }
 
-// ValidateToken checks if a raw token string is valid for enrollment.
-// Returns the token if valid (pending + not expired), nil otherwise.
-func (s *Service) ValidateToken(ctx context.Context, rawToken string) (*Token, bool) {
-	et, err := s.store.EnrollStore().ValidateEnrollmentToken(ctx, rawToken)
-	if err != nil || et == nil {
-		return nil, false
-	}
-	if et.Status != "pending" || time.Now().After(et.ExpiresAt) {
-		return nil, false
+// ErrAlreadyUsed is returned by ConsumeToken when the token does not exist,
+// has expired, or was already consumed. Re-exported from the store sentinel so
+// handlers can branch on it without importing the store package.
+var ErrAlreadyUsed = enrollstore.ErrAlreadyUsed
+
+// ConsumeToken atomically validates and single-use-consumes a raw enrollment
+// token in one DB statement, returning the consumed token. It
+// replaces the racy ValidateToken+MarkUsed two-step: the pending→used
+// transition is the race arbiter, so exactly one of N concurrent enrollments
+// using the same token succeeds; the rest receive ErrAlreadyUsed. The caller
+// must invoke LinkThing after minting the thing id to record the binding.
+func (s *Service) ConsumeToken(ctx context.Context, rawToken string) (*Token, error) {
+	et, err := s.store.EnrollStore().ConsumeEnrollmentToken(ctx, rawToken)
+	if err != nil {
+		if errors.Is(err, enrollstore.ErrAlreadyUsed) {
+			return nil, ErrAlreadyUsed
+		}
+		return nil, err
 	}
 	return &Token{
 		ID:        et.ID,
@@ -126,12 +135,14 @@ func (s *Service) ValidateToken(ctx context.Context, rawToken string) (*Token, b
 		Metadata:  et.Metadata,
 		CreatedBy: et.CreatedBy,
 		CreatedAt: et.CreatedAt,
-	}, true
+	}, nil
 }
 
-// MarkUsed marks a token as used and associates it with a thing.
-func (s *Service) MarkUsed(ctx context.Context, tokenID, thingID string) error {
-	err := s.store.EnrollStore().MarkEnrollmentTokenUsed(ctx, tokenID, thingID)
+// LinkThing records the thing id minted for an already-consumed token. A
+// non-fatal best-effort link (the token is already spent); callers log
+// failures rather than failing the enrollment.
+func (s *Service) LinkThing(ctx context.Context, tokenID, thingID string) error {
+	err := s.store.EnrollStore().LinkEnrollmentTokenThing(ctx, tokenID, thingID)
 	if errors.Is(err, enrollstore.ErrNotFound) {
 		return store.ErrNotFound
 	}

@@ -15,15 +15,19 @@ import (
 )
 
 // httpClient wraps net/http.Client with Hub-specific auth and base URL.
+//
+// tokenFn is the live credential source: do() calls it per request so
+// a device token rotated after the client started is carried on the very next
+// HTTP fallback call rather than a value captured at construction.
 type httpClient struct {
 	client  *http.Client
 	baseURL string
-	token   string
+	tokenFn func() string
 	thingID string
 	logger  *slog.Logger
 }
 
-func newHTTPClient(baseURL, token, thingID string, logger *slog.Logger) *httpClient {
+func newHTTPClient(baseURL string, tokenFn func() string, thingID string, logger *slog.Logger) *httpClient {
 	return &httpClient{
 		client: nexushttp.New(nexushttp.Config{
 			Timeout:        10 * time.Second,
@@ -31,7 +35,7 @@ func newHTTPClient(baseURL, token, thingID string, logger *slog.Logger) *httpCli
 			PropagateReqID: true,
 		}),
 		baseURL: baseURL,
-		token:   token,
+		tokenFn: tokenFn,
 		thingID: thingID,
 		logger:  logger,
 	}
@@ -58,7 +62,7 @@ func (h *httpClient) do(ctx context.Context, method, path string, body any) ([]b
 		return nil, 0, fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+h.token)
+	req.Header.Set("Authorization", "Bearer "+h.tokenFn())
 	if h.thingID != "" {
 		req.Header.Set("X-Thing-Id", h.thingID)
 	}
@@ -269,7 +273,7 @@ func (c *Client) getHTTPClient() *httpClient {
 		if baseURL == "" {
 			baseURL = deriveHTTPURL(c.cfg.HubURL)
 		}
-		c.hc = newHTTPClient(baseURL, c.cfg.Token, c.cfg.ThingID, c.logger)
+		c.hc = newHTTPClient(baseURL, c.currentToken, c.cfg.ThingID, c.logger)
 	}
 	return c.hc
 }

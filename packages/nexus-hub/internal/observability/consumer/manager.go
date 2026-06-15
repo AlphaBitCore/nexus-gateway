@@ -11,7 +11,7 @@ import (
 )
 
 // Startable is implemented by all consumer types (TrafficEventWriter,
-// AdminAuditWriter, SIEMForwarder). Start blocks until ctx is cancelled.
+// AdminAuditWriter, ExemptionConsumer). Start blocks until ctx is cancelled.
 type Startable interface {
 	Start(ctx context.Context) error
 }

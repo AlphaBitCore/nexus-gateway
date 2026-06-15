@@ -39,7 +39,7 @@ func (f *fakeTransport) ApplyAuth(r *http.Request, t CallTarget) error {
 	r.Header.Set("Authorization", "Bearer "+t.APIKey)
 	return nil
 }
-func (f *fakeTransport) Do(ctx context.Context, r *http.Request) (*http.Response, error) {
+func (f *fakeTransport) Do(ctx context.Context, r *http.Request, _ CallTarget) (*http.Response, error) {
 	f.lastReq = r
 	if r.Body != nil {
 		b, _ := io.ReadAll(r.Body)
@@ -63,11 +63,12 @@ func (f *fakeTransport) Probe(ctx context.Context, t CallTarget) (*ProbeResult, 
 }
 
 type fakeCodec struct {
-	encodeErr error
-	decodeErr error
-	encoded   []byte
-	decoded   []byte
-	usage     Usage
+	encodeErr   error
+	decodeErr   error
+	encoded     []byte
+	decoded     []byte
+	usage       Usage
+	urlOverride string
 
 	encodeCalled bool
 	decodeCalled bool
@@ -79,11 +80,11 @@ func (c *fakeCodec) EncodeRequest(_ typology.WireShape, body []byte, _ CallTarge
 		return EncodeResult{}, c.encodeErr
 	}
 	if c.encoded != nil {
-		return EncodeResult{Body: c.encoded, ContentType: "application/json"}, nil
+		return EncodeResult{Body: c.encoded, ContentType: "application/json", URLOverride: c.urlOverride}, nil
 	}
-	return EncodeResult{Body: body, ContentType: "application/json"}, nil
+	return EncodeResult{Body: body, ContentType: "application/json", URLOverride: c.urlOverride}, nil
 }
-func (c *fakeCodec) DecodeResponse(_ typology.WireShape, body []byte, _ string) (DecodeResult, error) {
+func (c *fakeCodec) DecodeResponse(_ typology.WireShape, body []byte, _ string, _ DecodeContext) (DecodeResult, error) {
 	c.decodeCalled = true
 	if c.decodeErr != nil {
 		return DecodeResult{}, c.decodeErr
@@ -213,6 +214,71 @@ func TestSpecAdapter_TranslateViaCodec(t *testing.T) {
 	}
 	if !bytes.Equal(tr.lastReqBody, []byte(`{"translated":true}`)) {
 		t.Errorf("upstream body not the codec output: %q", tr.lastReqBody)
+	}
+}
+
+// TestSpecAdapter_NonStream_OversizeBody_SetsTruncated pins the F-0349
+// contract: when the upstream non-streaming body exceeds the runtime read
+// cap (req.MaxResponseBytes), Execute clamps the bytes AND flags
+// Response.Truncated so the handler refuses usage_extraction_status="ok".
+func TestSpecAdapter_NonStream_OversizeBody_SetsTruncated(t *testing.T) {
+	bigBody := strings.Repeat("a", 4096) // far larger than the 16-byte cap below
+	tr := &fakeTransport{
+		do: func(_ context.Context, _ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(bigBody)),
+			}, nil
+		},
+	}
+	codec := &fakeCodec{} // identity decode, no error on the clamped bytes
+	adapter := NewSpecAdapter(specFrom(tr, codec, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
+
+	resp, err := adapter.Execute(context.Background(), Request{
+		WireShape:        typology.WireShapeOpenAIChat,
+		BodyFormat:       FormatOpenAI,
+		Body:             []byte(`{"model":"gpt-4o","messages":[]}`),
+		Target:           CallTarget{APIKey: "sk-x"},
+		MaxResponseBytes: 16,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !resp.Truncated {
+		t.Error("Response.Truncated=false want true (oversize body must surface truncation)")
+	}
+	if len(resp.Body) != 16 {
+		t.Errorf("clamped body len=%d want 16 (cap)", len(resp.Body))
+	}
+}
+
+// Control: a body within the cap must NOT be flagged truncated.
+func TestSpecAdapter_NonStream_BodyWithinCap_NotTruncated(t *testing.T) {
+	small := `{"ok":true}`
+	tr := &fakeTransport{
+		do: func(_ context.Context, _ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(small)),
+			}, nil
+		},
+	}
+	adapter := NewSpecAdapter(specFrom(tr, &fakeCodec{}, &fakeStreamDecoder{}, &fakeErrorNormalizer{}, FormatOpenAI), slog.Default())
+
+	resp, err := adapter.Execute(context.Background(), Request{
+		WireShape:        typology.WireShapeOpenAIChat,
+		BodyFormat:       FormatOpenAI,
+		Body:             []byte(`{"model":"gpt-4o","messages":[]}`),
+		Target:           CallTarget{APIKey: "sk-x"},
+		MaxResponseBytes: 1024,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if resp.Truncated {
+		t.Error("Response.Truncated=true want false on a body within the cap")
 	}
 }
 
@@ -648,11 +714,11 @@ func TestSpecAdapter_PrepareBody_ExposedAndIdempotent(t *testing.T) {
 		Target:     CallTarget{ProviderModelID: "gpt-4o-2024-08-06"},
 	}
 
-	body1, rw1, err := adapter.PrepareBody(req)
+	body1, rw1, _, err := adapter.PrepareBody(req)
 	if err != nil {
 		t.Fatalf("PrepareBody error: %v", err)
 	}
-	body2, rw2, err := adapter.PrepareBody(req)
+	body2, rw2, _, err := adapter.PrepareBody(req)
 	if err != nil {
 		t.Fatalf("PrepareBody error (2nd): %v", err)
 	}
@@ -697,7 +763,7 @@ func TestSpecAdapter_PrepareBody_CodecPathIdempotent(t *testing.T) {
 				return res.Body, err
 			},
 			decFn: func(ep typology.WireShape, body []byte, contentType string) (DecodeResult, error) {
-				return cc.DecodeResponse(ep, body, contentType)
+				return cc.DecodeResponse(ep, body, contentType, DecodeContext{})
 			},
 		},
 		StreamDecoder:   &fakeStreamDecoder{},
@@ -713,11 +779,11 @@ func TestSpecAdapter_PrepareBody_CodecPathIdempotent(t *testing.T) {
 		Target:     CallTarget{ProviderModelID: "claude-3-5-sonnet-20240620"},
 	}
 
-	body1, rw1, err := adapter.PrepareBody(req)
+	body1, rw1, _, err := adapter.PrepareBody(req)
 	if err != nil {
 		t.Fatalf("PrepareBody (1st) error: %v", err)
 	}
-	body2, rw2, err := adapter.PrepareBody(req)
+	body2, rw2, _, err := adapter.PrepareBody(req)
 	if err != nil {
 		t.Fatalf("PrepareBody (2nd) error: %v", err)
 	}
@@ -743,7 +809,7 @@ func (s schemaCodecFunc) EncodeRequest(ep typology.WireShape, body []byte, ct Ca
 	out, err := s.encFn(ep, body, ct)
 	return EncodeResult{Body: out, ContentType: "application/json"}, err
 }
-func (s schemaCodecFunc) DecodeResponse(ep typology.WireShape, body []byte, ct string) (DecodeResult, error) {
+func (s schemaCodecFunc) DecodeResponse(ep typology.WireShape, body []byte, ct string, _ DecodeContext) (DecodeResult, error) {
 	return s.decFn(ep, body, ct)
 }
 
@@ -764,7 +830,7 @@ func TestSpecAdapter_PrepareBody_EndpointModelsReturnsNil(t *testing.T) {
 		Body:       nil,
 		Target:     CallTarget{},
 	}
-	body, rewrites, err := adapter.PrepareBody(req)
+	body, rewrites, _, err := adapter.PrepareBody(req)
 	if err != nil {
 		t.Fatalf("PrepareBody typology.WireShapeNone error: %v", err)
 	}

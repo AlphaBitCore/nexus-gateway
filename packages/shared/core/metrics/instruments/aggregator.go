@@ -6,25 +6,17 @@ import (
 )
 
 // IsHistogramMetric returns true if the metric stores histogram data in its
-// metadata field (JSON-encoded Histogram).
+// metadata field (JSON-encoded Histogram). Derived from the aggregation-kind
+// registry so there is a single source of truth for per-metric merge behavior.
 func IsHistogramMetric(name string) bool {
-	switch name {
-	case MetricLatencyHistogram, MetricHookLatencyHist:
-		return true
-	default:
-		return false
-	}
+	return AggregationKindFor(name) == AggregationHistogram
 }
 
 // IsTimestampMetric returns true if the metric stores first_seen/last_seen
-// timestamps in its metadata field (JSON-encoded TimestampMeta).
+// timestamps in its metadata field (JSON-encoded TimestampMeta). Derived from
+// the aggregation-kind registry (see IsHistogramMetric).
 func IsTimestampMetric(name string) bool {
-	switch name {
-	case MetricFirstSeen, MetricLastSeen:
-		return true
-	default:
-		return false
-	}
+	return AggregationKindFor(name) == AggregationTimestamp
 }
 
 // rowKey is the composite key used for grouping rollup rows during merge.
@@ -45,8 +37,9 @@ type thingRowKey struct {
 }
 
 // MergeThingRollupRows is the per-Thing twin of MergeRollupRows. Identical
-// merge semantics (histogram / timestamp / sum) keyed by (ThingID, MetricName,
-// DimensionKey, SubDimension). Insertion order is preserved.
+// merge semantics (histogram / timestamp / distinct-max / sum, driven by the
+// aggregation-kind registry) keyed by (ThingID, MetricName, DimensionKey,
+// SubDimension). Insertion order is preserved.
 func MergeThingRollupRows(rows []ThingRollupRow) []ThingRollupRow {
 	acc := make(map[thingRowKey]*ThingRollupRow, len(rows))
 	var order []thingRowKey
@@ -71,7 +64,9 @@ func MergeThingRollupRows(rows []ThingRollupRow) []ThingRollupRow {
 		case IsTimestampMetric(r.MetricName):
 			mergeTimestampMetadataThing(existing, r)
 		default:
-			existing.Value += r.Value
+			// Sum-kind adds; distinct/gauge-kind takes the max so coarse-tier
+			// distinct counts are not inflated across the merge cascade.
+			existing.Value = CombineValues(r.MetricName, existing.Value, r.Value)
 		}
 	}
 
@@ -122,10 +117,14 @@ func mergeTimestampMetadataThing(dst *ThingRollupRow, src ThingRollupRow) {
 }
 
 // MergeRollupRows combines rows that share the same (MetricName, DimensionKey,
-// SubDimension) using the appropriate merge strategy:
+// SubDimension) using the per-metric strategy from the aggregation-kind
+// registry:
 //   - Histogram metrics: element-wise addition of bucket counts in metadata
 //   - Timestamp metrics: MIN(first_seen), MAX(last_seen) in metadata
-//   - All other metrics: simple SUM of Value
+//   - Distinct-cardinality metrics (active_entities / active_organizations /
+//     distinct_sources): MAX of Value — per-bucket distinct counts must not be
+//     summed across the cascade, which would over-count (see CombineValues).
+//   - All other metrics: simple SUM of Value (the default)
 //
 // Insertion order is preserved: the first occurrence of each key determines its
 // position in the output slice.
@@ -156,7 +155,9 @@ func MergeRollupRows(rows []RollupRow) []RollupRow {
 		case IsTimestampMetric(r.MetricName):
 			mergeTimestampMetadata(existing, r)
 		default:
-			existing.Value += r.Value
+			// Sum-kind adds; distinct/gauge-kind takes the max so coarse-tier
+			// distinct counts are not inflated across the merge cascade.
+			existing.Value = CombineValues(r.MetricName, existing.Value, r.Value)
 		}
 	}
 

@@ -146,6 +146,27 @@ func (h *Handler) UpdateDSAR(c echo.Context) error {
 	return c.JSON(http.StatusOK, updated)
 }
 
+// accessExportDigest reduces an ACCESS export to per-surface counts (and a
+// user-present flag) for the admin-audit AfterState. It deliberately carries
+// NO field values — only sizes — so the audit log never holds the subject's
+// PII.
+func accessExportDigest(e *dsarstore.DSARAccessExport) map[string]any {
+	if e == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"userPresent":       e.User != nil,
+		"iamGroups":         len(e.IAMGroups),
+		"vk":                len(e.VKRows),
+		"agent":             len(e.AgentRows),
+		"devices":           len(e.Devices),
+		"payloads":          len(e.Payloads),
+		"assistantSessions": len(e.Assistant.Sessions),
+		"assistantMemory":   len(e.Assistant.Memory),
+		"assistantFiles":    len(e.Assistant.Files),
+	}
+}
+
 func (h *Handler) FulfillDSAR(c echo.Context) error {
 	id := c.Param("id")
 	ctx := c.Request().Context()
@@ -159,6 +180,36 @@ func (h *Handler) FulfillDSAR(c echo.Context) error {
 	updatedBy := "unknown"
 	if aa != nil {
 		updatedBy = aa.KeyID
+	}
+
+	// Validate the subjectId resolves to a real NexusUser BEFORE fulfilling.
+	// A mistyped/free-string subjectId would otherwise run a 0-row erasure (or
+	// an empty access export) and then force the request to COMPLETED — telling
+	// a compliance officer "the data is gone" when nothing was ever matched.
+	// Reject it as needs-review instead.
+	exists, err := h.db.SubjectExists(ctx, existing.SubjectID)
+	if err != nil {
+		h.logger.Error("dsar subject existence", "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Fulfillment failed", "server_error", ""))
+	}
+	if !exists {
+		rejected := "REJECTED"
+		now := time.Now().UTC()
+		note := "subjectId does not resolve to a known user; no data was changed"
+		if _, uerr := h.db.UpdateDSARRequest(ctx, id, dsarstore.UpdateDSARParams{
+			Status:      &rejected,
+			CompletedAt: &now,
+			Notes:       &note,
+			UpdatedBy:   &updatedBy,
+		}); uerr != nil {
+			h.logger.Error("dsar reject unknown subject", "error", uerr)
+			return c.JSON(http.StatusInternalServerError, errJSON("Failed to update DSAR status", "server_error", ""))
+		}
+		ae := audit.EntryFor(c, iam.ResourceDSAR, iam.VerbFulfill)
+		ae.EntityID = id
+		ae.AfterState = map[string]any{"result": "REJECTED", "reason": "subject_not_found"}
+		h.audit.LogObserved(ctx, ae)
+		return c.JSON(http.StatusUnprocessableEntity, errJSON("subjectId does not resolve to a known user", "subject_not_found", "SUBJECT_NOT_FOUND"))
 	}
 
 	if existing.Type == "ACCESS" {
@@ -182,9 +233,15 @@ func (h *Handler) FulfillDSAR(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, errJSON("Failed to update DSAR status", "server_error", ""))
 		}
 
+		// The admin-audit row stores only per-surface COUNTS, never the export
+		// itself — the export holds the subject's full PII (name, identity,
+		// prompt/response bodies) and the audit log is unbounded + never erased,
+		// so copying the export there would defeat any later erasure.
+		// The full export still rides the HTTP response (the SAR delivery) and
+		// is persisted to dsar_request.outcome, which ERASURE scrubs.
 		ae := audit.EntryFor(c, iam.ResourceDSAR, iam.VerbFulfill)
 		ae.EntityID = id
-		ae.AfterState = map[string]any{"type": "ACCESS", "export": export}
+		ae.AfterState = map[string]any{"type": "ACCESS", "counts": accessExportDigest(export)}
 		h.audit.LogObserved(ctx, ae)
 
 		return c.JSON(http.StatusOK, map[string]any{"request": updated, "export": export})
@@ -198,11 +255,22 @@ func (h *Handler) FulfillDSAR(c echo.Context) error {
 	}
 
 	outcomeJSON, _ := json.Marshal(map[string]any{
-		"mode":            "ERASURE",
-		"vkAnonymised":    result.VKAnonymised,
-		"agentAnonymised": result.AgentAnonymised,
-		"totalAnonymised": result.TotalAnonymised,
-		"fulfilledAt":     time.Now().UTC(),
+		"mode":                       "ERASURE",
+		"vkAnonymised":               result.VKAnonymised,
+		"agentAnonymised":            result.AgentAnonymised,
+		"totalAnonymised":            result.TotalAnonymised,
+		"payloadsScrubbed":           result.PayloadsScrubbed,
+		"normalizedScrubbed":         result.NormalizedScrubbed,
+		"spillRefsOrphaned":          result.SpillRefsOrphaned,
+		"assistantErased":            result.AssistantErased,
+		"accessOutcomesScrubbed":     result.AccessOutcomesScrubbed,
+		"vkOwnedDeleted":             result.VKOwnedDeleted,
+		"adminApiKeysDeleted":        result.AdminApiKeysDeleted,
+		"federatedIdentitiesDeleted": result.FederatedIdentitiesDeleted,
+		"refreshTokensDeleted":       result.RefreshTokensDeleted,
+		"scimTokensDeleted":          result.ScimTokensDeleted,
+		"accountDeleted":             result.AccountDeleted,
+		"fulfilledAt":                time.Now().UTC(),
 	})
 	now := time.Now().UTC()
 	completedStatus := "COMPLETED"
@@ -219,7 +287,7 @@ func (h *Handler) FulfillDSAR(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceDSAR, iam.VerbFulfill)
 	ae.EntityID = id
-	ae.AfterState = map[string]any{"type": "ERASURE", "vkAnonymised": result.VKAnonymised, "agentAnonymised": result.AgentAnonymised, "totalAnonymised": result.TotalAnonymised}
+	ae.AfterState = map[string]any{"type": "ERASURE", "vkAnonymised": result.VKAnonymised, "agentAnonymised": result.AgentAnonymised, "totalAnonymised": result.TotalAnonymised, "payloadsScrubbed": result.PayloadsScrubbed, "normalizedScrubbed": result.NormalizedScrubbed, "spillRefsOrphaned": result.SpillRefsOrphaned, "assistantErased": result.AssistantErased, "accessOutcomesScrubbed": result.AccessOutcomesScrubbed, "vkOwnedDeleted": result.VKOwnedDeleted, "adminApiKeysDeleted": result.AdminApiKeysDeleted, "federatedIdentitiesDeleted": result.FederatedIdentitiesDeleted, "refreshTokensDeleted": result.RefreshTokensDeleted, "scimTokensDeleted": result.ScimTokensDeleted, "accountDeleted": result.AccountDeleted}
 	h.audit.LogObserved(ctx, ae)
 
 	return c.JSON(http.StatusOK, map[string]any{"request": updated, "outcome": result})

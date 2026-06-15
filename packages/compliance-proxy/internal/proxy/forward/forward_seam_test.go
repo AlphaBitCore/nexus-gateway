@@ -94,25 +94,25 @@ func withBumpFn(t *testing.T, fn func(context.Context, net.Conn, string, func(*t
 
 func TestLogRelayResult_NilError_IsNoop(t *testing.T) {
 	// Must not panic and must not call any logger method that would fail.
-	logRelayResult(slog.Default(), "test", nil)
+	LogRelayResult(slog.Default(), "test", nil)
 }
 
 func TestLogRelayResult_DialError_LogsWarn(t *testing.T) {
 	// PassThroughError with Op=dial → WARN path.
 	ptErr := &tlsbump.PassThroughError{Op: "dial", Err: errors.New("connection refused")}
 	// Should not panic.
-	logRelayResult(slog.Default(), "passthrough", ptErr)
+	LogRelayResult(slog.Default(), "passthrough", ptErr)
 }
 
 func TestLogRelayResult_RelayError_LogsDebug(t *testing.T) {
 	// Generic relay error (not a dial failure) → DEBUG path.
 	ptErr := &tlsbump.PassThroughError{Op: "copy", Err: errors.New("connection reset")}
-	logRelayResult(slog.Default(), "relay", ptErr)
+	LogRelayResult(slog.Default(), "relay", ptErr)
 }
 
 func TestLogRelayResult_NonPassThroughError_LogsDebug(t *testing.T) {
 	// A plain error (not *PassThroughError at all) → DEBUG path.
-	logRelayResult(slog.Default(), "relay", errors.New("EOF"))
+	LogRelayResult(slog.Default(), "relay", errors.New("EOF"))
 }
 
 // Run — kill switch
@@ -241,6 +241,185 @@ func TestRun_BumpConnection_PinningError_FallsBackToPassthrough(t *testing.T) {
 		t.Error("PinningTracker.RecordFailure should have auto-exempted the host")
 	}
 	_ = passthroughAttempted
+}
+
+// failClosedEngine returns a domain.Engine where host api.example.com is
+// matched and configured FAIL_CLOSED (the rest default to FAIL_OPEN).
+func failClosedEngine(t *testing.T, host string, behavior domain.AdapterErrorBehavior) *domain.Engine {
+	t.Helper()
+	e := domain.NewEngine()
+	d := domain.InterceptionDomain{
+		ID:                "id-" + host,
+		Name:              host,
+		HostPattern:       host,
+		HostMatchType:     domain.HostMatchExact,
+		NetworkZone:       domain.ZonePublic,
+		DefaultPathAction: domain.PathActionProcess,
+		OnAdapterError:    behavior,
+		Enabled:           true,
+	}
+	if err := e.Swap([]domain.InterceptionDomain{d}); err != nil {
+		t.Fatalf("swap: %v", err)
+	}
+	return e
+}
+
+// TestRun_BumpConnection_PinningError_FailClosed_RefusesNoPassthrough is the
+// safety-critical assertion for FIX 1: a pinned flow whose matched domain is
+// FAIL_CLOSED must be refused (no PassThrough dial), NOT relayed uninspected.
+// We point TargetHost at a local listener and assert it receives NO connection.
+func TestRun_BumpConnection_PinningError_FailClosed_RefusesNoPassthrough(t *testing.T) {
+	withBumpFn(t, func(_ context.Context, _ net.Conn, _ string, _ func(*tls.ClientHelloInfo) (*tls.Certificate, error), _ *tlsbump.UpstreamTransport, _ *slog.Logger, _ ...tlsbump.BumpOption) error {
+		return tls.AlertError(48) // unknown_ca → IsPinningError true
+	})
+
+	// Local listener stands in for the upstream. PassThrough would dial it;
+	// a refused flow must not.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	accepted := make(chan struct{}, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			accepted <- struct{}{}
+			c.Close()
+		}
+	}()
+
+	tracker := tlsbump.NewPinningTracker(tlsbump.PinningConfig{
+		AutoExempt: tlsbump.AutoExemptConfig{
+			Enabled: true, FailureThreshold: 1, WindowSeconds: 60, ExemptionDuration: 1 * time.Hour,
+		},
+	})
+
+	cfg := minimalCfg()
+	cfg.TargetHost = ln.Addr().String()
+	cfg.PinningTracker = tracker
+	cfg.DomainEngine = failClosedEngine(t, "api.example.com", domain.AdapterErrorFailClosed)
+
+	client, server := net.Pipe()
+	server.Close()
+	Run(context.Background(), client, cfg)
+	client.Close()
+
+	select {
+	case <-accepted:
+		t.Fatal("FAIL_CLOSED domain MUST refuse — PassThrough dialed upstream (flow was relayed uninspected)")
+	case <-time.After(200 * time.Millisecond):
+		// No connection to upstream: refused as required.
+	}
+}
+
+// TestRun_BumpConnection_PinningError_FailOpen_StillPassesThrough confirms the
+// default fail-open behavior is unchanged for a matched FAIL_OPEN domain: the
+// pinned flow IS relayed (PassThrough dials the upstream).
+func TestRun_BumpConnection_PinningError_FailOpen_StillPassesThrough(t *testing.T) {
+	withBumpFn(t, func(_ context.Context, _ net.Conn, _ string, _ func(*tls.ClientHelloInfo) (*tls.Certificate, error), _ *tlsbump.UpstreamTransport, _ *slog.Logger, _ ...tlsbump.BumpOption) error {
+		return tls.AlertError(48)
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	accepted := make(chan struct{}, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			accepted <- struct{}{}
+			c.Close()
+		}
+	}()
+
+	tracker := tlsbump.NewPinningTracker(tlsbump.PinningConfig{
+		AutoExempt: tlsbump.AutoExemptConfig{
+			Enabled: true, FailureThreshold: 1, WindowSeconds: 60, ExemptionDuration: 1 * time.Hour,
+		},
+	})
+
+	cfg := minimalCfg()
+	cfg.TargetHost = ln.Addr().String()
+	cfg.PinningTracker = tracker
+	cfg.DomainEngine = failClosedEngine(t, "api.example.com", domain.AdapterErrorFailOpen)
+
+	client, _ := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(context.Background(), client, cfg)
+	}()
+
+	select {
+	case <-accepted:
+		// PassThrough dialed upstream: fail-open preserved.
+	case <-time.After(2 * time.Second):
+		t.Fatal("FAIL_OPEN domain MUST still pass through — upstream never dialed")
+	}
+	// Closing the client unblocks the PassThrough relay so Run returns. We MUST
+	// wait for the Run goroutine to exit before the test returns: it reads the
+	// package-level bumpConnFn seam (and the metrics counter), which withBumpFn's
+	// t.Cleanup restores — a leaked goroutine racing that restore is the -race
+	// failure this test originally exhibited.
+	client.Close()
+	<-done
+}
+
+// TestRun_BumpConnection_PinningError_UnmatchedHost_PassesThrough confirms an
+// unmatched host (no domain, e.g. system/DNS-adjacent traffic) still fails
+// open even with a FAIL_CLOSED domain present for a different host.
+func TestRun_BumpConnection_PinningError_UnmatchedHost_PassesThrough(t *testing.T) {
+	withBumpFn(t, func(_ context.Context, _ net.Conn, _ string, _ func(*tls.ClientHelloInfo) (*tls.Certificate, error), _ *tlsbump.UpstreamTransport, _ *slog.Logger, _ ...tlsbump.BumpOption) error {
+		return tls.AlertError(48)
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	accepted := make(chan struct{}, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			accepted <- struct{}{}
+			c.Close()
+		}
+	}()
+
+	tracker := tlsbump.NewPinningTracker(tlsbump.PinningConfig{
+		AutoExempt: tlsbump.AutoExemptConfig{
+			Enabled: true, FailureThreshold: 1, WindowSeconds: 60, ExemptionDuration: 1 * time.Hour,
+		},
+	})
+
+	cfg := minimalCfg()
+	cfg.TargetHost = ln.Addr().String()
+	cfg.Host = "unmatched.example.com" // no domain matches this host
+	cfg.PinningTracker = tracker
+	cfg.DomainEngine = failClosedEngine(t, "api.example.com", domain.AdapterErrorFailClosed)
+
+	client, _ := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(context.Background(), client, cfg)
+	}()
+
+	select {
+	case <-accepted:
+		// Unmatched host fails open: upstream dialed.
+	case <-time.After(2 * time.Second):
+		t.Fatal("unmatched host MUST still pass through — upstream never dialed")
+	}
+	// Wait for the Run goroutine to exit before returning (see FailOpen test):
+	// it reads the bumpConnFn seam that withBumpFn's t.Cleanup restores; a leaked
+	// goroutine racing that restore is the -race failure.
+	client.Close()
+	<-done
 }
 
 // Run — BumpConnection error: generic (non-pinning) error → log and return

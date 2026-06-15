@@ -2,7 +2,6 @@ package wiring
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,7 +17,7 @@ import (
 // On signal it performs a graceful shutdown within cfg.Server.ShutdownTimeout
 // seconds and returns 0; on server error it returns 1.
 func RunUntilSignal(ctx context.Context, ctxCancel context.CancelFunc, e *echo.Echo, cfg *config.Config, logger *slog.Logger) int {
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := cfg.Server.BindAddr()
 	slog.Info("starting control-plane",
 		slog.String("addr", addr),
 		slog.String("log_level", cfg.Log.Level),

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/kms"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/redisfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
@@ -40,12 +42,23 @@ type Config struct {
 	CORS      CORSConfig          `yaml:"cors"`
 	Cache     CacheConfig         `yaml:"cache"`
 	Otel      OtelConfig          `yaml:"otel"`
+	// Audit configures the traffic_event audit pipeline's durable spill: when
+	// the in-memory buffer is full after backpressure, overflow records are
+	// written here as NDJSON instead of dropped silently.
+	Audit AuditConfig `yaml:"audit"`
 	// Spill configures out-of-band body storage for audit captures: bodies
 	// at/above the inline threshold are written to the configured backend
 	// instead of inline'd onto traffic_event_payload. Disabled by default
 	// (every body stays inline regardless of size). See
 	// shared/spillstore/spillfactory.FactoryConfig for field semantics.
 	Spill spillfactory.FactoryConfig `yaml:"spill"`
+	// SecretCustody is the server-side envelope-custody config. provider "noop"
+	// (default) reads the crown-jewel secrets raw from env;
+	// provider "command" reads them as base64 wrapped blobs and unwraps each once
+	// at boot via the configured KMS/sops/age/vault command. yaml/argv only — no
+	// secret here. Covers ADMIN_KEY_HMAC_SECRET / CREDENTIAL_ENCRYPTION_KEY /
+	// CREDENTIAL_KEY_MAP. [MUST MATCH] the Control Plane on the unwrapped plaintext.
+	SecretCustody kms.CustodyConfig `yaml:"secretCustody"`
 	// Upstream tunes the HTTP client every provider adapter uses to call
 	// the LLM upstream (OpenAI, Anthropic, Gemini, Bedrock, ZhipuAI, ...).
 	// When the upstream call exceeds Upstream.TimeoutSec, ai-gateway returns
@@ -134,6 +147,11 @@ type UpstreamConfig struct {
 	// blows the per-Do context deadline still returns a clean error
 	// rather than racing the client-level timer.
 	TimeoutSec int `yaml:"timeoutSec"`
+	// StreamIdleTimeoutSec is the inter-chunk silence budget for a streaming
+	// response. The downstream write deadline resets on every chunk, so an
+	// actively-producing stream runs unbounded and only a stalled upstream is
+	// cut after this much quiet. Zero falls back to the code default.
+	StreamIdleTimeoutSec int `yaml:"streamIdleTimeoutSec"`
 	// DialTimeoutSec is the TCP connect budget per Dial.
 	DialTimeoutSec int `yaml:"dialTimeoutSec"`
 	// TLSHandshakeTimeoutSec is the TLS handshake budget per Dial.
@@ -204,6 +222,12 @@ type ServerConfig struct {
 	Port         int           `yaml:"port"`
 	ReadTimeout  time.Duration `yaml:"readTimeout"`
 	WriteTimeout time.Duration `yaml:"writeTimeout"`
+	// Host is the bind interface for the HTTP server. Empty (default) binds
+	// all interfaces (":port") — what container / Kubernetes / direct
+	// deployments need. Set to "127.0.0.1" to bind loopback-only (the
+	// single-host appliance, where nginx fronts /v1 and the unauthenticated
+	// /internal/* debug surface must not be externally reachable).
+	Host string `yaml:"host"`
 	// AdvertiseHost is the host portion of the URL Hub uses to reach this
 	// service's /metrics + /debug/runtime endpoints (registered via
 	// thingclient as `metricsUrl`). Empty defaults to 127.0.0.1, which is
@@ -212,10 +236,14 @@ type ServerConfig struct {
 	AdvertiseHost string `yaml:"advertiseHost"`
 }
 
-// DatabaseConfig is the PostgreSQL connection configuration.
-type DatabaseConfig struct {
-	URL string `yaml:"url"`
+// BindAddr returns the host:port the HTTP server listens on. Empty Host yields
+// ":port" (all interfaces), preserving the historical default.
+func (s ServerConfig) BindAddr() string {
+	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
+
+// DatabaseConfig and AuditConfig (the high-concurrency pool / spill tuning
+// types) live in config_pools.go.
 
 // RegistryConfig holds Hub connection settings for thingclient registration.
 type RegistryConfig struct {
@@ -229,7 +257,14 @@ type RegistryConfig struct {
 // override the env value; values are populated by Load() from environment
 // variables. See `.env.example` at repo root for the full contract.
 type AuthConfig struct {
-	HMACSecret           string `yaml:"-"` // env ADMIN_KEY_HMAC_SECRET
+	HMACSecret string `yaml:"-"` // env ADMIN_KEY_HMAC_SECRET — single-version HMAC secret
+	// HMACKeyMap is the versioned HMAC keyring (env ADMIN_KEY_HMAC_KEY_MAP,
+	// "[*]vN:secret,…"). When set it supersedes HMACSecret:
+	// the VK admission path tries every version (current-first) so a rotated VK
+	// keeps admitting until re-issue/expiry. Either this OR HMACSecret is
+	// required. [MUST MATCH] the Control Plane (same version's secret → same VK
+	// hash).
+	HMACKeyMap           string `yaml:"-"`
 	CredentialMasterKey  string `yaml:"-"` // env CREDENTIAL_ENCRYPTION_KEY
 	CredentialKeyMap     string `yaml:"-"` // env CREDENTIAL_KEY_MAP — multi-key "v1:hex64,v2:hex64"; takes precedence over single key
 	InternalServiceToken string `yaml:"-"` // env INTERNAL_SERVICE_TOKEN — Bearer for Hub WS/HTTP + X-RS-Token on /v1/ai-guard/classify; must match Hub
@@ -262,6 +297,9 @@ func Load(path string) (*Config, error) {
 	cfg.Routing.DefaultRetryPolicy = cfgpolicy.DefaultRetryPolicy().MergedWith(&cfg.Routing.DefaultRetryPolicy)
 	cfg.Routing.DefaultRetryPolicy.MaxAttemptsPerTarget = cfgpolicy.ClampMaxAttempts(cfg.Routing.DefaultRetryPolicy.MaxAttemptsPerTarget)
 
+	if err := resolveCustodySecrets(cfg); err != nil {
+		return nil, fmt.Errorf("resolve custody secrets: %w", err)
+	}
 	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
@@ -275,14 +313,25 @@ func defaults() *Config {
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 60 * time.Second,
 		},
+		Database: DatabaseConfig{
+			MaxConns:           25,
+			MinConns:           5,
+			MaxConnLifetimeSec: 300,
+		},
+		Audit: AuditConfig{
+			SpoolDir:        "/var/lib/nexus/audit-spool",
+			SpoolMaxFileMB:  64,
+			SpoolMaxTotalMB: 512,
+		},
 		Upstream: UpstreamConfig{
-			TimeoutSec:             120,
+			TimeoutSec:             600,
+			StreamIdleTimeoutSec:   120,
 			DialTimeoutSec:         15,
 			TLSHandshakeTimeoutSec: 10,
 			KeepAliveSec:           30,
-			IdleConnTimeoutSec:     90,
-			MaxIdleConns:           200,
-			MaxIdleConnsPerHost:    50,
+			IdleConnTimeoutSec:     300,
+			MaxIdleConns:           2000,
+			MaxIdleConnsPerHost:    500,
 		},
 		HTTPClients: HTTPClientsConfig{
 			Webhook: HTTPClientPoolConfig{
@@ -298,26 +347,60 @@ func defaults() *Config {
 	}
 }
 
+// resolveCustodySecrets unwraps the crown-jewel root secrets through the
+// SecretCustody provider. provider "noop" returns each
+// secret's raw env value (byte-identical to os.Getenv, preserving today's
+// behavior); provider "command" unwraps a base64 wrapped blob once at boot. The
+// unwrapped plaintext MUST match the Control Plane's (the [MUST MATCH] contract
+// is on the plaintext, not the wrapped blob — each service wraps under its own
+// grant). Empty stays empty (validate() enforces the required ones); a non-empty
+// secret that fails to unwrap aborts the boot.
+func resolveCustodySecrets(cfg *Config) error {
+	custody, err := kms.NewCustody(cfg.SecretCustody)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	for _, s := range []struct {
+		env string
+		dst *string
+	}{
+		{"ADMIN_KEY_HMAC_SECRET", &cfg.Auth.HMACSecret},
+		{"ADMIN_KEY_HMAC_KEY_MAP", &cfg.Auth.HMACKeyMap},
+		{"CREDENTIAL_ENCRYPTION_KEY", &cfg.Auth.CredentialMasterKey},
+		{"CREDENTIAL_KEY_MAP", &cfg.Auth.CredentialKeyMap},
+	} {
+		v, err := custody.Unwrap(ctx, s.env)
+		if err != nil {
+			return err
+		}
+		if v != "" {
+			*s.dst = v
+		}
+	}
+	return nil
+}
+
 func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		cfg.Database.URL = v
 	}
+	if v := os.Getenv("AI_GATEWAY_AUDIT_SPOOL_DIR"); v != "" {
+		cfg.Audit.SpoolDir = v
+	}
 	if v := os.Getenv("AI_GATEWAY_PUBLIC_URL"); v != "" {
 		cfg.PublicURL = v
 	}
-	if v := os.Getenv("ADMIN_KEY_HMAC_SECRET"); v != "" {
-		cfg.Auth.HMACSecret = v
-	}
-	if v := os.Getenv("CREDENTIAL_ENCRYPTION_KEY"); v != "" {
-		cfg.Auth.CredentialMasterKey = v
-	}
-	if v := os.Getenv("CREDENTIAL_KEY_MAP"); v != "" {
-		cfg.Auth.CredentialKeyMap = v
-	}
+	// ADMIN_KEY_HMAC_SECRET / CREDENTIAL_ENCRYPTION_KEY / CREDENTIAL_KEY_MAP are
+	// crown jewels resolved through the SecretCustody loader in Load(),
+	// not read raw here, so they can be KMS-wrapped at rest.
 	if v := os.Getenv("AI_GATEWAY_PORT"); v != "" {
 		// best-effort: a malformed env var leaves the default port in place,
 		// which is the right fallback during local dev.
 		_, _ = fmt.Sscanf(v, "%d", &cfg.Server.Port)
+	}
+	if v := os.Getenv("AI_GATEWAY_HOST"); v != "" {
+		cfg.Server.Host = v
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
@@ -337,14 +420,20 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("NATS_URL"); v != "" {
 		cfg.MQ.NATS.URL = v
 	}
-	if v := os.Getenv("AI_GATEWAY_CORS_ENABLED"); v == "true" || v == "1" {
+	switch os.Getenv("AI_GATEWAY_CORS_ENABLED") {
+	case "true", "1":
 		cfg.CORS.Enabled = true
+	case "false", "0":
+		cfg.CORS.Enabled = false
 	}
 	if v := os.Getenv("AI_GATEWAY_CORS_ALLOWED_ORIGINS"); v != "" {
 		cfg.CORS.AllowedOrigins = strings.Split(v, ",")
 	}
-	if v := os.Getenv("AI_GATEWAY_CACHE_ENABLED"); v == "true" || v == "1" {
+	switch os.Getenv("AI_GATEWAY_CACHE_ENABLED") {
+	case "true", "1":
 		cfg.Cache.Enabled = true
+	case "false", "0":
+		cfg.Cache.Enabled = false
 	}
 	if v := os.Getenv("AI_GATEWAY_CACHE_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -393,11 +482,16 @@ func validate(cfg *Config) error {
 	if cfg.Auth.InternalServiceToken == "" {
 		return fmt.Errorf("auth.internalServiceToken is required (env INTERNAL_SERVICE_TOKEN; must match Hub)")
 	}
-	if cfg.Auth.HMACSecret == "" {
-		return fmt.Errorf("auth.hmacSecret is required (env ADMIN_KEY_HMAC_SECRET; hashes VK + Admin API keys before DB lookup)")
+	if cfg.Auth.HMACSecret == "" && cfg.Auth.HMACKeyMap == "" {
+		return fmt.Errorf("an HMAC secret is required: set ADMIN_KEY_HMAC_SECRET (single) or ADMIN_KEY_HMAC_KEY_MAP (versioned \"[*]vN:secret\" keyring); hashes VK + Admin API keys before DB lookup; [MUST MATCH] Control Plane")
 	}
-	if cfg.Auth.CredentialMasterKey == "" {
-		return fmt.Errorf("auth.credentialMasterKey is required (env CREDENTIAL_ENCRYPTION_KEY; decrypts Hub-pushed provider credentials)")
+	if cfg.Auth.CredentialMasterKey == "" && cfg.Auth.CredentialKeyMap == "" {
+		// Either the single master key OR the multi-key map satisfies the
+		// requirement: CREDENTIAL_KEY_MAP is documented as standalone
+		// ("takes precedence when present"), and wiring builds a map-only
+		// decryptor correctly — but validate() previously demanded the single
+		// key unconditionally, making map-only mode non-bootable.
+		return fmt.Errorf("a credential decryption key is required: set CREDENTIAL_ENCRYPTION_KEY (single hex key) or CREDENTIAL_KEY_MAP (multi-key \"v1:hex64,v2:hex64\"); both decrypt Hub-pushed provider credentials")
 	}
 	if len(cfg.Redis.Addrs) == 0 && os.Getenv("REDIS_ADDRS") == "" {
 		return fmt.Errorf("redis.addrs is required (set in yaml or via REDIS_ADDRS env)")

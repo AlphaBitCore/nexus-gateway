@@ -1,0 +1,32 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "anthropic-messages",
+  "model": "claude-sonnet-4-6",
+  "stream": true,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "27 * 43\n\n= 27 * 40 + 27 * 3\n= 1080 + 81\n= 1161"
+        },
+        {
+          "type": "text",
+          "text": "## Solving 27 × 43 Step by Step\n\n**Break apart one of the numbers:**\n\nI'll split 43 into 40 + 3\n\n**Multiply each part by 27:**\n\n* 27 × 40 = 1,080\n* 27 × 3 = 81\n\n**Add the results:**\n\n* 1,080 + 81 = **1,161**\n\n**Answer: 27 × 43 = 1,161**"
+        }
+      ],
+      "finishReason": "end_turn"
+    }
+  ],
+  "usage": {
+    "promptTokens": 48,
+    "completionTokens": 158,
+    "totalTokens": 206,
+    "reasoningTokens": 41
+  },
+  "finishReason": "end_turn",
+  "confidence": 1,
+  "detectedSpec": "anthropic-messages"
+}

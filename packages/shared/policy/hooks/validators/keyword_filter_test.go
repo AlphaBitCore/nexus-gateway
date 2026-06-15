@@ -211,3 +211,40 @@ func TestFlagsForCaseSensitive(t *testing.T) {
 		t.Errorf("caseSensitive=false: got %q, want %q", got, "i")
 	}
 }
+
+// TestKeywordFilter_StampsStorageActionOnMatch: a keyword match must carry
+// the hook's storageAction even when the inflight decision is approve — the
+// pipeline stamps storage policy only for non-Approve decisions, and without
+// the stamp an "approve inflight, redact/drop storage" policy would persist
+// the matched content. Keyword matches carry no spans, so the audit writer
+// degrades a redact storage policy to the drop-content placeholder.
+func TestKeywordFilter_StampsStorageActionOnMatch(t *testing.T) {
+	cfg := makeKeywordConfig([]map[string]any{
+		{"pattern": "project-aurora", "category": "confidential", "severity": "hard"},
+	}, false)
+	cfg.Config["onMatch"] = map[string]any{"inflightAction": "approve", "storageAction": "redact"}
+	hook, err := NewKeywordFilter(cfg)
+	if err != nil {
+		t.Fatalf("NewKeywordFilter: %v", err)
+	}
+	input := &HookInput{Normalized: PayloadFromTextSegments([]string{"status of project-aurora please"})}
+	result, err := hook.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Decision != Approve {
+		t.Errorf("decision = %s, want APPROVE (inflight untouched)", result.Decision)
+	}
+	if string(result.StorageAction) != "redact" {
+		t.Errorf("storageAction = %q, want self-stamped redact", result.StorageAction)
+	}
+
+	// A clean input must stamp nothing.
+	clean, err := hook.Execute(context.Background(), &HookInput{Normalized: PayloadFromTextSegments([]string{"hello"})})
+	if err != nil {
+		t.Fatalf("Execute clean: %v", err)
+	}
+	if clean.StorageAction != "" {
+		t.Errorf("clean input stamped storageAction %q", clean.StorageAction)
+	}
+}

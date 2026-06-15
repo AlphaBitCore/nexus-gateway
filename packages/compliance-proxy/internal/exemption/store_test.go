@@ -402,6 +402,46 @@ func TestMatchSourceIP_InvalidInputsReturnFalse(t *testing.T) {
 	}
 }
 
+// TestStore_OverBroadCIDR_Dropped verifies that zero-prefix CIDRs (0.0.0.0/0,
+// ::/0) combined with a blank/wildcard target host are rejected at Rebuild as
+// over-broad grants (F-0297). A grant with a specific target host is fine
+// even if the source is 0.0.0.0/0, since it scopes to one destination.
+func TestStore_OverBroadCIDR_Dropped(t *testing.T) {
+	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
+	cases := []struct {
+		name     string
+		sourceIP string
+		host     string
+		wantDrop bool
+	}{
+		{"v4_zero_prefix+blank_host", "0.0.0.0/0", "", true},
+		{"v4_zero_prefix+wildcard_host", "0.0.0.0/0", "*", true},
+		{"v6_zero_prefix+blank_host", "::/0", "", true},
+		{"v6_zero_prefix+wildcard_host", "::/0", "*", true},
+		// Scoped to a specific host — not over-broad.
+		{"v4_zero_prefix+specific_host", "0.0.0.0/0", "api.openai.com", false},
+		// Ordinary blank+blank (pre-existing guard).
+		{"blank+blank", "", "", true},
+		{"star+blank", "*", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewStore(testLogger())
+			s.Rebuild([]identity.ActiveExemption{{
+				ID: "e1", SourceIP: tc.sourceIP, TargetHost: tc.host,
+				ExpiresAt: future, Reason: "r", ApprovedBy: "admin",
+			}})
+			snap := s.Snapshot()
+			if tc.wantDrop && len(snap.Entries) != 0 {
+				t.Errorf("want 0 exemptions after Rebuild (over-broad drop), got %d", len(snap.Entries))
+			}
+			if !tc.wantDrop && len(snap.Entries) != 1 {
+				t.Errorf("want 1 exemption (specific-host OK), got %d", len(snap.Entries))
+			}
+		})
+	}
+}
+
 func TestStore_CaseSensitiveHost(t *testing.T) {
 	s := NewStore(testLogger())
 	s.Add("10.0.0.1", "API.OpenAI.COM", 1*time.Hour, "test", "admin")

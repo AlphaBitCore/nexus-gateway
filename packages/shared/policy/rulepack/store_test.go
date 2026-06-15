@@ -40,7 +40,7 @@ func TestImportPack_HappyPath_InsertsPackAndRules(t *testing.T) {
 	mock, store := newMockStore(t)
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectQuery(`INSERT INTO "rule_pack"`).
-		WithArgs("test/pack-a", "v1.0.0", "test", "", "").
+		WithArgs("test/pack-a", "v1.0.0", "test", "").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("pack-id-1"))
 	mock.ExpectQuery(`INSERT INTO "rule"`).
 		WithArgs("pack-id-1", "r1", "pi", "hard", `foo`, "", "", []string{"lbl"}).
@@ -78,7 +78,7 @@ func TestImportPack_DuplicateVersion_ReturnsSentinel(t *testing.T) {
 	mock, store := newMockStore(t)
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectQuery(`INSERT INTO "rule_pack"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(&pgconn.PgError{Code: "23505", Message: "duplicate"})
 	mock.ExpectRollback()
 
@@ -109,7 +109,7 @@ func TestImportPack_GenericInsertError_Wraps(t *testing.T) {
 	want := errors.New("planner error")
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectQuery(`INSERT INTO "rule_pack"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(want)
 	mock.ExpectRollback()
 
@@ -126,7 +126,7 @@ func TestImportPack_RuleInsertError_Wraps(t *testing.T) {
 	mock, store := newMockStore(t)
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectQuery(`INSERT INTO "rule_pack"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("pack-1"))
 	mock.ExpectQuery(`INSERT INTO "rule"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -146,7 +146,7 @@ func TestImportPack_CommitError_Wraps(t *testing.T) {
 	mock, store := newMockStore(t)
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectQuery(`INSERT INTO "rule_pack"`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("pack-1"))
 	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
 	mock.ExpectRollback()
@@ -164,9 +164,9 @@ func TestListPacks_HappyPath(t *testing.T) {
 	now := time.Now()
 	mock.ExpectQuery(`FROM "rule_pack" p`).
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "desc", "sig", now).
-			AddRow("p2", "test/b", "v2", "m2", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "desc", now).
+			AddRow("p2", "test/b", "v2", "m2", "", now))
 
 	got, err := store.ListPacks(context.Background())
 	if err != nil {
@@ -205,8 +205,8 @@ func TestGetPack_HappyPath(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "d", "s", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "d", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
@@ -240,8 +240,8 @@ func TestGetPack_RulesQueryError(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "n", "v", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "n", "v", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnError(errors.New("disconnected"))
@@ -258,8 +258,8 @@ func TestGetPack_RuleScanError(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "n", "v", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "n", "v", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("only-one-col"))
@@ -375,7 +375,7 @@ func TestUpdatePack_MetadataOnly_HappyPath(t *testing.T) {
 	maint := "new-maintainer"
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectExec(`UPDATE "rule_pack" SET`).
-		WithArgs("p1", &maint, true, "", false, "").
+		WithArgs("p1", &maint, true, "").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	mock.ExpectCommit()
 
@@ -393,7 +393,7 @@ func TestUpdatePack_MetadataUpdate_NotFound(t *testing.T) {
 	maint := "x"
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectExec(`UPDATE "rule_pack" SET`).
-		WithArgs("missing", &maint, false, "", false, "").
+		WithArgs("missing", &maint, false, "").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
 	mock.ExpectRollback()
 
@@ -408,7 +408,7 @@ func TestUpdatePack_MetadataExecError(t *testing.T) {
 	maint := "x"
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectExec(`UPDATE "rule_pack" SET`).
-		WithArgs("p1", &maint, false, "", false, "").
+		WithArgs("p1", &maint, false, "").
 		WillReturnError(errors.New("constraint"))
 	mock.ExpectRollback()
 
@@ -498,11 +498,11 @@ func TestUpdatePack_InsertRuleError(t *testing.T) {
 		WithArgs("p1").
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	mock.ExpectExec(`INSERT INTO "rule"`).
-		WithArgs("p1", "r1", "", "", "x", "", "", []string(nil)).
+		WithArgs("p1", "r1", "", "hard", "x", "", "", []string(nil)).
 		WillReturnError(errors.New("constraint"))
 	mock.ExpectRollback()
 
-	newRules := []rulepack.Rule{{RuleID: "r1", Pattern: "x"}}
+	newRules := []rulepack.Rule{{RuleID: "r1", Severity: "hard", Pattern: "x"}}
 	err := store.UpdatePack(context.Background(), "p1", rulepack.PackUpdate{Rules: &newRules})
 	if err == nil || !strings.Contains(err.Error(), "insert rule") {
 		t.Errorf("expected insert-rule wrap; got: %v", err)
@@ -524,7 +524,7 @@ func TestUpdatePack_CommitError(t *testing.T) {
 	maint := "x"
 	mock.ExpectBeginTx(pgx.TxOptions{})
 	mock.ExpectExec(`UPDATE "rule_pack" SET`).
-		WithArgs("p1", &maint, false, "", false, "").
+		WithArgs("p1", &maint, false, "").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
 	mock.ExpectRollback()
@@ -706,8 +706,8 @@ func TestLoadEffectiveSetsForHook_FiltersDisabled(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
@@ -769,8 +769,8 @@ func TestLoadForInstall_OverrideDisablesRule(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
@@ -802,8 +802,8 @@ func TestLoadForInstall_OverrideChangesSeverity(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
@@ -834,8 +834,8 @@ func TestLoadForInstall_NoOverrides(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
@@ -895,8 +895,8 @@ func TestLoadForInstall_OverridesQueryError(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
@@ -922,8 +922,8 @@ func TestLoadForInstall_OverrideScanError(t *testing.T) {
 	mock.ExpectQuery(`FROM "rule_pack" WHERE id = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "name", "version", "maintainer", "description", "signature", "createdAt"},
-		).AddRow("p1", "test/a", "v1", "m", "", "", now))
+			[]string{"id", "name", "version", "maintainer", "description", "createdAt"},
+		).AddRow("p1", "test/a", "v1", "m", "", now))
 	mock.ExpectQuery(`FROM "rule" WHERE "packId" = \$1`).
 		WithArgs("p1").
 		WillReturnRows(pgxmock.NewRows(
@@ -952,3 +952,159 @@ func TestNewStore_AcceptsNilForCompilationCoverage(t *testing.T) {
 
 // strPtr is a small helper used across tests.
 func strPtr(s string) *string { return &s }
+
+// --- F-0275: ImportPack / UpdatePack pattern + severity validation ---------
+
+// asInvalidRulesError unwraps err to *rulepack.InvalidRulesError or fails.
+func asInvalidRulesError(t *testing.T, err error) *rulepack.InvalidRulesError {
+	t.Helper()
+	var ire *rulepack.InvalidRulesError
+	if !errors.As(err, &ire) {
+		t.Fatalf("expected *InvalidRulesError; got %T: %v", err, err)
+	}
+	return ire
+}
+
+func TestImportPack_InvalidSeverity_RejectedNoWrite(t *testing.T) {
+	// A severity typo (here "blocK" — not in hard|soft|warn) must be rejected
+	// before any SQL runs; otherwise it silently downgrades to non-blocking at
+	// runtime. The mock asserts zero DB interaction by registering no
+	// expectations: any Begin/Exec would fail ExpectationsWereMet.
+	mock, store := newMockStore(t)
+
+	_, err := store.ImportPack(context.Background(), &rulepack.Pack{
+		Name: "test/p", Version: "v1.0.0", Maintainer: "t",
+		Rules: []rulepack.Rule{
+			{RuleID: "r1", Severity: "blocK", Pattern: `foo`},
+		},
+	})
+	ire := asInvalidRulesError(t, err)
+	if len(ire.Errors) != 1 || ire.Errors[0].RuleID != "r1" {
+		t.Fatalf("expected one error for r1; got %+v", ire.Errors)
+	}
+	if !strings.Contains(ire.Errors[0].Reason, "invalid severity") {
+		t.Errorf("reason should mention severity; got %q", ire.Errors[0].Reason)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("no SQL should run on validation failure: %v", err)
+	}
+}
+
+func TestImportPack_InvalidRegex_RejectedNoWrite(t *testing.T) {
+	mock, store := newMockStore(t)
+
+	_, err := store.ImportPack(context.Background(), &rulepack.Pack{
+		Name: "test/p", Version: "v1.0.0", Maintainer: "t",
+		Rules: []rulepack.Rule{
+			{RuleID: "r1", Severity: "hard", Pattern: `(`}, // unterminated group
+		},
+	})
+	ire := asInvalidRulesError(t, err)
+	if len(ire.Errors) != 1 || !strings.Contains(ire.Errors[0].Reason, "invalid pattern") {
+		t.Fatalf("expected invalid-pattern error; got %+v", ire.Errors)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("no SQL should run on validation failure: %v", err)
+	}
+}
+
+func TestImportPack_AllInvalidRulesListed(t *testing.T) {
+	// Multiple bad rules must ALL be reported in one error so the operator
+	// fixes them in a single round trip — not one-at-a-time.
+	_, store := newMockStore(t)
+
+	_, err := store.ImportPack(context.Background(), &rulepack.Pack{
+		Name: "test/p", Version: "v1.0.0", Maintainer: "t",
+		Rules: []rulepack.Rule{
+			{RuleID: "bad-sev", Severity: "nope", Pattern: `ok`},
+			{RuleID: "good", Severity: "hard", Pattern: `ok`},
+			{RuleID: "bad-rx", Severity: "soft", Pattern: `[`},
+			{RuleID: "empty-rx", Severity: "warn", Pattern: ``},
+		},
+	})
+	ire := asInvalidRulesError(t, err)
+	if len(ire.Errors) != 3 {
+		t.Fatalf("expected 3 invalid rules reported; got %d: %+v", len(ire.Errors), ire.Errors)
+	}
+	gotIDs := map[string]bool{}
+	for _, re := range ire.Errors {
+		gotIDs[re.RuleID] = true
+	}
+	for _, want := range []string{"bad-sev", "bad-rx", "empty-rx"} {
+		if !gotIDs[want] {
+			t.Errorf("missing error for %q; got %+v", want, ire.Errors)
+		}
+	}
+	if gotIDs["good"] {
+		t.Errorf("valid rule must not be flagged; got %+v", ire.Errors)
+	}
+}
+
+func TestImportPack_ErrorMessageEnumeratesRules(t *testing.T) {
+	_, store := newMockStore(t)
+	_, err := store.ImportPack(context.Background(), &rulepack.Pack{
+		Name: "test/p", Version: "v1.0.0", Maintainer: "t",
+		Rules: []rulepack.Rule{{RuleID: "r1", Severity: "x", Pattern: `(`}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid rules") {
+		t.Fatalf("Error() should enumerate invalid rules; got %v", err)
+	}
+}
+
+func TestUpdatePack_InvalidRule_RejectedNoWrite(t *testing.T) {
+	mock, store := newMockStore(t)
+
+	rules := []rulepack.Rule{{RuleID: "r1", Severity: "warnn", Pattern: `ok`}}
+	err := store.UpdatePack(context.Background(), "p1", rulepack.PackUpdate{Rules: &rules})
+	ire := asInvalidRulesError(t, err)
+	if len(ire.Errors) != 1 || ire.Errors[0].RuleID != "r1" {
+		t.Fatalf("expected one error for r1; got %+v", ire.Errors)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("no SQL should run on validation failure: %v", err)
+	}
+}
+
+func TestUpdatePack_NilRules_SkipsValidation(t *testing.T) {
+	// When Rules is nil (metadata-only update), validation is skipped and the
+	// metadata path runs normally.
+	mock, store := newMockStore(t)
+	maint := "m"
+	mock.ExpectBeginTx(pgx.TxOptions{})
+	mock.ExpectExec(`UPDATE "rule_pack" SET`).
+		WithArgs("p1", &maint, false, "").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectCommit()
+
+	if err := store.UpdatePack(context.Background(), "p1", rulepack.PackUpdate{Maintainer: &maint}); err != nil {
+		t.Fatalf("metadata-only update should not validate rules: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+func TestImportPack_ValidWarnSeverity_Accepted(t *testing.T) {
+	// "warn" is a valid authoring severity and must pass validation through to
+	// the SQL path (covering the happy-path of the validation gate).
+	mock, store := newMockStore(t)
+	mock.ExpectBeginTx(pgx.TxOptions{})
+	mock.ExpectQuery(`INSERT INTO "rule_pack"`).
+		WithArgs("test/p", "v1.0.0", "t", "").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("pk"))
+	mock.ExpectQuery(`INSERT INTO "rule"`).
+		WithArgs("pk", "r1", "cat", "warn", `ok`, "", "", []string(nil)).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("ri"))
+	mock.ExpectCommit()
+
+	_, err := store.ImportPack(context.Background(), &rulepack.Pack{
+		Name: "test/p", Version: "v1.0.0", Maintainer: "t",
+		Rules: []rulepack.Rule{{RuleID: "r1", Category: "cat", Severity: "warn", Pattern: `ok`}},
+	})
+	if err != nil {
+		t.Fatalf("warn severity should be accepted: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}

@@ -18,12 +18,36 @@ import (
 // RegisterSIEMRoutes registers SIEM settings routes.
 func (h *Handler) RegisterSIEMRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
 	g.GET("/settings/siem", h.GetSIEMConfig, iamMW(iam.ResourceAuditLog.Action(iam.VerbRead)))
-	g.PUT("/settings/siem", h.UpdateSIEMConfig, iamMW(iam.ResourceAuditLog.Action(iam.VerbWrite)))
-	g.POST("/settings/siem/test", h.TestSIEMConfig, iamMW(iam.ResourceAuditLog.Action(iam.VerbWrite)))
+	// Reconfiguring the SIEM egress redirects the ENTIRE org's audit
+	// stream to an operator-supplied URL and (pre-guard) was an SSRF primitive —
+	// that is a system-integration setting, not an audit-log record operation.
+	// The mutating verbs are gated on the higher-blast-radius settings:write tier
+	// (the verb also used by health:reset), so a narrow audit-log:write grant can
+	// no longer point the audit firehose at an attacker endpoint. Read stays on
+	// audit-log:read: viewing the redacted egress config is an audit concern.
+	g.PUT("/settings/siem", h.UpdateSIEMConfig, iamMW(iam.ResourceSettings.Action(iam.VerbWrite)))
+	g.POST("/settings/siem/test", h.TestSIEMConfig, iamMW(iam.ResourceSettings.Action(iam.VerbWrite)))
 	g.GET("/settings/siem/event-types", h.ListSIEMEventTypes, iamMW(iam.ResourceAuditLog.Action(iam.VerbRead)))
 }
 
 const siemConfigKey = "siem.config"
+
+// redactedSecretSentinel is the placeholder GetSIEMConfig returns in place of a
+// stored secret header value (Authorization / x-api-key). It is a fixed marker —
+// NOT a partial reveal — so a read-back leaks nothing: the client learns only
+// that a value is set, never any byte of it. On UpdateSIEMConfig, a
+// header whose value still equals this sentinel means "unchanged" and the
+// previously stored real value is preserved (see preserveSecretHeaders); the SIEM
+// forwarder therefore keeps working across a UI GET→edit→PUT round-trip without
+// the admin ever re-typing the secret.
+const redactedSecretSentinel = "********"
+
+// isSecretHeader reports whether a SIEM request header carries a credential
+// whose value must never be echoed back to a client in plaintext. Matching is
+// case-insensitive because callers may store "Authorization" or "authorization".
+func isSecretHeader(name string) bool {
+	return strings.EqualFold(name, "authorization") || strings.EqualFold(name, "x-api-key")
+}
 
 // SIEMConfig holds the SIEM integration configuration.
 type SIEMConfig struct {
@@ -32,6 +56,51 @@ type SIEMConfig struct {
 	Format     string            `json:"format"` // json | cef | syslog
 	Headers    map[string]string `json:"headers"`
 	EventTypes []string          `json:"eventTypes"`
+}
+
+// redactSecretHeaders returns a copy of headers with every secret header value
+// replaced by the fixed redactedSecretSentinel (non-secret headers pass through
+// unchanged). An empty stored value is returned as empty (not the sentinel) so
+// the UI can distinguish "no value set" from "value set but hidden". Used by
+// GetSIEMConfig so a read-back never carries a real token byte.
+func redactSecretHeaders(headers map[string]string) map[string]string {
+	if headers == nil {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for k, v := range headers {
+		if isSecretHeader(k) && v != "" {
+			out[k] = redactedSecretSentinel
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// preserveSecretHeaders reconciles an inbound (client) header map against the
+// stored map: any secret header whose inbound value is the redaction sentinel
+// (the client is replaying what GetSIEMConfig returned, not setting a new
+// secret) is replaced with the previously stored real value. This stops a UI
+// round-trip from overwriting a live token with the placeholder while still
+// letting an admin set a genuinely new secret (any other value is taken as-is)
+// or clear it (empty string is taken as-is). Mutates and returns inbound.
+func preserveSecretHeaders(inbound, stored map[string]string) map[string]string {
+	if inbound == nil {
+		return inbound
+	}
+	for k, v := range inbound {
+		if isSecretHeader(k) && v == redactedSecretSentinel {
+			if prev, ok := stored[k]; ok {
+				inbound[k] = prev
+			} else {
+				// No prior value to preserve — drop the placeholder rather than
+				// persist the literal sentinel as if it were a real credential.
+				delete(inbound, k)
+			}
+		}
+	}
+	return inbound
 }
 
 func (h *Handler) GetSIEMConfig(c echo.Context) error {
@@ -50,22 +119,11 @@ func (h *Handler) GetSIEMConfig(c echo.Context) error {
 		return c.JSON(http.StatusOK, &SIEMConfig{Format: "json"})
 	}
 
-	// Mask auth headers
-	if cfg.Headers != nil {
-		masked := make(map[string]string)
-		for k, v := range cfg.Headers {
-			if strings.EqualFold(k, "authorization") || strings.EqualFold(k, "x-api-key") {
-				if len(v) > 8 {
-					masked[k] = v[:4] + "****" + v[len(v)-4:]
-				} else {
-					masked[k] = "****"
-				}
-			} else {
-				masked[k] = v
-			}
-		}
-		cfg.Headers = masked
-	}
+	// Redact secret header values to a fixed sentinel so the read-back leaks
+	// no byte of the stored token. The previous behaviour revealed the
+	// first and last 4 characters, which narrows a brute-force / shoulder-surf
+	// and is itself a partial disclosure of a credential.
+	cfg.Headers = redactSecretHeaders(cfg.Headers)
 
 	return c.JSON(http.StatusOK, cfg)
 }
@@ -82,6 +140,20 @@ func (h *Handler) UpdateSIEMConfig(c echo.Context) error {
 	}
 	if cfg.URL != "" && !strings.HasPrefix(cfg.URL, "https://") && !strings.HasPrefix(cfg.URL, "http://") {
 		return c.JSON(http.StatusBadRequest, errJSON("url must be a valid HTTP(S) URL", "validation_error", ""))
+	}
+
+	// Preserve any secret header the client replayed as the redaction sentinel:
+	// GetSIEMConfig returns secret values masked, so a UI that GETs,
+	// edits a non-secret field, and PUTs back would otherwise overwrite the live
+	// token with the placeholder. Load the prior stored config and substitute the
+	// real value wherever the client sent the sentinel; a genuinely new value
+	// (anything else) or an empty string (clear) is taken as submitted.
+	if cfg.Headers != nil {
+		var prev SIEMConfig
+		if priorRaw, perr := h.db.GetSystemMetadata(c.Request().Context(), siemConfigKey); perr == nil && priorRaw != nil {
+			_ = json.Unmarshal(priorRaw, &prev)
+		}
+		cfg.Headers = preserveSecretHeaders(cfg.Headers, prev.Headers)
 	}
 
 	aa := middleware.AdminAuthFromContext(c)
@@ -140,18 +212,39 @@ func (h *Handler) TestSIEMConfig(c echo.Context) error {
 		Timeout:        10 * time.Second,
 		Caller:         "cp-admin-siem",
 		PropagateReqID: true,
+		// The test probe dials an operator-supplied URL, so it is an SSRF
+		// primitive. Scope the dial guard to THIS client only (not
+		// process-wide — CP legitimately dials its own private deps); the
+		// guard runs on the resolved address, defeating DNS-rebinding too. A
+		// SIEM endpoint is external by nature — a private/loopback target is
+		// never legitimate — so it routes through the admin-egress chokepoint
+		// as ExternalOnly.
+		DialControl: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly),
 	})
-	resp, err := client.Do(req)
-	if err != nil {
-		return c.JSON(http.StatusOK, map[string]any{"ok": false, "error": "Failed to reach SIEM endpoint: " + err.Error()})
+	resp, derr := client.Do(req)
+	if resp != nil {
+		defer resp.Body.Close() //nolint:errcheck
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	return c.JSON(http.StatusOK, siemProbeResult(resp, derr))
+}
 
+// siemProbeResult maps the outcome of the SIEM connectivity POST to the generic
+// reachable/unreachable envelope returned to the admin UI.
+//
+// It deliberately reveals only a boolean plus a fixed message. The
+// raw transport error (connection-refused vs. SSRF-guard reject vs. TLS error
+// vs. timeout) and the upstream status code (401 vs 403 vs 500) are a blind-SSRF
+// / internal-endpoint fingerprinting oracle, so a dial failure and an error
+// status each collapse to one constant string with no statusCode field. Any two
+// distinct failure causes MUST produce byte-identical bodies.
+func siemProbeResult(resp *http.Response, dialErr error) map[string]any {
+	if dialErr != nil {
+		return map[string]any{"ok": false, "error": "Failed to reach the SIEM endpoint"}
+	}
 	if resp.StatusCode >= 400 {
-		return c.JSON(http.StatusOK, map[string]any{"ok": false, "error": "SIEM returned HTTP " + resp.Status, "statusCode": resp.StatusCode})
+		return map[string]any{"ok": false, "error": "The SIEM endpoint returned an error response"}
 	}
-
-	return c.JSON(http.StatusOK, map[string]any{"ok": true, "statusCode": resp.StatusCode})
+	return map[string]any{"ok": true}
 }
 
 // ListSIEMEventTypes returns the full set of SIEM event types the
@@ -183,6 +276,15 @@ func (h *Handler) ListSIEMEventTypes(c echo.Context) error {
 		{Type: "traffic.rate_limited", Resource: "traffic", Service: string(iam.ServiceCompliance)},
 		{Type: "traffic.budget_exceeded", Resource: "traffic", Service: string(iam.ServiceCompliance)},
 		{Type: "traffic.request_blocked", Resource: "traffic", Service: string(iam.ServiceCompliance)},
+		// Authentication event types — hand-listed (no IAM catalog resource).
+		// ClassifyAdminEvent maps the dotted login actions
+		// (admin.login.failed/.succeeded) to these canonical auth.* identities so
+		// they survive a SIEM whitelist; without a picker entry an admin could
+		// never select them and enabling any whitelist would silently stop
+		// forwarding login events. Grouped under a synthetic "auth"
+		// resource in the IAM service.
+		{Type: "auth.login_failure", Resource: "auth", Service: string(iam.ServiceIAM)},
+		{Type: "auth.login_success", Resource: "auth", Service: string(iam.ServiceIAM)},
 	}
 
 	// Admin event types — one entry per (resource, verb) pair in the

@@ -40,7 +40,7 @@ func TestAgentExemptionsLoader_Load_Empty(t *testing.T) {
 		t.Errorf("empty result set should report version=0, got %d", ver)
 	}
 	raw, _ := json.Marshal(state)
-	want := `{"auto_exempt_cert_pinned":false,"admin_exemptions":[],"denylist":[]}`
+	want := `{"admin_exemptions":[],"denylist":[]}`
 	if string(raw) != want {
 		t.Errorf("empty state mismatch:\n got %s\nwant %s", raw, want)
 	}
@@ -73,7 +73,7 @@ func TestAgentExemptionsLoader_Load_SingleGrant(t *testing.T) {
 		t.Errorf("version = %d, want %d (latest.Unix())", ver, updated.Unix())
 	}
 	raw, _ := json.Marshal(state)
-	want := `{"auto_exempt_cert_pinned":false,"admin_exemptions":["api.openai.com"],"denylist":[]}`
+	want := `{"admin_exemptions":["api.openai.com"],"denylist":[]}`
 	if string(raw) != want {
 		t.Errorf("state mismatch:\n got %s\nwant %s", raw, want)
 	}
@@ -148,7 +148,7 @@ func TestAgentExemptionsLoader_Load_NullLatestTimestamp(t *testing.T) {
 		t.Errorf("NULL latest must produce version=0, got %d", ver)
 	}
 	raw, _ := json.Marshal(state)
-	want := `{"auto_exempt_cert_pinned":false,"admin_exemptions":["orphan.example.com"],"denylist":[]}`
+	want := `{"admin_exemptions":["orphan.example.com"],"denylist":[]}`
 	if string(raw) != want {
 		t.Errorf("state mismatch:\n got %s\nwant %s", raw, want)
 	}

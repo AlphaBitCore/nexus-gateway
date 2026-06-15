@@ -98,7 +98,7 @@ func (t *Transport) ApplyAuth(r *http.Request, target provcore.CallTarget) error
 }
 
 // Do delegates to the shared HTTP client.
-func (t *Transport) Do(ctx context.Context, r *http.Request) (*http.Response, error) {
+func (t *Transport) Do(ctx context.Context, r *http.Request, _ provcore.CallTarget) (*http.Response, error) {
 	return t.client.Do(r.WithContext(ctx))
 }
 

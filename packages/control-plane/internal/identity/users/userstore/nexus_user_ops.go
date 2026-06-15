@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/usercascade"
 )
 
 // NexusUserListParams holds filter/pagination for NexusUser listing.
@@ -18,8 +20,13 @@ type NexusUserListParams struct {
 	// IncludeSubOrgs extends the OrgID filter to include all descendant orgs
 	// by matching Organization.path prefix.
 	IncludeSubOrgs bool
-	Limit          int
-	Offset         int
+	// OwnedByIdP, when non-nil, restricts the result to users provisioned by /
+	// federated to that identity provider (a UserFederatedIdentity link row
+	// exists). The SCIM ListUsers handler sets it to the calling token's IdP so a
+	// per-IdP SCIM token cannot enumerate users owned by another IdP.
+	OwnedByIdP *string
+	Limit      int
+	Offset     int
 }
 
 // NexusUserSafe is a NexusUser without the password hash.
@@ -73,6 +80,13 @@ func (store *Store) ListNexusUsers(ctx context.Context, p NexusUserListParams) (
 			where += fmt.Sprintf(` AND u."organizationId" = $%d`, argIdx)
 		}
 		args = append(args, p.OrgID)
+		argIdx++
+	}
+	if p.OwnedByIdP != nil && *p.OwnedByIdP != "" {
+		// Restrict to users the given IdP provisioned/owns so a
+		// per-IdP SCIM token cannot enumerate users owned by another IdP.
+		where += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM "UserFederatedIdentity" f WHERE f."userId" = u.id AND f."idpId" = $%d)`, argIdx)
+		args = append(args, *p.OwnedByIdP)
 		argIdx++
 	}
 
@@ -263,14 +277,37 @@ func (store *Store) UpdateNexusUser(ctx context.Context, id string, p UpdateNexu
 	return &u, nil
 }
 
-// DeleteNexusUser deletes a NexusUser.
+// DeleteNexusUser hard-deletes a NexusUser and the auth/authz artifacts that
+// reference it, in one transaction. A naive
+// `DELETE FROM "NexusUser"` would FAIL on the ScimToken.createdBy RESTRICT FK
+// and orphan-null the user's owned VirtualKey/AdminApiKey rows; the FK-correct
+// ordering lives in usercascade — the SAME ordering the GDPR Art.17 erasure
+// (dsarstore.FulfillDSARErasure) uses for its account-removal stage.
+//
+// Semantics differ from DSAR erasure: this is a genuine HARD DELETE of the
+// account plus its owned auth artifacts — it does NOT anonymise the user's
+// traffic footprint (that is erasure-specific). The tamper-evident
+// AdminAuditLog hash chain is never touched (see usercascade docs). Returns
+// pgx.ErrNoRows when no such user exists.
 func (store *Store) DeleteNexusUser(ctx context.Context, id string) error {
-	tag, err := store.pool.Exec(ctx, `DELETE FROM "NexusUser" WHERE id = $1`, id)
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete user tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	counts, err := usercascade.DeleteUserAccount(ctx, tx, id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if !counts.AccountDeleted {
+		// No NexusUser row existed; the cascade ran as no-ops. Roll back (via the
+		// deferred Rollback) and report not-found, preserving the prior contract.
 		return pgx.ErrNoRows
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete user: %w", err)
 	}
 	return nil
 }

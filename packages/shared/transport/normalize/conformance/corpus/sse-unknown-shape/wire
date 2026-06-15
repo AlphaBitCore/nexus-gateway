@@ -1,0 +1,8 @@
+event: foo
+data: {"a":1}
+
+event: bar
+data: not-json-text
+
+data: {"b":[1,2]}
+

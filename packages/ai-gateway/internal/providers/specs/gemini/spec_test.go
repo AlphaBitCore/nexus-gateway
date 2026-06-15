@@ -104,7 +104,7 @@ func TestGemini_Codec_DecodeResponse(t *testing.T) {
 		"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3},
 		"modelVersion":"gemini-1.5-pro"
 	}`)
-	decRes, err := gemini.NewCodec().DecodeResponse(typology.WireShapeGeminiGenerateContent, native, "")
+	decRes, err := gemini.NewCodec().DecodeResponse(typology.WireShapeGeminiGenerateContent, native, "", provcore.DecodeContext{})
 	canon := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {

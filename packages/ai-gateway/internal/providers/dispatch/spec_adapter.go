@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/forwardheader"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/bodydecompress"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -104,55 +105,13 @@ func (a *specAdapter) Execute(ctx context.Context, req Request) (*Response, erro
 	return a.executeWithBodyAndURL(ctx, req, body, rewrites, urlOverride)
 }
 
-func (a *specAdapter) ExecuteWithBody(ctx context.Context, req Request, body []byte, rewrites []string) (*Response, error) {
-	// Cache MISS / prepared-body fast path: PrepareBody discarded the
-	// codec's URLOverride to keep its (body, rewrites, err) signature.
-	// For endpoints where the action URL is selected by body shape
-	// (Gemini embeddings — :embedContent for single, :batchEmbedContents
-	// for batch), recover the override by peeking at the body. Without
-	// this, a batch-shaped body lands on :embedContent and Gemini
-	// returns HTTP 400 `Unknown name "requests": Cannot find field.`
-	urlOverride := deriveURLOverrideFromBody(req.WireShape, a.spec.Format, body)
+func (a *specAdapter) ExecuteWithBody(ctx context.Context, req Request, body []byte, rewrites []string, urlOverride string) (*Response, error) {
+	// Cache MISS / prepared-body fast path: the codec's URLOverride is
+	// threaded through PrepareBody → the cache layer → here, so a
+	// shape-driven action URL (Gemini :embedContent vs :batchEmbedContents)
+	// reaches the dispatched URL without the generic dispatcher re-deriving
+	// it by peeking at provider-specific body fields.
 	return a.executeWithBodyAndURL(ctx, req, body, rewrites, urlOverride)
-}
-
-// deriveURLOverrideFromBody inspects an already-prepared wire body and
-// returns the URLOverride suffix the codec would have emitted. Empty
-// string means no override needed (transport default applies). Today
-// only the Gemini embeddings endpoint needs this; extend the switch
-// when other providers gain shape-driven URL action variants.
-//
-// Mirrors the dispatch the codec performs in
-// packages/ai-gateway/internal/providers/specs/gemini/codec/embeddings.go
-// — kept in sync with that codec's URLOverride literals.
-func deriveURLOverrideFromBody(shape typology.WireShape, format Format, body []byte) string {
-	if format != FormatGemini && format != FormatVertex {
-		return ""
-	}
-	// Embeddings-kind shapes only. The prepared/failover paths may carry
-	// either the caller's openai-embeddings shape OR — after cross-format
-	// canonicalization — the target's native Gemini/Vertex embed shape. The
-	// body-peek below is Gemini-wire-aware (requests[]/content), so all three
-	// embeddings shapes route to the same single-vs-batch URL action recovery.
-	switch shape {
-	case typology.WireShapeOpenAIEmbeddings,
-		typology.WireShapeGeminiEmbedContent,
-		typology.WireShapeVertexEmbedContent:
-	default:
-		return ""
-	}
-	if len(body) == 0 {
-		return ""
-	}
-	// gjson is already imported via the dispatch package's other files;
-	// peek at top-level fields without allocating a full parse.
-	if gjson.GetBytes(body, "requests").IsArray() {
-		return ":batchEmbedContents"
-	}
-	if gjson.GetBytes(body, "content").Exists() {
-		return ":embedContent"
-	}
-	return ""
 }
 
 // executeWithBodyAndURL is the internal implementation of ExecuteWithBody.
@@ -177,6 +136,26 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		url = applyURLOverride(url, urlOverride)
 	}
 
+	// Non-streaming upstream calls get an explicit per-request deadline from
+	// the live ActiveConfig().Timeout budget. The upstream http.Client.Timeout
+	// is intentionally 0 (specutil), so without this the only non-stream bound
+	// was an unrelated server write-timeout that never cancelled the upstream
+	// goroutine — the operator-tuned upstream.timeout was dead on the hot path.
+	// context.WithTimeout only ever tightens: if the caller
+	// already set an earlier deadline, that one still wins. Streaming responses
+	// are NOT wrapped: the stream body is read lazily by the caller after this
+	// function returns, so a deadline anchored to this stack frame would abort
+	// a healthy long-lived stream; their time-to-headers is bounded by the
+	// Transport's ResponseHeaderTimeout instead.
+	callCtx := ctx
+	if !req.Stream {
+		if budget := specutil.ActiveConfig().Timeout; budget > 0 {
+			var cancel context.CancelFunc
+			callCtx, cancel = context.WithTimeout(ctx, budget)
+			defer cancel()
+		}
+	}
+
 	method := http.MethodPost
 	var reader io.Reader
 	if req.WireShape == typology.WireShapeNone {
@@ -186,7 +165,7 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		reader = bytes.NewReader(body)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, method, url, reader)
+	httpReq, err := http.NewRequestWithContext(callCtx, method, url, reader)
 	if err != nil {
 		return nil, &ProviderError{
 			Status:  http.StatusInternalServerError,
@@ -218,9 +197,9 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		)
 	}
 
-	httpResp, err := a.spec.Transport.Do(ctx, httpReq)
+	httpResp, err := a.spec.Transport.Do(callCtx, httpReq, req.Target)
 	if err != nil {
-		if ctx.Err() != nil {
+		if callCtx.Err() != nil {
 			return nil, &ProviderError{
 				Status:  http.StatusGatewayTimeout,
 				Code:    CodeTimeout,
@@ -258,8 +237,10 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		// that Go's transport leaves untouched, so the ErrorNormalizer's
 		// JSON probe sees plain text. gzip is auto-decompressed by Go
 		// (Accept-Encoding stripped → transport adds its own) and the
-		// helper is a no-op via resp.Uncompressed=true.
-		raw = bodydecompress.Decompress(raw, httpResp)
+		// helper is a no-op via resp.Uncompressed=true. Error bodies are
+		// tiny; the default decompressed-size bound (50 MiB) suffices and a
+		// truncation here only affects the diagnostic error message.
+		raw, _ = bodydecompress.Decompress(raw, httpResp, 0)
 		pe := a.spec.ErrorNormalizer.Normalize(httpResp.StatusCode, httpResp.Header, raw)
 		if pe == nil {
 			pe = &ProviderError{
@@ -305,13 +286,24 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 	}
 
 	defer httpResp.Body.Close() //nolint:errcheck
-	native, err := LimitedReadAllN(httpResp.Body, req.MaxResponseBytes)
+	native, readTruncated, err := LimitedReadAllN(httpResp.Body, req.MaxResponseBytes)
 	if err != nil {
 		return nil, &ProviderError{
 			Status:  http.StatusBadGateway,
 			Code:    CodeUpstreamError,
 			Message: fmt.Sprintf("read body: %v", err),
 		}
+	}
+	if readTruncated {
+		// The upstream non-streaming body exceeded the read cap and
+		// was clamped. The usage block (typically at the JSON tail) may be
+		// missing or partial, so the eventual token counts cannot be trusted;
+		// the handler stamps usage_extraction_status="truncated" off
+		// Response.Truncated below.
+		a.log.Warn("upstream response exceeded read cap; usage extraction may be incomplete",
+			slog.Int64("max_response_bytes", req.MaxResponseBytes),
+			slog.String("format", string(a.spec.Format)),
+		)
 	}
 	// #77 — decompress non-gzip Content-Encoding (br / zstd / deflate)
 	// upstream before SchemaCodec sees the bytes. A custom provider URL
@@ -320,13 +312,23 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 	// would fail with an opaque JSON parse error and rec.ResponseBody
 	// would never be set. No-op for the gzip path Go's transport already
 	// decompresses (resp.Uncompressed=true short-circuits the helper).
-	native = bodydecompress.Decompress(native, httpResp)
+	// The compressed read above is bounded by req.MaxResponseBytes; the
+	// decompressed expansion is bounded by bodydecompress's own cap so a
+	// br/zstd decompression bomb cannot OOM the gateway.
+	var decompTruncated bool
+	native, decompTruncated = bodydecompress.Decompress(native, httpResp, 0)
+	if decompTruncated {
+		a.log.Warn("upstream response exceeded decompressed-size bound; treating as opaque",
+			slog.String("content_encoding", httpResp.Header.Get("Content-Encoding")),
+			slog.String("format", string(a.spec.Format)),
+		)
+	}
 
 	// Stamp resp_adapter_ms onto the request's PhaseSink so the handler's
 	// finalize can merge it into latency_breakdown JSONB. No-op when no
 	// sink is on ctx (e.g. probe / test paths).
 	respAdapterStart := time.Now()
-	decodeRes, err := a.spec.SchemaCodec.DecodeResponse(req.WireShape, native, httpResp.Header.Get("Content-Type"))
+	decodeRes, err := a.spec.SchemaCodec.DecodeResponse(req.WireShape, native, httpResp.Header.Get("Content-Type"), DecodeContext{Target: req.Target, RequestBody: body})
 	if ps := traffic.PhaseSinkFromContext(ctx); ps != nil {
 		ps.AddBreakdown(string(traffic.PhaseRespAdapter), int(time.Since(respAdapterStart).Milliseconds()))
 	}
@@ -340,46 +342,25 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 	}
 	usage := decodeRes.Usage
 	canonicalBody := decodeRes.CanonicalBody
-	// Gemini embedding API never returns token counts in the response —
-	// neither :embedContent nor :batchEmbedContents includes usage fields
-	// (verified against raw upstream bodies). Without a usage figure the
-	// gateway records prompt_tokens=0, which silently breaks per-call cost
-	// accounting for Gemini embeddings. Recover by estimating from the wire
-	// body's `text` payload (chars/4 heuristic) when Usage came back zeroed.
-	// Both Response.Usage (internal) and the canonical body's usage block
-	// (client-visible JSON) are updated so cost rollups and SDK numbers align.
-	if req.WireShape == typology.WireShapeOpenAIEmbeddings &&
-		(a.spec.Format == FormatGemini || a.spec.Format == FormatVertex) &&
-		(usage.PromptTokens == nil || *usage.PromptTokens == 0) {
-		var charCount int
-		gjson.GetBytes(body, "content.parts").ForEach(func(_, p gjson.Result) bool {
-			charCount += len(p.Get("text").String())
-			return true
-		})
-		gjson.GetBytes(body, "requests").ForEach(func(_, r gjson.Result) bool {
-			r.Get("content.parts").ForEach(func(_, p gjson.Result) bool {
-				charCount += len(p.Get("text").String())
-				return true
-			})
-			return true
-		})
-		if charCount > 0 {
-			est := charCount / 4
-			if est < 1 {
-				est = 1
-			}
-			usage.PromptTokens = &est
-			usage.TotalTokens = &est
-			// Mirror into canonical body so the JSON the client receives
-			// also carries the estimate. SetBytes is a no-op when the
-			// canonical body is empty (early-failure paths).
-			if len(canonicalBody) > 0 {
-				if updated, sjErr := sjson.SetBytes(canonicalBody, "usage.prompt_tokens", est); sjErr == nil {
-					canonicalBody = updated
-				}
-				if updated, sjErr := sjson.SetBytes(canonicalBody, "usage.total_tokens", est); sjErr == nil {
-					canonicalBody = updated
-				}
+	// The Gemini/Vertex embedding wire never returns token counts; the
+	// chars/4 prompt-token estimate that recovers them now lives in the
+	// Gemini embedding codec (decodeGeminiEmbeddingResponse), which
+	// receives the wire request body via DecodeContext — no provider-name
+	// branch in this generic dispatcher.
+	//
+	// Generic embeddings model back-fill: the canonical embeddings response
+	// must echo the requested model so OpenAI SDK callers can read it. Most
+	// decoders stamp the model from the wire response, but providers whose
+	// embedding wire shape carries no model field (Gemini / Vertex) leave it
+	// empty because the stateless SchemaCodec.DecodeResponse interface does
+	// not receive the CallTarget. Back-fill from the resolved ProviderModelID
+	// here — this is a format-agnostic rule (no provider-name branch) and is a
+	// no-op when the decoder already stamped a non-empty model.
+	if typology.KindFromWireShape(req.WireShape) == typology.EndpointKindEmbeddings &&
+		len(canonicalBody) > 0 && req.Target.ProviderModelID != "" {
+		if m := gjson.GetBytes(canonicalBody, "model"); !m.Exists() || m.Str == "" {
+			if updated, sjErr := sjson.SetBytes(canonicalBody, "model", req.Target.ProviderModelID); sjErr == nil {
+				canonicalBody = updated
 			}
 		}
 	}
@@ -392,6 +373,11 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		Coerced:      rewrites,
 		TargetMethod: httpReq.Method,
 		TargetPath:   httpReq.URL.Path,
+		// Either the raw read cap (readTruncated) or the
+		// decompressed-size bound (decompTruncated) clamped the bytes fed to
+		// DecodeResponse, so the parsed usage is incomplete. Surface it so the
+		// handler refuses to report usage_extraction_status="ok".
+		Truncated: readTruncated || decompTruncated,
 	}, nil
 }
 
@@ -405,12 +391,13 @@ func (a *specAdapter) Probe(ctx context.Context, target CallTarget) (*ProbeResul
 // passthrough path; the codec path always returns an empty rewrite list.
 // Idempotent; no side effects.
 //
-// Note: PrepareBody intentionally drops EncodeResult.URLOverride to keep
-// the public Adapter interface stable. Use Execute (which calls
-// prepareBodyFull internally) when the URLOverride must be honored.
-func (a *specAdapter) PrepareBody(req Request) ([]byte, []string, error) {
-	body, rewrites, _, err := a.prepareBodyFull(req)
-	return body, rewrites, err
+// PrepareBody returns the codec's URLOverride alongside the body so a
+// caller reusing the prepared body on the cache-MISS fast path can pass
+// it into ExecuteWithBody — the override (e.g. Gemini :batchEmbedContents)
+// then reaches the dispatched URL instead of being re-derived from the
+// body in generic dispatch.
+func (a *specAdapter) PrepareBody(req Request) ([]byte, []string, string, error) {
+	return a.prepareBodyFull(req)
 }
 
 // prepareBodyFull is the internal variant of PrepareBody that also

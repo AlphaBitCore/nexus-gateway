@@ -1,0 +1,6 @@
+{
+  "adapterType": "openai",
+  "direction": "response",
+  "endpointPath": "/v1/chat/completions",
+  "stream": true
+}

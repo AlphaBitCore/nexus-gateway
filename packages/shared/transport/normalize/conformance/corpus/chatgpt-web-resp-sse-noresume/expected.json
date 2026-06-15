@@ -1,0 +1,26 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "chatgpt-web",
+  "model": "gpt-5-5-thinking",
+  "stream": true,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello 👋 我在。"
+        }
+      ]
+    }
+  ],
+  "http": {
+    "bodyView": {
+      "text": "event: delta_encoding\ndata: \"v1\"\n\nevent: delta\ndata: {\"p\": \"\", \"o\": \"add\", \"v\": {\"message\": {\"id\": \"8edafc38-bd71-4525-9cf1-921469dc4a07\", \"author\": {\"role\": \"system\", \"name\": null, \"metadata\": {}}, \"create_time\": 1779637886.6927807, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"\"]}, \"status\": \"finished_successfully\", \"end_turn\": true, \"weight\": 0.0, \"metadata\": {\"rebase_developer_message\": true, \"chime_version\": 1, \"request_id\": \"9a8ae95c-f7f1-44dd-8364-3ed855e609f2\", \"message_type\": \"next\", \"turn_exchange_id\": \"741c8af5-48c6-48bd-a19d-cf48a972e884\", \"model_slug\": \"gpt-5-5-thinking\", \"default_model_slug\": \"gpt-5-5-thinking\", \"thinking_effort\": \"standard\", \"parent_id\": \"99c66660-80e7-48e0-91e6-fbb8ca96c007\", \"model_switcher_deny\": [], \"is_visually_hidden_from_conversation\": true}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"6a0f4054-1c28-8320-8d60-a2452eef4674\", \"error\": null, \"error_code\": null}, \"c\": 0}   \n\nevent: delta\ndata: {\"v\": {\"message\": {\"id\": \"53587352-dcdc-47a0-928c-66fefb533ee7\", \"author\": {\"role\": \"assistant\", \"name\": null, \"metadata\": {}}, \"create_time\": 1779637886.7663376, \"update_time\": null, \"content\": {\"content_type\": \"model_editable_context\", \"model_set_context\": \"\", \"repository\": null, \"repo_summary\": null, \"structured_context\": null}, \"status\": \"finished_successfully\", \"end_turn\": null, \"weight\": 1.0, \"metadata\": {\"search_result_groups\": [], \"chime_version\": 1, \"request_id\": \"9a8ae95c-f7f1-44dd-8364-3ed855e609f2\", \"message_type\": \"next\", \"turn_exchange_id\": \"741c8af5-48c6-48bd-a19d-cf48a972e884\", \"model_slug\": \"gpt-5-5-thinking\", \"default_model_slug\": \"gpt-5-5-thinking\", \"thinking_effort\": \"standard\", \"can_save\": false, \"parent_id\": \"8edafc38-bd71-4525-9cf1-921469dc4a07\", \"model_switcher_deny\": []}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"6a0f4054-1c28-8320-8d60-a2452eef4674\", \"error\": null, \"error_code\": null}, \"c\": 1}    \n\nevent: delta\ndata: {\"v\": {\"message\": {\"id\": \"4013e78c-ae58-4e84-9334-5308cd6060e2\", \"author\": {\"role\": \"assistant\", \"name\": null, \"metadata\": {}}, \"create_time\": 1779637886.792856, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"\"]}, \"status\": \"in_progress\", \"end_turn\": null, \"weight\": 1.0, \"metadata\": {\"citations\": [], \"content_references\": [], \"story_events\": [], \"resolved_model_slug\": \"gpt-5-5-thinking\", \"request_id\": \"9a8ae95c-f7f1-44dd-8364-3ed855e609f2\", \"message_type\": \"next\", \"turn_exchange_id\": \"741c8af5-48c6-48bd-a19d-cf48a972e884\", \"model_slug\": \"gpt-5-5-thinking\", \"default_model_slug\": \"gpt-5-5-thinking\", \"thinking_effort\": \"standard\", \"parent_id\": \"53587352-dcdc-47a0-928c-66fefb533ee7\", \"model_switcher_deny\": []}, \"recipient\": \"all\", \"channel\": \"final\"}, \"conversation_id\": \"6a0f4054-1c28-8320-8d60-a2452eef4674\", \"error\": null, \"error_code\": null}, \"c\": 2}       \n\nevent: delta\ndata: {\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"Hello \\ud83d\\udc4b \\u6211\\u5728\"}\n\nevent: delta\ndata: {\"p\": \"\", \"o\": \"patch\", \"v\": [{\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"\\u3002\"}, {\"p\": \"/message/status\", \"o\": \"replace\", \"v\": \"finished_successfully\"}, {\"p\": \"/message/end_turn\", \"o\": \"replace\", \"v\": true}, {\"p\": \"/message/metadata\", \"o\": \"append\", \"v\": {\"search_result_groups\": [], \"finish_details\": {\"type\": \"stop\", \"stop_tokens\": [200002]}, \"can_save\": true, \"is_complete\": true}}]}\n\ndata: [DONE]\n\n"
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "chatgpt-web",
+  "selectionEvidence": "host"
+}

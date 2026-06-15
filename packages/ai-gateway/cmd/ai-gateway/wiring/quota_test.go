@@ -8,7 +8,7 @@ import (
 // TestInitQuota_nilDBReturnsNils verifies that nil DB returns (nil, nil)
 // without panicking — quota enforcement is skipped in degraded mode.
 func TestInitQuota_nilDBReturnsNils(t *testing.T) {
-	engine, policyCache := InitQuota(context.Background(), nil, nil, discardLogger())
+	engine, policyCache := InitQuota(context.Background(), nil, nil, discardLogger(), nil)
 	if engine != nil {
 		t.Error("expected nil quota engine for nil DB")
 	}

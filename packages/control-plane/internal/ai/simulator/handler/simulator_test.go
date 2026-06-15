@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -44,20 +45,41 @@ func TestInternalServerError(t *testing.T) {
 	}
 }
 
-func TestDefaultSimulatorTargetURL_Default(t *testing.T) {
+func TestConfiguredGatewayURL_Default(t *testing.T) {
 	// Without env override, should return the fallback localhost URL.
 	t.Setenv("AI_GATEWAY_URL", "")
-	got := defaultSimulatorTargetURL()
+	got, err := configuredGatewayURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != "http://localhost:3050" {
 		t.Errorf("got %q; want http://localhost:3050", got)
 	}
 }
 
-func TestDefaultSimulatorTargetURL_EnvOverride(t *testing.T) {
-	t.Setenv("AI_GATEWAY_URL", "https://ai-gw.example.com")
-	got := defaultSimulatorTargetURL()
-	if got != "https://ai-gw.example.com" {
+func TestConfiguredGatewayURL_EnvOverride(t *testing.T) {
+	t.Setenv("AI_GATEWAY_URL", "https://ai-gw.example.com/")
+	got, err := configuredGatewayURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://ai-gw.example.com" { // trailing slash trimmed
 		t.Errorf("got %q; want https://ai-gw.example.com", got)
+	}
+}
+
+func TestConfiguredGatewayURL_Misconfigured(t *testing.T) {
+	for _, tc := range []struct{ name, val string }{
+		{"bad scheme", "ftp://ai-gw.example.com"},
+		{"no host", "http://"},
+		{"parse error", "http://[::1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AI_GATEWAY_URL", tc.val)
+			if _, err := configuredGatewayURL(); err == nil {
+				t.Errorf("expected error for %q, got nil", tc.val)
+			}
+		})
 	}
 }
 
@@ -106,62 +128,27 @@ func TestValidateForwardRequest(t *testing.T) {
 		{
 			name: "valid GET",
 			req: simulatorForwardRequest{
-				TargetURL: "http://localhost:3050",
-				Path:      "/v1/models",
-				Method:    "GET",
-				VK:        "vk-test",
+				Path:   "/v1/models",
+				Method: "GET",
+				VK:     "vk-test",
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid POST",
 			req: simulatorForwardRequest{
-				TargetURL: "https://ai.example.com",
-				Path:      "/v1/chat/completions",
-				Method:    "POST",
-				VK:        "vk-test",
+				Path:   "/v1/chat/completions",
+				Method: "POST",
+				VK:     "vk-test",
 			},
 			wantErr: false,
-		},
-		{
-			name: "empty targetURL uses default",
-			req: simulatorForwardRequest{
-				TargetURL: "",
-				Path:      "/v1/models",
-				Method:    "GET",
-				VK:        "vk-test",
-			},
-			wantErr: false,
-		},
-		{
-			name: "bad scheme",
-			req: simulatorForwardRequest{
-				TargetURL: "ftp://bad.example.com",
-				Path:      "/v1/models",
-				Method:    "GET",
-				VK:        "vk-test",
-			},
-			wantErr:     true,
-			errContains: "not allowed",
-		},
-		{
-			name: "no host",
-			req: simulatorForwardRequest{
-				TargetURL: "http://",
-				Path:      "/v1/models",
-				Method:    "GET",
-				VK:        "vk-test",
-			},
-			wantErr:     true,
-			errContains: "no host",
 		},
 		{
 			name: "disallowed path",
 			req: simulatorForwardRequest{
-				TargetURL: "http://localhost:3050",
-				Path:      "/v1/embeddings",
-				Method:    "POST",
-				VK:        "vk-test",
+				Path:   "/v1/embeddings",
+				Method: "POST",
+				VK:     "vk-test",
 			},
 			wantErr:     true,
 			errContains: "allowlist",
@@ -169,10 +156,9 @@ func TestValidateForwardRequest(t *testing.T) {
 		{
 			name: "disallowed method",
 			req: simulatorForwardRequest{
-				TargetURL: "http://localhost:3050",
-				Path:      "/v1/models",
-				Method:    "DELETE",
-				VK:        "vk-test",
+				Path:   "/v1/models",
+				Method: "DELETE",
+				VK:     "vk-test",
 			},
 			wantErr:     true,
 			errContains: "not allowed",
@@ -180,10 +166,9 @@ func TestValidateForwardRequest(t *testing.T) {
 		{
 			name: "missing vk",
 			req: simulatorForwardRequest{
-				TargetURL: "http://localhost:3050",
-				Path:      "/v1/models",
-				Method:    "GET",
-				VK:        "",
+				Path:   "/v1/models",
+				Method: "GET",
+				VK:     "",
 			},
 			wantErr:     true,
 			errContains: "vk is required",
@@ -207,20 +192,66 @@ func TestValidateForwardRequest(t *testing.T) {
 	}
 }
 
-// validateForwardRequest fills TargetURL with default when empty.
-func TestValidateForwardRequest_FillsDefaultURL(t *testing.T) {
-	t.Setenv("AI_GATEWAY_URL", "")
-	req := simulatorForwardRequest{
-		TargetURL: "",
-		Path:      "/v1/models",
-		Method:    "GET",
-		VK:        "vk-abc",
-	}
-	if err := validateForwardRequest(&req); err != nil {
+// TestAIGatewaySimulatorForward_IgnoresCallerSuppliedHost is the F-0269
+// regression: a caller that smuggles a targetUrl into the JSON body must NOT be
+// able to redirect the proxy — the request always goes to the configured
+// gateway. We stand up two servers; only the configured one must be hit.
+func TestAIGatewaySimulatorForward_IgnoresCallerSuppliedHost(t *testing.T) {
+	configuredHit := false
+	configured := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		configuredHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer configured.Close()
+
+	attackerHit := false
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer attacker.Close()
+
+	t.Setenv("AI_GATEWAY_URL", configured.URL)
+	h := newTestHandler()
+	e := echo.New()
+	// Raw JSON carrying an unknown "targetUrl" field pointing at the attacker
+	// server — the struct no longer has the field, so it must be ignored.
+	raw := `{"targetUrl":"` + attacker.URL + `","path":"/v1/models","method":"GET","vk":"vk-test"}`
+	req := httptest.NewRequest(http.MethodPost, "/forward", strings.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if err := h.AIGatewaySimulatorForward(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if req.TargetURL != "http://localhost:3050" {
-		t.Errorf("TargetURL = %q; want http://localhost:3050", req.TargetURL)
+	if attackerHit {
+		t.Error("attacker-supplied host was reached — host pinning failed (F-0269)")
+	}
+	if !configuredHit {
+		t.Error("configured gateway was not reached")
+	}
+}
+
+// AIGatewaySimulatorForward — misconfigured gateway URL → 500 (not 400)
+
+func TestAIGatewaySimulatorForward_MisconfiguredGateway_Returns500(t *testing.T) {
+	t.Setenv("AI_GATEWAY_URL", "ftp://bad.example.com") // invalid scheme
+	h := newTestHandler()
+	e := echo.New()
+	body, _ := json.Marshal(simulatorForwardRequest{
+		Path:   "/v1/models",
+		Method: "GET",
+		VK:     "vk-test",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/forward", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if err := h.AIGatewaySimulatorForward(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want 500 (operator misconfig, not caller error)", rec.Code)
 	}
 }
 
@@ -248,10 +279,9 @@ func TestAIGatewaySimulatorForward_ValidationFailure(t *testing.T) {
 	h := newTestHandler()
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
-		TargetURL: "http://localhost:3050",
-		Path:      "/v1/models",
-		Method:    "DELETE", // disallowed
-		VK:        "vk-test",
+		Path:   "/v1/models",
+		Method: "DELETE", // disallowed
+		VK:     "vk-test",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/forward", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -275,14 +305,14 @@ func TestAIGatewaySimulatorForward_UpstreamSuccess(t *testing.T) {
 		w.Write([]byte(`{"object":"list","data":[]}`)) //nolint:errcheck
 	}))
 	defer upstream.Close()
+	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
 	h := newTestHandler()
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
-		TargetURL: upstream.URL,
-		Path:      "/v1/models",
-		Method:    "GET",
-		VK:        "vk-test",
+		Path:   "/v1/models",
+		Method: "GET",
+		VK:     "vk-test",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/forward", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -299,14 +329,14 @@ func TestAIGatewaySimulatorForward_UpstreamSuccess(t *testing.T) {
 // AIGatewaySimulatorForward — upstream down (connection refused)
 
 func TestAIGatewaySimulatorForward_UpstreamDown(t *testing.T) {
-	// Use a port that is guaranteed not in use.
+	// Point the configured gateway at a port that is guaranteed not in use.
+	t.Setenv("AI_GATEWAY_URL", "http://127.0.0.1:19999")
 	h := newTestHandler()
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
-		TargetURL: "http://127.0.0.1:19999",
-		Path:      "/v1/models",
-		Method:    "GET",
-		VK:        "vk-test",
+		Path:   "/v1/models",
+		Method: "GET",
+		VK:     "vk-test",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/forward", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -334,16 +364,16 @@ func TestAIGatewaySimulatorForward_PostWithBody(t *testing.T) {
 		w.Write(data) //nolint:errcheck
 	}))
 	defer upstream.Close()
+	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
 	h := newTestHandler()
 	e := echo.New()
 	chatBody := json.RawMessage(`{"model":"gpt-4","messages":[]}`)
 	body, _ := json.Marshal(simulatorForwardRequest{
-		TargetURL: upstream.URL,
-		Path:      "/v1/chat/completions",
-		Method:    "POST",
-		VK:        "vk-test",
-		Body:      chatBody,
+		Path:   "/v1/chat/completions",
+		Method: "POST",
+		VK:     "vk-test",
+		Body:   chatBody,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/forward", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -383,14 +413,14 @@ func TestAIGatewaySimulatorForward_AcceptHeaderPassThrough(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
+	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
 	h := newTestHandler()
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
-		TargetURL: upstream.URL,
-		Path:      "/v1/chat/completions",
-		Method:    "POST",
-		VK:        "vk-test",
+		Path:   "/v1/chat/completions",
+		Method: "POST",
+		VK:     "vk-test",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/forward", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -416,14 +446,14 @@ func TestAIGatewaySimulatorForward_CanceledContext_Returns499(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer upstream.Close()
+	t.Setenv("AI_GATEWAY_URL", upstream.URL)
 
 	h := newTestHandler()
 	e := echo.New()
 	body, _ := json.Marshal(simulatorForwardRequest{
-		TargetURL: upstream.URL,
-		Path:      "/v1/chat/completions",
-		Method:    "POST",
-		VK:        "vk-test",
+		Path:   "/v1/chat/completions",
+		Method: "POST",
+		VK:     "vk-test",
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -449,6 +479,35 @@ func TestAIGatewaySimulatorForward_CanceledContext_Returns499(t *testing.T) {
 }
 
 // New constructor
+
+// TestNewSimulatorForwardClient_Timeout verifies the forward client applies a
+// real ResponseHeaderTimeout (= simulatorForwardTimeout) so a wedged upstream
+// that never sends headers cannot pin the admin request forever, while keeping
+// Client.Timeout == 0 so an in-progress streaming response is not truncated
+// (F-0272c).
+func TestNewSimulatorForwardClient_Timeout(t *testing.T) {
+	client := newSimulatorForwardClient()
+
+	if client.Timeout != 0 {
+		t.Errorf("Client.Timeout = %v; want 0 (streaming must not be capped by the client deadline)", client.Timeout)
+	}
+
+	type unwrapper interface{ Unwrap() http.RoundTripper }
+	uw, ok := client.Transport.(unwrapper)
+	if !ok {
+		t.Fatalf("transport %T does not expose Unwrap()", client.Transport)
+	}
+	tr, ok := uw.Unwrap().(*http.Transport)
+	if !ok {
+		t.Fatalf("unwrapped transport is %T; want *http.Transport", uw.Unwrap())
+	}
+	if tr.ResponseHeaderTimeout != simulatorForwardTimeout {
+		t.Errorf("ResponseHeaderTimeout = %v; want %v", tr.ResponseHeaderTimeout, simulatorForwardTimeout)
+	}
+	if simulatorForwardTimeout != 120*time.Second {
+		t.Errorf("simulatorForwardTimeout = %v; want 120s", simulatorForwardTimeout)
+	}
+}
 
 func TestNew(t *testing.T) {
 	h := newTestHandler()

@@ -216,10 +216,10 @@ func (h *Handler) AnalyticsCostSummary(c echo.Context) error {
 		}
 	} else {
 		provRows, err := h.pool.Query(ctx, `
-			SELECT COALESCE(provider_id, 'unknown'), COALESCE(SUM(estimated_cost_usd), 0)
+			SELECT COALESCE(routed_provider_id, provider_id, 'unknown'), COALESCE(SUM(estimated_cost_usd), 0)
 			FROM traffic_event
 			WHERE timestamp > $1
-			GROUP BY provider_id
+			GROUP BY 1
 			ORDER BY 2 DESC
 		`, since)
 		if err != nil {

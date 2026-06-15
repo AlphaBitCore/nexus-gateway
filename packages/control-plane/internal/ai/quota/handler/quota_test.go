@@ -33,6 +33,9 @@ type fakeQuotaDB struct {
 	policies  map[string]*quotastore.QuotaPolicy
 	overrides map[string]*quotastore.QuotaOverride
 
+	enabledPolicies    []quotastore.QuotaPolicy
+	enabledPoliciesErr error
+
 	listPoliciesErr   error
 	getPolicyErr      error
 	createPolicyErr   error
@@ -47,8 +50,10 @@ type fakeQuotaDB struct {
 	deleteOverrideErr error
 
 	// Last-call captures for assertions on params plumbing.
-	lastCreatePolicyParams *quotastore.CreateQuotaPolicyParams
-	lastUpdatePolicyParams *quotastore.UpdateQuotaPolicyParams
+	lastCreatePolicyParams   *quotastore.CreateQuotaPolicyParams
+	lastUpdatePolicyParams   *quotastore.UpdateQuotaPolicyParams
+	lastCreateOverrideParams *quotastore.CreateQuotaOverrideParams
+	lastUpdateOverrideParams *quotastore.UpdateQuotaOverrideParams
 }
 
 func newFakeQuotaDB() *fakeQuotaDB {
@@ -69,6 +74,15 @@ func (f *fakeQuotaDB) ListQuotaPolicies(_ context.Context, _ quotastore.QuotaPol
 		out = append(out, *p)
 	}
 	return out, len(out), nil
+}
+
+func (f *fakeQuotaDB) ListEnabledPoliciesForScopes(_ context.Context, _ []string) ([]quotastore.QuotaPolicy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.enabledPoliciesErr != nil {
+		return nil, f.enabledPoliciesErr
+	}
+	return f.enabledPolicies, nil
 }
 
 func (f *fakeQuotaDB) GetQuotaPolicy(_ context.Context, id string) (*quotastore.QuotaPolicy, error) {
@@ -173,6 +187,8 @@ func (f *fakeQuotaDB) GetQuotaOverrideByTarget(_ context.Context, _, _ string) (
 func (f *fakeQuotaDB) CreateQuotaOverride(_ context.Context, p quotastore.CreateQuotaOverrideParams) (*quotastore.QuotaOverride, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	pCopy := p
+	f.lastCreateOverrideParams = &pCopy
 	if f.createOverrideErr != nil {
 		return nil, f.createOverrideErr
 	}
@@ -185,9 +201,11 @@ func (f *fakeQuotaDB) CreateQuotaOverride(_ context.Context, p quotastore.Create
 	return o, nil
 }
 
-func (f *fakeQuotaDB) UpdateQuotaOverride(_ context.Context, id string, _ quotastore.UpdateQuotaOverrideParams) (*quotastore.QuotaOverride, error) {
+func (f *fakeQuotaDB) UpdateQuotaOverride(_ context.Context, id string, p quotastore.UpdateQuotaOverrideParams) (*quotastore.QuotaOverride, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	pc := p
+	f.lastUpdateOverrideParams = &pc
 	if f.updateOverrideErr != nil {
 		return nil, f.updateOverrideErr
 	}
@@ -213,30 +231,47 @@ func (f *fakeQuotaDB) DeleteQuotaOverride(_ context.Context, id string) error {
 type fakeMetricsDB struct {
 	rows []metrics.RollupRow
 	err  error
+	// queriedMetrics records the Metrics slice of the last QueryRollup call so a
+	// test can assert which cost metric the analytics handler reads (F-0160).
+	queriedMetrics []string
 }
 
-func (f *fakeMetricsDB) QueryRollup(_ context.Context, _ metrics.MetricsQuery) ([]metrics.RollupRow, error) {
+func (f *fakeMetricsDB) QueryRollup(_ context.Context, q metrics.MetricsQuery) ([]metrics.RollupRow, error) {
+	f.queriedMetrics = q.Metrics
 	return f.rows, f.err
 }
 
 // fakeUsersDB implements usersDB.
 type fakeUsersDB struct {
-	user *userstore.NexusUserSafe
-	err  error
+	user    *userstore.NexusUserSafe
+	err     error
+	orgID   string
+	orgName string
+	orgErr  error
 }
 
 func (f *fakeUsersDB) GetNexusUserSafe(_ context.Context, _ string) (*userstore.NexusUserSafe, error) {
 	return f.user, f.err
 }
 
+func (f *fakeUsersDB) GetNexusUserOrgInfo(_ context.Context, _ string) (string, string, error) {
+	return f.orgID, f.orgName, f.orgErr
+}
+
 // fakeOrgsDB implements orgsDB.
 type fakeOrgsDB struct {
-	org *orgstore.Organization
-	err error
+	org     *orgstore.Organization
+	err     error
+	project *orgstore.Project
+	projErr error
 }
 
 func (f *fakeOrgsDB) GetOrganization(_ context.Context, _ string) (*orgstore.Organization, error) {
 	return f.org, f.err
+}
+
+func (f *fakeOrgsDB) GetProject(_ context.Context, _ string) (*orgstore.Project, error) {
+	return f.project, f.projErr
 }
 
 // fakeVKsDB implements vksDB.
@@ -249,20 +284,22 @@ func (f *fakeVKsDB) GetVirtualKey(_ context.Context, _ string) (*vkstore.Virtual
 	return f.vk, f.err
 }
 
-// fakeHubAPI implements HubAPI.
+// fakeHubAPI implements HubAPI. invalidateErr drives the push-failure → 502 branch.
 type fakeHubAPI struct {
-	mu    sync.Mutex
-	calls []string
+	mu            sync.Mutex
+	calls         []string
+	invalidateErr error
 }
 
 func (h *fakeHubAPI) NotifyConfigChange(_ context.Context, _ hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error) {
 	return nil, nil
 }
 
-func (h *fakeHubAPI) InvalidateConfig(_ context.Context, thingType, configKey string) {
+func (h *fakeHubAPI) InvalidateConfigE(_ context.Context, thingType, configKey string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.calls = append(h.calls, thingType+"/"+configKey)
+	return h.invalidateErr
 }
 
 func (h *fakeHubAPI) seen() []string {
@@ -291,12 +328,15 @@ func newTestHandler(db quotaDB, met metricsDB, hub HubAPI) *Handler {
 	return &Handler{
 		quota:   db,
 		metrics: met,
-		users:   &fakeUsersDB{},
-		orgs:    &fakeOrgsDB{},
-		vks:     &fakeVKsDB{},
-		hub:     hub,
-		audit:   aw,
-		logger:  logger,
+		// Default doubles resolve every referent as "found" so create/update
+		// happy-path tests pass the F-0170 referential checks; not-found tests
+		// reassign these fields with empty doubles to drive the 400 branch.
+		users:  &fakeUsersDB{user: &userstore.NexusUserSafe{DisplayName: "u"}},
+		orgs:   &fakeOrgsDB{org: &orgstore.Organization{Name: "o"}, project: &orgstore.Project{Name: "p"}},
+		vks:    &fakeVKsDB{vk: &vkstore.VirtualKey{Name: "vk"}},
+		hub:    hub,
+		audit:  aw,
+		logger: logger,
 	}
 }
 
@@ -331,13 +371,17 @@ func mustJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
-// samplePolicy returns a valid QuotaPolicy seeded in the fake DB.
+// samplePolicy returns a valid QuotaPolicy seeded in the fake DB. It carries a
+// positive cost cap so update-path validation (which requires the merged policy
+// to retain a non-nil, positive cost limit) is satisfied by default.
 func samplePolicy() quotastore.QuotaPolicy {
+	cost := 100.0
 	return quotastore.QuotaPolicy{
 		ID:              "pol-1",
 		Name:            "default-policy",
 		Scope:           "user",
 		PeriodType:      "monthly",
+		CostLimitUsd:    &cost,
 		EnforcementMode: "reject",
 		Enabled:         true,
 	}
@@ -578,6 +622,7 @@ func validCreatePolicyBody(overrides ...func(map[string]any)) string {
 		"scope":           "user",
 		"periodType":      "monthly",
 		"enforcementMode": "reject",
+		"costLimitUsd":    100.0,
 	}
 	for _, fn := range overrides {
 		fn(body)
@@ -689,7 +734,7 @@ func TestCreateQuotaPolicy_InvalidScopeCombination(t *testing.T) {
 func TestCreateQuotaPolicy_DefaultEnforcementMode(t *testing.T) {
 	h := newTestHandler(newFakeQuotaDB(), nil, nil)
 	// omit enforcementMode — handler defaults to "reject"
-	body := mustJSON(t, map[string]any{"name": "p", "scope": "user", "periodType": "monthly"})
+	body := mustJSON(t, map[string]any{"name": "p", "scope": "user", "periodType": "monthly", "costLimitUsd": 100.0})
 	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
 	if err := h.CreateQuotaPolicy(c); err != nil {
 		t.Fatal(err)
@@ -702,7 +747,7 @@ func TestCreateQuotaPolicy_DefaultEnforcementMode(t *testing.T) {
 func TestCreateQuotaPolicy_ExplicitEnabled(t *testing.T) {
 	h := newTestHandler(newFakeQuotaDB(), nil, nil)
 	enabled := false
-	body := mustJSON(t, map[string]any{"name": "p", "scope": "user", "periodType": "monthly", "enabled": enabled})
+	body := mustJSON(t, map[string]any{"name": "p", "scope": "user", "periodType": "monthly", "enabled": enabled, "costLimitUsd": 100.0})
 	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
 	if err := h.CreateQuotaPolicy(c); err != nil {
 		t.Fatal(err)
@@ -1136,8 +1181,9 @@ func TestGetQuotaOverride_StoreError(t *testing.T) {
 
 func validCreateOverrideBody() string {
 	b, _ := json.Marshal(map[string]any{
-		"targetType": "user",
-		"targetId":   "user-abc",
+		"targetType":   "user",
+		"targetId":     "user-abc",
+		"costLimitUsd": 100.0,
 	})
 	return string(b)
 }
@@ -1218,6 +1264,51 @@ func TestCreateQuotaOverride_InvalidPeriodType(t *testing.T) {
 	}
 }
 
+// F-0161: a create with an already-past expiresAt is rejected (an exception
+// born expired would be silently ignored by the enforcement engine).
+func TestCreateQuotaOverride_PastExpiresRejected(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	body := mustJSON(t, map[string]any{
+		"targetType":   "user",
+		"targetId":     "user-abc",
+		"costLimitUsd": 100.0,
+		"expiresAt":    time.Now().Add(-time.Hour).Format(time.RFC3339),
+	})
+	c, rec := echoCtx(http.MethodPost, "/quota-overrides", body)
+	if err := h.CreateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400 (past expiresAt)", rec.Code)
+	}
+}
+
+// F-0161: a future expiresAt threads through to the store create params.
+func TestCreateQuotaOverride_FutureExpiresAccepted(t *testing.T) {
+	db := newFakeQuotaDB()
+	h := newTestHandler(db, nil, &fakeHubAPI{})
+	future := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	body := mustJSON(t, map[string]any{
+		"targetType":   "user",
+		"targetId":     "user-abc",
+		"costLimitUsd": 100.0,
+		"expiresAt":    future.Format(time.RFC3339),
+	})
+	c, rec := echoCtx(http.MethodPost, "/quota-overrides", body)
+	if err := h.CreateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d; want 201 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if db.lastCreateOverrideParams == nil || db.lastCreateOverrideParams.ExpiresAt == nil {
+		t.Fatal("expiresAt not threaded into create params")
+	}
+	if !db.lastCreateOverrideParams.ExpiresAt.Equal(future) {
+		t.Errorf("ExpiresAt = %v; want %v", db.lastCreateOverrideParams.ExpiresAt, future)
+	}
+}
+
 func TestCreateQuotaOverride_ConflictError(t *testing.T) {
 	db := newFakeQuotaDB()
 	db.createOverrideErr = quotastore.ErrQuotaOverrideConflict
@@ -1273,6 +1364,129 @@ func TestUpdateQuotaOverride_Valid(t *testing.T) {
 	}
 	if len(spy.seen()) == 0 {
 		t.Error("expected hub invalidation on update")
+	}
+}
+
+// F-0146 regression: switching a populated override's cost cap back to
+// "Inherit from policy" on edit must CLEAR the column (so the engine inherits
+// the policy cap), not silently keep the old value via the store's COALESCE.
+func TestUpdateQuotaOverride_InheritClearsCost(t *testing.T) {
+	db := newFakeQuotaDB()
+	ovr := sampleOverride() // CostLimitUsd = 100
+	db.overrides[ovr.ID] = &ovr
+	h := newTestHandler(db, nil, &fakeHubAPI{})
+	// costLimitMode "_inherit" + an enforcement override (so the merged override
+	// still customises something and passes the all-nil guard).
+	body := mustJSON(t, map[string]any{"costLimitMode": "_inherit", "enforcementMode": "reject"})
+	c, rec := echoCtx(http.MethodPut, "/quota-overrides/ovr-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("ovr-1")
+	if err := h.UpdateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	p := db.lastUpdateOverrideParams
+	if p == nil {
+		t.Fatal("update params not captured")
+	}
+	if !p.ClearCostLimit {
+		t.Error("ClearCostLimit must be true when costLimitMode=_inherit")
+	}
+	if p.CostLimitUsd != nil {
+		t.Errorf("CostLimitUsd must be nil on inherit; got %v", *p.CostLimitUsd)
+	}
+	if p.EnforcementMode == nil || *p.EnforcementMode != "reject" {
+		t.Errorf("EnforcementMode = %v; want reject", p.EnforcementMode)
+	}
+	if p.ClearEnforcementMode {
+		t.Error("ClearEnforcementMode must be false when a real mode is set")
+	}
+}
+
+// "_inherit" on enforcementMode / periodType clears those columns.
+func TestUpdateQuotaOverride_InheritClearsModeAndPeriod(t *testing.T) {
+	db := newFakeQuotaDB()
+	ovr := sampleOverride() // CostLimitUsd = 100 (kept, so guard passes)
+	db.overrides[ovr.ID] = &ovr
+	h := newTestHandler(db, nil, &fakeHubAPI{})
+	body := mustJSON(t, map[string]any{"enforcementMode": "_inherit", "periodType": "_inherit"})
+	c, rec := echoCtx(http.MethodPut, "/quota-overrides/ovr-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("ovr-1")
+	if err := h.UpdateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	p := db.lastUpdateOverrideParams
+	if !p.ClearEnforcementMode || p.EnforcementMode != nil {
+		t.Errorf("enforcementMode must clear: clear=%v val=%v", p.ClearEnforcementMode, p.EnforcementMode)
+	}
+	if !p.ClearPeriodType || p.PeriodType != nil {
+		t.Errorf("periodType must clear: clear=%v val=%v", p.ClearPeriodType, p.PeriodType)
+	}
+}
+
+// F-0161: expiresAtMode "_inherit" clears the expiry (restores a permanent
+// override) — ClearExpiresAt is set and the value is nil-ed.
+func TestUpdateQuotaOverride_InheritClearsExpires(t *testing.T) {
+	db := newFakeQuotaDB()
+	ovr := sampleOverride() // CostLimitUsd kept, so the all-nil guard passes
+	db.overrides[ovr.ID] = &ovr
+	h := newTestHandler(db, nil, &fakeHubAPI{})
+	body := mustJSON(t, map[string]any{"expiresAtMode": "_inherit"})
+	c, rec := echoCtx(http.MethodPut, "/quota-overrides/ovr-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("ovr-1")
+	if err := h.UpdateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	p := db.lastUpdateOverrideParams
+	if p == nil || !p.ClearExpiresAt || p.ExpiresAt != nil {
+		t.Errorf("expiresAt must clear: clear=%v val=%v", p.ClearExpiresAt, p.ExpiresAt)
+	}
+}
+
+// F-0161: an update setting an already-past expiresAt is rejected.
+func TestUpdateQuotaOverride_PastExpiresRejected(t *testing.T) {
+	db := newFakeQuotaDB()
+	ovr := sampleOverride()
+	db.overrides[ovr.ID] = &ovr
+	h := newTestHandler(db, nil, &fakeHubAPI{})
+	body := mustJSON(t, map[string]any{"expiresAt": time.Now().Add(-time.Hour).Format(time.RFC3339)})
+	c, rec := echoCtx(http.MethodPut, "/quota-overrides/ovr-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("ovr-1")
+	if err := h.UpdateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400 (past expiresAt)", rec.Code)
+	}
+}
+
+// Clearing the only governing field (cost) with nothing else set is rejected —
+// an override that customises nothing is meaningless.
+func TestUpdateQuotaOverride_InheritAllRejected(t *testing.T) {
+	db := newFakeQuotaDB()
+	ovr := sampleOverride() // only CostLimitUsd set
+	db.overrides[ovr.ID] = &ovr
+	h := newTestHandler(db, nil, &fakeHubAPI{})
+	body := mustJSON(t, map[string]any{"costLimitMode": "_inherit"})
+	c, rec := echoCtx(http.MethodPut, "/quota-overrides/ovr-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("ovr-1")
+	if err := h.UpdateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (clearing the only field is invalid)", rec.Code)
 	}
 }
 
@@ -1485,7 +1699,9 @@ func TestScopeToDimension(t *testing.T) {
 		{"user", "user", true},
 		{"vk", "virtual_key", true},
 		{"virtual_key", "virtual_key", true},
-		{"project", "organization", true},
+		// project maps to its own dimension: billed_cost_usd is emitted with a
+		// project= key and quota overrides/policies are project-scoped.
+		{"project", "project", true},
 		{"organization", "organization", true},
 		{"unknown", "", false},
 	}
@@ -1800,12 +2016,35 @@ func TestResolveEntityName_OrgError_FallsBack(t *testing.T) {
 	}
 }
 
+// project resolves through the project store (NOT the organization store):
+// billed_cost_usd is emitted with a project= dimension and quota
+// overrides/policies are project-scoped, so quota analytics report per-project
+// usage. The display name is the project name, falling back to its code, then
+// the raw ID.
 func TestResolveEntityName_Project(t *testing.T) {
 	h := newTestHandler(newFakeQuotaDB(), nil, nil)
-	h.orgs = &fakeOrgsDB{org: &orgstore.Organization{Name: "Project X"}}
+	h.orgs = &fakeOrgsDB{project: &orgstore.Project{Name: "Project X"}}
 	got := h.resolveEntityName(context.Background(), "project", "proj-1")
 	if got != "Project X" {
 		t.Errorf("got %q; want Project X", got)
+	}
+}
+
+func TestResolveEntityName_ProjectCodeFallback(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.orgs = &fakeOrgsDB{project: &orgstore.Project{Code: "PROJ-X"}}
+	got := h.resolveEntityName(context.Background(), "project", "proj-1")
+	if got != "PROJ-X" {
+		t.Errorf("got %q; want PROJ-X (code fallback when name empty)", got)
+	}
+}
+
+func TestResolveEntityName_ProjectError_FallsBack(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.orgs = &fakeOrgsDB{projErr: errors.New("not found")}
+	got := h.resolveEntityName(context.Background(), "project", "proj-1")
+	if got != "proj-1" {
+		t.Errorf("got %q; want proj-1 (raw-ID fallback on store error)", got)
 	}
 }
 
@@ -1884,13 +2123,14 @@ func TestCreateQuotaPolicy_AllNotNullDefaultsFilled(t *testing.T) {
 	db := newFakeQuotaDB()
 	h := newTestHandler(db, nil, nil)
 
-	// Most minimal body: only name + scope + periodType (the three required
-	// fields without @default). Everything else MUST be defaulted by the
-	// handler.
+	// Most minimal body: the three required fields without @default (name, scope,
+	// periodType) plus the now-mandatory positive cost cap (F-0147 — a policy's
+	// only enforceable limit). Everything else MUST be defaulted by the handler.
 	body := mustJSON(t, map[string]any{
-		"name":       "minimal",
-		"scope":      "user",
-		"periodType": "monthly",
+		"name":         "minimal",
+		"scope":        "user",
+		"periodType":   "monthly",
+		"costLimitUsd": 100.0,
 	})
 	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
 	if err := h.CreateQuotaPolicy(c); err != nil {
@@ -1979,5 +2219,616 @@ func TestUpdateQuotaPolicy_OmittedFieldsArePreservedViaCOALESCE(t *testing.T) {
 	// (not the literal bytes `null` and not the default).
 	if p.AlertThresholds != nil {
 		t.Errorf("AlertThresholds = %q; want nil so COALESCE keeps existing", string(p.AlertThresholds))
+	}
+}
+
+// --- F-0147: quota limit positivity + all-nil rejection ---
+
+// assertValidationError fails unless rec carries the given status and an
+// error.type == "validation_error" envelope — the named failure mode for F-0147.
+func assertValidationError(t *testing.T, rec *httptest.ResponseRecorder, wantCode int) {
+	t.Helper()
+	if rec.Code != wantCode {
+		t.Fatalf("status = %d; want %d (body=%s)", rec.Code, wantCode, rec.Body.String())
+	}
+	var m map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&m); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	inner, ok := m["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing error envelope: %v", m)
+	}
+	if inner["type"] != "validation_error" {
+		t.Fatalf("error.type = %v; want validation_error (body=%s)", inner["type"], rec.Body.String())
+	}
+}
+
+func TestCreateQuotaPolicy_ZeroCostRejected(t *testing.T) {
+	db := newFakeQuotaDB()
+	h := newTestHandler(db, nil, nil)
+	body := validCreatePolicyBody(func(m map[string]any) { m["costLimitUsd"] = 0 })
+	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
+	if err := h.CreateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+	if db.lastCreatePolicyParams != nil {
+		t.Error("store CreateQuotaPolicy must not be called when cost is 0")
+	}
+}
+
+func TestCreateQuotaPolicy_NegativeCostRejected(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	body := validCreatePolicyBody(func(m map[string]any) { m["costLimitUsd"] = -5 })
+	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
+	if err := h.CreateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+func TestCreateQuotaPolicy_NilCostRejected(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	// all-nil-limits: omit the cost cap entirely (post-F-0149 it is the only limit).
+	body := validCreatePolicyBody(func(m map[string]any) { delete(m, "costLimitUsd") })
+	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
+	if err := h.CreateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+func TestUpdateQuotaPolicy_ZeroCostRejected(t *testing.T) {
+	db := newFakeQuotaDB()
+	pol := samplePolicy()
+	db.policies[pol.ID] = &pol
+	h := newTestHandler(db, nil, nil)
+	body := mustJSON(t, map[string]any{"costLimitUsd": 0})
+	c, rec := echoCtx(http.MethodPut, "/quota-policies/pol-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("pol-1")
+	if err := h.UpdateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+func TestUpdateQuotaPolicy_MergedNilCostRejected(t *testing.T) {
+	// Existing policy with a nil cost cap (a pre-F-0147 row) + an update that does
+	// not supply a cap must be rejected: the merged policy would enforce nothing.
+	db := newFakeQuotaDB()
+	pol := samplePolicy()
+	pol.CostLimitUsd = nil
+	db.policies[pol.ID] = &pol
+	h := newTestHandler(db, nil, nil)
+	body := mustJSON(t, map[string]any{"name": "rename only"})
+	c, rec := echoCtx(http.MethodPut, "/quota-policies/pol-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("pol-1")
+	if err := h.UpdateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+func TestUpdateQuotaPolicy_PositiveCostAccepted(t *testing.T) {
+	db := newFakeQuotaDB()
+	pol := samplePolicy()
+	db.policies[pol.ID] = &pol
+	h := newTestHandler(db, nil, nil)
+	body := mustJSON(t, map[string]any{"costLimitUsd": 250.0})
+	c, rec := echoCtx(http.MethodPut, "/quota-policies/pol-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("pol-1")
+	if err := h.UpdateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateQuotaOverride_ZeroCostRejected(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	body := mustJSON(t, map[string]any{"targetType": "user", "targetId": "u1", "costLimitUsd": 0})
+	c, rec := echoCtx(http.MethodPost, "/quota-overrides", body)
+	if err := h.CreateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+func TestCreateQuotaOverride_AllNilRejected(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	// No cost, no enforcement, no period — the override would change nothing.
+	body := mustJSON(t, map[string]any{"targetType": "user", "targetId": "u1"})
+	c, rec := echoCtx(http.MethodPost, "/quota-overrides", body)
+	if err := h.CreateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+// TestCreateQuotaOverride_InheritCostWithModeAccepted is the F-0146 contract: an
+// override that customises only the enforcement mode is valid and is persisted
+// with a nil cost cap (NOT an explicit 0) so the engine inherits the policy cap.
+func TestCreateQuotaOverride_InheritCostWithModeAccepted(t *testing.T) {
+	db := newFakeQuotaDB()
+	h := newTestHandler(db, nil, nil)
+	body := mustJSON(t, map[string]any{"targetType": "user", "targetId": "u1", "enforcementMode": "reject"})
+	c, rec := echoCtx(http.MethodPost, "/quota-overrides", body)
+	if err := h.CreateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d; want 201 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if db.lastCreateOverrideParams == nil {
+		t.Fatal("expected store CreateQuotaOverride to be called")
+	}
+	if db.lastCreateOverrideParams.CostLimitUsd != nil {
+		t.Errorf("CostLimitUsd = %v; want nil so the engine inherits the policy cap", *db.lastCreateOverrideParams.CostLimitUsd)
+	}
+}
+
+func TestUpdateQuotaOverride_ZeroCostRejected(t *testing.T) {
+	db := newFakeQuotaDB()
+	ovr := sampleOverride()
+	db.overrides[ovr.ID] = &ovr
+	h := newTestHandler(db, nil, nil)
+	body := mustJSON(t, map[string]any{"costLimitUsd": 0})
+	c, rec := echoCtx(http.MethodPut, "/quota-overrides/ovr-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("ovr-1")
+	if err := h.UpdateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+func TestUpdateQuotaOverride_MergedAllNilRejected(t *testing.T) {
+	db := newFakeQuotaDB()
+	// An existing override that only carried a cost cap, then the cost is... still
+	// nil here (constructed with everything nil) — an empty update leaves it
+	// overriding nothing and must be rejected.
+	db.overrides["ovr-x"] = &quotastore.QuotaOverride{ID: "ovr-x", TargetType: "user", TargetID: "u1"}
+	h := newTestHandler(db, nil, nil)
+	c, rec := echoCtx(http.MethodPut, "/quota-overrides/ovr-x", "{}")
+	c.SetParamNames("id")
+	c.SetParamValues("ovr-x")
+	if err := h.UpdateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, rec, http.StatusBadRequest)
+}
+
+// --- F-0148: analytics resolves the effective limit via override→policy ---
+
+// overviewRow runs the overview handler for one entity and returns its row.
+func overviewRow(t *testing.T, h *Handler, scope, periodKey, entityID string) map[string]any {
+	t.Helper()
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/quota-analytics/overview?scope="+scope+"&periodKey="+periodKey, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if err := h.QuotaAnalyticsOverview(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeBody(t, rec)
+	for _, raw := range body["data"].([]any) {
+		row := raw.(map[string]any)
+		if row["entityId"] == entityID {
+			return row
+		}
+	}
+	t.Fatalf("entity %q not found in overview data: %v", entityID, body["data"])
+	return nil
+}
+
+func TestQuotaAnalyticsOverview_PolicyCapNoOverride(t *testing.T) {
+	db := newFakeQuotaDB()
+	cost := 100.0
+	db.enabledPolicies = []quotastore.QuotaPolicy{{ID: "p1", Scope: "user", CostLimitUsd: &cost, EnforcementMode: "reject", Enabled: true}}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 90.0}}}
+	h := newTestHandler(db, met, nil)
+	row := overviewRow(t, h, "user", "2026-04", "user-1")
+	if row["costLimitUsd"].(float64) != 100.0 {
+		t.Errorf("costLimitUsd = %v; want 100 (policy cap)", row["costLimitUsd"])
+	}
+	if row["usagePercent"].(float64) != 90.0 {
+		t.Errorf("usagePercent = %v; want 90 (regression: was 0 before F-0148)", row["usagePercent"])
+	}
+	if row["alertLevel"] != "critical" {
+		t.Errorf("alertLevel = %v; want critical", row["alertLevel"])
+	}
+}
+
+func TestQuotaAnalyticsOverview_OverrideTakesPrecedenceOverPolicy(t *testing.T) {
+	db := newFakeQuotaDB()
+	policyCost := 100.0
+	overrideCost := 50.0
+	db.enabledPolicies = []quotastore.QuotaPolicy{{ID: "p1", Scope: "user", CostLimitUsd: &policyCost, Enabled: true}}
+	db.getByTargetResult = &quotastore.QuotaOverride{ID: "o1", CostLimitUsd: &overrideCost}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 30.0}}}
+	h := newTestHandler(db, met, nil)
+	row := overviewRow(t, h, "user", "2026-04", "user-1")
+	if row["costLimitUsd"].(float64) != 50.0 {
+		t.Errorf("costLimitUsd = %v; want 50 (override wins)", row["costLimitUsd"])
+	}
+	if row["usagePercent"].(float64) != 60.0 {
+		t.Errorf("usagePercent = %v; want 60 (30/50)", row["usagePercent"])
+	}
+}
+
+func TestQuotaAnalyticsOverview_PolicyOrgFilterMatches(t *testing.T) {
+	db := newFakeQuotaDB()
+	highCost := 999.0
+	matchCost := 200.0
+	orgB := "org-B"
+	orgA := "org-A"
+	// Higher-priority policy is org-scoped to org-B (won't match); the org-A
+	// policy is the one that governs a user in org-A. Order = priority DESC.
+	db.enabledPolicies = []quotastore.QuotaPolicy{
+		{ID: "pB", Scope: "user", OrganizationID: &orgB, CostLimitUsd: &highCost, Priority: 10, Enabled: true},
+		{ID: "pA", Scope: "user", OrganizationID: &orgA, CostLimitUsd: &matchCost, Priority: 5, Enabled: true},
+	}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 100.0}}}
+	h := newTestHandler(db, met, nil)
+	h.users = &fakeUsersDB{orgID: "org-A"}
+	row := overviewRow(t, h, "user", "2026-04", "user-1")
+	if row["costLimitUsd"].(float64) != 200.0 {
+		t.Errorf("costLimitUsd = %v; want 200 (org-A policy, not org-B)", row["costLimitUsd"])
+	}
+	if row["usagePercent"].(float64) != 50.0 {
+		t.Errorf("usagePercent = %v; want 50 (100/200)", row["usagePercent"])
+	}
+}
+
+func TestQuotaAnalyticsOverview_VkTypeFilterMatches(t *testing.T) {
+	db := newFakeQuotaDB()
+	personalCost := 10.0
+	appCost := 500.0
+	personal := "personal"
+	application := "application"
+	db.enabledPolicies = []quotastore.QuotaPolicy{
+		{ID: "pp", Scope: "vk", VKType: &personal, CostLimitUsd: &personalCost, Priority: 10, Enabled: true},
+		{ID: "pa", Scope: "vk", VKType: &application, CostLimitUsd: &appCost, Priority: 5, Enabled: true},
+	}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "virtual_key=vk-1", Value: 250.0}}}
+	h := newTestHandler(db, met, nil)
+	appType := "application"
+	h.vks = &fakeVKsDB{vk: &vkstore.VirtualKey{VKType: &appType}}
+	row := overviewRow(t, h, "vk", "2026-04", "vk-1")
+	if row["costLimitUsd"].(float64) != 500.0 {
+		t.Errorf("costLimitUsd = %v; want 500 (application vk policy)", row["costLimitUsd"])
+	}
+	if row["usagePercent"].(float64) != 50.0 {
+		t.Errorf("usagePercent = %v; want 50 (250/500)", row["usagePercent"])
+	}
+}
+
+func TestQuotaAnalyticsOverview_OrgScopeUsesTargetAsOrg(t *testing.T) {
+	db := newFakeQuotaDB()
+	cost := 400.0
+	orgID := "org-1"
+	db.enabledPolicies = []quotastore.QuotaPolicy{{ID: "po", Scope: "organization", OrganizationID: &orgID, CostLimitUsd: &cost, Enabled: true}}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "organization=org-1", Value: 200.0}}}
+	h := newTestHandler(db, met, nil)
+	row := overviewRow(t, h, "organization", "2026-04", "org-1")
+	if row["costLimitUsd"].(float64) != 400.0 {
+		t.Errorf("costLimitUsd = %v; want 400", row["costLimitUsd"])
+	}
+	if row["usagePercent"].(float64) != 50.0 {
+		t.Errorf("usagePercent = %v; want 50 (200/400)", row["usagePercent"])
+	}
+}
+
+// Project is a real analytics scope: billed_cost_usd is emitted with a project=
+// dimension and quota overrides/policies are project-scoped, so the overview
+// reports per-project usage against the project's effective limit, with the
+// entity name resolved through the project store.
+func TestQuotaAnalyticsOverview_ProjectScope(t *testing.T) {
+	db := newFakeQuotaDB()
+	cost := 400.0
+	db.enabledPolicies = []quotastore.QuotaPolicy{{ID: "pp", Scope: "project", CostLimitUsd: &cost, Enabled: true}}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "project=proj-1", Value: 200.0}}}
+	h := newTestHandler(db, met, nil)
+	h.orgs = &fakeOrgsDB{project: &orgstore.Project{Name: "Project X"}}
+	row := overviewRow(t, h, "project", "2026-04", "proj-1")
+	if row["entityName"] != "Project X" {
+		t.Errorf("entityName = %v; want Project X", row["entityName"])
+	}
+	if row["currentCostUsd"].(float64) != 200.0 {
+		t.Errorf("currentCostUsd = %v; want 200", row["currentCostUsd"])
+	}
+	if row["usagePercent"].(float64) != 50.0 {
+		t.Errorf("usagePercent = %v; want 50 (200/400)", row["usagePercent"])
+	}
+}
+
+func TestQuotaAnalyticsOverview_UserOrgLookupErrorMatchesUnscopedPolicy(t *testing.T) {
+	db := newFakeQuotaDB()
+	cost := 100.0
+	// Policy with no org filter still applies when the user's org cannot be read.
+	db.enabledPolicies = []quotastore.QuotaPolicy{{ID: "p1", Scope: "user", CostLimitUsd: &cost, Enabled: true}}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 50.0}}}
+	h := newTestHandler(db, met, nil)
+	h.users = &fakeUsersDB{orgErr: errors.New("user gone")}
+	row := overviewRow(t, h, "user", "2026-04", "user-1")
+	if row["costLimitUsd"].(float64) != 100.0 {
+		t.Errorf("costLimitUsd = %v; want 100 (unscoped policy)", row["costLimitUsd"])
+	}
+}
+
+func TestQuotaAnalyticsOverview_PolicyListErrorFallsBackToOverride(t *testing.T) {
+	db := newFakeQuotaDB()
+	db.enabledPoliciesErr = errors.New("policy query boom")
+	overrideCost := 50.0
+	db.getByTargetResult = &quotastore.QuotaOverride{ID: "o1", CostLimitUsd: &overrideCost}
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 25.0}}}
+	h := newTestHandler(db, met, nil)
+	row := overviewRow(t, h, "user", "2026-04", "user-1")
+	// Policy load failed, but the override still supplies the effective cap.
+	if row["costLimitUsd"].(float64) != 50.0 {
+		t.Errorf("costLimitUsd = %v; want 50 (override despite policy load failure)", row["costLimitUsd"])
+	}
+	if row["usagePercent"].(float64) != 50.0 {
+		t.Errorf("usagePercent = %v; want 50 (25/50)", row["usagePercent"])
+	}
+}
+
+func TestPolicyScopesForAnalytics(t *testing.T) {
+	tests := []struct {
+		scope string
+		want  []string
+	}{
+		{"vk", []string{"vk", "virtual_key"}},
+		{"virtual_key", []string{"vk", "virtual_key"}},
+		{"user", []string{"user"}},
+		{"organization", []string{"organization"}},
+		{"project", []string{"project"}},
+	}
+	for _, tc := range tests {
+		got := policyScopesForAnalytics(tc.scope)
+		if len(got) != len(tc.want) {
+			t.Fatalf("policyScopesForAnalytics(%q) = %v; want %v", tc.scope, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("policyScopesForAnalytics(%q) = %v; want %v", tc.scope, got, tc.want)
+			}
+		}
+	}
+}
+
+// --- F-0160: analytics reads the BILLED cost metric (matches enforcement) ---
+
+func TestQuotaAnalyticsOverview_QueriesBilledCost(t *testing.T) {
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 10.0}}}
+	h := newTestHandler(newFakeQuotaDB(), met, nil)
+	c, _ := echoCtx(http.MethodGet, "/quota-analytics/overview?scope=user&periodKey=2026-04", "")
+	if err := h.QuotaAnalyticsOverview(c); err != nil {
+		t.Fatal(err)
+	}
+	if len(met.queriedMetrics) != 1 || met.queriedMetrics[0] != metrics.MetricBilledCostUSD {
+		t.Errorf("overview queried %v; want [%s] (must match the enforcement cost base, not estimated)",
+			met.queriedMetrics, metrics.MetricBilledCostUSD)
+	}
+}
+
+func TestQuotaAnalyticsTop_QueriesBilledCost(t *testing.T) {
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 10.0}}}
+	h := newTestHandler(newFakeQuotaDB(), met, nil)
+	c, _ := echoCtx(http.MethodGet, "/quota-analytics/top?scope=user&periodKey=2026-04", "")
+	if err := h.QuotaAnalyticsTop(c); err != nil {
+		t.Fatal(err)
+	}
+	if len(met.queriedMetrics) != 1 || met.queriedMetrics[0] != metrics.MetricBilledCostUSD {
+		t.Errorf("top queried %v; want [%s]", met.queriedMetrics, metrics.MetricBilledCostUSD)
+	}
+}
+
+func TestQuotaAnalyticsTrend_QueriesBilledCost(t *testing.T) {
+	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 5.0}}}
+	h := newTestHandler(newFakeQuotaDB(), met, nil)
+	c, _ := echoCtx(http.MethodGet, "/quota-analytics/trend?targetType=user&targetId=user-1&periods=1", "")
+	if err := h.QuotaAnalyticsTrend(c); err != nil {
+		t.Fatal(err)
+	}
+	if len(met.queriedMetrics) != 1 || met.queriedMetrics[0] != metrics.MetricBilledCostUSD {
+		t.Errorf("trend queried %v; want [%s]", met.queriedMetrics, metrics.MetricBilledCostUSD)
+	}
+}
+
+// --- F-0170: referential validation of override targetId / policy organizationId ---
+
+func createOverrideStatus(t *testing.T, h *Handler, targetType, targetID string) (int, string) {
+	t.Helper()
+	body := mustJSON(t, map[string]any{"targetType": targetType, "targetId": targetID, "costLimitUsd": 100.0})
+	c, rec := echoCtx(http.MethodPost, "/quota-overrides", body)
+	if err := h.CreateQuotaOverride(c); err != nil {
+		t.Fatal(err)
+	}
+	return rec.Code, rec.Body.String()
+}
+
+func TestCreateQuotaOverride_MissingUser_400(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.users = &fakeUsersDB{} // returns (nil, nil) → not found
+	code, body := createOverrideStatus(t, h, "user", "ghost")
+	if code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400 for a non-existent user target; body=%s", code, body)
+	}
+	if !strings.Contains(body, "does not reference an existing user") {
+		t.Errorf("missing referential error; body=%s", body)
+	}
+}
+
+func TestCreateQuotaOverride_MissingVK_400(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.vks = &fakeVKsDB{}
+	code, body := createOverrideStatus(t, h, "vk", "ghost")
+	if code != http.StatusBadRequest || !strings.Contains(body, "does not reference an existing vk") {
+		t.Errorf("status = %d body=%s; want 400 + referential error", code, body)
+	}
+}
+
+func TestCreateQuotaOverride_MissingOrg_400(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.orgs = &fakeOrgsDB{}
+	code, body := createOverrideStatus(t, h, "organization", "ghost")
+	if code != http.StatusBadRequest || !strings.Contains(body, "does not reference an existing organization") {
+		t.Errorf("status = %d body=%s; want 400 + referential error", code, body)
+	}
+}
+
+func TestCreateQuotaOverride_MissingProject_400(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.orgs = &fakeOrgsDB{} // project nil → not found
+	code, body := createOverrideStatus(t, h, "project", "ghost")
+	if code != http.StatusBadRequest || !strings.Contains(body, "does not reference an existing project") {
+		t.Errorf("status = %d body=%s; want 400 + referential error", code, body)
+	}
+}
+
+func TestCreateQuotaOverride_TargetLookupError_500(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.users = &fakeUsersDB{err: errors.New("db down")}
+	code, body := createOverrideStatus(t, h, "user", "u1")
+	if code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want 500 on target lookup failure; body=%s", code, body)
+	}
+}
+
+func TestCreateQuotaOverride_ExistingTarget_201(t *testing.T) {
+	// Found-by-default doubles → referential check passes, override is created.
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	code, body := createOverrideStatus(t, h, "user", "u1")
+	if code != http.StatusCreated {
+		t.Errorf("status = %d; want 201 for an existing target; body=%s", code, body)
+	}
+}
+
+func TestCreateQuotaPolicy_MissingOrg_400(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.orgs = &fakeOrgsDB{} // org nil → not found
+	body := mustJSON(t, map[string]any{
+		"name": "p", "scope": "organization", "organizationId": "ghost",
+		"periodType": "monthly", "costLimitUsd": 50.0,
+	})
+	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
+	if err := h.CreateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "does not reference an existing organization") {
+		t.Errorf("status = %d body=%s; want 400 + org referential error", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateQuotaPolicy_OrgLookupError_500(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	h.orgs = &fakeOrgsDB{err: errors.New("db down")}
+	body := mustJSON(t, map[string]any{
+		"name": "p", "scope": "organization", "organizationId": "org-1",
+		"periodType": "monthly", "costLimitUsd": 50.0,
+	})
+	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
+	if err := h.CreateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want 500 on org lookup failure; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateQuotaPolicy_ExistingOrg_201(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	body := mustJSON(t, map[string]any{
+		"name": "p", "scope": "organization", "organizationId": "org-1",
+		"periodType": "monthly", "costLimitUsd": 50.0,
+	})
+	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
+	if err := h.CreateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Errorf("status = %d; want 201 for an existing org; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- F-0170: targetEntityExists branch coverage + update-policy org check ---
+
+func TestTargetEntityExists_AllBranches(t *testing.T) {
+	h := newTestHandler(newFakeQuotaDB(), nil, nil)
+	ctx := context.Background()
+
+	// Found cases (default doubles all resolve).
+	for _, tt := range []string{"user", "vk", "virtual_key", "organization", "project"} {
+		ok, err := h.targetEntityExists(ctx, tt, "id")
+		if err != nil || !ok {
+			t.Errorf("targetEntityExists(%q) found-case = (%v,%v); want (true,nil)", tt, ok, err)
+		}
+	}
+	// Unknown type → permitted (no referent class to check).
+	if ok, err := h.targetEntityExists(ctx, "weird", "id"); err != nil || !ok {
+		t.Errorf("unknown type = (%v,%v); want (true,nil)", ok, err)
+	}
+
+	// Not-found cases (empty doubles).
+	h.users = &fakeUsersDB{}
+	h.vks = &fakeVKsDB{}
+	h.orgs = &fakeOrgsDB{}
+	for _, tt := range []string{"user", "vk", "organization", "project"} {
+		if ok, _ := h.targetEntityExists(ctx, tt, "ghost"); ok {
+			t.Errorf("targetEntityExists(%q) missing-case = true; want false", tt)
+		}
+	}
+
+	// nil-store degrade → permitted so dev mode without a DB is not blocked.
+	h.users, h.vks, h.orgs = nil, nil, nil
+	for _, tt := range []string{"user", "vk", "organization", "project"} {
+		if ok, err := h.targetEntityExists(ctx, tt, "id"); err != nil || !ok {
+			t.Errorf("targetEntityExists(%q) nil-store = (%v,%v); want (true,nil)", tt, ok, err)
+		}
+	}
+}
+
+func TestUpdateQuotaPolicy_MissingOrg_400(t *testing.T) {
+	db := newFakeQuotaDB()
+	pol := samplePolicy()
+	db.policies[pol.ID] = &pol
+	h := newTestHandler(db, nil, nil)
+	h.orgs = &fakeOrgsDB{} // org nil → not found
+	body := mustJSON(t, map[string]any{"scope": "organization", "organizationId": "ghost"})
+	c, rec := echoCtx(http.MethodPut, "/quota-policies/pol-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("pol-1")
+	if err := h.UpdateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "does not reference an existing organization") {
+		t.Errorf("status=%d body=%s; want 400 + org referential error", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateQuotaPolicy_OrgLookupError_500(t *testing.T) {
+	db := newFakeQuotaDB()
+	pol := samplePolicy()
+	db.policies[pol.ID] = &pol
+	h := newTestHandler(db, nil, nil)
+	h.orgs = &fakeOrgsDB{err: errors.New("db down")}
+	body := mustJSON(t, map[string]any{"scope": "organization", "organizationId": "org-1"})
+	c, rec := echoCtx(http.MethodPut, "/quota-policies/pol-1", body)
+	c.SetParamNames("id")
+	c.SetParamValues("pol-1")
+	if err := h.UpdateQuotaPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status=%d; want 500 on org lookup failure", rec.Code)
 	}
 }

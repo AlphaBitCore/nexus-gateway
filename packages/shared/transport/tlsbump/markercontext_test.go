@@ -20,6 +20,7 @@ func TestCPMarkerContext_Roundtrip(t *testing.T) {
 	got := CPMarkerFromContext(ctx)
 	if got == nil {
 		t.Fatal("expected non-nil marker from context")
+		return
 	}
 	if got.RequestID != "req-1" {
 		t.Errorf("RequestID: want %q got %q", "req-1", got.RequestID)

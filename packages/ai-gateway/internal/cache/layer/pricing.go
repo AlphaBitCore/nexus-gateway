@@ -1,8 +1,6 @@
 package cachelayer
 
 import (
-	"context"
-
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 )
 
@@ -12,19 +10,11 @@ import (
 // reload. Cache decomposition rows in the Traffic Event drawer match
 // exactly because UI + gateway read the same 4 numbers.
 
-// LookupCachePricing returns a *store.ProviderPricing-shaped struct
-// assembled from the in-memory Models snapshot for the model identified
-// by modelCode. Returns nil when the model is not in the snapshot OR
-// when its InputPricePM is nil (no price configured → caller treats
-// cache costs as zero).
-//
-// `adapterType` and `providerID` arguments are accepted for backwards
-// compatibility with the historical signature but are no longer used:
-// the Model row carries everything we need. They MAY be used by future
-// per-provider overrides if the need arises.
-func (l *Layer) LookupCachePricing(adapterType, providerID, modelCode string) *store.ProviderPricing {
-	_ = adapterType
-	_ = providerID
+// LookupCachePricing returns the four per-million-token prices for the model
+// identified by modelCode, assembled from the in-memory Models snapshot.
+// Returns nil when the model is not in the snapshot OR when its InputPricePM
+// is nil (no price configured → caller treats cache costs as zero).
+func (l *Layer) LookupCachePricing(modelCode string) *store.CachePricing {
 	idx := l.modelsByCode.Load()
 	if idx == nil {
 		return nil
@@ -33,7 +23,7 @@ func (l *Layer) LookupCachePricing(adapterType, providerID, modelCode string) *s
 	if !ok || m.InputPricePM == nil {
 		return nil
 	}
-	p := &store.ProviderPricing{
+	return &store.CachePricing{
 		InputUSDPerM:  *m.InputPricePM,
 		OutputUSDPerM: derefOrZero(m.OutputPricePM),
 		// NULL cache prices mean "no discount / no surcharge configured"
@@ -41,14 +31,6 @@ func (l *Layer) LookupCachePricing(adapterType, providerID, modelCode string) *s
 		CacheReadUSDPerM:  derefOrFallback(m.CachedInputReadPricePM, m.InputPricePM),
 		CacheWriteUSDPerM: derefOrFallback(m.CachedInputWritePricePM, m.InputPricePM),
 	}
-	return p
-}
-
-// ReloadProviderPricing is preserved as a no-op for callers that still
-// invoke it from config reload paths. The real reload happens via
-// ReloadModels now.
-func (l *Layer) ReloadProviderPricing(_ context.Context) error {
-	return nil
 }
 
 func derefOrZero(f *float64) float64 {

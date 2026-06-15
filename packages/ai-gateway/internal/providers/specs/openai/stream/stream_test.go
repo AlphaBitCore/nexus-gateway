@@ -5,7 +5,7 @@
 //   - reasoning_content: routed to ReasoningDelta (DeepSeek / Kimi / thinking models)
 //   - tool_call deltas: ToolCallDeltas populated from choices[0].delta.tool_calls
 //   - usage chunk: Usage extracted via shared/normalize
-//   - empty data line: silently skipped (Next recurses)
+//   - empty data line: silently skipped via an in-Next loop (no recursion; F-0232a)
 //   - nil body: returns error
 //   - context cancelled: returns ctx.Err()
 //   - EndpointResponsesAPI: dispatches to responsesStreamSession (not openaiStreamSession)
@@ -32,6 +32,52 @@ func TestStreamDecoder_nilBody_returnsError(t *testing.T) {
 	_, err := d.Open(nil, typology.WireShapeOpenAIChat)
 	if err == nil {
 		t.Fatal("expected error for nil body")
+	}
+}
+
+// TestStreamDecoder_emptyDataFramesFlood_skippedViaLoop covers F-0232a: a
+// burst of empty `data:` frames before a real chunk must be skipped inside a
+// single Next call via an iterative loop (NOT tail recursion, which Go does
+// not optimise — a hostile upstream could otherwise grow the goroutine
+// stack). The next call must still return the real delta that followed.
+func TestStreamDecoder_emptyDataFramesFlood_skippedViaLoop(t *testing.T) {
+	var b strings.Builder
+	for range 5000 {
+		b.WriteString("data: \n\n") // empty payload frames
+	}
+	b.WriteString(`data: {"choices":[{"delta":{"content":"hello"}}]}` + "\n\n")
+	d := ostream.NewStreamDecoder(slog.Default())
+	sess, err := d.Open(sseBody(b.String()), typology.WireShapeOpenAIChat)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer sess.Close() //nolint:errcheck
+
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatalf("Next after empty-frame flood: %v", err)
+	}
+	if chunk.Delta != "hello" {
+		t.Errorf("Delta = %q, want %q (real frame after the flood)", chunk.Delta, "hello")
+	}
+}
+
+// TestStreamDecoder_emptyDataThenDone covers the empty-frame skip terminating
+// at the [DONE] sentinel without recursion (F-0232a).
+func TestStreamDecoder_emptyDataThenDone(t *testing.T) {
+	d := ostream.NewStreamDecoder(slog.Default())
+	sess, err := d.Open(sseBody("data: \n\ndata: \n\ndata: [DONE]\n\n"), typology.WireShapeOpenAIChat)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer sess.Close() //nolint:errcheck
+
+	chunk, err := sess.Next(context.Background())
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if !chunk.Done {
+		t.Errorf("expected Done chunk after empty frames + [DONE], got %+v", chunk)
 	}
 }
 

@@ -463,3 +463,52 @@ func TestNewQueue_TempFile(t *testing.T) {
 		t.Errorf("expected 1 unsynced in file-based queue, got %d", q.UnsyncedCount())
 	}
 }
+
+// TestRedactionSpansRoundtrip — the storage-governed redaction spans must
+// survive every SQLite round-trip (single insert, batch insert, drain for
+// upload, detail-view lookup), and unredacted rows must read back nil so
+// the upload map omits the keys entirely.
+func TestRedactionSpansRoundtrip(t *testing.T) {
+	q := newTestQueue(t)
+	reqSpans := `[{"start":8,"end":24,"replacement":"[EMAIL-REDACTED]","contentAddress":"messages.0.content.0"}]`
+	respSpans := `[{"start":0,"end":4,"replacement":"[X]","contentAddress":"messages.1.content.0"}]`
+
+	redacted := makeEvent("spans-1")
+	redacted.RequestRedactionSpans = json.RawMessage(reqSpans)
+	redacted.ResponseRedactionSpans = json.RawMessage(respSpans)
+	if err := q.Record(redacted); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	plain := makeEvent("spans-2")
+	if err := q.RecordBatch([]event.Event{plain}); err != nil {
+		t.Fatalf("record batch: %v", err)
+	}
+
+	drained, err := q.DrainBatch(10)
+	if err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	byID := map[string]event.Event{}
+	for _, e := range drained {
+		byID[e.ID] = e
+	}
+	got := byID["spans-1"]
+	if string(got.RequestRedactionSpans) != reqSpans {
+		t.Errorf("drained request spans = %q, want %q", got.RequestRedactionSpans, reqSpans)
+	}
+	if string(got.ResponseRedactionSpans) != respSpans {
+		t.Errorf("drained response spans = %q, want %q", got.ResponseRedactionSpans, respSpans)
+	}
+	if byID["spans-2"].RequestRedactionSpans != nil || byID["spans-2"].ResponseRedactionSpans != nil {
+		t.Errorf("unredacted row must read back nil spans")
+	}
+
+	detail, err := q.EventByID("spans-1")
+	if err != nil || detail == nil {
+		t.Fatalf("EventByID: %v %v", detail, err)
+	}
+	if string(detail.RequestRedactionSpans) != reqSpans || string(detail.ResponseRedactionSpans) != respSpans {
+		t.Errorf("detail spans = %q / %q", detail.RequestRedactionSpans, detail.ResponseRedactionSpans)
+	}
+}

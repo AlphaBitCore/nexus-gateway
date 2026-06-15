@@ -34,7 +34,7 @@ import (
 func TestLogRelayResult_NilErr(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	// Must not panic.
-	logRelayResult(logger, "kill switch passthrough", nil)
+	LogRelayResult(logger, "kill switch passthrough", nil)
 }
 
 // TestLogRelayResult_DialError — named failure mode: when PassThrough fails
@@ -51,7 +51,7 @@ func TestLogRelayResult_DialError(t *testing.T) {
 		Err:  errors.New("connection refused"),
 	}
 	// Must not panic; WARN level is verified structurally below.
-	logRelayResult(logger, "kill switch passthrough", ptErr)
+	LogRelayResult(logger, "kill switch passthrough", ptErr)
 }
 
 // TestLogRelayResult_CopyError — named failure mode: when the relay ends due
@@ -60,7 +60,7 @@ func TestLogRelayResult_DialError(t *testing.T) {
 func TestLogRelayResult_CopyError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	// A plain (non-PassThroughError) error simulates a copy-side closure.
-	logRelayResult(logger, "pinning fallback passthrough", errors.New("connection reset by peer"))
+	LogRelayResult(logger, "pinning fallback passthrough", errors.New("connection reset by peer"))
 }
 
 // Run — kill-switch branch
@@ -485,7 +485,7 @@ func TestRun_CompliancePipelineNonNil_BumpOpts(t *testing.T) {
 		PayloadCaptureStore: payloadcapture.NewStore(payloadcapture.Config{}),
 		DomainEngine:        domain.NewEngine(),
 		AdapterRegistry:     traffic.NewAdapterRegistry("forward-test"),
-		// #115 — non-nil Store exercises the WithStreamingPolicyStore
+		// non-nil Store exercises the WithStreamingPolicyStore
 		// branch of Run's BumpOpts assembly. Nil-store path is
 		// covered by the other tests that omit this field.
 		StreamingPolicyStore: streampolicy.NewStore(streampolicy.DefaultPolicy()),

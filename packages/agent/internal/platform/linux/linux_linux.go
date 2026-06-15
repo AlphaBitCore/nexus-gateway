@@ -7,17 +7,14 @@ package linux
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"net"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
-	"unsafe"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/proxy"
 	agentTLS "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/tls"
@@ -27,8 +24,17 @@ import (
 )
 
 const (
-	soOriginalDst  = 80 // linux/netfilter_ipv4.h SO_ORIGINAL_DST
-	defaultLinAddr = "127.0.0.1:19080"
+	soOriginalDst = 80 // linux/netfilter_ipv4.h SO_ORIGINAL_DST (level SOL_IP)
+	// ip6tSOOriginalDst is the IPv6 equivalent: linux/netfilter_ipv6/ip6_tables.h
+	// IP6T_SO_ORIGINAL_DST, read at level SOL_IPV6. Same numeric value (80) as
+	// the v4 option but a different socket level, so the two are not
+	// interchangeable.
+	ip6tSOOriginalDst = 80
+	defaultLinAddr    = "127.0.0.1:19080"
+	// loopbackV6 is the address the IPv6 listener binds. iptables REDIRECT in
+	// the OUTPUT chain rewrites locally-generated IPv6 flows to the v6 loopback,
+	// so the proxy must accept there in addition to 127.0.0.1.
+	loopbackV6 = "::1"
 )
 
 // LinuxPlatform implements api.Platform for Linux via iptables REDIRECT +
@@ -36,22 +42,43 @@ const (
 const maxConcurrentConns = 512
 
 type LinuxPlatform struct {
-	handler        api.ConnectionHandler
-	listener       net.Listener
+	handler  api.ConnectionHandler
+	listener net.Listener
+	// listener6 is the IPv6 loopback ([::1]) listener. Separate from the v4
+	// listener because Go binds one family per listener and we want
+	// loopback-only on both (binding ":port" would expose the proxy on all
+	// interfaces). Nil when the host has no IPv6 — the agent then runs v4-only.
+	listener6      net.Listener
 	wg             sync.WaitGroup
 	done           chan struct{}
 	stopOnce       sync.Once
 	sem            chan struct{} // bounds concurrent connection handlers
 	tlsEngine      *agentTLS.Engine
 	addr           string
-	reconciler     *Reconciler
 	upstreamDialer *net.Dialer
+
+	// reconciler maintains the NEXUS_AGENT redirect chain. Held as an
+	// atomic pointer because InterceptionHealth() reads it from the
+	// status-collector goroutine concurrently with Start (which sets it)
+	// and Start's failure path (which clears it back to nil).
+	reconciler atomic.Pointer[Reconciler]
 
 	// bridgeDeps routes inspect flows through shared/tlsbump.BumpConnection
 	// (via proxy.BumpFlow) — the same engine macOS, the compliance proxy,
 	// and the AI gateway use. Set once at boot via SetBridgeDeps before
 	// Start launches the accept loop; read by the per-connection handlers.
 	bridgeDeps *proxy.BridgeDeps
+
+	// InterceptionHealth flow counters. Written from handleConn
+	// goroutines, read lock-free by InterceptionHealth(). startedAtNS is
+	// set in Start; the others track flow lifecycle for the diagnostics
+	// dashboard. The health *verdict* comes from the reconciler, not
+	// these counters — an idle Linux host with zero flows is healthy
+	// (the redirect chain is live the moment the reconciler installs it).
+	startedAtNS      atomic.Int64
+	connectionsTotal atomic.Int64
+	activeSessions   atomic.Int32
+	lastFlowAtNS     atomic.Int64
 }
 
 // SetBridgeDeps wires the shared/tlsbump bridge dependencies so the inspect
@@ -66,6 +93,43 @@ func (p *LinuxPlatform) SetBridgeDeps(deps *proxy.BridgeDeps) {
 // alive.
 func (p *LinuxPlatform) InterceptionMode() api.InterceptionMode {
 	return api.ModeIPTables
+}
+
+// InterceptionHealth implements api.InterceptionHealthReporter for Linux.
+//
+// Unlike the macOS NE shim — where zero IPC attaches means the user never
+// approved the proxy dialog and the host is capturing nothing — the Linux
+// iptables redirect chain is live the instant the reconciler installs it.
+// An enrolled host sitting idle with zero flows is therefore HEALTHY, not
+// degraded. So the health *verdict* is driven entirely by the reconciler's
+// chain-upkeep state (installed + not persistently failing to repair),
+// reported via SelfReported=true + DegradedReason. The flow counters are
+// surfaced for the diagnostics dashboard only; they never gate the verdict.
+//
+// This is why we must NOT reuse the generic ConnectionsTotal==0 heuristic:
+// it would mis-flag every idle Linux host. See status_health.go.
+func (p *LinuxPlatform) InterceptionHealth() api.InterceptionHealth {
+	h := api.InterceptionHealth{
+		SelfReported:     true,
+		ConnectionsTotal: p.connectionsTotal.Load(),
+		ActiveSessions:   int(p.activeSessions.Load()),
+	}
+	if ns := p.startedAtNS.Load(); ns > 0 {
+		h.StartedAt = time.Unix(0, ns)
+	}
+	if ns := p.lastFlowAtNS.Load(); ns > 0 {
+		h.LastFlowAt = time.Unix(0, ns)
+	}
+	if rec := p.reconciler.Load(); rec != nil {
+		h.DegradedReason = rec.degradedReason()
+	} else {
+		// Start has not run (or its reconciler install failed and the
+		// pointer was cleared). Either way no redirect chain is being
+		// maintained, so nothing is being captured.
+		h.DegradedReason = "iptables redirect chain not installed"
+	}
+	h.Connected = h.DegradedReason == ""
+	return h
 }
 
 // NewPlatform creates a new Linux platform shim.
@@ -133,45 +197,86 @@ func (p *LinuxPlatform) Start(ctx context.Context, handler api.ConnectionHandler
 		return fmt.Errorf("init TLS engine: %w", err)
 	}
 
+	port, err := portFromAddr(p.addr)
+	if err != nil {
+		return fmt.Errorf("derive proxy port from addr %q: %w", p.addr, err)
+	}
+
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", p.addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", p.addr, err)
 	}
 	p.listener = ln
+	p.startedAtNS.Store(time.Now().UnixNano())
 	slog.Info("transparent proxy listening", "addr", p.addr)
+
+	// IPv6 loopback listener. The ip6tables REDIRECT rule sends locally-
+	// generated IPv6 flows to [::1]:port, so without a listener there every
+	// intercepted IPv6 connection would hit a closed port and break. Best-
+	// effort: a host with IPv6 disabled simply runs IPv4-only.
+	addr6 := net.JoinHostPort(loopbackV6, strconv.Itoa(port))
+	if ln6, err6 := lc.Listen(ctx, "tcp6", addr6); err6 != nil {
+		slog.Warn("IPv6 transparent proxy listen failed; continuing IPv4-only",
+			"addr", addr6, "error", err6)
+	} else {
+		p.listener6 = ln6
+		slog.Info("transparent proxy listening (IPv6)", "addr", addr6)
+	}
 
 	// Start the iptables reconciler — installs the NEXUS_AGENT
 	// chain immediately and keeps it healed against firewalld /
 	// ufw / manual flushes. Failure to install on this first
 	// pass is fatal: without the chain, no traffic reaches us.
-	port, err := portFromAddr(p.addr)
-	if err != nil {
-		return fmt.Errorf("derive proxy port from addr %q: %w", p.addr, err)
-	}
-	p.reconciler = NewReconciler(slog.Default(), port)
-	if err := p.reconciler.Start(ctx); err != nil {
+	rec := NewReconciler(slog.Default(), port)
+	p.reconciler.Store(rec)
+	if err := rec.Start(ctx); err != nil {
 		// Critical: clear the field so the caller's deferred
 		// Stop() does NOT then call reconciler.Stop(), which
 		// would block forever on doneCh — the loop goroutine
 		// never started so it never closes that channel.
-		p.reconciler = nil
+		p.reconciler.Store(nil)
 		_ = ln.Close()
+		if p.listener6 != nil {
+			_ = p.listener6.Close()
+		}
 		return fmt.Errorf("start iptables reconciler: %w", err)
 	}
 
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
+		if p.listener6 != nil {
+			_ = p.listener6.Close()
+		}
 	}()
 
+	// Serve the IPv6 listener in its own goroutine (tracked by wg) and the
+	// IPv4 listener inline. Both feed handleConn and both unwind on ctx
+	// cancel; wg.Wait below blocks until both loops and all in-flight
+	// handlers have drained.
+	if p.listener6 != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.acceptLoop(ctx, p.listener6)
+		}()
+	}
+	p.acceptLoop(ctx, ln)
+	p.wg.Wait()
+	return nil
+}
+
+// acceptLoop accepts connections on ln until ctx is cancelled — cancellation
+// closes the listener, which surfaces as an Accept error and unwinds the loop.
+// Each accepted connection runs on the bounded worker pool.
+func (p *LinuxPlatform) acceptLoop(ctx context.Context, ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				p.wg.Wait()
-				return nil
+				return
 			default:
 				slog.Error("accept failed", "error", err)
 				continue
@@ -195,14 +300,17 @@ func (p *LinuxPlatform) Stop() error {
 	// listener while the kernel stops redirecting new ones. This
 	// avoids the brief window where the kernel sends connections to
 	// a closing listener.
-	if p.reconciler != nil {
-		if err := p.reconciler.Stop(); err != nil {
+	if rec := p.reconciler.Load(); rec != nil {
+		if err := rec.Stop(); err != nil {
 			slog.Warn("reconciler stop returned error", "error", err)
 		}
 	}
 
 	if p.listener != nil {
 		_ = p.listener.Close()
+	}
+	if p.listener6 != nil {
+		_ = p.listener6.Close()
 	}
 	done := make(chan struct{})
 	go func() { p.wg.Wait(); close(done) }()
@@ -212,238 +320,4 @@ func (p *LinuxPlatform) Stop() error {
 		slog.Warn("proxy drain timeout")
 	}
 	return nil
-}
-
-// portFromAddr extracts the TCP port from a "host:port" address
-// string. The reconciler needs the bare port for its
-// `-j REDIRECT --to-ports N` rule.
-func portFromAddr(addr string) (int, error) {
-	_, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return 0, err
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return 0, fmt.Errorf("parse port %q: %w", portStr, err)
-	}
-	if port <= 0 || port > 65535 {
-		return 0, fmt.Errorf("port out of range: %d", port)
-	}
-	return port, nil
-}
-
-func (p *LinuxPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
-	defer func() { _ = clientConn.Close() }()
-	startedAt := time.Now()
-
-	tcpConn, ok := clientConn.(*net.TCPConn)
-	if !ok {
-		return
-	}
-
-	// Resolve original destination via SO_ORIGINAL_DST
-	dstIP, dstPort, err := getOriginalDst(tcpConn)
-	if err != nil {
-		slog.Warn("SO_ORIGINAL_DST failed", "error", err)
-		return
-	}
-
-	// Peek at TLS ClientHello for SNI (hostname)
-	sni, peeked, peekErr := proxy.PeekSNI(clientConn, 5*time.Second)
-	dstHost := sni
-	if dstHost == "" {
-		dstHost = dstIP // fallback to IP when no SNI
-	}
-
-	// Resolve source PID
-	srcAddr := clientConn.RemoteAddr().(*net.TCPAddr)
-	pid := findPIDBySocket(srcAddr.IP.String(), srcAddr.Port, dstIP, dstPort)
-	var procMeta api.ProcessMeta
-	if pid > 0 {
-		procMeta, _ = p.ProcessInfo(pid)
-	}
-
-	intercepted := api.InterceptedConn{
-		FlowID:  fmt.Sprintf("%s:%d-%s:%d-%d", srcAddr.IP, srcAddr.Port, dstIP, dstPort, startedAt.UnixMilli()),
-		SrcIP:   srcAddr.IP.String(),
-		SrcPort: srcAddr.Port,
-		DstIP:   dstIP,
-		DstPort: dstPort,
-		DstHost: dstHost,
-		Process: procMeta,
-	}
-
-	if p.handler == nil {
-		return
-	}
-	decision := p.handler.HandleConnection(intercepted)
-
-	var bytesIn, bytesOut int64
-	bumpStatus := ""
-	// intercept_ms = time the agent spent on its own intercept work
-	// (SO_ORIGINAL_DST + SNI peek + PID resolve + decision) before handing
-	// off to upstream. Stamped just before the first upstream operation
-	// in each branch; zero-value means we never reached upstream (e.g.
-	// deny) and we report nothing.
-	var interceptDoneAt time.Time
-	// bumpedViaTLSBump is set when the inspect path ran through
-	// proxy.BumpFlow (shared/tlsbump), which emits its own per-HTTP-request
-	// audit rows. When true, the flow-level OnFlowComplete row below is
-	// skipped to avoid double-auditing — mirrors the macOS NE bridge.
-	var bumpedViaTLSBump bool
-
-	switch decision {
-	case api.DecisionDeny:
-		if tc, ok := clientConn.(*net.TCPConn); ok {
-			_ = tc.SetLinger(0)
-		}
-
-	case api.DecisionPassthrough:
-		serverAddr := net.JoinHostPort(dstIP, strconv.Itoa(dstPort))
-		// SO_MARK-stamped dialer so this upstream connection is
-		// excluded from our own REDIRECT rule (FR-L4).
-		interceptDoneAt = time.Now()
-		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		serverConn, err := p.upstreamDialer.DialContext(dialCtx, "tcp", serverAddr)
-		cancel()
-		if err != nil {
-			slog.Warn("connect to server failed", "addr", serverAddr, "error", err)
-			break
-		}
-		defer func() { _ = serverConn.Close() }()
-		// Replay peeked bytes
-		if len(peeked) > 0 {
-			if _, err := serverConn.Write(peeked); err != nil {
-				slog.Warn("replay peeked bytes failed", "error", err)
-				break
-			}
-		}
-		bytesOut, bytesIn = proxy.Relay(clientConn, serverConn)
-
-	case api.DecisionInspect:
-		if p.bridgeDeps == nil || peekErr != nil {
-			// Cannot inspect — bridge deps unwired (device CA load failed
-			// at boot) or the TLS ClientHello peek failed (non-TLS /
-			// server-speaks-first protocol). Fail open to passthrough so
-			// the user's flow still works.
-			serverAddr := net.JoinHostPort(dstIP, strconv.Itoa(dstPort))
-			// SO_MARK-stamped (FR-L4) — same reasoning as the
-			// passthrough path above.
-			interceptDoneAt = time.Now()
-			dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			serverConn, derr := p.upstreamDialer.DialContext(dialCtx, "tcp", serverAddr)
-			cancel()
-			if derr != nil {
-				break
-			}
-			defer func() { _ = serverConn.Close() }()
-			if len(peeked) > 0 {
-				if _, werr := serverConn.Write(peeked); werr != nil {
-					slog.Warn("replay peeked bytes failed (inspect fallback)", "error", werr)
-					break
-				}
-			}
-			bytesOut, bytesIn = proxy.Relay(clientConn, serverConn)
-			bumpStatus = "BUMP_FAILED_PASSTHROUGH"
-		} else {
-			// Inspect via shared/tlsbump.BumpConnection (the same engine the
-			// macOS NE bridge, the compliance proxy, and the AI gateway use).
-			// BumpFlow terminates TLS, runs the hook pipeline, and emits
-			// per-HTTP-request audit rows directly via its AuditEmitter — so
-			// the flow-level OnFlowComplete row below is skipped. Any bump
-			// failure (cert-pin client, non-TLS upstream) falls open to an
-			// opaque relay inside BumpFlow, preserving the user's flow.
-			interceptDoneAt = time.Now()
-			fp := proxy.FlowProcess{Name: procMeta.Name, Bundle: procMeta.BundleID, User: procMeta.User}
-			if err := proxy.BumpFlow(ctx, clientConn, peeked, dstHost, dstPort, intercepted.FlowID, fp, *p.bridgeDeps); err != nil {
-				slog.Debug("bump flow ended with error", "host", dstHost, "error", err)
-			}
-			bumpedViaTLSBump = true
-		}
-	}
-
-	// Audit callback. Skipped for inspect flows bumped via tlsbump —
-	// BumpFlow already emitted per-HTTP-request rows (mirrors the macOS
-	// NE bridge); writing a flow-level row here would double-audit.
-	if auditor, ok := p.handler.(api.FlowAuditor); ok && !bumpedViaTLSBump {
-		auditor.OnFlowComplete(api.FlowResult{
-			FlowID:     intercepted.FlowID,
-			SrcIP:      intercepted.SrcIP,
-			DstHost:    dstHost,
-			DstIP:      dstIP,
-			DstPort:    dstPort,
-			Process:    procMeta,
-			Decision:   decision,
-			BytesIn:    bytesIn,
-			BytesOut:   bytesOut,
-			DurationMs: int(time.Since(startedAt).Milliseconds()),
-			BumpStatus: bumpStatus,
-			StartedAt:  startedAt,
-			// A Linux raw relay has no distinct upstream call to time, so
-			// UpstreamTtfbMs/TotalMs stay nil; LatencyBreakdown carries the
-			// agent's own intercept overhead (intercept_ms).
-			LatencyBreakdown: mergeInterceptMs(nil, startedAt, interceptDoneAt),
-		})
-	}
-}
-
-// mergeInterceptMs stamps intercept_ms (the agent's own intercept overhead —
-// SO_ORIGINAL_DST + SNI peek + PID resolve + decision) into the latency
-// breakdown map. interceptDoneAt is zero when no upstream branch ran (e.g.
-// DecisionDeny), in which case we don't add the key. Creates the map on
-// demand when the phase sink produced nothing else.
-func mergeInterceptMs(breakdown map[string]int, startedAt, interceptDoneAt time.Time) map[string]int {
-	if interceptDoneAt.IsZero() {
-		return breakdown
-	}
-	ms := int(interceptDoneAt.Sub(startedAt).Milliseconds())
-	if ms < 0 {
-		ms = 0
-	}
-	if breakdown == nil {
-		breakdown = make(map[string]int, 1)
-	}
-	breakdown["intercept_ms"] = ms
-	return breakdown
-}
-
-// getOriginalDst retrieves the original destination address from a connection
-// that was redirected via iptables REDIRECT.
-func getOriginalDst(conn *net.TCPConn) (string, int, error) {
-	raw, err := conn.SyscallConn()
-	if err != nil {
-		return "", 0, fmt.Errorf("syscall conn: %w", err)
-	}
-
-	var addr unix.RawSockaddrInet4
-	var sysErr error
-
-	err = raw.Control(func(fd uintptr) {
-		addrLen := uint32(unix.SizeofSockaddrInet4)
-		_, _, errno := unix.Syscall6(
-			unix.SYS_GETSOCKOPT,
-			fd,
-			uintptr(unix.SOL_IP),
-			uintptr(soOriginalDst),
-			uintptr(unsafe.Pointer(&addr)),
-			uintptr(unsafe.Pointer(&addrLen)),
-			0,
-		)
-		if errno != 0 {
-			sysErr = errno
-		}
-	})
-	if err != nil {
-		return "", 0, err
-	}
-	if sysErr != nil {
-		return "", 0, fmt.Errorf("getsockopt SO_ORIGINAL_DST: %w", sysErr)
-	}
-
-	ip := net.IPv4(addr.Addr[0], addr.Addr[1], addr.Addr[2], addr.Addr[3])
-	// Port is in network byte order (big-endian) in memory.
-	portBuf := (*[2]byte)(unsafe.Pointer(&addr.Port))
-	port := int(binary.BigEndian.Uint16(portBuf[:]))
-
-	return ip.String(), port, nil
 }

@@ -26,7 +26,7 @@ import (
 )
 
 // StreamingTuning is the hot-swappable bundle of streaming-timeout
-// tunables. The mode field was removed in #115 — admin streaming
+// tunables. The mode field was removed — admin streaming
 // policy (resolved via Config.StreamingPolicyStore) is now the single
 // source of truth for SSE mode dispatch.
 type StreamingTuning struct {
@@ -71,7 +71,7 @@ type Config struct {
 	PayloadCaptureStore *payloadcapture.Store
 	DomainEngine        *domain.Engine
 	AdapterRegistry     *traffic.AdapterRegistry
-	// NormalizeRegistry — V2 #67 — Tier 1+2+3 chain shared with
+	// NormalizeRegistry — Tier 1+2+3 chain shared with
 	// agent + ai-gateway + nexus-hub agent_audit. Wired into
 	// tlsbump via WithNormalizeRegistry so hookInput.Normalized
 	// comes from the full fallback chain instead of nil when the
@@ -96,9 +96,14 @@ type Config struct {
 // variable before calling Run.
 var bumpConnFn = tlsbump.BumpConnection
 
-// logRelayResult classifies the return of a tlsbump.PassThrough call.
-// Dial failures stay at WARN; copy-side EOF/ECONNRESET errors drop to DEBUG.
-func logRelayResult(logger *slog.Logger, label string, err error) {
+// LogRelayResult classifies the return of a tlsbump.PassThrough call. Dial
+// failures (DNS, TCP refused, network unreachable) are real problems and stay
+// at WARN. Copy-side errors are routine peer-close events on a transparent TCP
+// relay (EOF, ECONNRESET, EPIPE, net.ErrClosed when one side hangs up) — logging
+// them at ERROR drowns the channel in benign noise, so we drop those to DEBUG.
+// Exported because the server package shares this exact classification for its
+// unlisted-passthrough relay.
+func LogRelayResult(logger *slog.Logger, label string, err error) {
 	if err == nil {
 		return
 	}
@@ -131,7 +136,7 @@ func Run(ctx context.Context, conn net.Conn, cfg Config) {
 		if cfg.AuditEmitter != nil {
 			cfg.AuditEmitter.EmitKillSwitchPassthrough(cfg.SourceAddr, cfg.TargetHost)
 		}
-		logRelayResult(logger, "kill switch passthrough", tlsbump.PassThrough(ctx, conn, cfg.TargetHost))
+		LogRelayResult(logger, "kill switch passthrough", tlsbump.PassThrough(ctx, conn, cfg.TargetHost))
 		return
 	}
 
@@ -145,7 +150,7 @@ func Run(ctx context.Context, conn net.Conn, cfg Config) {
 			if metrics.PinningPassthroughTotal != nil {
 				metrics.PinningPassthroughTotal.With(bumpStatus).Inc()
 			}
-			logRelayResult(logger, "pinning exemption passthrough", tlsbump.PassThrough(ctx, conn, cfg.TargetHost))
+			LogRelayResult(logger, "pinning exemption passthrough", tlsbump.PassThrough(ctx, conn, cfg.TargetHost))
 			return
 		}
 	}
@@ -175,6 +180,14 @@ func Run(ctx context.Context, conn net.Conn, cfg Config) {
 	// WithIdentity stamps "compliance-proxy" on x-nexus-via for response markers.
 	// Always set even when compliance is bypassed so operators can identify the proxy.
 	bumpOpts = append(bumpOpts, tlsbump.WithIdentity("compliance-proxy"))
+	// The compliance-proxy is a dedicated forward-proxy appliance that
+	// already returns 403 for disallowed CONNECTs, so it can safely REFUSE. Opt in
+	// to strict fail-closed: an admin-configured failBehavior="fail-closed" hook
+	// that is UNBUILDABLE (unregistered implementationId on a partial deploy, or a
+	// malformed pushed rule) makes BuildPipeline error → the request is refused
+	// rather than forwarded uninspected. The agent NE host-packet path does NOT
+	// set this and stays fail-open by design.
+	bumpOpts = append(bumpOpts, tlsbump.WithStrictFailClosed())
 	// Install the attestation verifier so tlsbump's pre-pipeline peek can
 	// short-circuit attested requests to pure passthrough. Nil-safe — no-op
 	// when feature off.
@@ -215,6 +228,22 @@ func Run(ctx context.Context, conn net.Conn, cfg Config) {
 	if err := bumpConnFn(ctx, conn, cfg.TargetHost, cfg.GetCert, cfg.Upstream, logger, bumpOpts...); err != nil {
 		if cfg.PinningTracker != nil && tlsbump.IsPinningError(err) {
 			bumpStatus := cfg.PinningTracker.RecordFailure(cfg.Host)
+			// FAIL_CLOSED enforcement (on_adapter_error). When the matched
+			// interception domain is configured FAIL_CLOSED, a pinned flow we
+			// cannot inspect MUST NOT be relayed uninspected — refuse it by
+			// closing the connection (return without PassThrough). This is the
+			// runtime consumer of domain.AdapterErrorFailClosed. Default is
+			// unchanged: an unmatched host, a FAIL_OPEN domain, or a missing
+			// engine all return false here and fall through to the passthrough.
+			if cfg.DomainEngine.ShouldFailClosed(cfg.Host) {
+				logger.Warn("TLS bump failed due to pinning and matched domain is FAIL_CLOSED — refusing flow (not relaying uninspected)",
+					"error", err,
+					"bump_status", bumpStatus,
+					"host", cfg.Host,
+					"on_adapter_error", "FAIL_CLOSED",
+				)
+				return
+			}
 			logger.Warn("TLS bump failed due to pinning, falling back to passthrough",
 				"error", err,
 				"bump_status", bumpStatus,
@@ -222,7 +251,7 @@ func Run(ctx context.Context, conn net.Conn, cfg Config) {
 			if metrics.PinningPassthroughTotal != nil {
 				metrics.PinningPassthroughTotal.With(tlsbump.BumpStatusFailedPassthrough).Inc()
 			}
-			logRelayResult(logger, "pinning fallback passthrough", tlsbump.PassThrough(ctx, conn, cfg.TargetHost))
+			LogRelayResult(logger, "pinning fallback passthrough", tlsbump.PassThrough(ctx, conn, cfg.TargetHost))
 			return
 		}
 		logger.Error("bump connection ended with error", "error", err)

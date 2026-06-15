@@ -17,6 +17,14 @@ type ProviderDetailResult struct {
 }
 
 // GetProviderAnalyticsDetail returns comprehensive analytics for a single provider.
+//
+// Usage is attributed off `routed_provider_id` — the provider that actually
+// handled the call. The earlier implementation joined `traffic_event.model_id`
+// to `Model."providerId"`, but `model_id` is the REQUESTED side (the model the
+// client pinned, empty for "auto" / OpenAI-style), not the served provider, so
+// that INNER JOIN matched nothing for most traffic and every provider's detail
+// read zero. This mirrors the `provider` → `routed_provider` switch already
+// made for the by-provider rollup.
 func (store *Store) GetProviderAnalyticsDetail(ctx context.Context, providerID string, start, end *time.Time) (*ProviderDetailResult, error) {
 	timeClause := ""
 	args := []any{providerID}
@@ -45,8 +53,7 @@ func (store *Store) GetProviderAnalyticsDetail(ctx context.Context, providerID s
 			AVG(a.upstream_ttfb_ms)  FILTER (WHERE a.upstream_ttfb_ms  IS NOT NULL),
 			AVG(a.upstream_total_ms) FILTER (WHERE a.upstream_total_ms IS NOT NULL)
 		FROM traffic_event a
-		INNER JOIN "Model" m ON m.id = a.model_id AND m."providerId" = $1
-		WHERE a.source = 'ai-gateway' %s
+		WHERE a.source = 'ai-gateway' AND a.routed_provider_id = $1 %s
 	`, timeClause)
 	if err := store.pool.QueryRow(ctx, summaryQ, args...).Scan(
 		&totalCount, &errorCount, &cacheHitCount,
@@ -91,14 +98,13 @@ func (store *Store) GetProviderAnalyticsDetail(ctx context.Context, providerID s
 
 	// By model
 	byModelQ := fmt.Sprintf(`
-		SELECT COALESCE(NULLIF(m.name, ''), NULLIF(a.model_name, ''), a.model_id::text),
+		SELECT COALESCE(NULLIF(a.routed_model_name, ''), NULLIF(a.model_name, ''), 'unknown'),
 			COUNT(*), AVG(a.latency_ms), SUM(a.total_tokens),
 			SUM(a.prompt_tokens), SUM(a.completion_tokens), SUM(a.estimated_cost_usd),
 			AVG(GREATEST(0, a.latency_ms - a.upstream_total_ms)) FILTER (WHERE a.upstream_total_ms IS NOT NULL),
 			AVG(a.upstream_total_ms) FILTER (WHERE a.upstream_total_ms IS NOT NULL)
 		FROM traffic_event a
-		INNER JOIN "Model" m ON m.id = a.model_id AND m."providerId" = $1
-		WHERE a.source = 'ai-gateway' AND a.model_id IS NOT NULL %s
+		WHERE a.source = 'ai-gateway' AND a.routed_provider_id = $1 %s
 		GROUP BY 1 ORDER BY COUNT(*) DESC
 	`, timeClause)
 	byModelRows, err := store.pool.Query(ctx, byModelQ, args...)
@@ -139,9 +145,8 @@ func (store *Store) GetProviderAnalyticsDetail(ctx context.Context, providerID s
 			AVG(GREATEST(0, a.latency_ms - a.upstream_total_ms)) FILTER (WHERE a.upstream_total_ms IS NOT NULL),
 			AVG(a.upstream_total_ms) FILTER (WHERE a.upstream_total_ms IS NOT NULL)
 		FROM traffic_event a
-		INNER JOIN "Model" m ON m.id = a.model_id AND m."providerId" = $1
 		INNER JOIN "Project" p ON p.id = (a.identity->'project'->>'id')
-		WHERE a.source = 'ai-gateway' AND a.identity->'project'->>'id' IS NOT NULL %s
+		WHERE a.source = 'ai-gateway' AND a.routed_provider_id = $1 AND a.identity->'project'->>'id' IS NOT NULL %s
 		GROUP BY p.id, p.name, p.code
 		ORDER BY COUNT(*) DESC
 	`, timeClause)
@@ -200,9 +205,8 @@ func (store *Store) GetProviderAnalyticsDetail(ctx context.Context, providerID s
 			AVG(GREATEST(0, a.latency_ms - a.upstream_total_ms)) FILTER (WHERE a.upstream_total_ms IS NOT NULL),
 			AVG(a.upstream_total_ms) FILTER (WHERE a.upstream_total_ms IS NOT NULL)
 		FROM traffic_event a
-		INNER JOIN "Model" m ON m.id = a.model_id AND m."providerId" = $1
 		INNER JOIN "VirtualKey" vk ON vk.id = (a.identity->'vk'->>'id')
-		WHERE a.source = 'ai-gateway' AND a.identity->'vk'->>'id' IS NOT NULL %s
+		WHERE a.source = 'ai-gateway' AND a.routed_provider_id = $1 AND a.identity->'vk'->>'id' IS NOT NULL %s
 		GROUP BY vk.id, vk.name, vk."keyPrefix"
 		ORDER BY COUNT(*) DESC
 	`, timeClause)
@@ -251,8 +255,7 @@ func (store *Store) GetProviderAnalyticsDetail(ctx context.Context, providerID s
 		SELECT DATE_TRUNC('day', a.timestamp) AS day, COUNT(*), COUNT(*) FILTER (WHERE a.status_code >= 400),
 			SUM(a.total_tokens), SUM(a.estimated_cost_usd)
 		FROM traffic_event a
-		INNER JOIN "Model" m ON m.id = a.model_id AND m."providerId" = $1
-		WHERE a.source = 'ai-gateway' AND a.timestamp >= NOW() - INTERVAL '30 days' %s
+		WHERE a.source = 'ai-gateway' AND a.routed_provider_id = $1 AND a.timestamp >= NOW() - INTERVAL '30 days' %s
 		GROUP BY day ORDER BY day ASC
 	`, timeClause)
 	dailyRows, err := store.pool.Query(ctx, dailyQ, args...)
@@ -278,8 +281,7 @@ func (store *Store) GetProviderAnalyticsDetail(ctx context.Context, providerID s
 	statusQ := fmt.Sprintf(`
 		SELECT a.status_code, COUNT(*)
 		FROM traffic_event a
-		INNER JOIN "Model" m ON m.id = a.model_id AND m."providerId" = $1
-		WHERE a.source = 'ai-gateway' AND a.status_code IS NOT NULL %s
+		WHERE a.source = 'ai-gateway' AND a.routed_provider_id = $1 AND a.status_code IS NOT NULL %s
 		GROUP BY a.status_code ORDER BY a.status_code ASC
 	`, timeClause)
 	statusRows, err := store.pool.Query(ctx, statusQ, args...)

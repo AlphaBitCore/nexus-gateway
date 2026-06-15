@@ -73,6 +73,21 @@ type SemanticCacheConfigRow struct {
 	EmbeddingMaxInputTokens int `json:"embeddingMaxInputTokens,omitempty"`
 }
 
+// WireState is the canonical Hub-shadow State for the semantic_cache.config
+// key. It is the full row MINUS the two bookkeeping columns (UpdatedAt,
+// UpdatedBy): UpdatedAt is stamped from the Go process wall clock by Save but
+// from the DB NOW() when read back by Get, so the two never byte-match — and
+// without dropping it the configreconcile content-diff watch
+// would log a spurious drift + heal on every admin save. The AI Gateway
+// receiver does not consume either field. Both the admin push (PutConfig) and
+// the reconcile SourceLoader call this so the diff is apples-to-apples.
+func (r *SemanticCacheConfigRow) WireState() *SemanticCacheConfigRow {
+	cp := *r
+	cp.UpdatedAt = time.Time{}
+	cp.UpdatedBy = nil
+	return &cp
+}
+
 // ErrUnsupportedEmbeddingDimension is returned by Save when the requested
 // embedding dimension is not one the chosen model can produce (per its
 // capabilityJson.embeddings.supported_dimensions). Surfaced as 400 by the
@@ -147,7 +162,8 @@ func resolveEmbeddingDimension(requested *int, capb embeddingCapability) (*int, 
 // semantic_cache_config.time_sensitive_overrides.
 //
 // This blob IS the canonical rule list. seed.ts populates the default 11
-// rules on a fresh DB (tools/db-migrate/seed/data/time-sensitive-rules.json);
+// rules on a fresh DB (tools/db-migrate/seed/fixtures/semantic_cache_config.json,
+// the single row's time_sensitive_overrides field);
 // admin CRUD operates on the same blob from there on. There are no Go-side
 // defaults or fallbacks — if seed didn't run the list is empty and the
 // freshness gate is off, which is the correct behaviour.

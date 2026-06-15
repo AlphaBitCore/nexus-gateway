@@ -34,6 +34,10 @@ type thingManager interface {
 // token success/failure branches without a Postgres dependency.
 type tokenValidator interface {
 	ValidateDeviceToken(ctx context.Context, thingID, tokenHash string) (*store.Thing, error)
+	// GetThingStatus returns the status field of the Thing. Used by the
+	// service-token path to reject reconnects from revoked service Things.
+	// Returns store.ErrNotFound when the id is unknown.
+	GetThingStatus(ctx context.Context, id string) (string, error)
 }
 
 // OpsMetricsHandler is the dispatch surface ws.Server uses to forward
@@ -64,26 +68,29 @@ type Server struct {
 	hubID          string
 	serviceToken   string
 	allowedOrigins []string
+	devMode        bool
 	ops            OpsMetricsHandler
 	logger         *slog.Logger
 }
 
 // NewServer creates a WebSocket server. allowedOrigins is the production
-// origin allowlist (e.g. cluster DNS names) appended to the built-in
-// localhost patterns; it may be nil or empty for dev/test setups.
-func NewServer(pool *Pool, mgr *manager.Manager, hubID, serviceToken string, allowedOrigins []string, logger *slog.Logger) *Server {
+// origin allowlist (e.g. cluster DNS names). When devMode is true, localhost
+// origins are additionally accepted; in production devMode MUST be false so
+// no browser origin (including localhost) can hijack a bearer token into the
+// Hub.
+func NewServer(pool *Pool, mgr *manager.Manager, hubID, serviceToken string, allowedOrigins []string, devMode bool, logger *slog.Logger) *Server {
 	var validator tokenValidator
 	if st := mgr.Store(); st != nil {
 		validator = st.RegistryStore()
 	}
-	return newServerWithDeps(pool, mgr, validator, hubID, serviceToken, allowedOrigins, logger)
+	return newServerWithDeps(pool, mgr, validator, hubID, serviceToken, allowedOrigins, devMode, logger)
 }
 
 // newServerWithDeps is the dependency-injection seam used by NewServer in
 // production and by tests that want to substitute a fake manager / token
 // validator. The seam exists for unit-test reachability of authenticate,
 // HandleUpgrade, and handleMessage without a live Postgres.
-func newServerWithDeps(pool *Pool, mgr thingManager, validator tokenValidator, hubID, serviceToken string, allowedOrigins []string, logger *slog.Logger) *Server {
+func newServerWithDeps(pool *Pool, mgr thingManager, validator tokenValidator, hubID, serviceToken string, allowedOrigins []string, devMode bool, logger *slog.Logger) *Server {
 	return &Server{
 		pool:           pool,
 		mgr:            mgr,
@@ -91,6 +98,7 @@ func newServerWithDeps(pool *Pool, mgr thingManager, validator tokenValidator, h
 		hubID:          hubID,
 		serviceToken:   serviceToken,
 		allowedOrigins: allowedOrigins,
+		devMode:        devMode,
 		logger:         logger.With("component", "ws_server"),
 	}
 }
@@ -111,10 +119,16 @@ func (s *Server) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hub WebSocket is service-to-service only (agents, CP, AI gateway,
-	// compliance proxy). Allow localhost for dev and the configured
-	// production allowlist for cluster traffic; reject browser origins so
-	// a malicious page cannot hijack a user's bearer token into the Hub.
-	originPatterns := append([]string{"localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"}, s.allowedOrigins...)
+	// compliance proxy). The configured production allowlist covers cluster
+	// traffic; all other browser origins are rejected so a malicious page
+	// cannot hijack a user's bearer token into the Hub. Localhost origins are
+	// added ONLY in dev mode — in production even a localhost origin is
+	// rejected, since a page served from the operator's own machine plus a
+	// leaked token would otherwise reach the Hub.
+	originPatterns := append([]string(nil), s.allowedOrigins...)
+	if s.devMode {
+		originPatterns = append([]string{"localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"}, originPatterns...)
+	}
 	wsConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: originPatterns,
 		Subprotocols:   []string{"nexus.bearer"},
@@ -174,9 +188,13 @@ func (s *Server) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 	// Run blocks until disconnect
 	conn.Run(r.Context())
 
-	// Cleanup on disconnect
-	s.pool.Remove(conn)
-	s.mgr.MarkOffline(context.Background(), thingID)
+	// Cleanup on disconnect. Remove returns false when a newer connection has
+	// already replaced this one (reconnect race) — in that case the
+	// Thing is still live on the new conn, so we must NOT mark it offline or we
+	// would black-hole config pushes to a healthy node.
+	if s.pool.Remove(conn) {
+		s.mgr.MarkOffline(context.Background(), thingID)
+	}
 	s.logger.Info("ws disconnected", "thing_id", thingID)
 }
 
@@ -194,6 +212,25 @@ func (s *Server) authenticate(r *http.Request) (thingID, thingType string, err e
 		thingType = r.URL.Query().Get("type")
 		if thingID == "" || thingType == "" {
 			return "", "", errUnauthorized
+		}
+		// Revoked service Things must not be allowed to reconnect via the
+		// shared service token — per-service revocation is structurally
+		// ineffective without per-service tokens, but the status check at
+		// least prevents a revoked Thing from re-promoting itself to online
+		// on reconnect. Skip the check when the validator is nil
+		// (test harnesses that wire no store).
+		if s.validator != nil {
+			st, stErr := s.validator.GetThingStatus(r.Context(), thingID)
+			// Fail closed on DB errors and on "revoked". Any other status
+			// (online, offline, enrolled, drift) is admitted. If a new
+			// exclusionary status is added in future (e.g. "suspended"),
+			// extend this condition rather than adding an allow-list, so
+			// unknown statuses are admitted by default — a connect from a
+			// Thing in an unknown status is preferable to breaking the fleet
+			// during a rolling deploy that adds the new status.
+			if stErr != nil || st == "revoked" {
+				return "", "", errUnauthorized
+			}
 		}
 		return thingID, thingType, nil
 	}
@@ -238,6 +275,29 @@ func (s *Server) handleMessage(thingID, thingType string, data []byte) {
 			ReportedOutcomesRaw: payload.ReportedOutcomes,
 		}); err != nil {
 			s.logger.Error("shadow report failed", "thing_id", thingID, "error", err)
+		}
+
+	case "shadow_report_break_glass":
+		// Dedicated break-glass frame (thingclient.SendBreakGlassShadowReport).
+		// The message type is the break-glass signal; stamp the reconciliation
+		// sentinel here so HandleShadowReport routes to handleBreakGlassReport.
+		// thingID is the WS-authenticated identity captured at upgrade — the
+		// payload's own identity, if any, is never trusted for routing.
+		var payload BreakGlassReportPayload
+		if err := json.Unmarshal(msg.Raw, &payload); err != nil {
+			s.logger.Warn("invalid shadow_report_break_glass", "thing_id", thingID, "error", err)
+			return
+		}
+		if err := s.mgr.HandleShadowReport(ctx, manager.ShadowReportRequest{
+			ID:           thingID,
+			Reported:     payload.Reported,
+			ReportedVer:  payload.ReportedVer,
+			Reason:       "break_glass",
+			SourceIP:     payload.SourceIP,
+			ActorTokenID: payload.ActorTokenID,
+			KeyVersions:  payload.KeyVersions,
+		}); err != nil {
+			s.logger.Error("break-glass shadow report failed", "thing_id", thingID, "error", err)
 		}
 
 	case "metrics_sample":

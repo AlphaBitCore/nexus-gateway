@@ -108,9 +108,10 @@ func TestGetVirtualKey(t *testing.T) {
 
 func TestCreateVirtualKey_Defaults(t *testing.T) {
 	s, m := newMock(t)
-	// vkType ""→"personal" (arg 12), vkStatus ""→"active" (arg 13).
+	// SEC-W2-01 Layer A: key_version is arg 3 (KeyVersion unset → ""); vkType
+	// ""→"personal" (arg 13), vkStatus ""→"active" (arg 14).
 	m.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs("k", "hash", "vk_abc", (*string)(nil), (*string)(nil), true,
+		WithArgs("k", "hash", "", "vk_abc", (*string)(nil), (*string)(nil), true,
 			(*int)(nil), (*int)(nil), pgxmock.AnyArg(), (*string)(nil), (*time.Time)(nil), "personal", "active").
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(vkRow("vk1", "k")...))
 	v, err := s.CreateVirtualKey(context.Background(), CreateVirtualKeyParams{Name: "k", KeyHash: "hash", KeyPrefix: "vk_abc", Enabled: true})
@@ -120,7 +121,7 @@ func TestCreateVirtualKey_Defaults(t *testing.T) {
 	if err := m.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet (defaults not applied?): %v", err)
 	}
-	m.ExpectQuery(`INSERT INTO "VirtualKey"`).WithArgs(anyArgs(13)...).WillReturnError(errors.New("dup"))
+	m.ExpectQuery(`INSERT INTO "VirtualKey"`).WithArgs(anyArgs(14)...).WillReturnError(errors.New("dup"))
 	if _, err := s.CreateVirtualKey(context.Background(), CreateVirtualKeyParams{VKType: "application", VKStatus: "pending"}); err == nil {
 		t.Fatal("insert error should surface")
 	}
@@ -142,12 +143,12 @@ func TestUpdateVirtualKey(t *testing.T) {
 
 func TestRegenerateVirtualKeyHash(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectExec(`UPDATE "VirtualKey" SET "keyHash"`).WithArgs("vk1", "h2", "vk_xyz").WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	if err := s.RegenerateVirtualKeyHash(context.Background(), "vk1", "h2", "vk_xyz"); err != nil {
+	m.ExpectExec(`UPDATE "VirtualKey" SET "keyHash"`).WithArgs("vk1", "h2", "v1", "vk_xyz").WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	if err := s.RegenerateVirtualKeyHash(context.Background(), "vk1", "h2", "v1", "vk_xyz"); err != nil {
 		t.Fatalf("RegenerateVirtualKeyHash: %v", err)
 	}
-	m.ExpectExec(`UPDATE "VirtualKey"`).WithArgs("vk1", "h2", "vk_xyz").WillReturnError(errors.New("boom"))
-	if err := s.RegenerateVirtualKeyHash(context.Background(), "vk1", "h2", "vk_xyz"); err == nil {
+	m.ExpectExec(`UPDATE "VirtualKey"`).WithArgs("vk1", "h2", "v1", "vk_xyz").WillReturnError(errors.New("boom"))
+	if err := s.RegenerateVirtualKeyHash(context.Background(), "vk1", "h2", "v1", "vk_xyz"); err == nil {
 		t.Fatal("exec error should surface")
 	}
 }

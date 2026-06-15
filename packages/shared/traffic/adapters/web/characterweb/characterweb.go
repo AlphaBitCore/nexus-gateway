@@ -99,7 +99,7 @@ func (a *Adapter) ExtractStreamChunk(_ context.Context, chunk []byte, _ string) 
 }
 
 func (a *Adapter) DetectRequestMeta(_ *http.Request, _ []byte) traffic.RequestMeta {
-	return traffic.RequestMeta{Provider: "character-web"}
+	return traffic.RequestMeta{Provider: adapterID}
 }
 func (a *Adapter) DetectResponseUsage(_ *http.Response, _ []byte) traffic.UsageMeta {
 	return traffic.UsageMeta{Status: traffic.UsageStatusNonLLM}

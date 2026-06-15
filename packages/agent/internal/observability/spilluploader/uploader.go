@@ -153,9 +153,13 @@ func (u *Uploader) mint(ctx context.Context, req mintRequest) (mintResponse, err
 
 // put streams the body to the upload URL with Content-Length pinned to
 // len(body). The agent reuses Hub's HTTP client for the localfs PUT
-// (so the request follows mTLS + tracing); for an S3 PUT the URL is
-// public and the SDK on the server side enforces the signed
-// Content-Length / sha256.
+// (so the request follows mTLS + tracing); for an S3 PUT the URL is a
+// public presigned URL and S3 enforces the signed Content-Length on the
+// PUT. SHA-256 is NOT bound into the presigned URL, so we do not send an
+// x-amz-checksum-sha256 header here — integrity is anchored on the
+// agent-computed sha256 recorded on the SpillRef (and the mint token),
+// verified at read time, not by an S3-side write checksum. See
+// spillstore/s3.PresignPut for the full integrity-model rationale.
 func (u *Uploader) put(ctx context.Context, url, contentType string, body []byte) error {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
 	if err != nil {

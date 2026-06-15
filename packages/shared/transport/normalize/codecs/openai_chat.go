@@ -1,15 +1,13 @@
 package codecs
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
-	"io"
 	"strings"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // OpenAIChatNormalizer handles OpenAI's /v1/chat/completions surface
@@ -30,6 +28,47 @@ func NewOpenAIChatNormalizer() *OpenAIChatNormalizer { return &OpenAIChatNormali
 // diagnostics.
 func (n *OpenAIChatNormalizer) ID() string { return "openai-chat" }
 
+// LooksLike implements core.Sniffer: matches the OpenAI Chat wire by
+// its distinctive markers, probed within the leading bytes only —
+// an SSE stream whose first data payload is a chat-completion chunk
+// (`data: {"id":"chatcmpl`), or a JSON body carrying the
+// `"object":"chat.completion` discriminator (the closing quote is
+// deliberately omitted so both "chat.completion" and
+// "chat.completion.chunk" values match). The bare `data:` prefix the
+// stream decoder accepts as a fallback is deliberately NOT enough
+// here: every SSE protocol shares it, and matching it would steal
+// Anthropic / Gemini streams from their own codecs.
+//
+// Request direction (or direction unset): a body carrying BOTH
+// `"messages"` and `"model"` matches, with one negative marker —
+// `"author"` must be absent. The chatgpt-web consumer request is the
+// known messages+model collision: its messages[] items wrap the role
+// in an `author` object (OpenAI Chat messages never carry that key)
+// and `"messages"` opens the body, so the marker always sits inside
+// the probe window. Without the exclusion, key-missed chatgpt-web
+// requests would be claimed here with empty content instead of
+// reaching the Tier-2 chatgpt-web spec that decodes them fully.
+// Anthropic requests also carry messages+model; the sniff walk
+// registers anthropic first and its stricter messages+max_tokens
+// requirement wins before this probe runs.
+func (n *OpenAIChatNormalizer) LooksLike(raw []byte, meta core.Meta) bool {
+	probe := sniffProbe(raw)
+	if bytes.Contains(probe, []byte(`"object":"chat.completion`)) {
+		return true
+	}
+	if meta.Direction != core.DirectionResponse &&
+		bytes.Contains(probe, []byte(`"messages"`)) &&
+		bytes.Contains(probe, []byte(`"model"`)) &&
+		!bytes.Contains(probe, []byte(`"author"`)) {
+		return true
+	}
+	s := bytes.TrimLeft(probe, " \t\r\n")
+	if rest, ok := bytes.CutPrefix(s, []byte("data:")); ok {
+		return bytes.HasPrefix(bytes.TrimLeft(rest, " "), []byte(`{"id":"chatcmpl`))
+	}
+	return false
+}
+
 // Normalize routes by Meta.Direction to the request or response path.
 // Empty raw bytes return core.ErrUnsupported so the caller records the
 // failure cleanly.
@@ -47,14 +86,19 @@ func (n *OpenAIChatNormalizer) Normalize(_ context.Context, raw []byte, meta cor
 	default:
 		return zeroPayloadForKind(meta), fmt.Errorf("openai-chat: direction %q not supported: %w", meta.Direction, core.ErrUnsupported)
 	}
-	// Stamp Tier-1 Confidence by comparing the wire body's top-level
-	// keys against the openai-chat FieldSpec — see confidence.go for the
-	// scoring rubric. Required absence (model/choices/usage missing)
-	// drives the score below 0.70 and lets the Coordinator fall through
-	// to Tier-2; unknown keys (new OpenAI optional fields, vendor
-	// extensions) apply a bounded −0.10 penalty.
+	// Confidence semantics (one meaning per input shape): a stream fold
+	// computes frame coverage (recognized / total data frames) and sets
+	// Confidence itself; single-document bodies score weighted field
+	// coverage by comparing the wire body's top-level keys against the
+	// openai-chat FieldSpec — see confidence.go for the scoring rubric.
+	// Required absence (model/choices/usage missing) drives the score
+	// below 0.70 and lets the Coordinator fall through to Tier-2;
+	// unknown keys (new OpenAI optional fields, vendor extensions)
+	// apply a bounded −0.10 penalty.
 	if err == nil {
-		p.Confidence = core.ScoreTier1Confidence(raw, openAIChatFieldSpec(meta.Direction))
+		if p.Confidence == 0 {
+			p.Confidence = core.ScoreTier1Confidence(raw, openAIChatFieldSpec(meta.Direction))
+		}
 		if p.DetectedSpec == "" {
 			p.DetectedSpec = "openai-chat"
 		}
@@ -116,6 +160,20 @@ type openAIChatMessage struct {
 	// core.ContentReasoning blocks so audit readers see the model's thinking
 	// alongside its visible output.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// Reasoning is the alternate wire name some OpenAI-compatible
+	// providers (xAI, OpenRouter) use for the same chain-of-thought
+	// text as reasoning_content. Whichever field is non-empty wins.
+	Reasoning string `json:"reasoning,omitempty"`
+}
+
+// firstNonEmptyString returns the first non-empty argument; used to
+// collapse the reasoning_content / reasoning wire-name aliases into one
+// canonical reasoning text source.
+func firstNonEmptyString(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 type openAIToolCall struct {
@@ -165,7 +223,7 @@ func (n *OpenAIChatNormalizer) normalizeRequest(raw []byte, meta core.Meta) (cor
 	msgs := make([]core.Message, 0, len(req.Messages))
 	for _, raw := range req.Messages {
 		msg := core.Message{Role: roleFromString(raw.Role)}
-		msg.Content = decodeOpenAIContent(raw.Content, raw.ToolCalls, raw.ToolCallID, raw.ReasoningContent)
+		msg.Content = decodeOpenAIContent(raw.Content, raw.ToolCalls, raw.ToolCallID, firstNonEmptyString(raw.ReasoningContent, raw.Reasoning))
 		msgs = append(msgs, msg)
 	}
 
@@ -482,10 +540,10 @@ func (n *OpenAIChatNormalizer) normalizeNonStreamResponse(raw []byte, meta core.
 		if ch.Message == nil {
 			continue
 		}
-		reasoningChars += len(ch.Message.ReasoningContent)
+		reasoningChars += len(firstNonEmptyString(ch.Message.ReasoningContent, ch.Message.Reasoning))
 		msg := core.Message{
 			Role:         roleFromString(ch.Message.Role),
-			Content:      decodeOpenAIContent(ch.Message.Content, ch.Message.ToolCalls, ch.Message.ToolCallID, ch.Message.ReasoningContent),
+			Content:      decodeOpenAIContent(ch.Message.Content, ch.Message.ToolCalls, ch.Message.ToolCallID, firstNonEmptyString(ch.Message.ReasoningContent, ch.Message.Reasoning)),
 			FinishReason: ch.FinishReason,
 		}
 		out.Messages = append(out.Messages, msg)
@@ -515,212 +573,6 @@ func (n *OpenAIChatNormalizer) normalizeNonStreamResponse(raw []byte, meta core.
 		}
 	}
 	return out, nil
-}
-
-// streamChoiceState accumulates a single OpenAI streaming choice across
-// SSE events. text holds the concatenated delta.content; reasoning
-// holds the concatenated delta.reasoning_content (DeepSeek/Moonshot
-// chain-of-thought stream); toolCallsBuf stitches together
-// delta.tool_calls[].function.arguments fragments keyed by tool-call
-// index.
-type streamChoiceState struct {
-	role         string
-	text         strings.Builder
-	reasoning    strings.Builder
-	finishReason string
-	toolCalls    map[int]*openAIToolCall
-	toolOrder    []int
-}
-
-func (n *OpenAIChatNormalizer) normalizeStreamResponse(raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
-	out := core.NormalizedPayload{
-		Kind:             core.KindAIChat,
-		NormalizeVersion: core.SchemaVersion,
-		Protocol:         "openai-chat",
-		Model:            meta.Model,
-		Stream:           true,
-	}
-
-	// SSE events are separated by blank lines. Each event has one or more
-	// `data: <payload>` lines; the value is JSON (or the literal [DONE]).
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	choices := map[int]*streamChoiceState{}
-	choiceOrder := []int{}
-	var usage *core.Usage
-	var sawAny bool
-
-	pumpChunk := func(line string) error {
-		payload := strings.TrimPrefix(line, "data:")
-		payload = strings.TrimSpace(payload)
-		if payload == "" || payload == "[DONE]" {
-			return nil
-		}
-		var chunk struct {
-			Model   string             `json:"model"`
-			Choices []openAIChatChoice `json:"choices"`
-			Usage   *openAIUsage       `json:"usage,omitempty"`
-		}
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			return err
-		}
-		if out.Model == "" && chunk.Model != "" {
-			out.Model = chunk.Model
-		}
-		if chunk.Usage != nil {
-			if u := chunk.Usage.extractCanonicalUsage(); u != nil {
-				usage = u
-			}
-		}
-		for _, ch := range chunk.Choices {
-			st, ok := choices[ch.Index]
-			if !ok {
-				st = &streamChoiceState{toolCalls: map[int]*openAIToolCall{}}
-				choices[ch.Index] = st
-				choiceOrder = append(choiceOrder, ch.Index)
-			}
-			if ch.Delta != nil {
-				if ch.Delta.Role != "" && st.role == "" {
-					st.role = ch.Delta.Role
-				}
-				if len(ch.Delta.Content) > 0 && string(ch.Delta.Content) != "null" {
-					var s string
-					if err := json.Unmarshal(ch.Delta.Content, &s); err == nil {
-						st.text.WriteString(s)
-						sawAny = true
-					}
-				}
-				if ch.Delta.ReasoningContent != "" {
-					st.reasoning.WriteString(ch.Delta.ReasoningContent)
-					sawAny = true
-				}
-				for pos, tc := range ch.Delta.ToolCalls {
-					idx := indexOfToolCall(tc, pos)
-					existing, ok := st.toolCalls[idx]
-					if !ok {
-						existing = &openAIToolCall{}
-						st.toolCalls[idx] = existing
-						st.toolOrder = append(st.toolOrder, idx)
-					}
-					if tc.ID != "" {
-						existing.ID = tc.ID
-					}
-					if tc.Type != "" {
-						existing.Type = tc.Type
-					}
-					if tc.Function.Name != "" {
-						existing.Function.Name = tc.Function.Name
-					}
-					if tc.Function.Arguments != "" {
-						existing.Function.Arguments += tc.Function.Arguments
-					}
-					sawAny = true
-				}
-			}
-			if ch.FinishReason != "" {
-				st.finishReason = ch.FinishReason
-			}
-		}
-		return nil
-	}
-
-	var lastErr error
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		if err := pumpChunk(line); err != nil {
-			lastErr = err
-		}
-	}
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-		lastErr = err
-	}
-
-	if !sawAny {
-		return out, fmt.Errorf("openai-chat: no chunks decoded: %w", core.ErrUnsupported)
-	}
-
-	for _, idx := range choiceOrder {
-		st := choices[idx]
-		role := st.role
-		if role == "" {
-			role = string(core.RoleAssistant)
-		}
-		msg := core.Message{Role: roleFromString(role), FinishReason: st.finishReason}
-		if r := st.reasoning.String(); r != "" {
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentReasoning, Text: r})
-		}
-		if t := st.text.String(); t != "" {
-			msg.Content = append(msg.Content, core.ContentBlock{Type: core.ContentText, Text: t})
-		}
-		for _, tidx := range st.toolOrder {
-			tc := st.toolCalls[tidx]
-			if tc == nil {
-				continue
-			}
-			var input map[string]any
-			if tc.Function.Arguments != "" {
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
-			}
-			msg.Content = append(msg.Content, core.ContentBlock{
-				Type: core.ContentToolUse,
-				ToolUse: &core.ToolUse{
-					CallID: tc.ID,
-					Name:   tc.Function.Name,
-					Input:  input,
-				},
-			})
-		}
-		out.Messages = append(out.Messages, msg)
-		if out.FinishReason == "" {
-			out.FinishReason = st.finishReason
-		}
-	}
-	out.Usage = usage
-	// Moonshot reasoning derivation (stream variant): same rationale as
-	// the non-stream path — when the wire usage block omitted reasoning
-	// _tokens but we accumulated reasoning_content deltas, surface a
-	// chars/3.5 heuristic so the canonical Usage carries a non-zero
-	// value. Sum across all choices.
-	reasoningChars := 0
-	for _, st := range choices {
-		reasoningChars += st.reasoning.Len()
-	}
-	if reasoningChars > 0 {
-		if out.Usage == nil {
-			out.Usage = &core.Usage{}
-		}
-		if out.Usage.ReasoningTokens == nil {
-			est := reasoningChars * 2 / 7
-			if est < 1 {
-				est = 1
-			}
-			out.Usage.ReasoningTokens = &est
-		}
-	}
-	if lastErr != nil {
-		// Partial parse — caller decides whether status=partial.
-		return out, fmt.Errorf("openai-chat: stream parse incomplete: %w", lastErr)
-	}
-	return out, nil
-}
-
-// indexOfToolCall returns the aggregation-map key for a streaming tool-call
-// delta. The OpenAI spec places the key in tool_calls[i].index on the delta
-// object; when that field is present it takes precedence because it is stable
-// across chunks (a single tool call may span many SSE events, each carrying
-// only an arguments fragment with the same index). When the field is absent
-// (non-compliant or synthetic streams) we fall back to pos — the ordinal
-// position of this item within the current chunk's tool_calls slice — which
-// preserves the original intent of "position in the slice as it appears in
-// this chunk".
-func indexOfToolCall(tc openAIToolCall, pos int) int {
-	if tc.Index != nil {
-		return *tc.Index
-	}
-	return pos
 }
 
 func zeroPayloadForKind(meta core.Meta) core.NormalizedPayload {

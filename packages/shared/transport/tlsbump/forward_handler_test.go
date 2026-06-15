@@ -2,8 +2,12 @@ package tlsbump
 
 import (
 	"bytes"
+	"compress/gzip"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
@@ -67,6 +71,110 @@ func TestReadBody_UsesDynamicStoreValue(t *testing.T) {
 	}
 	if len(got2) != 1024 {
 		t.Errorf("second read after Set: want 1024, got %d", len(got2))
+	}
+}
+
+// TestReadResponseBodyBounded asserts F-0277's named failure mode: a malicious
+// upstream returning an oversize buffered response is truncated to the cap
+// instead of being read unbounded into memory (proxy OOM). Mirrors the
+// request-side readBody cap behaviour.
+func TestReadResponseBodyBounded(t *testing.T) {
+	payload := bytes.Repeat([]byte("z"), 10*1024)
+
+	tests := []struct {
+		name    string
+		max     int64
+		wantLen int
+	}{
+		{"4KiB cap truncates oversize response", 4096, 4096},
+		{"zero falls back to default 10 MiB", 0, len(payload)},
+		{"negative falls back to default 10 MiB", -1, len(payload)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := io.NopCloser(bytes.NewReader(payload))
+			got, err := readResponseBodyBounded(rc, tc.max)
+			if err != nil {
+				t.Fatalf("readResponseBodyBounded: %v", err)
+			}
+			if len(got) != tc.wantLen {
+				t.Errorf("len(body): want %d, got %d", tc.wantLen, len(got))
+			}
+		})
+	}
+
+	t.Run("nil body returns nil", func(t *testing.T) {
+		got, err := readResponseBodyBounded(nil, 4096)
+		if err != nil || got != nil {
+			t.Fatalf("nil body: want (nil,nil), got (%v,%v)", got, err)
+		}
+	})
+}
+
+// gzipBombFixture builds a gzip stream whose compressed form is tiny but whose
+// decompressed form exceeds want bytes, written in small chunks so the test
+// never holds the full expansion in memory while constructing the fixture.
+func gzipBombFixture(t *testing.T, want int64) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	chunk := bytes.Repeat([]byte("A"), 64*1024)
+	var written int64
+	for written <= want {
+		n, err := w.Write(chunk)
+		if err != nil {
+			t.Fatalf("gzip write: %v", err)
+		}
+		written += int64(n)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestDecompressForCaptureBombBounded asserts the tlsbump wrapper enforces the
+// decompressed-size bound (F-0278): a gzip bomb expanding past the default cap
+// is returned as the original compressed bytes (opaque capture, no OOM) and a
+// warning is emitted.
+func TestDecompressForCaptureBombBounded(t *testing.T) {
+	// A fixture that inflates past the 50 MiB default decompressed cap while its
+	// compressed form stays a few KiB.
+	bomb := gzipBombFixture(t, 50*1024*1024+1)
+
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("Content-Encoding", "gzip")
+
+	var logbuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logbuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	got := decompressForCapture(bomb, resp, logger)
+	if !bytes.Equal(got, bomb) {
+		t.Fatal("decompression bomb must yield the original compressed bytes, not a multi-GB buffer")
+	}
+	if !strings.Contains(logbuf.String(), "exceeded decompressed-size bound") {
+		t.Fatalf("expected a truncation warning; log=%q", logbuf.String())
+	}
+}
+
+// TestDecompressForCaptureHappyPath covers the normal (non-bomb) path: a small
+// gzip body decodes to the original and emits no warning, including the
+// nil-logger safety branch.
+func TestDecompressForCaptureHappyPath(t *testing.T) {
+	original := []byte(`{"choices":[{"message":{"content":"hello"}}]}`)
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(original); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("Content-Encoding", "gzip")
+
+	if got := decompressForCapture(buf.Bytes(), resp, nil); !bytes.Equal(got, original) {
+		t.Fatalf("small gzip body must round-trip; got %q", got)
 	}
 }
 

@@ -532,3 +532,34 @@ func TestExtrasRouteVerbsKnownToCatalog(t *testing.T) {
 		}
 	}
 }
+
+// TestForwardHookTest_AttachesBearer verifies forwardHookTest carries
+// Authorization: Bearer <token> on the CP→ai-gateway /internal/hooks-test
+// call (F-0001).
+func TestForwardHookTest_AttachesBearer(t *testing.T) {
+	const tok = "cp-internal-token"
+	var gotAuth string
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"passed":true}`))
+	}))
+	defer gw.Close()
+
+	h := newHandler(nil, nil, nil, audit.NewWriter(nil, "", slog.Default()))
+	h.proxy = ProxyConfig{AIGatewayURL: gw.URL, AIGatewayInternalToken: tok}
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u1")
+
+	hc := &hookstore.HookConfig{TimeoutMs: 1000}
+	if err := h.forwardHookTest(c, hc); err != nil {
+		t.Fatalf("forwardHookTest: %v", err)
+	}
+	if want := "Bearer " + tok; gotAuth != want {
+		t.Errorf("Authorization = %q; want %q", gotAuth, want)
+	}
+}

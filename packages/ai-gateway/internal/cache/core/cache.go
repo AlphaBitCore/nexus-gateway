@@ -68,8 +68,7 @@ type StreamEntry struct {
 	// re-encode or serve verbatim. Different ingresses share the same
 	// cache key when the canonical body fingerprint matches, so without
 	// this tag the HIT path returned the writer's wire shape to every
-	// subsequent ingress — the cross-ingress shape contamination bug
-	// fixed by Option B2.
+	// subsequent ingress — the cross-ingress shape contamination bug.
 	//
 	// omitempty so legacy pre-fix entries decode without error: an empty
 	// value flags "unknown origin" and the HIT reader falls back to the
@@ -324,12 +323,27 @@ func marshalSortedKeys(v any) ([]byte, error) {
 //
 // The "v3\n" header pins the key schema; v1/v2 entries are unreachable.
 func (c *Cache) BuildKey(provider, model string, body []byte, allowlistVersion string) string {
+	return c.BuildScopedKey(provider, model, body, allowlistVersion, "")
+}
+
+// BuildScopedKey is BuildKey with an additional tenant-isolation scope folded
+// in. scope is the resolved isolation token (e.g. "vk:<id>", "org:<id>",
+// "user:<id>") that L2 derives from the fleet `vary_by` setting; passing it
+// here makes the L1 exact-match tier honour the same isolation the L2 semantic
+// tier enforces. When scope is empty the key is byte-identical
+// to the pre-isolation v3 key, preserving fleet-wide dedup for the default
+// vary_by=none configuration.
+func (c *Cache) BuildScopedKey(provider, model string, body []byte, allowlistVersion, scope string) string {
 	if c == nil {
 		return ""
 	}
 	canonical := canonicalizeJSON(body)
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "v3\nprovider=%s\nmodel=%s\nallowlist=%s\nbody=", provider, model, allowlistVersion)
+	_, _ = fmt.Fprintf(h, "v3\nprovider=%s\nmodel=%s\nallowlist=%s\n", provider, model, allowlistVersion)
+	if scope != "" {
+		_, _ = fmt.Fprintf(h, "scope=%s\n", scope)
+	}
+	_, _ = fmt.Fprint(h, "body=")
 	h.Write(canonical)
 	return c.prefix + ":" + hex.EncodeToString(h.Sum(nil))
 }

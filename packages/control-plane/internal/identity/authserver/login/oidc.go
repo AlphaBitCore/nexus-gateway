@@ -36,6 +36,13 @@ type OIDCDeps struct {
 	// SSO-start leg. Shared with StartDeps.Resolver so the document fetched
 	// at start is reused here. May be nil (tests that pin explicit endpoints).
 	Resolver *oidcdisco.Resolver
+	// StateSigner verifies the HMAC-signed oidc_state cookie startOIDC set,
+	// binding this callback to the browser that initiated the flow (login-CSRF
+	// defense-in-depth). Shared with StartDeps.StateSigner so the same
+	// per-process key signs and verifies. When non-nil the callback REQUIRES a
+	// valid cookie that binds to the `state` query param; when nil (test
+	// harnesses that don't exercise the binding) the cookie check is skipped.
+	StateSigner *stateSigner
 	// Audit emits the admin.login.succeeded row for an OIDC login, mirroring the
 	// password path; nil-tolerant for test harnesses that don't assert audit.
 	Audit *audit.Writer
@@ -71,6 +78,26 @@ func OIDCCallbackHandler(d OIDCDeps) echo.HandlerFunc {
 
 		if code == "" || authctx == "" {
 			return c.JSON(http.StatusBadRequest, errorResponse{Error: errAuthctxExpired})
+		}
+
+		// Login-CSRF binding: the request must carry the HMAC-signed oidc_state
+		// cookie startOIDC set in the initiating browser, and that cookie's
+		// authctx must match the `state` query param. Checked BEFORE Pending.Take
+		// so a forged callback cannot even consume the single-use handle. The
+		// cookie is cleared regardless of outcome so a replay finds no cookie.
+		// Skipped only when no signer is wired (test harnesses).
+		if d.StateSigner != nil {
+			clearOIDCStateCookie(c)
+			cookie, cErr := c.Cookie(oidcStateCookieName)
+			if cErr != nil {
+				return c.JSON(http.StatusBadRequest, errorResponse{Error: errStateCookieMismatch})
+			}
+			verified, vErr := d.StateSigner.verify(cookie.Value)
+			if vErr != nil || verified != authctx {
+				slog.Default().Warn("authserver: OIDC state cookie mismatch (login-CSRF rejected)",
+					"err", vErr, "bound", verified != authctx)
+				return c.JSON(http.StatusBadRequest, errorResponse{Error: errStateCookieMismatch})
+			}
 		}
 
 		pending, ok := d.Pending.Take(authctx)
@@ -265,6 +292,22 @@ func OIDCCallbackHandler(d OIDCDeps) echo.HandlerFunc {
 		}
 		return c.Redirect(http.StatusFound, redirect)
 	}
+}
+
+// clearOIDCStateCookie expires the oidc_state cookie. The Path MUST match the
+// one startOIDC set or the browser ignores the deletion. Called on every
+// callback that reaches the cookie check so a single-use state cookie cannot be
+// replayed in a second forced callback.
+func clearOIDCStateCookie(c echo.Context) {
+	c.SetCookie(&http.Cookie{
+		Name:     oidcStateCookieName,
+		Value:    "",
+		Path:     oidcStateCookiePath,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
 }
 
 // oidcDisplayName derives a human display name for the federated user,

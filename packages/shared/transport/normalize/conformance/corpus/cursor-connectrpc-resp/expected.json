@@ -1,0 +1,16 @@
+{
+  "kind": "http-binary",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "binaryRef": {
+        "size": 96,
+        "contentType": "application/connect+proto",
+        "sha256": "dea68328f617ea3ca05f6df723065a6ea0c0ae4b0c0e131affa4be8c471b6cec"
+      }
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

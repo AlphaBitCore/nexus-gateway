@@ -67,8 +67,8 @@ export function PoliciesOverview() {
         <KpiTile count={data.rulePacks.length} label={t('policies.kpi.rulePacks')} onClick={() => navigate('/policies/rule-packs')} />
         <KpiTile
           label={t('policies.kpi.killSwitch')}
-          value={!data.killSwitch.enabled ? t('policies.kpi.on') : t('policies.kpi.off')}
-          state={!data.killSwitch.enabled ? 'danger' : 'off'}
+          value={data.killSwitch.engaged ? t('policies.kpi.on') : t('policies.kpi.off')}
+          state={data.killSwitch.engaged ? 'danger' : 'off'}
         />
       </div>
 
@@ -183,7 +183,7 @@ function HeroStatus({
   let metaKey = 'policies.hero.inSyncMeta';
   let metaArgs: Record<string, string | number> = { at: fmtTime(sync.lastReportedAt, locale) };
 
-  if (!killSwitch.enabled) {
+  if (killSwitch.engaged) {
     tone = 'danger';
     titleKey = 'policies.hero.killSwitchEngaged';
     metaKey = 'policies.hero.killSwitchMeta';

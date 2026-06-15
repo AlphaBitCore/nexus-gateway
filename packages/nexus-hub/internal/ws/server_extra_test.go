@@ -95,6 +95,10 @@ type fakeValidator struct {
 	expectedHash string
 	thing        *store.Thing
 	err          error
+	// thingStatuses drives GetThingStatus responses by thingID.
+	// If the id is absent the default status is "online".
+	thingStatuses map[string]string
+	statusErr     error
 }
 
 func (f *fakeValidator) ValidateDeviceToken(_ context.Context, _, tokenHash string) (*store.Thing, error) {
@@ -105,6 +109,16 @@ func (f *fakeValidator) ValidateDeviceToken(_ context.Context, _, tokenHash stri
 		return nil, errors.New("hash mismatch")
 	}
 	return f.thing, nil
+}
+
+func (f *fakeValidator) GetThingStatus(_ context.Context, id string) (string, error) {
+	if f.statusErr != nil {
+		return "", f.statusErr
+	}
+	if st, ok := f.thingStatuses[id]; ok {
+		return st, nil
+	}
+	return "online", nil
 }
 
 // fakeOps captures opsmetrics dispatch calls.
@@ -152,7 +166,7 @@ func newFakeServer(t *testing.T, fm *fakeManager, fv *fakeValidator) (*Server, *
 	t.Helper()
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	srv := newServerWithDeps(pool, fm, fv, "test-hub", testServiceToken, nil, nullLogger())
+	srv := newServerWithDeps(pool, fm, fv, "test-hub", testServiceToken, nil, true, nullLogger())
 	ops := &fakeOps{}
 	srv.SetOpsMetricsHandler(ops)
 	return srv, pool, ops
@@ -375,6 +389,79 @@ func TestHandleMessage_ShadowReport_ManagerError(t *testing.T) {
 	}
 }
 
+// TestHandleMessage_BreakGlass_ReachesHandler drives the EXACT wire frame the
+// production thingclient emits (thingclient.SendBreakGlassShadowReport, type
+// "shadow_report_break_glass") through the WS dispatcher and asserts it reaches
+// HandleShadowReport with the break_glass reconciliation sentinel stamped and
+// the audit context (KeyVersions / ActorTokenID / SourceIP) carried. This is
+// the regression guard for F-0143 — before the fix this frame fell to the
+// dispatcher's default case and was silently dropped, so the emergency override
+// never reached Hub adoption.
+func TestHandleMessage_BreakGlass_ReachesHandler(t *testing.T) {
+	fm := &fakeManager{}
+	srv, _, _ := newFakeServer(t, fm, &fakeValidator{})
+	// Byte-for-byte the frame thingclient sends: raw state (no {state,version}
+	// wrapper), a human reason string, and the per-key version map.
+	msg := `{"type":"shadow_report_break_glass","reported":{"killswitch":{"engaged":true}},"reportedVer":4,"reason":"incident-1234","sourceIp":"10.0.0.7","actorTokenId":"a1b2c3d4","keyVersions":{"killswitch":4}}`
+	srv.handleMessage("proxy-1", "compliance-proxy", []byte(msg))
+
+	if fm.shadowCount() != 1 {
+		t.Fatalf("break-glass frame did not reach HandleShadowReport (got %d calls) — wire is dead", fm.shadowCount())
+	}
+	fm.mu.Lock()
+	call := fm.shadowCalls[0]
+	fm.mu.Unlock()
+	if call.ID != "proxy-1" {
+		t.Errorf("ID = %q, want proxy-1 (WS-authenticated identity)", call.ID)
+	}
+	// The message TYPE is the signal — Hub stamps the sentinel, not the wire's
+	// human reason field.
+	if call.Reason != "break_glass" {
+		t.Errorf("Reason = %q, want break_glass (sentinel stamped by dispatcher)", call.Reason)
+	}
+	if call.ReportedVer != 4 {
+		t.Errorf("ReportedVer = %d, want 4", call.ReportedVer)
+	}
+	if call.ActorTokenID != "a1b2c3d4" {
+		t.Errorf("ActorTokenID = %q, want a1b2c3d4", call.ActorTokenID)
+	}
+	if call.SourceIP != "10.0.0.7" {
+		t.Errorf("SourceIP = %q, want 10.0.0.7", call.SourceIP)
+	}
+	if call.KeyVersions["killswitch"] != 4 {
+		t.Errorf("KeyVersions[killswitch] = %d, want 4", call.KeyVersions["killswitch"])
+	}
+	ks, ok := call.Reported["killswitch"].(map[string]any)
+	if !ok || ks["engaged"] != true {
+		t.Errorf("Reported[killswitch] = %v, want {engaged:true}", call.Reported["killswitch"])
+	}
+}
+
+// TestHandleMessage_BreakGlass_InvalidPayload covers the malformed-frame branch:
+// a break-glass type with a non-numeric reportedVer fails the struct decode and
+// must NOT reach the handler.
+func TestHandleMessage_BreakGlass_InvalidPayload(t *testing.T) {
+	fm := &fakeManager{}
+	srv, _, _ := newFakeServer(t, fm, &fakeValidator{})
+	msg := `{"type":"shadow_report_break_glass","reportedVer":"nope"}`
+	srv.handleMessage("proxy-1", "compliance-proxy", []byte(msg))
+	if fm.shadowCount() != 0 {
+		t.Fatalf("expected 0 calls on bad break-glass payload, got %d", fm.shadowCount())
+	}
+}
+
+// TestHandleMessage_BreakGlass_ManagerError asserts the dispatcher invokes the
+// handler even when reconciliation errors (the error is logged, not retried).
+func TestHandleMessage_BreakGlass_ManagerError(t *testing.T) {
+	fm := &fakeManager{shadowErr: errors.New("boom")}
+	srv, _, _ := newFakeServer(t, fm, &fakeValidator{})
+	msg := `{"type":"shadow_report_break_glass","reported":{"killswitch":{"engaged":true}},"reportedVer":4,"actorTokenId":"a1b2c3d4","keyVersions":{"killswitch":4}}`
+	srv.handleMessage("proxy-1", "compliance-proxy", []byte(msg))
+	if fm.shadowCount() != 1 {
+		t.Fatalf("expected handler invoked even on error, got %d", fm.shadowCount())
+	}
+}
+
 func TestHandleMessage_MetricsSample_DispatchedWhenOpsConfigured(t *testing.T) {
 	srv, _, ops := newFakeServer(t, &fakeManager{}, &fakeValidator{})
 	srv.handleMessage("thing-x", "agent", []byte(`{"type":"metrics_sample","samples":[]}`))
@@ -386,7 +473,7 @@ func TestHandleMessage_MetricsSample_DispatchedWhenOpsConfigured(t *testing.T) {
 func TestHandleMessage_MetricsSample_DroppedWhenOpsNil(t *testing.T) {
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, nullLogger())
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, true, nullLogger())
 	// ops intentionally not set — must be silently dropped.
 	srv.handleMessage("thing-x", "agent", []byte(`{"type":"metrics_sample"}`))
 	// no panic, no dispatch — success criterion is "no panic".
@@ -396,7 +483,7 @@ func TestHandleMessage_MetricsSample_DispatchErrorLogged(t *testing.T) {
 	ops := &fakeOps{sampleErr: errors.New("dispatch boom")}
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, nullLogger())
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, true, nullLogger())
 	srv.SetOpsMetricsHandler(ops)
 	srv.handleMessage("thing-x", "agent", []byte(`{"type":"metrics_sample"}`))
 	if ops.samples() != 1 {
@@ -415,7 +502,7 @@ func TestHandleMessage_DiagEvent_Dispatched(t *testing.T) {
 func TestHandleMessage_DiagEvent_DroppedWhenOpsNil(t *testing.T) {
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, nullLogger())
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, true, nullLogger())
 	srv.handleMessage("thing-x", "agent", []byte(`{"type":"diag_event"}`))
 }
 
@@ -423,7 +510,7 @@ func TestHandleMessage_DiagEvent_DispatchErrorLogged(t *testing.T) {
 	ops := &fakeOps{diagErr: errors.New("diag boom")}
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, nullLogger())
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, true, nullLogger())
 	srv.SetOpsMetricsHandler(ops)
 	srv.handleMessage("thing-x", "agent", []byte(`{"type":"diag_event"}`))
 	if ops.diags() != 1 {
@@ -442,7 +529,7 @@ func TestHandleMessage_StaticInfo_Dispatched(t *testing.T) {
 func TestHandleMessage_StaticInfo_DroppedWhenOpsNil(t *testing.T) {
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, nullLogger())
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, true, nullLogger())
 	srv.handleMessage("thing-x", "agent", []byte(`{"type":"static_info"}`))
 }
 
@@ -450,7 +537,7 @@ func TestHandleMessage_StaticInfo_DispatchErrorLogged(t *testing.T) {
 	ops := &fakeOps{staticErr: errors.New("static boom")}
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, nullLogger())
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, true, nullLogger())
 	srv.SetOpsMetricsHandler(ops)
 	srv.handleMessage("thing-x", "agent", []byte(`{"type":"static_info"}`))
 	if ops.statics() != 1 {
@@ -536,9 +623,13 @@ func newStubConn(id, typ string) *Conn {
 }
 
 // stubConnWithFullBuffer returns a Conn whose outCh is at capacity so Write
-// drops with an error (used to assert Broadcast and Send failure branches).
-func stubConnWithFullBuffer(id, typ string) *Conn {
+// drops with an error (used to assert Broadcast and Send failure branches). It
+// is backed by a real (discard) websocket because the buffer-full drop path now
+// closes the connection (F-0251), which dereferences c.ws.
+func stubConnWithFullBuffer(t *testing.T, id, typ string) *Conn {
+	t.Helper()
 	c := &Conn{
+		ws:        newDiscardWS(t),
 		thingID:   id,
 		thingType: typ,
 		outCh:     make(chan []byte, 1),
@@ -644,7 +735,7 @@ func TestPool_Broadcast_PartialFailureBumpsOnlyDelivered(t *testing.T) {
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
 	good := newStubConn("agent-good", "agent")
-	bad := stubConnWithFullBuffer("agent-bad", "agent")
+	bad := stubConnWithFullBuffer(t, "agent-bad", "agent")
 	pool.Add(good)
 	pool.Add(bad)
 	sent := pool.Broadcast("agent", []byte("hi"))
@@ -656,7 +747,7 @@ func TestPool_Broadcast_PartialFailureBumpsOnlyDelivered(t *testing.T) {
 func TestPool_Send_BufferFullReturnsFalse(t *testing.T) {
 	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
 	pool := NewPool(reg, nullLogger())
-	bad := stubConnWithFullBuffer("agent-bad", "agent")
+	bad := stubConnWithFullBuffer(t, "agent-bad", "agent")
 	pool.Add(bad)
 	if pool.Send("agent-bad", []byte("won't fit")) {
 		t.Fatal("Send into full buffer should return false")
@@ -994,6 +1085,66 @@ func TestHandleUpgrade_AcceptFailsOnDisallowedOrigin(t *testing.T) {
 	}
 }
 
+// TestHandleUpgrade_ProdRejectsLocalhostOrigin covers F-0256: with devMode
+// false (production), a localhost Origin must NOT be auto-allowed — the upgrade
+// must fail the origin check (coder/websocket returns 403, not 101). This is
+// the regression that would otherwise let a page served from the operator's own
+// machine, plus a leaked bearer token, open a Hub WS.
+func TestHandleUpgrade_ProdRejectsLocalhostOrigin(t *testing.T) {
+	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
+	pool := NewPool(reg, nullLogger())
+	// devMode=false, no allowlist → no origin is permitted.
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, false, nullLogger())
+	httpSrv := httptest.NewServer(http.HandlerFunc(srv.HandleUpgrade))
+	t.Cleanup(httpSrv.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/?id=svc-1&type=ai-gateway", nil)
+	req.Header.Set("Authorization", "Bearer "+testServiceToken)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Origin", "http://localhost:3000")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http.Do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		t.Fatal("prod (devMode=false) must reject a localhost Origin, but upgrade succeeded (F-0256)")
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("auth should have passed; rejection must be the origin check, got 401")
+	}
+}
+
+// TestHandleUpgrade_DevAllowsLocalhostOrigin is the paired positive case: with
+// devMode true, the same localhost Origin upgrade succeeds. This confirms the
+// dev gate flips the behavior rather than removing localhost support entirely.
+func TestHandleUpgrade_DevAllowsLocalhostOrigin(t *testing.T) {
+	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
+	pool := NewPool(reg, nullLogger())
+	srv := newServerWithDeps(pool, &fakeManager{}, &fakeValidator{}, "test-hub", testServiceToken, nil, true, nullLogger())
+	httpSrv := httptest.NewServer(http.HandlerFunc(srv.HandleUpgrade))
+	t.Cleanup(httpSrv.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/?id=svc-1&type=ai-gateway"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	client, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Authorization": {"Bearer " + testServiceToken}, "Origin": {"http://localhost:3000"}},
+		Subprotocols: []string{"nexus.bearer"},
+	})
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dev mode should accept localhost Origin, dial failed: %v", err)
+	}
+	_ = client.Close(websocket.StatusNormalClosure, "done")
+}
+
 // TestNewServer_PassesThroughDeps verifies the production constructor wires
 // the Manager + Store dependency through to the seam without a live DB.
 // manager.New tolerates a nil *store.Store at construction; the resulting
@@ -1005,7 +1156,7 @@ func TestNewServer_PassesThroughDeps(t *testing.T) {
 	// Construct a real *manager.Manager with nil store/redis/mq — only
 	// the constructor path itself is exercised; we don't dispatch any RPCs.
 	mgr := manager.New(nil, nil, nil, pool, "prod-hub", nullLogger())
-	srv := NewServer(pool, mgr, "prod-hub", "tok", []string{"prod.example.com"}, nullLogger())
+	srv := NewServer(pool, mgr, "prod-hub", "tok", []string{"prod.example.com"}, false, nullLogger())
 	if srv == nil {
 		t.Fatal("NewServer returned nil")
 	}
@@ -1218,3 +1369,206 @@ func TestConn_WritePump_CtxDoneReturns(t *testing.T) {
 // triggering unused-import; we use sync/atomic in the liveness test pieces
 // below.
 var _ = atomic.LoadInt64
+
+// TestPool_Remove_IdentityGuard_StaleConnDoesNotEvictLive is the pool-level
+// F-0199 regression. After a reconnect race installs a new connection for a
+// Thing ID, the stale old connection's late Remove must be a no-op: it must NOT
+// evict the live new connection, must report it did not remove (false), and
+// pool.Send must still reach the live conn. A genuine Remove of the current
+// connection still evicts and reports true.
+func TestPool_Remove_IdentityGuard_StaleConnDoesNotEvictLive(t *testing.T) {
+	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
+	pool := NewPool(reg, nullLogger())
+
+	old := newStubConn("agent-1", "agent")
+	old.ws = newDiscardWS(t) // Add's replace path calls old.Close → needs a real ws
+	pool.Add(old)
+
+	live := newStubConn("agent-1", "agent")
+	live.ws = newDiscardWS(t)
+	pool.Add(live) // replaces + closes old, installs live
+
+	// The stale old conn's defer eventually calls Remove(old). With the
+	// identity guard this is a no-op because the registered conn is `live`.
+	if pool.Remove(old) {
+		t.Fatal("Remove(stale old) returned true — it would evict the live new conn (F-0199)")
+	}
+	if !pool.IsConnected("agent-1") {
+		t.Fatal("live conn was evicted by the stale old conn's Remove (F-0199)")
+	}
+	if pool.Count() != 1 {
+		t.Fatalf("Count = %d after stale Remove, want 1", pool.Count())
+	}
+
+	// Pushes must still reach the live conn — the whole point of the fix is that
+	// config pushes are not black-holed after a reconnect race.
+	if !pool.Send("agent-1", []byte("cfg")) {
+		t.Fatal("Send did not reach the live conn after a stale Remove")
+	}
+	select {
+	case <-live.outCh:
+	default:
+		t.Fatal("live conn did not receive the queued push")
+	}
+
+	// A genuine Remove of the current conn DOES evict and reports true.
+	if !pool.Remove(live) {
+		t.Fatal("Remove(current conn) returned false; expected eviction")
+	}
+	if pool.IsConnected("agent-1") {
+		t.Fatal("current conn should be gone after its own Remove")
+	}
+}
+
+// TestPool_Remove_NeverAddedReportsFalse pins the "not present" branch of the
+// identity guard: removing a conn that was never added returns false.
+func TestPool_Remove_NeverAddedReportsFalse(t *testing.T) {
+	reg := opsmetrics.NewRegistry(prometheus.NewRegistry())
+	pool := NewPool(reg, nullLogger())
+	if pool.Remove(newStubConn("ghost", "agent")) {
+		t.Fatal("Remove(never-added) returned true; want false")
+	}
+}
+
+// TestHandleUpgrade_ReconnectRace_StaleDisconnectDoesNotMarkOffline is the
+// server-level F-0199 regression. Two WebSocket connections arrive for the same
+// Thing ID; the second replaces the first in the pool. When the stale first
+// connection's read loop unblocks and runs its disconnect cleanup, pool.Remove
+// returns false (the new conn is current) so MarkOffline MUST be suppressed —
+// otherwise a healthy node is marked offline and every config push to it is
+// dropped. Closing the current connection later fires MarkOffline exactly once.
+func TestHandleUpgrade_ReconnectRace_StaleDisconnectDoesNotMarkOffline(t *testing.T) {
+	fm := &fakeManager{registerResp: &manager.RegisterResponse{Desired: map[string]any{}, DesiredVer: 1}}
+	srv, pool, _ := newFakeServer(t, fm, &fakeValidator{})
+
+	httpSrv := httptest.NewServer(http.HandlerFunc(srv.HandleUpgrade))
+	t.Cleanup(httpSrv.Close)
+
+	dial := func() *websocket.Conn {
+		wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/?id=svc-1&type=ai-gateway"
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		c, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{"Authorization": []string{"Bearer " + testServiceToken}},
+		})
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		if err != nil {
+			t.Fatalf("Dial: %v", err)
+		}
+		// Drain the "connected" handshake so the upgrade is fully established.
+		rctx, rcancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer rcancel()
+		if _, _, err := c.Read(rctx); err != nil {
+			t.Fatalf("read handshake: %v", err)
+		}
+		return c
+	}
+
+	oldClient := dial()
+	defer oldClient.Close(websocket.StatusInternalError, "")
+
+	// Second connection for the SAME id — the server's pool.Add replaces and
+	// closes the old conn, which makes the old conn's server-side read loop
+	// unblock and run its disconnect cleanup.
+	newClient := dial()
+	defer newClient.Close(websocket.StatusInternalError, "")
+
+	// Wait until exactly the new conn is registered.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if pool.IsConnected("svc-1") && pool.Count() == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Give the stale conn's cleanup goroutine room to (wrongly) mark offline.
+	time.Sleep(200 * time.Millisecond)
+
+	if got := fm.offlineCount(); got != 0 {
+		t.Fatalf("MarkOffline fired %d times on a reconnect race; want 0 (live node would be black-holed)", got)
+	}
+	if !pool.IsConnected("svc-1") {
+		t.Fatal("new conn not registered after reconnect race")
+	}
+	// A push to the live node must still be deliverable.
+	if !pool.Send("svc-1", []byte(`{"type":"config_changed"}`)) {
+		t.Fatal("pool.Send did not reach the live new conn (drift repair would be defeated)")
+	}
+
+	// Cleanly close the current conn — its cleanup Remove returns true, so
+	// MarkOffline fires exactly once now.
+	newClient.Close(websocket.StatusNormalClosure, "bye")
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if fm.offlineCount() >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := fm.offlineCount(); got != 1 {
+		t.Fatalf("MarkOffline = %d after current conn closed; want exactly 1", got)
+	}
+}
+
+// TestAuthenticate_ServiceToken_RevokedThingIsRejected verifies that a
+// service-token WS upgrade for a Thing whose status is "revoked" is rejected
+// with 401, preventing a revoked service Thing from re-promoting itself to
+// online (F-0201).
+func TestAuthenticate_ServiceToken_RevokedThingIsRejected(t *testing.T) {
+	pool := NewPool(nil, nullLogger())
+	fv := &fakeValidator{
+		thingStatuses: map[string]string{"svc-revoked": "revoked"},
+	}
+	srv := newServerWithDeps(pool, &fakeManager{}, fv, "hub-1", testServiceToken, nil, false, nullLogger())
+
+	ts := httptest.NewServer(http.HandlerFunc(srv.HandleUpgrade))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") +
+		"/ws?id=svc-revoked&type=ai-gateway"
+	_, resp, err := websocket.Dial(context.Background(), wsURL, &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Authorization": []string{"Bearer " + testServiceToken}},
+		Subprotocols: []string{"nexus.bearer"},
+	})
+	if err == nil {
+		t.Fatal("expected dial to fail for revoked service Thing; got nil error")
+	}
+	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		var code int
+		if resp != nil {
+			code = resp.StatusCode
+		}
+		t.Fatalf("expected 401 for revoked service Thing; got %d", code)
+	}
+}
+
+// TestAuthenticate_ServiceToken_UnknownThingIsRejected verifies that a
+// service-token upgrade for an unknown thingID is rejected (GetThingStatus
+// returns ErrNotFound → errUnauthorized).
+func TestAuthenticate_ServiceToken_UnknownThingIsRejected(t *testing.T) {
+	pool := NewPool(nil, nullLogger())
+	fv := &fakeValidator{statusErr: errors.New("not found")}
+	srv := newServerWithDeps(pool, &fakeManager{}, fv, "hub-1", testServiceToken, nil, false, nullLogger())
+
+	ts := httptest.NewServer(http.HandlerFunc(srv.HandleUpgrade))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") +
+		"/ws?id=ghost-svc&type=ai-gateway"
+	_, resp, err := websocket.Dial(context.Background(), wsURL, &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Authorization": []string{"Bearer " + testServiceToken}},
+		Subprotocols: []string{"nexus.bearer"},
+	})
+	if err == nil {
+		t.Fatal("expected dial to fail for unknown service Thing")
+	}
+	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		var code int
+		if resp != nil {
+			code = resp.StatusCode
+		}
+		t.Fatalf("expected 401 for unknown service Thing; got %d", code)
+	}
+}

@@ -71,9 +71,9 @@ func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 }
 
 // DecodeResponse converts Cohere v2 response to canonical OpenAI shape.
-func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
+func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint == typology.WireShapeCohereEmbed {
-		return cohereEmbedResponseToCanonical(nativeBody)
+		return cohereEmbedResponseToCanonical(nativeBody, reqCtx.RequestBody)
 	}
 	if endpoint != typology.WireShapeCohereChat {
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/cmd/control-plane/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
@@ -12,6 +13,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
+
+// revocationCatchupInterval is how often InitJWT replays the auth server's
+// revocation log via RunCatchup after the initial startup backfill. It is
+// shorter than typical token lifetimes so a revocation missed during an MQ gap
+// is reconciled well before the affected token would otherwise be honored.
+const revocationCatchupInterval = 60 * time.Second
 
 // sanitizeForJetStreamDurable replaces characters NATS JetStream rejects in
 // durable-consumer name components (dot, slash, colon, whitespace) with
@@ -66,6 +73,29 @@ func InitJWT(
 			})
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("revocation consumer exited", slog.Any("err", err))
+			}
+		}()
+		// Backfill revocations missed while this replica was down (the MQ
+		// durable's DeliverAll only replays events still retained by JetStream),
+		// then poll the auth server's replay endpoint periodically so a gap in
+		// MQ delivery is reconciled even before strict mode engages. RunCatchup
+		// short-circuits to nil when ReplayURL is unset (dev).
+		go func() {
+			runCatchup := func() {
+				if err := revChecker.RunCatchup(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Warn("revocation catchup failed", slog.Any("err", err))
+				}
+			}
+			runCatchup()
+			ticker := time.NewTicker(revocationCatchupInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					runCatchup()
+				}
 			}
 		}()
 		adminRevCheck = revChecker

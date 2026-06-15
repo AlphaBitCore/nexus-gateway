@@ -69,6 +69,13 @@ func InitProxyServer(d ListenerDeps) *proxyserver.ProxyServer {
 		OnboardingEnabled:        d.Cfg.Onboarding.Enabled,
 		OnboardingCPUIBaseURL:    d.Cfg.Onboarding.CPUIBaseURL,
 		AttestationVerifier:      d.AttestationVerifier,
+		// Reject-body verbosity comes from the yaml rejectResponse block.
+		// Without this wiring the zero value (stealth) silently overrides
+		// the configured level and every refusal body is a bare Forbidden.
+		RejectConfig: tlsbump.RejectConfig{
+			DefaultLevel: tlsbump.RejectLevel(d.Cfg.Compliance.RejectResponse.DefaultLevel),
+			ContactInfo:  d.Cfg.Compliance.RejectResponse.ContactInfo,
+		},
 	}
 	if d.Cfg.Compliance.Enabled && d.ComplianceResolver != nil {
 		proxyCfg.CompliancePipeline = d.ComplianceResolver

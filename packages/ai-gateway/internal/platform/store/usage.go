@@ -82,8 +82,8 @@ func (db *DB) GetDailyUsageForVK(ctx context.Context, virtualKeyID string, start
 	rows, err := db.pool.Query(ctx, `
 		SELECT
 			date_trunc('day', timestamp)::date AS day,
-			COALESCE(model_name, '') AS model_name,
-			COALESCE(provider_name, '') AS provider_name,
+			COALESCE(routed_model_name, model_name, '') AS model_name,
+			COALESCE(routed_provider_name, provider_name, '') AS provider_name,
 			COUNT(*) AS requests,
 			COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
 			COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
@@ -94,7 +94,7 @@ func (db *DB) GetDailyUsageForVK(ctx context.Context, virtualKeyID string, start
 		  AND identity->'vk'->>'id' = $1
 		  AND timestamp >= $2
 		  AND timestamp < $3
-		GROUP BY day, model_name, provider_name
+		GROUP BY day, 2, 3
 		ORDER BY day DESC, cost_usd DESC
 	`, virtualKeyID, start, end)
 	if err != nil {

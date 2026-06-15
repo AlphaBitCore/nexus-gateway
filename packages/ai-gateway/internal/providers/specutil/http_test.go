@@ -5,17 +5,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// TestDefaultHTTPConfig pins the historical hardcoded values so a future
-// refactor doesn't silently halve the per-call budget.
+// TestDefaultHTTPConfig pins the baseline tunables so a future refactor
+// doesn't silently shrink the per-call budget or the connection pool. The
+// 600s budget + 120s stream-idle window are sized for long-reasoning models
+// (active streams run unbounded; only a stalled upstream trips the idle).
 func TestDefaultHTTPConfig(t *testing.T) {
 	d := DefaultHTTPConfig()
-	if d.Timeout != 120*time.Second {
-		t.Errorf("Timeout: want 120s, got %s", d.Timeout)
+	if d.Timeout != 600*time.Second {
+		t.Errorf("Timeout: want 600s, got %s", d.Timeout)
+	}
+	if d.StreamIdleTimeout != 120*time.Second {
+		t.Errorf("StreamIdleTimeout: want 120s, got %s", d.StreamIdleTimeout)
 	}
 	if d.DialTimeout != 15*time.Second {
 		t.Errorf("DialTimeout: want 15s, got %s", d.DialTimeout)
@@ -23,11 +29,28 @@ func TestDefaultHTTPConfig(t *testing.T) {
 	if d.TLSHandshakeTimeout != 10*time.Second {
 		t.Errorf("TLSHandshakeTimeout: want 10s, got %s", d.TLSHandshakeTimeout)
 	}
-	if d.IdleConnTimeout != 90*time.Second {
-		t.Errorf("IdleConnTimeout: want 90s, got %s", d.IdleConnTimeout)
+	if d.IdleConnTimeout != 300*time.Second {
+		t.Errorf("IdleConnTimeout: want 300s, got %s", d.IdleConnTimeout)
 	}
-	if d.MaxIdleConns != 200 || d.MaxIdleConnsPerHost != 50 {
-		t.Errorf("pool: want 200/50, got %d/%d", d.MaxIdleConns, d.MaxIdleConnsPerHost)
+	if d.MaxIdleConns != 2000 || d.MaxIdleConnsPerHost != 500 {
+		t.Errorf("pool: want 2000/500, got %d/%d", d.MaxIdleConns, d.MaxIdleConnsPerHost)
+	}
+}
+
+// TestConfigure_StreamIdleTimeoutFallsBack guards that omitting
+// streamIdleTimeoutSec in yaml does not collapse the stream-idle window to
+// zero (which would instantly cut every streaming response).
+func TestConfigure_StreamIdleTimeoutFallsBack(t *testing.T) {
+	t.Cleanup(func() { Configure(DefaultHTTPConfig()) })
+
+	Configure(HTTPConfig{Timeout: 240 * time.Second}) // StreamIdleTimeout omitted
+	if got := ActiveConfig(); got.StreamIdleTimeout != DefaultHTTPConfig().StreamIdleTimeout {
+		t.Errorf("StreamIdleTimeout: want default %s, got %s", DefaultHTTPConfig().StreamIdleTimeout, got.StreamIdleTimeout)
+	}
+
+	Configure(HTTPConfig{Timeout: 240 * time.Second, StreamIdleTimeout: 45 * time.Second})
+	if got := ActiveConfig(); got.StreamIdleTimeout != 45*time.Second {
+		t.Errorf("explicit StreamIdleTimeout must apply: got %s", got.StreamIdleTimeout)
 	}
 }
 
@@ -172,6 +195,59 @@ func TestLiveTransport_RoundTripDelegatesToActiveRT(t *testing.T) {
 	}
 	if got := calls.Load(); got != 1 {
 		t.Errorf("countingRT.calls=%d, want 1 — singleton did not delegate to activeRT", got)
+	}
+}
+
+// TestProbeClient_BlocksCloudMetadata proves the F-0369 SSRF guard: the shared
+// provider-probe client refuses to dial the cloud-metadata endpoint (and the
+// broader link-local range) even though the probe URL is admin-supplied. The
+// dial is aborted by the ssrf-guard before any bytes leave the host.
+func TestProbeClient_BlocksCloudMetadata(t *testing.T) {
+	client := NewProbeClient()
+	for _, target := range []string{
+		"http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+		"http://169.254.1.1/",
+	} {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
+		if err != nil {
+			t.Fatalf("NewRequest(%q): %v", target, err)
+		}
+		resp, err := client.Do(req)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if err == nil {
+			t.Errorf("probe to %q succeeded; want ssrf-guard dial error", target)
+			continue
+		}
+		if !strings.Contains(err.Error(), "ssrf-guard") {
+			t.Errorf("probe to %q: err=%v; want ssrf-guard rejection", target, err)
+		}
+	}
+}
+
+// TestProbeClient_AllowsOnPremPrivate proves the guard does NOT break the
+// on-prem self-hosted-provider use case: a probe to a loopback (127.0.0.1)
+// httptest server — standing in for a local vLLM/Ollama — dials and completes.
+// The metadata-only policy permits RFC-1918 / loopback by design.
+func TestProbeClient_AllowsOnPremPrivate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewProbeClient()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/v1/models", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("on-prem loopback probe must be allowed, got dial error: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status=%d, want 200", resp.StatusCode)
 	}
 }
 

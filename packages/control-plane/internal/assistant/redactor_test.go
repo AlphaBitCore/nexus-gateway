@@ -113,6 +113,128 @@ func TestRedactToolOutput_PassthroughWhenClean(t *testing.T) {
 	}
 }
 
+// TestRedactToolOutput_ScrubsMintedSecrets is the F-0290 assertion: a mint /
+// rotate / regenerate response body that echoes a freshly-minted credential in
+// plaintext must arrive with the secret replaced by [redacted-secret] before it
+// enters the prompt — the PiiDetector does not know these formats, so this is the
+// only thing standing between a minted key and the LLM.
+func TestRedactToolOutput_ScrubsMintedSecrets(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		secret string
+	}{
+		{
+			name:   "virtual key nvk_",
+			secret: "nvk_0123456789abcdef0123456789abcdef",
+			body:   `{"id":"vk-1","key":"nvk_0123456789abcdef0123456789abcdef","name":"prod"}`,
+		},
+		{
+			name:   "personal/admin API key nxk_",
+			secret: "nxk_deadbeefcafebabe0011223344556677",
+			body:   `{"apiKey":"nxk_deadbeefcafebabe0011223344556677"}`,
+		},
+		{
+			name:   "oauth client secret nx_cs_",
+			secret: "nx_cs_AbCdEf0123456789-_GhIjKlMnOpQr",
+			body:   `{"clientId":"c1","clientSecret":"nx_cs_AbCdEf0123456789-_GhIjKlMnOpQr"}`,
+		},
+		{
+			name:   "anthropic provider key sk-ant-",
+			secret: "sk-ant-api03-AbCdEf0123456789GhIjKlMn",
+			body:   `{"credential":"sk-ant-api03-AbCdEf0123456789GhIjKlMn"}`,
+		},
+		{
+			name:   "openai project key sk-proj-",
+			secret: "sk-proj-AbCdEf0123456789GhIjKlMnOpQr",
+			body:   `{"credential":"sk-proj-AbCdEf0123456789GhIjKlMnOpQr"}`,
+		},
+		{
+			name:   "bare sk- provider key",
+			secret: "sk-AbCdEf0123456789GhIjKlMnOpQrStUv",
+			body:   `{"credential":"sk-AbCdEf0123456789GhIjKlMnOpQrStUv"}`,
+		},
+		{
+			name:   "google AIza key",
+			secret: "AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456",
+			body:   `{"credential":"AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			cpmetrics.Register(metricsreg.NewRegistry(reg))
+			r, err := newPIIRedactor()
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := r.RedactToolOutput("resource_invoke", tc.body)
+			if strings.Contains(out, tc.secret) {
+				t.Errorf("secret reached the prompt unredacted: %s", out)
+			}
+			if !strings.Contains(out, secretPlaceholder) {
+				t.Errorf("expected %q marker, got: %s", secretPlaceholder, out)
+			}
+			// Non-secret metadata must survive so the assistant can still reason.
+			if !strings.Contains(out, `"`) {
+				t.Errorf("body structure was destroyed: %s", out)
+			}
+			if v := counterVal(t, reg, "nexus_assistant_pii_to_prompt_total", nil); v != 1 {
+				t.Errorf("a scrubbed secret must increment the counter once, got %v", v)
+			}
+		})
+	}
+}
+
+// TestRedactSecrets_PreservesPrefixFragments proves the length-floored anchors do
+// not false-match a bare prefix mentioned in prose (the model talking ABOUT key
+// formats) — only a real key body is scrubbed.
+func TestRedactSecrets_PreservesPrefixFragments(t *testing.T) {
+	in := "Virtual keys start with nvk_ and admin keys with nxk_; sk- is a provider key."
+	if out := redactSecrets(in); out != in {
+		t.Errorf("bare prefixes must not be redacted; got %s", out)
+	}
+}
+
+// TestRedactSecrets_MultipleInOneBody confirms every secret in a body is scrubbed,
+// not just the first match.
+func TestRedactSecrets_MultipleInOneBody(t *testing.T) {
+	in := `{"a":"nvk_0123456789abcdef0123456789abcdef","b":"nxk_deadbeefcafebabe0011223344556677"}`
+	out := redactSecrets(in)
+	if strings.Contains(out, "nvk_0123456789abcdef") || strings.Contains(out, "nxk_deadbeefcafebabe") {
+		t.Errorf("all secrets must be scrubbed; got %s", out)
+	}
+	if n := strings.Count(out, secretPlaceholder); n != 2 {
+		t.Errorf("want 2 placeholders, got %d: %s", n, out)
+	}
+}
+
+// TestRedactToolOutput_SecretAndPII verifies a body carrying BOTH a minted secret
+// and PII is fully scrubbed: the secret pass and the PII pass both fire and the
+// counter increments once for the combined change.
+func TestRedactToolOutput_SecretAndPII(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	cpmetrics.Register(metricsreg.NewRegistry(reg))
+	r, err := newPIIRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := `{"key":"nvk_0123456789abcdef0123456789abcdef","owner":"alice@example.com"}`
+	out := r.RedactToolOutput("resource_read", in)
+	if strings.Contains(out, "nvk_0123456789abcdef") {
+		t.Errorf("secret survived: %s", out)
+	}
+	if strings.Contains(out, "alice@example.com") {
+		t.Errorf("PII survived: %s", out)
+	}
+	if !strings.Contains(out, secretPlaceholder) || !strings.Contains(out, "[REDACTED_EMAIL]") {
+		t.Errorf("expected both markers, got: %s", out)
+	}
+	if v := counterVal(t, reg, "nexus_assistant_pii_to_prompt_total", nil); v != 1 {
+		t.Errorf("combined scrub must count once, got %v", v)
+	}
+}
+
 // TestRedactToolOutput_FailOpen locks the fail-open contract: a detector error or
 // a non-redacting decision returns the input UNCHANGED (availability over a hard
 // fail) and never counts. Fail-open is acceptable here because Execute is a pure

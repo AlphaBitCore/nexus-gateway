@@ -9,12 +9,24 @@ import (
 	"time"
 )
 
+// AttestationKey is the resolved attestation material for an agent: the
+// Ed25519 public key plus the NotAfter of the attestation certificate that
+// minted it. CertExpiresAt lets the verifier reject a key whose cert has
+// expired — an attestation that disables compliance
+// inspection of AI traffic must be time-bounded, not trusted forever. A zero
+// CertExpiresAt means "no expiry on record" (a legacy stamp from before the
+// field was threaded through); it is treated as non-expiring to stay fail-open,
+// but every current enrollment stamps a real 90-day expiry.
+type AttestationKey struct {
+	Key           ed25519.PublicKey
+	CertExpiresAt time.Time
+}
+
 // AttestationKeyLoader resolves an agent_id to its current Ed25519
-// attestation public key. Implementations may pull from Hub via HTTP,
-// from a thingclient shadow subscription, or from a local map (tests).
-// The loader is allowed to block on IO; the cache holds no locks while
-// it runs.
-type AttestationKeyLoader func(ctx context.Context, agentID string) (ed25519.PublicKey, error)
+// attestation public key (+ cert expiry). Implementations may pull from Hub via
+// HTTP, from a thingclient shadow subscription, or from a local map (tests).
+// The loader is allowed to block on IO; the cache holds no locks while it runs.
+type AttestationKeyLoader func(ctx context.Context, agentID string) (AttestationKey, error)
 
 // ErrUnknownAgent is the canonical loader-side miss. The CP verifier
 // translates this into the `unknown_agent` Prometheus outcome label and
@@ -28,9 +40,13 @@ const (
 )
 
 type cachedAttestationKey struct {
-	key       ed25519.PublicKey
-	expiresAt time.Time
-	err       error // populated only for negative-cache entries
+	key ed25519.PublicKey
+	// certExpiresAt is the attestation certificate's NotAfter — the
+	// verifier rejects the key once this passes. Distinct from expiresAt, which
+	// is the cache-TTL deadline that triggers a re-fetch.
+	certExpiresAt time.Time
+	expiresAt     time.Time
+	err           error // populated only for negative-cache entries
 }
 
 // AttestationKeyCache is a bounded TTL cache of (agent_id → Ed25519
@@ -103,9 +119,9 @@ func NewAttestationKeyCacheWith(
 // miss. Errors (empty agentID, loader miss, expired negative entry)
 // must translate to MITM fallback at the caller — never reject the
 // request.
-func (c *AttestationKeyCache) Get(ctx context.Context, agentID string) (ed25519.PublicKey, error) {
+func (c *AttestationKeyCache) Get(ctx context.Context, agentID string) (AttestationKey, error) {
 	if agentID == "" {
-		return nil, errors.New("attestation: empty agent_id")
+		return AttestationKey{}, errors.New("attestation: empty agent_id")
 	}
 
 	now := c.now()
@@ -114,12 +130,12 @@ func (c *AttestationKeyCache) Get(ctx context.Context, agentID string) (ed25519.
 	c.mu.RUnlock()
 	if hit && now.Before(entry.expiresAt) {
 		if entry.err != nil {
-			return nil, entry.err
+			return AttestationKey{}, entry.err
 		}
-		return entry.key, nil
+		return AttestationKey{Key: entry.key, CertExpiresAt: entry.certExpiresAt}, nil
 	}
 
-	pub, loadErr := c.loader(ctx, agentID)
+	loaded, loadErr := c.loader(ctx, agentID)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -135,23 +151,14 @@ func (c *AttestationKeyCache) Get(ctx context.Context, agentID string) (ed25519.
 			c.logger.Debug("attestation key cache: loader miss",
 				"agent_id", agentID, "error", loadErr)
 		}
-		return nil, loadErr
+		return AttestationKey{}, loadErr
 	}
 	c.items[agentID] = &cachedAttestationKey{
-		key:       pub,
-		expiresAt: now.Add(c.ttl),
+		key:           loaded.Key,
+		certExpiresAt: loaded.CertExpiresAt,
+		expiresAt:     now.Add(c.ttl),
 	}
-	return pub, nil
-}
-
-// Invalidate drops a single agent's cached entry. Called when Hub
-// signals a key rotation or revocation via the shadow update path so
-// the next CP verification picks up the fresh key without waiting for
-// the TTL to elapse.
-func (c *AttestationKeyCache) Invalidate(agentID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.items, agentID)
+	return loaded, nil
 }
 
 // Len returns the number of cached entries (positive + negative).

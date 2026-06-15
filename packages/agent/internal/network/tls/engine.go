@@ -245,12 +245,20 @@ func generateCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		return nil, nil, fmt.Errorf("generate CA serial: %w", err)
 	}
 	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "Nexus Agent Device CA", Organization: []string{"Nexus Gateway"}},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		IsCA:                  true,
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "Nexus Agent Device CA", Organization: []string{"Nexus Gateway"}},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		IsCA:         true,
+		// Path-length zero — this MITM root, installed fleet-wide in
+		// every host's OS trust store, must NOT be able to issue intermediate
+		// CAs. If the on-disk key is ever stolen, MaxPathLenZero stops the
+		// attacker from minting a working sub-CA off it (RFC 5280 §4.2.1.9,
+		// enforced by Go/NSS/macOS/Windows verifiers). It signs only the
+		// per-host leaf certs it mints directly.
+		MaxPathLen:            0,
+		MaxPathLenZero:        true,
 		BasicConstraintsValid: true,
 	}
 

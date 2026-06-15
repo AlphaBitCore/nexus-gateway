@@ -4,12 +4,29 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// canonicalQuotaScope folds the VK scope token to the single value the
+// enforcement engine queries. The CP UI / admin API persists VK-scoped quota
+// policies and overrides as "vk", while chain.go / enforcement.go look them up
+// as "virtual_key" (the value chain.go emits and metric_rollup_1h uses). Without
+// this fold a VK-scoped quota an admin sets in the UI is stored but never
+// enforced. All other scope tokens (user / project / organization)
+// pass through unchanged.
+func canonicalQuotaScope(s string) string {
+	if s == "vk" {
+		return "virtual_key"
+	}
+	return s
+}
 
 // PgxPool is the minimum pgx pool surface this package needs at runtime.
 // The concrete *pgxpool.Pool satisfies it in production; pgxmock's
@@ -24,7 +41,7 @@ type PgxPool interface {
 // CachedPolicy holds a policy loaded from QuotaPolicy table.
 type CachedPolicy struct {
 	ID              string
-	Scope           string // "user" | "virtual_key" | "project" | "organization"|"user" | "virtual_key" | "project" | "organization"|"user" | "virtual_key" | "project" | "organization"|"user" | "virtual_key" | "project" | "organization"
+	Scope           string // "user" | "virtual_key" | "project" | "organization"
 	OrganizationID  string // empty = match all
 	VKType          string // empty = match all
 	PeriodType      string
@@ -39,8 +56,9 @@ type CachedOverride struct {
 	TargetType      string
 	TargetID        string
 	CostLimitCents  int64
-	EnforcementMode string // empty = inherit from policy
-	PeriodType      string // empty = inherit from policy
+	EnforcementMode string     // empty = inherit from policy
+	PeriodType      string     // empty = inherit from policy
+	ExpiresAt       *time.Time // nil = never expires
 }
 
 // PolicyCache holds all enabled quota policies and overrides in memory,
@@ -52,7 +70,18 @@ type PolicyCache struct {
 	orgParents      map[string]string          // orgID -> parentOrgID
 	pool            PgxPool
 	logger          *slog.Logger
+	// loaded flips true after the FIRST successful Load. It distinguishes
+	// "loaded, legitimately zero policies" (enforce nothing, correct) from
+	// "never loaded due to a boot-time DB failure" (the silent
+	// fail-open) so the engine can emit an alertable signal for the latter.
+	loaded atomic.Bool
 }
+
+// Loaded reports whether the cache has completed at least one successful Load.
+// A false value means the engine is serving against an empty cache because the
+// boot load failed — an unenforced (fail-open) window, not a deliberate
+// no-policies config.
+func (c *PolicyCache) Loaded() bool { return c.loaded.Load() }
 
 // PolicySnapshot returns all cached policies (across every scope) flattened
 // into a single slice for runtime introspection (e31-s7). Order is by
@@ -153,16 +182,28 @@ func (c *PolicyCache) Load(ctx context.Context) error {
 			p.VKType = *vkType
 		}
 		if costLimitUsd != nil {
-			p.CostLimitCents = int64(*costLimitUsd * 100)
+			// Round, don't truncate: int64($0.29*100) is 28 because 0.29*100 is
+			// 28.9999… in float64, silently shaving a cent off every limit.
+			// math.Round gives the intended 29.
+			p.CostLimitCents = int64(math.Round(*costLimitUsd * 100))
 		}
+		// Canonicalize the VK scope token. The CP UI/admin API writes
+		// VK-scoped rows as "vk"; the enforcement engine (chain.go / enforcement.go)
+		// queries "virtual_key". Without this fold a VK-scoped quota set in the UI
+		// is silently never enforced.
+		p.Scope = canonicalQuotaScope(p.Scope)
 		newPolicies[p.Scope] = append(newPolicies[p.Scope], p)
 	}
 
-	// Load overrides.
+	// Load overrides. The SQL pre-filters rows expired at query time; we also
+	// store ExpiresAt in the cache so GetOverride can re-check at enforcement
+	// time without waiting for the next Load trigger.
 	overrideRows, err := c.pool.Query(ctx, `
 		SELECT id, "targetType", "targetId",
-		       "costLimitUsd"::double precision, "enforcementMode", "periodType"
+		       "costLimitUsd"::double precision, "enforcementMode", "periodType",
+		       "expiresAt"
 		FROM "QuotaOverride"
+		WHERE "expiresAt" IS NULL OR "expiresAt" > NOW()
 	`)
 	if err != nil {
 		return fmt.Errorf("policy_cache: query overrides: %w", err)
@@ -175,11 +216,12 @@ func (c *PolicyCache) Load(ctx context.Context) error {
 		var costLimitUsd *float64
 		var enfMode, periodType *string
 		if err := overrideRows.Scan(&o.ID, &o.TargetType, &o.TargetID,
-			&costLimitUsd, &enfMode, &periodType); err != nil {
+			&costLimitUsd, &enfMode, &periodType, &o.ExpiresAt); err != nil {
 			return fmt.Errorf("policy_cache: scan override: %w", err)
 		}
 		if costLimitUsd != nil {
-			o.CostLimitCents = int64(*costLimitUsd * 100)
+			// Round, not truncate — same rationale as the policy limit above.
+			o.CostLimitCents = int64(math.Round(*costLimitUsd * 100))
 		}
 		if enfMode != nil {
 			o.EnforcementMode = *enfMode
@@ -187,6 +229,9 @@ func (c *PolicyCache) Load(ctx context.Context) error {
 		if periodType != nil {
 			o.PeriodType = *periodType
 		}
+		// Same canonicalization as policies — UI writes "vk",
+		// enforcement queries "virtual_key".
+		o.TargetType = canonicalQuotaScope(o.TargetType)
 		key := o.TargetType + ":" + o.TargetID
 		newOverrides[key] = &o
 	}
@@ -213,6 +258,7 @@ func (c *PolicyCache) Load(ctx context.Context) error {
 	c.overridesByKey = newOverrides
 	c.orgParents = parents
 	c.mu.Unlock()
+	c.loaded.Store(true) // First successful load clears the fail-open flag.
 
 	c.logger.Info("policy cache loaded",
 		"policies", countPolicies(newPolicies),
@@ -227,6 +273,43 @@ func countPolicies(m map[string][]CachedPolicy) int {
 		n += len(v)
 	}
 	return n
+}
+
+// ActivePeriodTypes returns the distinct, normalized period types referenced
+// by any loaded policy or override (e.g. ["daily","monthly"]). An empty or
+// unrecognized PeriodType normalizes to "monthly" (the CurrentPeriodKey
+// default), so the result always contains at least "monthly" when any limit
+// exists. Backfill uses this to re-seed every active period's counter on boot,
+// not just the monthly one.
+func (c *PolicyCache) ActivePeriodTypes() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	seen := make(map[string]struct{})
+	add := func(pt string) {
+		switch pt {
+		case "daily", "weekly", "monthly":
+			seen[pt] = struct{}{}
+		default:
+			// Empty or unknown -> monthly, mirroring CurrentPeriodKey's default.
+			seen["monthly"] = struct{}{}
+		}
+	}
+	for _, ps := range c.policiesByScope {
+		for i := range ps {
+			add(ps[i].PeriodType)
+		}
+	}
+	for _, o := range c.overridesByKey {
+		if o != nil {
+			add(o.PeriodType)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for pt := range seen {
+		out = append(out, pt)
+	}
+	return out
 }
 
 // OrgParents returns a copy of the org hierarchy map (orgID -> parentOrgID).
@@ -310,11 +393,21 @@ func (c *PolicyCache) FindPolicy(scope, organizationID, vkType string) *CachedPo
 	return nil
 }
 
-// GetOverride returns the override for a specific target, or nil.
+// GetOverride returns the active override for a specific target, or nil.
+// An override whose ExpiresAt is in the past is treated as absent — this
+// closes the enforcement gap where a cached override would outlive its
+// expiry until the next Load() trigger.
 func (c *PolicyCache) GetOverride(targetType, targetID string) *CachedOverride {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	key := targetType + ":" + targetID
-	return c.overridesByKey[key]
+	o := c.overridesByKey[key]
+	if o == nil {
+		return nil
+	}
+	if o.ExpiresAt != nil && time.Now().After(*o.ExpiresAt) {
+		return nil
+	}
+	return o
 }

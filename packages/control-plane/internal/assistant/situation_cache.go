@@ -11,12 +11,12 @@ import (
 // situationTTL is how long a per-caller situation snapshot is reused before the next
 // turn rebuilds it. Sized for a real chat cadence: a back-and-forth where the operator
 // reads an answer and types a follow-up is typically tens of seconds, so 60s lets the
-// common rapid exchange reuse the snapshot (the NFR-11 win) rather than re-issuing the
+// common rapid exchange reuse the snapshot rather than re-issuing the
 // ~8 admin reads every turn. The ambient state it caches (kill-switch, firing alerts,
 // fleet sync) can therefore be up to 60s stale in the prompt — acceptable because it
 // is advisory context only: the agent has live observe_*/analyze_* tools for anything
 // the user actually asks, and every write is confirm-gated on a LIVE state read (the
-// FR-22 impact preview), never on this snapshot. A shorter TTL would rarely hit; a
+// confirm impact preview), never on this snapshot. A shorter TTL would rarely hit; a
 // longer one would stale the ambient view past usefulness.
 const situationTTL = 60 * time.Second
 

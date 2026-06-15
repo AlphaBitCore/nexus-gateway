@@ -250,7 +250,6 @@ func TestConvenienceVarsMatchCatalog(t *testing.T) {
 	expected := map[string]*ResourceDef{
 		"provider":             ResourceProvider,
 		"model":                ResourceModel,
-		"model-pricing":        ResourceModelPricing,
 		"credential":           ResourceCredential,
 		"virtual-key":          ResourceVirtualKey,
 		"routing-rule":         ResourceRoutingRule,
@@ -287,6 +286,7 @@ func TestConvenienceVarsMatchCatalog(t *testing.T) {
 		"settings":             ResourceSettings,
 		"diagnostic-mode":      ResourceDiagnosticMode,
 		"node":                 ResourceNode,
+		"assistant":            ResourceAssistant,
 		"nexus-session":        ResourceNexusSession,
 		"hook":                 ResourceHook,
 		"rule-pack":            ResourceRulePack,

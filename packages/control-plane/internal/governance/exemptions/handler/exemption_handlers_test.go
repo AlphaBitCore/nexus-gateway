@@ -21,6 +21,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
 // Test fixtures
@@ -201,6 +202,36 @@ func quietLogger() *slog.Logger {
 // branches in every handler without wiring an MQ.
 func noopAuditWriter() *audit.Writer {
 	return audit.NewWriter(nil, "audit", quietLogger())
+}
+
+// captureProducer records the bytes enqueued to the audit queue so a test can
+// decode the emitted AdminAuditMessage and assert EntityID / AfterState.
+type captureProducer struct {
+	mu   sync.Mutex
+	last []byte
+}
+
+func (p *captureProducer) Publish(_ context.Context, _ string, _ []byte) error { return nil }
+func (p *captureProducer) Enqueue(_ context.Context, _ string, data []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.last = append([]byte(nil), data...)
+	return nil
+}
+func (p *captureProducer) Close() error { return nil }
+
+func (p *captureProducer) decode(t *testing.T) mq.AdminAuditMessage {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.last == nil {
+		t.Fatal("no audit message was enqueued")
+	}
+	var m mq.AdminAuditMessage
+	if err := json.Unmarshal(p.last, &m); err != nil {
+		t.Fatalf("decode audit message: %v", err)
+	}
+	return m
 }
 
 func newHandler(data DataLayer, hub HubAPI) *Handler {
@@ -444,6 +475,48 @@ func TestPostGrant_Happy(t *testing.T) {
 	if !hub.invalidateTypes["compliance-proxy"] || !hub.invalidateTypes["agent"] || hub.invalidateLastKey != "exemptions" {
 		t.Errorf("invalidate fan-out = %v key=%q, want {compliance-proxy, agent} key=exemptions",
 			hub.invalidateTypes, hub.invalidateLastKey)
+	}
+}
+
+// F-0265: the grant-create audit row must carry the grant EntityID and the
+// grant scope (host, sourceIP, window, reason) so "who exempted which host,
+// for how long" is answerable from the audit row alone.
+func TestPostGrant_AuditCarriesEntityIDAndScope(t *testing.T) {
+	fd := &fakeData{
+		insertGrant: &store.ComplianceExemptionGrant{
+			ID:              "grant-77",
+			SourceIP:        "10.0.0.1",
+			TargetHost:      "api.openai.com",
+			Reason:          "incident-bridge",
+			DurationMinutes: 60,
+		},
+	}
+	cap := &captureProducer{}
+	h := newHandler(fd, &fakeHub{})
+	h.audit = audit.NewWriter(cap, "audit", quietLogger())
+	body := `{"sourceIP":"10.0.0.1","targetHost":"api.openai.com","durationMinutes":60,"reason":"incident-bridge"}`
+	c, rec := ctxWithAuth(http.MethodPost, "/", body)
+	if err := h.PostGrant(c); err != nil {
+		t.Fatalf("PostGrant: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d body=%s", rec.Code, rec.Body.String())
+	}
+	msg := cap.decode(t)
+	if msg.EntityID != "grant-77" {
+		t.Errorf("audit EntityID = %q; want grant-77 (was empty before F-0265)", msg.EntityID)
+	}
+	after, ok := msg.AfterState.(map[string]any)
+	if !ok {
+		t.Fatalf("AfterState type = %T; want map", msg.AfterState)
+	}
+	if after["targetHost"] != "api.openai.com" || after["sourceIP"] != "10.0.0.1" || after["reason"] != "incident-bridge" {
+		t.Errorf("AfterState missing grant scope: %+v", after)
+	}
+	for _, k := range []string{"effectiveFrom", "expiresAt"} {
+		if _, present := after[k]; !present {
+			t.Errorf("AfterState missing window field %q: %+v", k, after)
+		}
 	}
 }
 
@@ -994,13 +1067,13 @@ func TestInvalidateExemptions_NoHub_NoAudit_NoOp(t *testing.T) {
 	// hub=nil + audit=nil + c=nil: the helper must not panic and must
 	// emit no observable side effect.
 	h := newHandler(&fakeData{}, nil)
-	h.invalidateExemptions(context.Background(), "create", Actor{}, nil)
+	h.invalidateExemptions(context.Background(), "create", "", nil, Actor{}, nil)
 }
 
 func TestInvalidateExemptions_FiresHubInvalidateForBothLegs(t *testing.T) {
 	hub := &fakeHub{}
 	h := newHandler(&fakeData{}, hub)
-	h.invalidateExemptions(context.Background(), "create", Actor{UserID: "u-1", Name: "Bob"}, nil)
+	h.invalidateExemptions(context.Background(), "create", "g-1", map[string]any{"targetHost": "api.x"}, Actor{UserID: "u-1", Name: "Bob"}, nil)
 	if hub.invalidateHits != 2 {
 		t.Fatalf("invalidate hits = %d, want 2 (compliance-proxy + agent)", hub.invalidateHits)
 	}
@@ -1017,7 +1090,7 @@ func TestInvalidateExemptions_AuditSkippedWhenNoEchoCtx(t *testing.T) {
 	hub := &fakeHub{}
 	h := newHandler(&fakeData{}, hub)
 	h.audit = noopAuditWriter()
-	h.invalidateExemptions(context.Background(), "create", Actor{}, nil)
+	h.invalidateExemptions(context.Background(), "create", "", nil, Actor{}, nil)
 	// Hub invalidate still fires for both legs — proof the audit-skip
 	// branch ran without blocking the invalidation.
 	if hub.invalidateHits != 2 {
@@ -1033,7 +1106,7 @@ func TestInvalidateExemptions_AuditPath_Delete(t *testing.T) {
 	h := newHandler(&fakeData{}, hub)
 	h.audit = noopAuditWriter()
 	c, _ := ctxWithAuth(http.MethodPost, "/", "")
-	h.invalidateExemptions(context.Background(), "delete", Actor{UserID: "u-1", Name: "Bob"}, c)
+	h.invalidateExemptions(context.Background(), "delete", "g-1", nil, Actor{UserID: "u-1", Name: "Bob"}, c)
 	if hub.invalidateHits != 2 {
 		t.Errorf("invalidate hits = %d, want 2", hub.invalidateHits)
 	}
@@ -1046,7 +1119,7 @@ func TestInvalidateExemptions_AuditPath_Default(t *testing.T) {
 	h := newHandler(&fakeData{}, hub)
 	h.audit = noopAuditWriter()
 	c, _ := ctxWithAuth(http.MethodPost, "/", "")
-	h.invalidateExemptions(context.Background(), "reconcile", Actor{UserID: "u-1", Name: "Bob"}, c)
+	h.invalidateExemptions(context.Background(), "reconcile", "g-1", map[string]any{"exemptionRequestId": "r-1"}, Actor{UserID: "u-1", Name: "Bob"}, c)
 	if hub.invalidateHits != 2 {
 		t.Errorf("invalidate hits = %d, want 2", hub.invalidateHits)
 	}

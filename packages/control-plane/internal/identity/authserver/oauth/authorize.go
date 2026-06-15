@@ -105,7 +105,12 @@ func AuthorizeHandler(d AuthorizeDeps) echo.HandlerFunc {
 
 		codeChallenge := q.Get("code_challenge")
 		codeChallengeMethod := q.Get("code_challenge_method")
-		if codeChallenge == "" && client.RequirePKCE {
+		// PKCE is mandatory for every client. The token endpoint
+		// unconditionally requires a code_verifier (token.go), so a code minted
+		// without a challenge could never be exchanged. Requiring the challenge
+		// here keeps authorize and token fail-closed and consistent — there is
+		// no per-client opt-out.
+		if codeChallenge == "" {
 			return WriteOAuthError(c, ErrInvalidRequest,
 				"code_challenge required", http.StatusBadRequest)
 		}

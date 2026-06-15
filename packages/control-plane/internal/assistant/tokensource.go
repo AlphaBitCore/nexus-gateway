@@ -12,7 +12,7 @@ import (
 // service account / bootstrap / dev principal: the agent's reach is exactly the
 // caller's IAM policy.
 //
-// As of P2b (R3) these self-calls are dispatched IN-PROCESS (see selfcall.go): no
+// These self-calls are dispatched IN-PROCESS (see internal/platform/selfdispatch): no
 // loopback HTTP hop, and the transport stamps the originating web user's RealIP on
 // the synthetic request, so the audit row and any IAM condition keyed on
 // nexus:SourceIp see the real client IP rather than the loopback. The identity

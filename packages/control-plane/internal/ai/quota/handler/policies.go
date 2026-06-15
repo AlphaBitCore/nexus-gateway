@@ -3,12 +3,14 @@ package quota
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/quota/quotastore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -161,7 +163,6 @@ func (h *Handler) CreateQuotaPolicy(c echo.Context) error {
 		VKType          *string         `json:"vkType"`
 		PeriodType      string          `json:"periodType"`
 		CostLimitUsd    *float64        `json:"costLimitUsd"`
-		TokenLimit      *int64          `json:"tokenLimit"`
 		EnforcementMode string          `json:"enforcementMode"`
 		AlertThresholds json.RawMessage `json:"alertThresholds"`
 		Priority        int             `json:"priority"`
@@ -194,6 +195,33 @@ func (h *Handler) CreateQuotaPolicy(c echo.Context) error {
 	if err := validateScopeCombination(body.Scope, body.OrganizationID, body.VKType); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON(err.Error(), "validation_error", ""))
 	}
+	// Referential validation: an org-scoped policy whose organizationId
+	// is a typo would match no organization at enforcement time and silently
+	// govern nothing. Reject up front. (Only scope=organization carries an
+	// organizationId — validateScopeCombination forbids it on every other scope.)
+	if body.OrganizationID != nil && *body.OrganizationID != "" {
+		exists, lookupErr := h.targetEntityExists(c.Request().Context(), "organization", *body.OrganizationID)
+		if lookupErr != nil {
+			h.logger.Error("create quota policy: organization existence check failed", "error", lookupErr)
+			return c.JSON(http.StatusInternalServerError, errJSON("Failed to validate organization", "server_error", ""))
+		}
+		if !exists {
+			return c.JSON(http.StatusBadRequest, errJSON(
+				fmt.Sprintf("organizationId %q does not reference an existing organization", *body.OrganizationID),
+				"validation_error", ""))
+		}
+	}
+	// A quota policy's only enforceable limit is the USD cost cap (the gateway
+	// engine counts USD cents only). A nil cap enforces nothing and a cap <= 0 is
+	// silently treated as UNLIMITED by the engine (enforcement.go skips any level
+	// with limitCents <= 0) — both are rejected so "set 0 to hard-stop" can never
+	// produce a 201 + unlimited spend.
+	if body.CostLimitUsd == nil {
+		return c.JSON(http.StatusBadRequest, errJSON("costLimitUsd is required", "validation_error", ""))
+	}
+	if *body.CostLimitUsd <= 0 {
+		return c.JSON(http.StatusBadRequest, errJSON("costLimitUsd must be greater than 0", "validation_error", ""))
+	}
 
 	// Default alertThresholds when caller omits the field — QuotaPolicy.alertThresholds
 	// is Json NOT NULL with schema default [80, 90]; passing a nil json.RawMessage to the
@@ -222,7 +250,6 @@ func (h *Handler) CreateQuotaPolicy(c echo.Context) error {
 		VKType:          body.VKType,
 		PeriodType:      body.PeriodType,
 		CostLimitUsd:    body.CostLimitUsd,
-		TokenLimit:      body.TokenLimit,
 		EnforcementMode: body.EnforcementMode,
 		AlertThresholds: body.AlertThresholds,
 		Priority:        body.Priority,
@@ -234,14 +261,17 @@ func (h *Handler) CreateQuotaPolicy(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create quota policy", "server_error", ""))
 	}
 
+	if h.hub != nil {
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "quota_policies"); err != nil {
+			h.logger.Error("create quota policy: hub invalidate failed", "id", pol.ID, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
+	}
+
 	ae := audit.EntryFor(c, iam.ResourceQuotaPolicy, iam.VerbCreate)
 	ae.EntityID = pol.ID
 	ae.AfterState = pol
 	h.audit.LogObserved(c.Request().Context(), ae)
-
-	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "quota_policies")
-	}
 
 	return c.JSON(http.StatusCreated, pol)
 }
@@ -265,7 +295,6 @@ func (h *Handler) UpdateQuotaPolicy(c echo.Context) error {
 		VKType          *string         `json:"vkType"`
 		PeriodType      *string         `json:"periodType"`
 		CostLimitUsd    *float64        `json:"costLimitUsd"`
-		TokenLimit      *int64          `json:"tokenLimit"`
 		EnforcementMode *string         `json:"enforcementMode"`
 		AlertThresholds json.RawMessage `json:"alertThresholds"`
 		Priority        *int            `json:"priority"`
@@ -300,6 +329,36 @@ func (h *Handler) UpdateQuotaPolicy(c echo.Context) error {
 	if err := validateScopeCombination(effScope, effOrgID, effVKType); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON(err.Error(), "validation_error", ""))
 	}
+	// Referential validation: if this update sets/changes organizationId,
+	// confirm it references a live organization so an org-scoped policy can't be
+	// pointed at a non-existent org and silently govern nothing.
+	if body.OrganizationID != nil && *body.OrganizationID != "" {
+		exists, lookupErr := h.targetEntityExists(c.Request().Context(), "organization", *body.OrganizationID)
+		if lookupErr != nil {
+			h.logger.Error("update quota policy: organization existence check failed", "error", lookupErr)
+			return c.JSON(http.StatusInternalServerError, errJSON("Failed to validate organization", "server_error", ""))
+		}
+		if !exists {
+			return c.JSON(http.StatusBadRequest, errJSON(
+				fmt.Sprintf("organizationId %q does not reference an existing organization", *body.OrganizationID),
+				"validation_error", ""))
+		}
+	}
+
+	// Validate the merged effective cost cap. An explicit cap <= 0 is rejected
+	// (the engine treats it as UNLIMITED); and the merged state must still carry a
+	// non-nil cap — the cost cap is the policy's only enforceable limit, so a
+	// policy with no cap enforces nothing.
+	if body.CostLimitUsd != nil && *body.CostLimitUsd <= 0 {
+		return c.JSON(http.StatusBadRequest, errJSON("costLimitUsd must be greater than 0", "validation_error", ""))
+	}
+	effCost := existing.CostLimitUsd
+	if body.CostLimitUsd != nil {
+		effCost = body.CostLimitUsd
+	}
+	if effCost == nil {
+		return c.JSON(http.StatusBadRequest, errJSON("costLimitUsd is required", "validation_error", ""))
+	}
 
 	// Normalise alertThresholds for the COALESCE-based update: an omitted field or
 	// explicit JSON `null` means "no change" and must reach the store as a true Go
@@ -318,7 +377,6 @@ func (h *Handler) UpdateQuotaPolicy(c echo.Context) error {
 		VKType:          body.VKType,
 		PeriodType:      body.PeriodType,
 		CostLimitUsd:    body.CostLimitUsd,
-		TokenLimit:      body.TokenLimit,
 		EnforcementMode: body.EnforcementMode,
 		AlertThresholds: body.AlertThresholds,
 		Priority:        body.Priority,
@@ -329,15 +387,18 @@ func (h *Handler) UpdateQuotaPolicy(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to update quota policy", "server_error", ""))
 	}
 
+	if h.hub != nil {
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "quota_policies"); err != nil {
+			h.logger.Error("update quota policy: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
+	}
+
 	ae := audit.EntryFor(c, iam.ResourceQuotaPolicy, iam.VerbUpdate)
 	ae.EntityID = id
 	ae.BeforeState = existing
 	ae.AfterState = updated
 	h.audit.LogObserved(c.Request().Context(), ae)
-
-	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "quota_policies")
-	}
 
 	return c.JSON(http.StatusOK, updated)
 }
@@ -358,14 +419,17 @@ func (h *Handler) DeleteQuotaPolicy(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to delete quota policy", "server_error", ""))
 	}
 
+	if h.hub != nil {
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "quota_policies"); err != nil {
+			h.logger.Error("delete quota policy: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
+	}
+
 	ae := audit.EntryFor(c, iam.ResourceQuotaPolicy, iam.VerbDelete)
 	ae.EntityID = id
 	ae.BeforeState = existing
 	h.audit.LogObserved(c.Request().Context(), ae)
-
-	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "quota_policies")
-	}
 
 	return c.NoContent(http.StatusNoContent)
 }

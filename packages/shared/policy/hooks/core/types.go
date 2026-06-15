@@ -74,6 +74,7 @@ const (
 	ReasonRedactStorageOnlyByPolicy = decision.ReasonRedactStorageOnlyByPolicy
 	ReasonStorageDroppedByPolicy    = decision.ReasonStorageDroppedByPolicy
 	ReasonAIGuardSuggestedVsPolicy  = decision.ReasonAIGuardSuggestedVsPolicy
+	ReasonFailClosed                = decision.ReasonFailClosed
 )
 
 // HookInput is the structured data injected by the scheduler into hooks.

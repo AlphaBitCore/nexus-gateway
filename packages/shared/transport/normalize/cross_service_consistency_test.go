@@ -443,3 +443,109 @@ func TestCrossServiceConsistency_GeminiEmbeddings_Batch_Response(t *testing.T) {
 		t.Errorf("inputs should be nil on response side, got %v", payload.Inputs)
 	}
 }
+
+// TestGeminiIngress_NonStreamResponse_NonGeminiUpstream_NormalizesToAIChat
+// reproduces the prod bug where a non-stream request to a NON-Gemini model
+// (e.g. OpenAI o1) served over the Gemini `:generateContent` ingress had
+// its RESPONSE captured in Gemini `candidates[]` wire shape (the gateway
+// re-encodes the upstream OpenAI reply back to the client's Gemini ingress
+// shape before capture), yet the audit layer keyed the response normalizer
+// on the routed upstream adapter ("openai"). The OpenAI normalizer rejected
+// the `candidates[]` body and the row fell through to Tier-3 http-json.
+//
+// The fix keys shared/normalize on the INGRESS format for both directions
+// (the only wire shape ai-gateway ever captures), so the audit closure is
+// invoked with adapterType="gemini" here. The Gemini normalizer claims the
+// body at Tier-1 → kind=ai-chat with messages[0].content as a JSON array
+// carrying the visible assistant text.
+//
+// Uses the full production registry (Tier 1+2+3) to prove this is a clean
+// Tier-1 claim, not a Tier-2/3 rescue.
+func TestGeminiIngress_NonStreamResponse_NonGeminiUpstream_NormalizesToAIChat(t *testing.T) {
+	reg := BuildRegistry()
+	fn := BuildAuditFn(reg, nil)
+	if fn == nil {
+		t.Fatal("BuildAuditFn returned nil")
+	}
+
+	// Verbatim shape of the prod-captured response for model `o1` requested
+	// via the Gemini ingress: OpenAI upstream reply RE-ENCODED to Gemini wire
+	// (candidates[].content.parts[].text + usageMetadata).
+	geminiShapedResponse := []byte(`{
+	  "candidates": [{
+	    "content": {"role": "model", "parts": [{"text": "Paris is the capital of France."}]},
+	    "finishReason": "STOP"
+	  }],
+	  "responseId": "chatcmpl-abc123",
+	  "modelVersion": "o1-2024-12-17",
+	  "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 8, "thoughtsTokenCount": 256, "totalTokenCount": 276}
+	}`)
+
+	// adapterType="gemini" is what normalizeAdapterType now yields for a
+	// Gemini-ingress row (rec.IngressFormat="gemini"), regardless of the
+	// routed upstream being OpenAI.
+	raw, status, errReason := fn("response", "application/json", "gemini", "o1",
+		"/v1beta/models/o1:generateContent", false, geminiShapedResponse)
+	if status != "ok" {
+		t.Fatalf("status=%q errReason=%q, want ok", status, errReason)
+	}
+
+	var payload NormalizedPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Primary assertion: kind=ai-chat (NOT http-json).
+	if payload.Kind != KindAIChat {
+		t.Fatalf("Kind=%v, want %v (regression: fell through to Tier-3)", payload.Kind, KindAIChat)
+	}
+	// Protocol must be the Gemini generate normalizer, proving a Tier-1
+	// claim rather than a generic-http catch-all.
+	if payload.Protocol != "gemini-generate" {
+		t.Fatalf("Protocol=%q, want gemini-generate", payload.Protocol)
+	}
+
+	// Business assertion: messages[last].content is a non-empty ARRAY whose
+	// text block carries the visible assistant answer.
+	if len(payload.Messages) == 0 {
+		t.Fatalf("Messages empty, want at least one assistant message")
+	}
+	last := payload.Messages[len(payload.Messages)-1]
+	if len(last.Content) == 0 {
+		t.Fatalf("messages[last].content is empty, want a content array with the visible text")
+	}
+	var visible string
+	for _, block := range last.Content {
+		if block.Text != "" {
+			visible = block.Text
+			break
+		}
+	}
+	if visible != "Paris is the capital of France." {
+		t.Fatalf("visible text = %q, want %q", visible, "Paris is the capital of France.")
+	}
+
+	// Verify the serialised wire form really has content as a JSON array
+	// (the Control Plane reader + Agent UI depend on this), not a scalar.
+	var wire struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("wire unmarshal: %v", err)
+	}
+	if len(wire.Messages) == 0 {
+		t.Fatalf("wire messages empty")
+	}
+	wireContent := bytes.TrimSpace(wire.Messages[len(wire.Messages)-1].Content)
+	if len(wireContent) == 0 || wireContent[0] != '[' {
+		t.Fatalf("messages[last].content wire form = %s, want a JSON array", wireContent)
+	}
+
+	// Token usage must survive the Gemini normalizer so cost/analytics stay
+	// correct (candidatesTokenCount = visible output tokens).
+	if payload.Usage == nil {
+		t.Fatalf("Usage nil, want promptTokenCount/candidatesTokenCount extracted")
+	}
+}

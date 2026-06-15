@@ -134,7 +134,7 @@ func rankModel(code string) int {
 //
 // Two modes:
 //   - Explicit mode (NEXUS_ASSISTANT_MODELS set → cfg.Models non-empty): the offered set
-//     is the configured allow-list filtered (FR-17) to the models the system VK can
+//     is the configured allow-list filtered to the models the system VK can
 //     actually reach (the AI Gateway's VK-scoped GET /v1/models), so the picker never
 //     lists a model that would 400 at inference. Fails OPEN to the static list if the
 //     gateway can't be queried — a transient hiccup must not empty the picker.
@@ -244,7 +244,7 @@ func robustDefault(configured string, offered []string) string {
 
 // intersectModels returns the elements of want that also appear in have, preserving
 // want's order (the operator's configured ordering). Used to drop configured-but-
-// unreachable models from the assistant's model picker (FR-17).
+// unreachable models from the assistant's model picker.
 //
 // INVARIANT: both sides must use the SAME model identifier — the model *code* (e.g.
 // "claude-sonnet-4-6"). `NEXUS_ASSISTANT_MODELS` carries codes, the AI Gateway's
@@ -270,7 +270,7 @@ func intersectModels(want, have []string) []string {
 // or reports false when persistence is unavailable (no pool) or the principal has
 // no userId (non-bearer). Spill may be nil — List does not need it and Delete
 // tolerates it. The userId is always the authenticated principal, never client
-// input (I3).
+// input.
 func (h *Handler) callerDBStore(c echo.Context) (*dbStore, bool) {
 	if h.cfg.Pool == nil {
 		return nil, false
@@ -283,7 +283,7 @@ func (h *Handler) callerDBStore(c echo.Context) (*dbStore, bool) {
 }
 
 // ListSessions returns the caller's own conversation sessions (metadata only),
-// newest first. Login-only + userId-scoped — no new IAM action (I1/I3).
+// newest first. Login-only + userId-scoped — no new IAM action.
 func (h *Handler) ListSessions(c echo.Context) error {
 	store, ok := h.callerDBStore(c)
 	if !ok {
@@ -291,11 +291,11 @@ func (h *Handler) ListSessions(c echo.Context) error {
 	}
 	metas, err := store.List()
 	if err != nil {
-		return errJSON(c, http.StatusInternalServerError, "list_failed", "could not list sessions")
+		return writeErrJSON(c, http.StatusInternalServerError, "list_failed", "could not list sessions")
 	}
 	out := make([]map[string]any, 0, len(metas))
 	for _, m := range metas {
-		out = append(out, map[string]any{"id": m.ID, "title": m.Title, "updatedAt": m.Updated})
+		out = append(out, map[string]any{"id": m.ID, "title": m.Title, "updatedAt": m.Updated.UTC().Format(time.RFC3339)})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"sessions": out})
 }
@@ -305,14 +305,19 @@ func (h *Handler) ListSessions(c echo.Context) error {
 func (h *Handler) DeleteSession(c echo.Context) error {
 	id := c.Param("id")
 	if strings.TrimSpace(id) == "" {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "session id is required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "session id is required")
 	}
 	store, ok := h.callerDBStore(c)
 	if !ok {
-		return errJSON(c, http.StatusServiceUnavailable, "unavailable", "session persistence is not configured")
+		return writeErrJSON(c, http.StatusServiceUnavailable, "unavailable", "session persistence is not configured")
 	}
 	if err := store.Delete(id); err != nil {
-		return errJSON(c, http.StatusNotFound, "not_found", "session not found")
+		if errors.Is(err, errSessionNotFound) {
+			return writeErrJSON(c, http.StatusNotFound, "not_found", "session not found")
+		}
+		// The row may already be gone (e.g. the audit tombstone failed after
+		// the delete) — that is an infrastructure failure, not a 404.
+		return writeErrJSON(c, http.StatusInternalServerError, "delete_failed", "could not delete session")
 	}
 	// Release any live bus entry (cancels an in-flight turn for this session + drops
 	// its replay ring) so a deleted session leaves no detached turn running.
@@ -323,26 +328,26 @@ func (h *Handler) DeleteSession(c echo.Context) error {
 }
 
 // DownloadFile streams one of the caller's sandbox files. CP-proxied with an owner
-// re-check (WHERE "userId") — no transferable pre-signed URL is ever exposed (R8).
+// re-check (WHERE "userId") — no transferable pre-signed URL is ever exposed.
 func (h *Handler) DownloadFile(c echo.Context) error {
 	id := c.Param("id")
 	if strings.TrimSpace(id) == "" {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "file id is required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "file id is required")
 	}
 	if h.cfg.Pool == nil || h.cfg.Spill == nil {
-		return errJSON(c, http.StatusServiceUnavailable, "unavailable", "the file sandbox is not configured")
+		return writeErrJSON(c, http.StatusServiceUnavailable, "unavailable", "the file sandbox is not configured")
 	}
 	aa := middleware.AdminAuthFromContext(c)
 	if aa == nil || aa.KeyID == "" {
-		return errJSON(c, http.StatusUnprocessableEntity, "unsupported_auth", "an interactive admin session is required")
+		return writeErrJSON(c, http.StatusUnprocessableEntity, "unsupported_auth", "an interactive admin session is required")
 	}
 	fs := newWebFileStore(c.Request().Context(), h.cfg.Pool, h.cfg.Spill, aa.KeyID, "")
 	rc, m, err := fs.Get(id)
 	if errors.Is(err, errFileExpired) {
-		return errJSON(c, http.StatusGone, "expired", "this file has expired and is no longer available")
+		return writeErrJSON(c, http.StatusGone, "expired", "this file has expired and is no longer available")
 	}
 	if err != nil {
-		return errJSON(c, http.StatusNotFound, "not_found", "file not found")
+		return writeErrJSON(c, http.StatusNotFound, "not_found", "file not found")
 	}
 	defer func() { _ = rc.Close() }()
 	c.Response().Header().Set("Content-Length", strconv.Itoa(m.Size))
@@ -356,17 +361,17 @@ func (h *Handler) DownloadFile(c echo.Context) error {
 func (h *Handler) GetSession(c echo.Context) error {
 	id := c.Param("id")
 	if strings.TrimSpace(id) == "" {
-		return errJSON(c, http.StatusBadRequest, "validation_error", "session id is required")
+		return writeErrJSON(c, http.StatusBadRequest, "validation_error", "session id is required")
 	}
 	store, ok := h.callerDBStore(c)
 	if !ok {
-		return errJSON(c, http.StatusServiceUnavailable, "unavailable", "session persistence is not configured")
+		return writeErrJSON(c, http.StatusServiceUnavailable, "unavailable", "session persistence is not configured")
 	}
 	sess, err := store.Load(id)
 	if err != nil {
-		return errJSON(c, http.StatusNotFound, "not_found", "session not found")
+		return writeErrJSON(c, http.StatusNotFound, "not_found", "session not found")
 	}
-	msgs := make([]map[string]string, 0, len(sess.Messages))
+	msgs := make([]map[string]any, 0, len(sess.Messages))
 	for _, m := range sess.Messages {
 		txt := strings.TrimSpace(m.Text())
 		if txt == "" {
@@ -376,7 +381,22 @@ func (h *Handler) GetSession(c echo.Context) error {
 		if m.Role == agent.RoleUser {
 			role = "user"
 		}
-		msgs = append(msgs, map[string]string{"role": role, "text": txt})
+		msg := map[string]any{"role": role, "text": txt}
+		// A condensed-briefing message (auto-compact output) is system-authored
+		// context, not something the user typed — flag it so the UI renders a
+		// notice instead of a user bubble.
+		if role == "user" && strings.HasPrefix(m.Text(), agent.SummaryPrefix) {
+			msg["kind"] = "summary"
+		}
+		msgs = append(msgs, msg)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"id": sess.ID, "messages": msgs})
+	// Trusted audit: verify the session's revision chain on every load and
+	// surface the named verdict. A broken chain is served WITH the break named
+	// (the conversation surface must not brick on the victim) and durably
+	// stamped — never silently (the workflow MarkChainBroken mirror).
+	integ := store.verifySessionChain(id)
+	if integ.Status == chatIntegrityChainBroken {
+		markChatChainBroken(c.Request().Context(), store.pool, store.userID, id)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"id": sess.ID, "messages": msgs, "integrity": integ})
 }

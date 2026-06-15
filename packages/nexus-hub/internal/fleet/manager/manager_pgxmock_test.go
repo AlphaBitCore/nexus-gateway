@@ -243,16 +243,21 @@ func TestManager_GetDriftedThings(t *testing.T) {
 	mgr, mock := newPgxmockManager(t)
 	defer mock.Close()
 	now := time.Now().UTC()
+	// ListDriftedThings now selects 7 columns: id, type, status, desired_ver,
+	// reported_ver, last_seen_at, out_of_sync_keys (text[]).
 	mock.ExpectQuery(`FROM thing\s+WHERE status = 'drift'`).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "type", "status", "desired_ver", "reported_ver", "last_seen_at",
-		}).AddRow("t-1", "agent", "drift", int64(5), int64(3), &now))
+			"id", "type", "status", "desired_ver", "reported_ver", "last_seen_at", "out_of_sync_keys",
+		}).AddRow("t-1", "agent", "drift", int64(5), int64(3), &now, []string{"hooks", "routing_rules"}))
 	got, err := mgr.GetDriftedThings(context.Background())
 	if err != nil {
 		t.Fatalf("GetDriftedThings: %v", err)
 	}
 	if len(got) != 1 || got[0].ID != "t-1" {
 		t.Errorf("got: %+v", got)
+	}
+	if len(got[0].OutOfSyncKeys) != 2 || got[0].OutOfSyncKeys[0] != "hooks" {
+		t.Errorf("OutOfSyncKeys = %v, want [hooks routing_rules]", got[0].OutOfSyncKeys)
 	}
 }
 
@@ -270,7 +275,7 @@ func TestManager_HandleHeartbeat(t *testing.T) {
 		mgr := New(st, nil, nil, nil, "hub-test", silentLogger())
 
 		// Heartbeat UPDATE; first row response carries new desired_ver + desired.
-		mock.ExpectQuery(`UPDATE thing\s+SET status\s*= \$2`).
+		mock.ExpectQuery(`UPDATE thing\s+SET status\s*= CASE`).
 			WithArgs("thing-1", "online", pgxmock.AnyArg(), nil, nil, nil, nil).
 			WillReturnRows(pgxmock.NewRows([]string{"desired_ver", "desired"}).
 				AddRow(int64(5), []byte(`{"hooks":{"e":true}}`)))
@@ -305,7 +310,7 @@ func TestManager_HandleHeartbeat(t *testing.T) {
 		st := store.NewWithPgxPool(mock)
 		mgr := New(st, nil, nil, nil, "hub-test", silentLogger())
 
-		mock.ExpectQuery(`UPDATE thing\s+SET status\s*= \$2`).
+		mock.ExpectQuery(`UPDATE thing\s+SET status\s*= CASE`).
 			WithArgs("missing", "online", pgxmock.AnyArg(), nil, nil, nil, nil).
 			WillReturnError(pgx.ErrNoRows)
 		_, err := mgr.HandleHeartbeat(context.Background(), HeartbeatRequest{ID: "missing", Status: "online"})
@@ -505,7 +510,7 @@ func TestManager_RegisterThing_FirstTime(t *testing.T) {
 			AddRow("agent", "hooks", []byte(`{"e":true}`), int64(3), now, "alice"))
 	// TouchThingSession returns rows-affected=0 → ErrNotFound.
 	mock.ExpectExec(`UPDATE thing SET\s+version`).
-		WithArgs("a-1", "1.0", "addr", "host-a", "phys-1").
+		WithArgs("a-1", "1.0", "addr", "host-a").
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
 	// Enrollment UPSERT (UpsertThingEnrollmentWithDesiredVer) takes 13 args.
 	// arg 3 = p.Name = "host-a" (request set it directly).
@@ -559,7 +564,7 @@ func TestManager_RegisterThing_TouchOK(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("ai-gateway", "routing", []byte(`{"r":1}`), int64(7), now, "alice"))
 	mock.ExpectExec(`UPDATE thing SET\s+version`).
-		WithArgs("gw-1", "2.0", "10.1:80", "gw-host", "").
+		WithArgs("gw-1", "2.0", "10.1:80", "gw-host").
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	// UpsertThingService for non-agent type fires (4 args).
 	mock.ExpectExec(`INSERT INTO thing_service`).
@@ -590,7 +595,7 @@ func TestManager_RegisterThing_TouchErr(t *testing.T) {
 		WithArgs("agent").
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}))
 	mock.ExpectExec(`UPDATE thing SET`).
-		WithArgs("a-x", "", "", "", "").
+		WithArgs("a-x", "", "", "").
 		WillReturnError(errors.New("planner err"))
 	_, err := mgr.RegisterThing(context.Background(), RegisterRequest{ID: "a-x", Type: "agent"})
 	if err == nil || !strings.Contains(err.Error(), "touch thing") {
@@ -662,6 +667,47 @@ func TestManager_HandleShadowReport_BreakGlass_NonFatal(t *testing.T) {
 	// Outer error must be nil — break-glass failures don't fail the report.
 	if err != nil {
 		t.Errorf("err = %v, want nil (break-glass failures are non-fatal)", err)
+	}
+}
+
+// TestManager_HandleShadowReport_BreakGlass_DeniedWritesAudit locks SEC-M5-05:
+// a break-glass report carrying a key OUTSIDE the {killswitch, exemptions}
+// writable allowlist is rejected, and the rejection must leave a durable
+// break_glass_denied config_change_event (so a node probing the privileged
+// reconciliation surface is visible to audit/SIEM), while still being non-fatal
+// to the shadow report.
+func TestManager_HandleShadowReport_BreakGlass_DeniedWritesAudit(t *testing.T) {
+	mgr, mock := newPgxmockManager(t)
+	defer mock.Close()
+	// 1. UpdateShadowReport succeeds.
+	mock.ExpectExec(`UPDATE thing\s+SET reported`).
+		WithArgs("thing-1", pgxmock.AnyArg(), int64(7), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	// 2. emitBreakGlassDenied looks up the thing type (best-effort — error is
+	//    tolerated, thing_type falls back to "").
+	mock.ExpectQuery(`FROM thing t`).
+		WithArgs("thing-1").
+		WillReturnError(errors.New("lookup skipped"))
+	// 3. The denied event is written in its own transaction.
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO config_change_event`).
+		WithArgs("", "credentialKeys", "break_glass_denied", "break-glass:unknown", "break-glass",
+			pgxmock.AnyArg(), int64(7), "", false).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+	mock.ExpectCommit()
+
+	err := mgr.HandleShadowReport(context.Background(), ShadowReportRequest{
+		ID:          "thing-1",
+		Reported:    map[string]any{"credentialKeys": map[string]any{"x": 1}},
+		ReportedVer: 7,
+		Reason:      "break_glass",
+		KeyVersions: map[string]int64{"credentialKeys": 7}, // NOT in the writable allowlist
+	})
+	if err != nil {
+		t.Fatalf("HandleShadowReport: %v (break-glass denial must be non-fatal)", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("break_glass_denied audit event not written as expected: %v", err)
 	}
 }
 
@@ -740,13 +786,23 @@ func TestManager_GetShadowComparison(t *testing.T) {
 		if got.Keys["a"].Synced {
 			t.Error("key a should be drifted")
 		}
-		// b: desired only.
+		// b: desired only → InDesired true.
 		if got.Keys["b"].Reported != nil {
 			t.Errorf("key b reported should be nil, got %v", got.Keys["b"].Reported)
 		}
-		// c: reported only.
+		if !got.Keys["b"].InDesired {
+			t.Error("key b (desired-only) must have InDesired=true")
+		}
+		// c: reported only → InDesired false (the F-0112 auto-heal must ignore it).
 		if got.Keys["c"].Desired != nil {
 			t.Errorf("key c desired should be nil, got %v", got.Keys["c"].Desired)
+		}
+		if got.Keys["c"].InDesired {
+			t.Error("key c (reported-only) must have InDesired=false")
+		}
+		// a: present in desired → InDesired true.
+		if !got.Keys["a"].InDesired {
+			t.Error("key a (in desired) must have InDesired=true")
 		}
 	})
 	t.Run("store err propagates", func(t *testing.T) {
@@ -833,15 +889,15 @@ func TestManager_RePushConfigKey(t *testing.T) {
 	})
 }
 
-func TestManager_RePushAllKeys(t *testing.T) {
+func TestManager_ForceResyncAll(t *testing.T) {
 	t.Run("requires non-empty thingID", func(t *testing.T) {
 		mgr, mock := newPgxmockManager(t)
 		defer mock.Close()
-		if _, err := mgr.RePushAllKeys(context.Background(), ""); err == nil {
+		if _, err := mgr.ForceResyncAll(context.Background(), ""); err == nil {
 			t.Error("expected err for empty thingID")
 		}
 	})
-	t.Run("happy fan-out", func(t *testing.T) {
+	t.Run("happy fan-out bumps desired_ver then pushes every key", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		defer mock.Close()
 		st := store.NewWithPgxPool(mock)
@@ -854,30 +910,62 @@ func TestManager_RePushAllKeys(t *testing.T) {
 		mock.ExpectQuery(`FROM thing t`).
 			WithArgs("t-1").
 			WillReturnRows(minimalGetThingRow("t-1", "agent", desired, 9))
-		res, err := mgr.RePushAllKeys(context.Background(), "t-1")
+		// F-0116: the version bump is the reliable-delivery guarantee — it MUST
+		// take the advisory lock and run inside a tx like every other per-Thing
+		// desired writer (F-0109).
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		expectWriteDesiredAndBumpVer(mock, "t-1", 10)
+		mock.ExpectCommit()
+		res, err := mgr.ForceResyncAll(context.Background(), "t-1")
 		if err != nil {
-			t.Fatalf("RePushAllKeys: %v", err)
+			t.Fatalf("ForceResyncAll: %v", err)
 		}
 		if res.Pushed != 2 || len(res.Failed) != 0 {
 			t.Errorf("res = %+v, want Pushed=2 Failed=[]", res)
 		}
 	})
-	t.Run("partial failure: no delivery path increments Failed", func(t *testing.T) {
+	t.Run("no delivery path counts as Pushed (heartbeat pull covers it after bump)", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		defer mock.Close()
 		st := store.NewWithPgxPool(mock)
-		// No WS connection, no MQ → every key fails with ErrNoDeliveryPath.
+		// No WS connection, no MQ: the immediate push fails with
+		// ErrNoDeliveryPath, but the desired_ver bump guarantees the HTTP
+		// heartbeat pull will deliver — so it is honestly counted as Pushed,
+		// not Failed (F-0116).
 		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
 		desired := map[string]any{"k1": map[string]any{"v": 1}}
 		mock.ExpectQuery(`FROM thing t`).
 			WithArgs("t-1").
 			WillReturnRows(minimalGetThingRow("t-1", "agent", desired, 1))
-		res, err := mgr.RePushAllKeys(context.Background(), "t-1")
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		expectWriteDesiredAndBumpVer(mock, "t-1", 2)
+		mock.ExpectCommit()
+		res, err := mgr.ForceResyncAll(context.Background(), "t-1")
 		if err != nil {
-			t.Fatalf("RePushAllKeys: %v", err)
+			t.Fatalf("ForceResyncAll: %v", err)
 		}
-		if res.Pushed != 0 || len(res.Failed) != 1 {
-			t.Errorf("res = %+v, want Pushed=0 Failed[1]", res)
+		if res.Pushed != 1 || len(res.Failed) != 0 {
+			t.Errorf("res = %+v, want Pushed=1 Failed=[]", res)
+		}
+	})
+	t.Run("empty desired skips the bump and pushes nothing", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 1))
+		// No ExpectBegin: an empty desired map has nothing to deliver, so
+		// bumpDesiredVerForResync returns before opening a tx.
+		res, err := mgr.ForceResyncAll(context.Background(), "t-1")
+		if err != nil {
+			t.Fatalf("ForceResyncAll: %v", err)
+		}
+		if res.Pushed != 0 || len(res.Failed) != 0 {
+			t.Errorf("res = %+v, want Pushed=0 Failed=[]", res)
 		}
 	})
 	t.Run("GetThing err propagates", func(t *testing.T) {
@@ -886,9 +974,201 @@ func TestManager_RePushAllKeys(t *testing.T) {
 		mock.ExpectQuery(`FROM thing t`).
 			WithArgs("missing").
 			WillReturnError(errors.New("planner err"))
-		_, err := mgr.RePushAllKeys(context.Background(), "missing")
+		_, err := mgr.ForceResyncAll(context.Background(), "missing")
 		if err == nil {
 			t.Error("expected err")
+		}
+	})
+	t.Run("bump tx begin error aborts before any push", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"k1": map[string]any{"v": 1}}, 1))
+		mock.ExpectBegin().WillReturnError(errors.New("conn lost"))
+		if _, err := mgr.ForceResyncAll(context.Background(), "t-1"); err == nil {
+			t.Error("expected bump tx error")
+		}
+	})
+	t.Run("real push error (not no-delivery-path) goes into Failed", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		// MQ publish fails for the single key → publish-hub-signal wrap (not
+		// ErrNoDeliveryPath) → recorded in Failed, not counted as Pushed.
+		mq := &mockMQProducer{publishErr: errors.New("nats down")}
+		mgr := NewWithPool(st, mock, nil, mq, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"k1": map[string]any{"v": 1}}, 1))
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		expectWriteDesiredAndBumpVer(mock, "t-1", 2)
+		mock.ExpectCommit()
+		res, err := mgr.ForceResyncAll(context.Background(), "t-1")
+		if err != nil {
+			t.Fatalf("ForceResyncAll: %v", err)
+		}
+		if res.Pushed != 0 || len(res.Failed) != 1 {
+			t.Errorf("res = %+v, want Pushed=0 Failed[1]", res)
+		}
+		if res.Failed[0].ConfigKey != "k1" {
+			t.Errorf("Failed[0].ConfigKey = %q, want k1", res.Failed[0].ConfigKey)
+		}
+	})
+}
+
+func TestManager_ForceResyncKey(t *testing.T) {
+	t.Run("requires non-empty thingID + configKey", func(t *testing.T) {
+		mgr, mock := newPgxmockManager(t)
+		defer mock.Close()
+		if err := mgr.ForceResyncKey(context.Background(), "", "k"); err == nil {
+			t.Error("expected err for empty thingID")
+		}
+		if err := mgr.ForceResyncKey(context.Background(), "t", ""); err == nil {
+			t.Error("expected err for empty configKey")
+		}
+	})
+	t.Run("key not in desired returns ErrConfigKeyNotInDesired before any bump", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"other": 1}, 1))
+		// No ExpectBegin: the missing-key check runs before bumpDesiredVerForResync.
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); !errors.Is(err, ErrConfigKeyNotInDesired) {
+			t.Errorf("err = %v, want ErrConfigKeyNotInDesired", err)
+		}
+	})
+	t.Run("happy: bumps desired_ver then pushes the key over WS", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		ws := &mockWSPool{connectedIDs: map[string]bool{"t-1": true}}
+		mgr := NewWithPool(st, mock, nil, nil, ws, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"hooks": map[string]any{"e": true}}, 4))
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		expectWriteDesiredAndBumpVer(mock, "t-1", 5)
+		mock.ExpectCommit()
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); err != nil {
+			t.Fatalf("ForceResyncKey: %v", err)
+		}
+	})
+	t.Run("no delivery path is swallowed (bump guarantees heartbeat delivery)", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"hooks": map[string]any{"e": true}}, 4))
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		expectWriteDesiredAndBumpVer(mock, "t-1", 5)
+		mock.ExpectCommit()
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); err != nil {
+			t.Fatalf("ForceResyncKey: want nil (ErrNoDeliveryPath swallowed), got %v", err)
+		}
+	})
+	t.Run("GetThing err propagates", func(t *testing.T) {
+		mgr, mock := newPgxmockManager(t)
+		defer mock.Close()
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("missing").
+			WillReturnError(errors.New("planner err"))
+		if err := mgr.ForceResyncKey(context.Background(), "missing", "k"); err == nil {
+			t.Error("expected propagated err")
+		}
+	})
+	t.Run("bump tx begin error aborts", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"hooks": map[string]any{"e": true}}, 4))
+		mock.ExpectBegin().WillReturnError(errors.New("conn lost"))
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); err == nil {
+			t.Error("expected bump tx error")
+		}
+	})
+	t.Run("advisory lock error aborts", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"hooks": map[string]any{"e": true}}, 4))
+		mock.ExpectBegin()
+		mock.ExpectExec(`SELECT pg_advisory_xact_lock`).
+			WithArgs("agent").
+			WillReturnError(errors.New("lock timeout"))
+		mock.ExpectRollback()
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); err == nil {
+			t.Error("expected advisory lock error")
+		}
+	})
+	t.Run("write desired error aborts", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"hooks": map[string]any{"e": true}}, 4))
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		mock.ExpectQuery(`UPDATE thing\s+SET desired\s+= \$2::jsonb`).
+			WithArgs("t-1", pgxmock.AnyArg()).
+			WillReturnError(errors.New("planner err"))
+		mock.ExpectRollback()
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); err == nil {
+			t.Error("expected write desired error")
+		}
+	})
+	t.Run("commit error aborts", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		mgr := NewWithPool(st, mock, nil, nil, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"hooks": map[string]any{"e": true}}, 4))
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		expectWriteDesiredAndBumpVer(mock, "t-1", 5)
+		mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); err == nil {
+			t.Error("expected commit error")
+		}
+	})
+	t.Run("real push error (not no-delivery-path) propagates", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		st := store.NewWithPgxPool(mock)
+		// MQ publish fails → rePushConfigKeyForThing returns a publish-hub-signal
+		// wrap, NOT ErrNoDeliveryPath, so ForceResyncKey must surface it.
+		mq := &mockMQProducer{publishErr: errors.New("nats down")}
+		mgr := NewWithPool(st, mock, nil, mq, &mockWSPool{}, "hub-test", silentLogger())
+		mock.ExpectQuery(`FROM thing t`).
+			WithArgs("t-1").
+			WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{"hooks": map[string]any{"e": true}}, 4))
+		mock.ExpectBegin()
+		expectConfigVersionLock(mock, "agent")
+		expectWriteDesiredAndBumpVer(mock, "t-1", 5)
+		mock.ExpectCommit()
+		if err := mgr.ForceResyncKey(context.Background(), "t-1", "hooks"); err == nil ||
+			!strings.Contains(err.Error(), "publish hub signal") {
+			t.Errorf("err = %v, want publish-hub-signal wrap", err)
 		}
 	})
 }
@@ -950,6 +1230,7 @@ func TestManager_UpdateConfig_Happy(t *testing.T) {
 	mgr := NewWithPool(st, mock, nil, nil, ws, "hub-1", silentLogger())
 
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	// Step 1: UpsertConfigTemplate → returns newVer=5.
 	mock.ExpectQuery(`INSERT INTO thing_config_template`).
 		WithArgs("agent", "hooks", pgxmock.AnyArg(), "actor-1").
@@ -959,10 +1240,9 @@ func TestManager_UpdateConfig_Happy(t *testing.T) {
 		WithArgs("agent", "hooks", pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "desired_ver"}).
 			AddRow("t-1", int64(42)))
-	// notifyConfigChanged inside the same tx (per-Thing pg_notify).
-	mock.ExpectExec(`pg_notify`).
-		WithArgs(pgxmock.AnyArg(), "t-1").
-		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	// F-0110: thingType="agent" is NOT nexus-hub, so UpdateDesiredForType emits
+	// NO per-Thing pg_notify — config reaches agents via the WS broadcast below.
+	// (No ExpectExec(pg_notify); an emit here would surface as an unmatched SQL.)
 	// Step 4: InsertConfigChangeEvent (9 args).
 	mock.ExpectExec(`INSERT INTO config_change_event`).
 		WithArgs("agent", "hooks", "update", "actor-1", "alice", pgxmock.AnyArg(), int64(5), "10.0.0.1", false).
@@ -1000,6 +1280,7 @@ func TestManager_UpdateConfig_NoThings(t *testing.T) {
 	mgr := NewWithPool(st, mock, nil, nil, ws, "hub-1", silentLogger())
 
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectQuery(`INSERT INTO thing_config_template`).
 		WithArgs("agent", "hooks", pgxmock.AnyArg(), "actor-1").
 		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)))
@@ -1046,6 +1327,7 @@ func TestManager_UpdateConfig_UpsertErr(t *testing.T) {
 	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
 
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectQuery(`INSERT INTO thing_config_template`).
 		WithArgs("agent", "h", pgxmock.AnyArg(), "actor").
 		WillReturnError(errors.New("dup"))
@@ -1066,6 +1348,7 @@ func TestManager_UpdateConfig_UpdateDesiredErr(t *testing.T) {
 	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
 
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectQuery(`INSERT INTO thing_config_template`).
 		WithArgs("agent", "h", pgxmock.AnyArg(), "actor").
 		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)))
@@ -1089,15 +1372,14 @@ func TestManager_UpdateConfig_InsertEventErr(t *testing.T) {
 	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
 
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectQuery(`INSERT INTO thing_config_template`).
 		WithArgs("agent", "h", pgxmock.AnyArg(), "actor").
 		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)))
 	mock.ExpectQuery(`WITH next AS`).
 		WithArgs("agent", "h", pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "desired_ver"}).AddRow("t-1", int64(2)))
-	mock.ExpectExec(`pg_notify`).
-		WithArgs(pgxmock.AnyArg(), "t-1").
-		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	// F-0110: agent type emits no pg_notify in UpdateDesiredForType.
 	mock.ExpectExec(`INSERT INTO config_change_event`).
 		WillReturnError(errors.New("planner err"))
 	mock.ExpectRollback()
@@ -1117,15 +1399,14 @@ func TestManager_UpdateConfig_CommitErr(t *testing.T) {
 	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
 
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectQuery(`INSERT INTO thing_config_template`).
 		WithArgs("agent", "h", pgxmock.AnyArg(), "actor").
 		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)))
 	mock.ExpectQuery(`WITH next AS`).
 		WithArgs("agent", "h", pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "desired_ver"}).AddRow("t-1", int64(2)))
-	mock.ExpectExec(`pg_notify`).
-		WithArgs(pgxmock.AnyArg(), "t-1").
-		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	// F-0110: agent type emits no pg_notify in UpdateDesiredForType.
 	mock.ExpectExec(`INSERT INTO config_change_event`).
 		WithArgs("agent", "h", "", "actor", "", pgxmock.AnyArg(), int64(1), "", false).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
@@ -1277,6 +1558,16 @@ func expectInsertAdminAudit(mock pgxmock.PgxPoolIface) {
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 }
 
+// expectConfigVersionLock pins the per-type advisory lock that UpdateConfig /
+// SetOverride / ClearOverride take as the FIRST statement of their transaction
+// (store.AcquireConfigVersionLock, F-0109). It must be expected immediately
+// after ExpectBegin and before any other in-tx statement.
+func expectConfigVersionLock(mock pgxmock.PgxPoolIface, thingType string) {
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)`).
+		WithArgs(thingType).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+}
+
 // expectRecomputeDesiredTx pins the two SELECTs recomputeDesiredTx runs
 // inside the override tx (templates FOR SHARE then overrides). Both return
 // empty result sets so the merged map is {} — sufficient to drive the
@@ -1418,6 +1709,7 @@ func TestManager_SetOverride_Happy(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{"e":false}`), int64(4), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	// Step 3: UpsertOverride.
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
@@ -1490,6 +1782,7 @@ func TestManager_SetOverride_KillswitchAutoEmergency(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "killswitch", []byte(`{"engaged":false}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), // thing_id
@@ -1549,6 +1842,7 @@ func TestManager_SetOverride_BreakGlassReason_Mock(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{"e":false}`), int64(2), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), // thing_id
@@ -1682,6 +1976,7 @@ func TestManager_ClearOverride_Happy(t *testing.T) {
 			"alice", setAt, (*string)(nil), (*time.Time)(nil), false,
 		))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	// DeleteOverride.
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
@@ -1724,6 +2019,7 @@ func TestManager_ClearOverride_DeleteRace(t *testing.T) {
 			"alice", setAt, (*string)(nil), (*time.Time)(nil), false,
 		))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
 		WillReturnResult(pgconn.NewCommandTag("DELETE 0"))
@@ -1775,6 +2071,7 @@ func TestRecomputeDesiredTx_TemplateQueryErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), // thing_id
@@ -1798,77 +2095,6 @@ func TestRecomputeDesiredTx_TemplateQueryErr(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "recompute desired") {
 		t.Errorf("err = %v, want recompute-desired wrap", err)
-	}
-}
-
-// TestManager_HandleBreakGlassReport_NewTemplate drives the
-// "reported_ver > current template version" path, including
-// UpsertConfigTemplateAt + InsertConfigChangeEvent (emergency_override=true).
-func TestManager_HandleBreakGlassReport_NewTemplate(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	// GetThing.
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	// GetConfigTemplate → returns version=2 (lower than incoming 5).
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "killswitch").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "killswitch", []byte(`{"engaged":false}`), int64(2), tmplTime, "alice"))
-	// Tx for the upsert + event.
-	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO thing_config_template`).
-		WithArgs("agent", "killswitch", pgxmock.AnyArg(), int64(5), "break-glass:tok").
-		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(5)))
-	mock.ExpectExec(`INSERT INTO config_change_event`).
-		WithArgs("agent", "killswitch", "emergency_override", "break-glass:tok", "break-glass",
-			pgxmock.AnyArg(), int64(5), "10.0.0.1", true).
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectCommit()
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID:           "t-1",
-		Reported:     map[string]any{"killswitch": map[string]any{"engaged": true}},
-		KeyVersions:  map[string]int64{"killswitch": 5},
-		Reason:       "break_glass",
-		SourceIP:     "10.0.0.1",
-		ActorTokenID: "tok",
-	})
-	if err != nil {
-		t.Fatalf("handleBreakGlassReport: %v", err)
-	}
-}
-
-// TestManager_HandleBreakGlassReport_StaleSkip drives the "reported_ver <=
-// current template version" skip — admin write has already superseded.
-// No tx fires.
-func TestManager_HandleBreakGlassReport_StaleSkip(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "killswitch").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "killswitch", []byte(`{"engaged":false}`), int64(10), tmplTime, "alice"))
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID:           "t-1",
-		Reported:     map[string]any{"killswitch": map[string]any{"engaged": true}},
-		KeyVersions:  map[string]int64{"killswitch": 5},
-		Reason:       "break_glass",
-		ActorTokenID: "tok",
-	})
-	if err != nil {
-		t.Fatalf("handleBreakGlassReport: %v", err)
 	}
 }
 
@@ -1905,107 +2131,14 @@ func TestManager_HandleBreakGlassReport_GetThingErr(t *testing.T) {
 	mock.ExpectQuery(`FROM thing t`).WithArgs("missing").
 		WillReturnError(errors.New("planner err"))
 	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID:          "missing",
-		Reported:    map[string]any{"k": "v"},
-		KeyVersions: map[string]int64{"k": 1},
+		ID:           "missing",
+		Reported:     map[string]any{"killswitch": map[string]any{"engaged": true}},
+		KeyVersions:  map[string]int64{"killswitch": 1},
+		Reason:       "break_glass",
+		ActorTokenID: "tok",
 	})
 	if err == nil || !strings.Contains(err.Error(), "get thing") {
 		t.Errorf("err = %v, want get-thing wrap", err)
-	}
-}
-
-// TestManager_HandleBreakGlassReport_TemplateFetchErr surfaces a generic
-// template-fetch error (non-ErrNotFound) — it's logged and skipped.
-func TestManager_HandleBreakGlassReport_TemplateFetchErr(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "killswitch").
-		WillReturnError(errors.New("planner err"))
-	// No tx — the error is logged and the key is skipped.
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID:           "t-1",
-		Reported:     map[string]any{"killswitch": map[string]any{"engaged": true}},
-		KeyVersions:  map[string]int64{"killswitch": 5},
-		Reason:       "break_glass",
-		ActorTokenID: "tok",
-	})
-	if err != nil {
-		t.Fatalf("handleBreakGlassReport: %v", err)
-	}
-}
-
-// TestManager_HandleBreakGlassReport_UpsertRaceSkip covers the race where
-// UpsertConfigTemplateAt returns ErrNotFound (a concurrent admin UPDATE
-// already wrote a higher version) — silent skip + continue.
-func TestManager_HandleBreakGlassReport_UpsertRaceSkip(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	// Template not present (ErrNotFound on initial Get is fine).
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "k").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "k", []byte(`{}`), int64(1), tmplTime, "alice"))
-	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO thing_config_template`).
-		WithArgs("agent", "k", pgxmock.AnyArg(), int64(5), "break-glass:tok").
-		WillReturnError(pgx.ErrNoRows)
-	mock.ExpectRollback()
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID:           "t-1",
-		Reported:     map[string]any{"k": map[string]any{"v": 1}},
-		KeyVersions:  map[string]int64{"k": 5},
-		Reason:       "break_glass",
-		ActorTokenID: "tok",
-	})
-	if err != nil {
-		t.Fatalf("handleBreakGlassReport (race skip): %v", err)
-	}
-}
-
-// TestManager_HandleBreakGlassReport_UpsertGenericErr surfaces wrapped error
-// when UpsertConfigTemplateAt fails with non-ErrNotFound.
-func TestManager_HandleBreakGlassReport_UpsertGenericErr(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "k").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "k", []byte(`{}`), int64(1), tmplTime, "alice"))
-	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO thing_config_template`).
-		WithArgs("agent", "k", pgxmock.AnyArg(), int64(5), "break-glass:tok").
-		WillReturnError(errors.New("planner err"))
-	mock.ExpectRollback()
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID:           "t-1",
-		Reported:     map[string]any{"k": map[string]any{"v": 1}},
-		KeyVersions:  map[string]int64{"k": 5},
-		Reason:       "break_glass",
-		ActorTokenID: "tok",
-	})
-	if err == nil || !strings.Contains(err.Error(), "break-glass upsert") {
-		t.Errorf("err = %v, want break-glass-upsert wrap", err)
 	}
 }
 
@@ -2028,6 +2161,7 @@ func TestRecomputeDesiredTx_PopulatedSets(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{"e":false}`), int64(3), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2086,6 +2220,7 @@ func TestRecomputeDesiredTx_TemplateMalformedJSON(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2124,6 +2259,7 @@ func TestRecomputeDesiredTx_OverrideQueryErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2164,6 +2300,7 @@ func TestRecomputeDesiredTx_OverrideMalformedJSON(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2223,95 +2360,6 @@ func TestTxPool_UsesInjectedPool(t *testing.T) {
 	}
 }
 
-// TestManager_HandleBreakGlassReport_BeginTxErr surfaces the begin-tx wrap.
-func TestManager_HandleBreakGlassReport_BeginTxErr(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "k").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "k", []byte(`{}`), int64(1), tmplTime, "alice"))
-	mock.ExpectBegin().WillReturnError(errors.New("conn lost"))
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID: "t-1", Reported: map[string]any{"k": map[string]any{"v": 1}},
-		KeyVersions: map[string]int64{"k": 5}, Reason: "break_glass", ActorTokenID: "tok",
-	})
-	if err == nil || !strings.Contains(err.Error(), "begin tx") {
-		t.Errorf("err = %v, want begin-tx wrap", err)
-	}
-}
-
-// TestManager_HandleBreakGlassReport_InsertEventErr surfaces the
-// InsertConfigChangeEvent wrap.
-func TestManager_HandleBreakGlassReport_InsertEventErr(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "k").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "k", []byte(`{}`), int64(1), tmplTime, "alice"))
-	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO thing_config_template`).
-		WithArgs("agent", "k", pgxmock.AnyArg(), int64(5), "break-glass:tok").
-		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(5)))
-	mock.ExpectExec(`INSERT INTO config_change_event`).
-		WillReturnError(errors.New("planner err"))
-	mock.ExpectRollback()
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID: "t-1", Reported: map[string]any{"k": map[string]any{"v": 1}},
-		KeyVersions: map[string]int64{"k": 5}, Reason: "break_glass", ActorTokenID: "tok",
-	})
-	if err == nil || !strings.Contains(err.Error(), "break-glass insert event") {
-		t.Errorf("err = %v, want insert-event wrap", err)
-	}
-}
-
-// TestManager_HandleBreakGlassReport_CommitErr surfaces the commit error.
-func TestManager_HandleBreakGlassReport_CommitErr(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "k").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "k", []byte(`{}`), int64(1), tmplTime, "alice"))
-	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO thing_config_template`).
-		WithArgs("agent", "k", pgxmock.AnyArg(), int64(5), "break-glass:tok").
-		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(5)))
-	mock.ExpectExec(`INSERT INTO config_change_event`).
-		WithArgs("agent", "k", "emergency_override", "break-glass:tok", "break-glass",
-			pgxmock.AnyArg(), int64(5), "", true).
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID: "t-1", Reported: map[string]any{"k": map[string]any{"v": 1}},
-		KeyVersions: map[string]int64{"k": 5}, Reason: "break_glass", ActorTokenID: "tok",
-	})
-	if err == nil || !strings.Contains(err.Error(), "break-glass commit") {
-		t.Errorf("err = %v, want commit wrap", err)
-	}
-}
-
 // TestManager_SetOverride_UpsertErr surfaces the override-upsert wrap.
 func TestManager_SetOverride_UpsertErr(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
@@ -2327,6 +2375,7 @@ func TestManager_SetOverride_UpsertErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2360,6 +2409,7 @@ func TestManager_SetOverride_WriteDesiredErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2401,6 +2451,7 @@ func TestManager_SetOverride_AuditInsertErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2438,6 +2489,7 @@ func TestManager_SetOverride_CommitErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2478,6 +2530,7 @@ func TestManager_SetOverride_RefetchErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2528,6 +2581,7 @@ func TestManager_SetOverride_PostCommitPushFails(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2583,6 +2637,7 @@ func TestManager_ClearOverride_RecomputeErr(t *testing.T) {
 		}).AddRow("t-1", "hooks", []byte(`{"e":true}`), int64(1),
 			"alice", setAt, (*string)(nil), (*time.Time)(nil), false))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
 		WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
@@ -2615,6 +2670,7 @@ func TestManager_ClearOverride_WriteDesiredErr(t *testing.T) {
 		}).AddRow("t-1", "hooks", []byte(`{"e":true}`), int64(1),
 			"alice", setAt, (*string)(nil), (*time.Time)(nil), false))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
 		WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
@@ -2652,6 +2708,7 @@ func TestManager_ClearOverride_AuditInsertErr(t *testing.T) {
 		}).AddRow("t-1", "hooks", []byte(`{"e":true}`), int64(1),
 			"alice", setAt, &reason, &expiresAt, true))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
 		WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
@@ -2686,6 +2743,7 @@ func TestManager_ClearOverride_CommitErr(t *testing.T) {
 		}).AddRow("t-1", "hooks", []byte(`{"e":true}`), int64(1),
 			"alice", setAt, (*string)(nil), (*time.Time)(nil), false))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
 		WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
@@ -2719,6 +2777,7 @@ func TestManager_ClearOverride_DeleteErr(t *testing.T) {
 		}).AddRow("t-1", "hooks", []byte(`{"e":true}`), int64(1),
 			"alice", setAt, (*string)(nil), (*time.Time)(nil), false))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
 		WillReturnError(errors.New("planner err"))
@@ -2750,6 +2809,7 @@ func TestManager_ClearOverride_PostCommitPushFails(t *testing.T) {
 		}).AddRow("t-1", "hooks", []byte(`{"e":true}`), int64(1),
 			"alice", setAt, (*string)(nil), (*time.Time)(nil), false))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`DELETE FROM thing_config_override`).
 		WithArgs("t-1", "hooks").
 		WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
@@ -2797,6 +2857,7 @@ func TestRecomputeDesiredTx_TemplateScanErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2834,6 +2895,7 @@ func TestRecomputeDesiredTx_OverrideScanErr(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("agent", "hooks", []byte(`{}`), int64(1), tmplTime, "alice"))
 	mock.ExpectBegin()
+	expectConfigVersionLock(mock, "agent")
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -2936,42 +2998,5 @@ func TestBroadcastConfigChanged_StateMarshalErr(t *testing.T) {
 	defer ws.mu.Unlock()
 	if ws.lastBroadcastMsg != nil {
 		t.Error("Broadcast was called despite marshal err")
-	}
-}
-
-// TestManager_HandleBreakGlassReport_EmptyTokenID covers the
-// actorTokenID="" branch — actorID falls back to "break-glass:unknown".
-func TestManager_HandleBreakGlassReport_EmptyTokenID(t *testing.T) {
-	mock, _ := pgxmock.NewPool()
-	defer mock.Close()
-	st := store.NewWithPgxPool(mock)
-	mgr := NewWithPool(st, mock, nil, nil, nil, "hub-1", silentLogger())
-
-	tmplTime := time.Now().UTC()
-	mock.ExpectQuery(`FROM thing t`).WithArgs("t-1").
-		WillReturnRows(minimalGetThingRow("t-1", "agent", map[string]any{}, 0))
-	mock.ExpectQuery(`FROM thing_config_template\s+WHERE type = \$1 AND config_key = \$2`).
-		WithArgs("agent", "k").
-		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
-			AddRow("agent", "k", []byte(`{}`), int64(1), tmplTime, "alice"))
-	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO thing_config_template`).
-		WithArgs("agent", "k", pgxmock.AnyArg(), int64(5), "break-glass:unknown").
-		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(5)))
-	mock.ExpectExec(`INSERT INTO config_change_event`).
-		WithArgs("agent", "k", "emergency_override", "break-glass:unknown", "break-glass",
-			pgxmock.AnyArg(), int64(5), "", true).
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectCommit()
-
-	err := mgr.handleBreakGlassReport(context.Background(), ShadowReportRequest{
-		ID:          "t-1",
-		Reported:    map[string]any{"k": map[string]any{"v": 1}},
-		KeyVersions: map[string]int64{"k": 5},
-		Reason:      "break_glass",
-		// ActorTokenID intentionally empty.
-	})
-	if err != nil {
-		t.Fatalf("handleBreakGlassReport: %v", err)
 	}
 }

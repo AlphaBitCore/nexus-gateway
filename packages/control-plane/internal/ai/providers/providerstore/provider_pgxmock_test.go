@@ -163,11 +163,11 @@ func TestCreateProvider(t *testing.T) {
 func TestCreateProviderWithChildren_Full(t *testing.T) {
 	s, m := newMock(t)
 	m.ExpectBegin()
-	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).
+	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
 	m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(20)...).
 		WillReturnRows(pgxmock.NewRows(modelCols).AddRow(modelRow("m1", "gpt-4o")...))
-	m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(8)...).
+	m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(9)...).
 		WillReturnRows(pgxmock.NewRows(credCols).AddRow(credRow("c1")...))
 	m.ExpectCommit()
 
@@ -189,7 +189,7 @@ func TestCreateProviderWithChildren_Full(t *testing.T) {
 func TestCreateProviderWithChildren_NoChildren(t *testing.T) {
 	s, m := newMock(t)
 	m.ExpectBegin()
-	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).
+	m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
 		WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "openai")...))
 	m.ExpectCommit()
 	p, models, cred, err := s.CreateProviderWithChildren(context.Background(), CreateParams{Name: "openai"}, nil, nil)
@@ -209,7 +209,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("provider insert", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).WillReturnError(errors.New("boom"))
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).WillReturnError(errors.New("boom"))
 		m.ExpectRollback()
 		if _, _, _, err := s.CreateProviderWithChildren(context.Background(), CreateParams{}, nil, nil); err == nil {
 			t.Fatal("provider insert error should surface")
@@ -218,7 +218,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("model insert", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
 		m.ExpectQuery(`INSERT INTO "Model"`).WithArgs(anyArgs(20)...).WillReturnError(errors.New("bad model"))
 		m.ExpectRollback()
@@ -230,9 +230,9 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("credential insert", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
-		m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(8)...).WillReturnError(errors.New("bad cred"))
+		m.ExpectQuery(`INSERT INTO "Credential"`).WithArgs(anyArgs(9)...).WillReturnError(errors.New("bad cred"))
 		m.ExpectRollback()
 		if _, _, _, err := s.CreateProviderWithChildren(context.Background(), CreateParams{}, nil,
 			&credstore.CreateCredentialParams{Name: "c"}); err == nil {
@@ -242,7 +242,7 @@ func TestCreateProviderWithChildren_Errors(t *testing.T) {
 	t.Run("commit", func(t *testing.T) {
 		s, m := newMock(t)
 		m.ExpectBegin()
-		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(10)...).
+		m.ExpectQuery(`INSERT INTO "Provider"`).WithArgs(anyArgs(11)...).
 			WillReturnRows(pgxmock.NewRows(provCols).AddRow(provRow("p1", "o")...))
 		m.ExpectCommit().WillReturnError(errors.New("commit failed"))
 		if _, _, _, err := s.CreateProviderWithChildren(context.Background(), CreateParams{}, nil, nil); err == nil {
@@ -337,52 +337,5 @@ func TestListProviderHealth(t *testing.T) {
 	m2.ExpectQuery(`FROM "ProviderHealth"`).WillReturnRows(pgxmock.NewRows(cols).AddRow("p1", "o", "h", "bad-float", 1, 1, nil, nil))
 	if _, err := s2.ListProviderHealth(context.Background()); err == nil {
 		t.Fatal("scan error should surface")
-	}
-}
-
-func TestListModelPricing(t *testing.T) {
-	s, m := newMock(t)
-	cols := []string{"id", "modelId", "inputPricePerMillion", "outputPricePerMillion", "effectiveDate"}
-	m.ExpectQuery(`FROM "ModelPricing"`).WillReturnRows(pgxmock.NewRows(cols).AddRow("pr1", "m1", 2.5, 10.0, tNow))
-	rows, err := s.ListModelPricing(context.Background())
-	if err != nil || len(rows) != 1 || rows[0].ModelID != "m1" {
-		t.Fatalf("ListModelPricing: %+v %v", rows, err)
-	}
-	m.ExpectQuery(`FROM "ModelPricing"`).WillReturnError(errors.New("boom"))
-	if _, err := s.ListModelPricing(context.Background()); err == nil {
-		t.Fatal("query error should surface")
-	}
-	// scan error: bad-typed price column
-	s2, m2 := newMock(t)
-	m2.ExpectQuery(`FROM "ModelPricing"`).WillReturnRows(pgxmock.NewRows(cols).AddRow("pr1", "m1", "not-a-float", 1.0, tNow))
-	if _, err := s2.ListModelPricing(context.Background()); err == nil {
-		t.Fatal("scan error should surface")
-	}
-}
-
-func TestCreateModelPricing(t *testing.T) {
-	s, m := newMock(t)
-	m.ExpectQuery(`INSERT INTO "ModelPricing"`).WithArgs("m1", 2.5, 10.0).
-		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("pr1"))
-	id, err := s.CreateModelPricing(context.Background(), "m1", 2.5, 10.0)
-	if err != nil || id != "pr1" {
-		t.Fatalf("CreateModelPricing: %q %v", id, err)
-	}
-	m.ExpectQuery(`INSERT INTO "ModelPricing"`).WithArgs("m1", 0.0, 0.0).WillReturnError(errors.New("boom"))
-	if _, err := s.CreateModelPricing(context.Background(), "m1", 0, 0); err == nil {
-		t.Fatal("insert error should surface")
-	}
-}
-
-func TestDeleteModelPricing(t *testing.T) {
-	s, m := newMock(t)
-	m.ExpectExec(`DELETE FROM "ModelPricing"`).WithArgs("pr1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
-	n, err := s.DeleteModelPricing(context.Background(), "pr1")
-	if err != nil || n != 1 {
-		t.Fatalf("DeleteModelPricing: %d %v", n, err)
-	}
-	m.ExpectExec(`DELETE FROM "ModelPricing"`).WithArgs("x").WillReturnError(errors.New("boom"))
-	if _, err := s.DeleteModelPricing(context.Background(), "x"); err == nil {
-		t.Fatal("exec error should surface")
 	}
 }

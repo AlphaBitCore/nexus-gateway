@@ -2,6 +2,8 @@ package traffic
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -317,6 +319,17 @@ func (h *Handler) resolveSpillBody(ctx context.Context, refJSON []byte) (json.Ra
 	if err != nil {
 		return nil, fmt.Errorf("read spill body: %w", err)
 	}
+	// Verify the fetched bytes against the sha256 recorded on the
+	// traffic_event when the body was spilled. A mismatch means the at-rest blob
+	// was tampered with (e.g. a cross-node overwrite) — refuse to serve a forged
+	// body as the genuine captured request/response, so the forensic/compliance
+	// record can never present fabricated evidence as authentic.
+	if ref.SHA256 != "" {
+		sum := sha256.Sum256(body)
+		if got := hex.EncodeToString(sum[:]); got != strings.ToLower(ref.SHA256) {
+			return nil, fmt.Errorf("spill body integrity check failed (sha256 %s != recorded %s): blob may have been tampered with", got, ref.SHA256)
+		}
+	}
 	if isJSONContentType(ref.ContentType) && json.Valid(body) {
 		return json.RawMessage(body), nil
 	}
@@ -342,17 +355,14 @@ func isJSONContentType(ct string) bool {
 func parseAdminAuditParams(c echo.Context) trafficstore.AdminAuditLogListParams {
 	pg := parsePagination(c)
 	params := trafficstore.AdminAuditLogListParams{
-		ActorID:         c.QueryParam("actorId"),
-		ActorLabel:      c.QueryParam("actorLabel"),
-		ActorRole:       c.QueryParam("actorRole"),
-		Action:          c.QueryParam("action"),
-		EntityType:      c.QueryParam("entityType"),
-		NexusRequestID:  c.QueryParam("nexusRequestId"),
-		ClientRequestID: c.QueryParam("clientRequestId"),
-		ClientUserID:    c.QueryParam("clientUserId"),
-		ClientSessionID: c.QueryParam("clientSessionId"),
-		Limit:           pg.Limit,
-		Offset:          pg.Offset,
+		ActorID:        c.QueryParam("actorId"),
+		ActorLabel:     c.QueryParam("actorLabel"),
+		ActorRole:      c.QueryParam("actorRole"),
+		Action:         c.QueryParam("action"),
+		EntityType:     c.QueryParam("entityType"),
+		NexusRequestID: c.QueryParam("nexusRequestId"),
+		Limit:          pg.Limit,
+		Offset:         pg.Offset,
 	}
 	if v := c.QueryParam("startTime"); v != "" {
 		if t, ok := parseRFC3339Flexible(v); ok {

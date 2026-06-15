@@ -14,17 +14,16 @@ import (
 // AIGuardConfig mirrors the ai_guard_config table row with idiomatic Go
 // field names + JSON tags for API transport.
 type AIGuardConfig struct {
-	ID                   string         `json:"id"`
-	BackendMode          string         `json:"backendMode"`
-	ProviderID           *string        `json:"providerId,omitempty"`
-	ModelID              *string        `json:"modelId,omitempty"`
-	ExternalURL          *string        `json:"externalUrl,omitempty"`
-	ExternalCredentialID *string        `json:"externalCredentialId,omitempty"`
-	CustomHeaders        map[string]any `json:"customHeaders,omitempty"`
-	PromptTemplate       string         `json:"promptTemplate"`
-	TimeoutMs            int            `json:"timeoutMs"`
-	CacheTTLSeconds      int            `json:"cacheTtlSeconds"`
-	BackendFingerprint   string         `json:"backendFingerprint"`
+	ID                 string         `json:"id"`
+	BackendMode        string         `json:"backendMode"`
+	ProviderID         *string        `json:"providerId,omitempty"`
+	ModelID            *string        `json:"modelId,omitempty"`
+	ExternalURL        *string        `json:"externalUrl,omitempty"`
+	CustomHeaders      map[string]any `json:"customHeaders,omitempty"`
+	PromptTemplate     string         `json:"promptTemplate"`
+	TimeoutMs          int            `json:"timeoutMs"`
+	CacheTTLSeconds    int            `json:"cacheTtlSeconds"`
+	BackendFingerprint string         `json:"backendFingerprint"`
 	// InputStrategy controls which portion of the conversation is
 	// sent to the classifier. One of: last_user, system_plus_last_user,
 	// recent_turns, head_plus_tail, full_truncated. Defaults to
@@ -74,7 +73,7 @@ func NewAIGuardStoreWithPgxPool(pool PgxPool) *AIGuardStore {
 func (s *AIGuardStore) Load(ctx context.Context) (*AIGuardConfig, error) {
 	const q = `
 		SELECT id, backend_mode, provider_id, model_id, external_url,
-		       external_credential_id, custom_headers, prompt_template,
+		       custom_headers, prompt_template,
 		       timeout_ms, cache_ttl_seconds, backend_fingerprint,
 		       input_strategy, model_context_limit
 		FROM ai_guard_config WHERE id = 'singleton'`
@@ -82,7 +81,7 @@ func (s *AIGuardStore) Load(ctx context.Context) (*AIGuardConfig, error) {
 	var headersJSON []byte
 	err := s.pool.QueryRow(ctx, q).Scan(
 		&cfg.ID, &cfg.BackendMode, &cfg.ProviderID, &cfg.ModelID, &cfg.ExternalURL,
-		&cfg.ExternalCredentialID, &headersJSON, &cfg.PromptTemplate,
+		&headersJSON, &cfg.PromptTemplate,
 		&cfg.TimeoutMs, &cfg.CacheTTLSeconds, &cfg.BackendFingerprint,
 		&cfg.InputStrategy, &cfg.ModelContextLimit,
 	)
@@ -137,16 +136,15 @@ func (s *AIGuardStore) Save(ctx context.Context, cfg *AIGuardConfig) error {
 	const q = `
 		INSERT INTO ai_guard_config (
 			id, backend_mode, provider_id, model_id, external_url,
-			external_credential_id, custom_headers, prompt_template,
+			custom_headers, prompt_template,
 			timeout_ms, cache_ttl_seconds, backend_fingerprint,
 			input_strategy, model_context_limit, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW())
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			backend_mode = EXCLUDED.backend_mode,
 			provider_id = EXCLUDED.provider_id,
 			model_id = EXCLUDED.model_id,
 			external_url = EXCLUDED.external_url,
-			external_credential_id = EXCLUDED.external_credential_id,
 			custom_headers = EXCLUDED.custom_headers,
 			prompt_template = EXCLUDED.prompt_template,
 			timeout_ms = EXCLUDED.timeout_ms,
@@ -157,7 +155,7 @@ func (s *AIGuardStore) Save(ctx context.Context, cfg *AIGuardConfig) error {
 			updated_at = NOW()`
 	_, err = s.pool.Exec(ctx, q,
 		cfg.ID, cfg.BackendMode, cfg.ProviderID, cfg.ModelID, cfg.ExternalURL,
-		cfg.ExternalCredentialID, headersJSON, cfg.PromptTemplate,
+		headersJSON, cfg.PromptTemplate,
 		cfg.TimeoutMs, cfg.CacheTTLSeconds, cfg.BackendFingerprint,
 		cfg.InputStrategy, cfg.ModelContextLimit,
 	)

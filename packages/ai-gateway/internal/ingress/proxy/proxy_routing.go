@@ -52,14 +52,19 @@ func (h *Handler) writeAuthError(w http.ResponseWriter, rec *audit.Record, err e
 
 // checkRateLimit checks per-key rate limits. Sets Retry-After header on rejection.
 //
+// The bucket is keyed on vkMeta.ID — the globally-unique VirtualKey id —
+// NOT vkMeta.Name. VirtualKey.name has no uniqueness constraint, so two
+// tenants that happen to pick the same display label would otherwise share
+// one Redis bucket (`nexus:rl:<name>`) and exhaust each other's budget.
+//
 // /v1/estimate compare requests use a dedicated per-VK bucket
-// (checkCompareRateLimit, keyed by vkName + ":compare") so estimation
+// (checkCompareRateLimit, keyed by the VK id + ":compare") so estimation
 // traffic cannot exhaust the real-call quota and vice versa.
 func (h *Handler) checkRateLimit(w http.ResponseWriter, vkMeta *vkauth.VKMeta) error {
 	if vkMeta.RateLimitRpm == nil || h.deps.RateLimiter == nil {
 		return nil
 	}
-	allowed, retryAfter := h.deps.RateLimiter.Allow(vkMeta.Name, *vkMeta.RateLimitRpm, 60_000)
+	allowed, retryAfter := h.deps.RateLimiter.Allow(vkMeta.ID, *vkMeta.RateLimitRpm, 60_000)
 	if !allowed {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		return fmt.Errorf("rate limit exceeded")
@@ -82,7 +87,7 @@ func (h *Handler) checkCompareRateLimit(w http.ResponseWriter, vkMeta *vkauth.VK
 	if limit <= 0 {
 		return nil
 	}
-	allowed, retryAfter := h.deps.RateLimiter.Allow(vkMeta.Name+":compare", limit, 60_000)
+	allowed, retryAfter := h.deps.RateLimiter.Allow(vkMeta.ID+":compare", limit, 60_000)
 	if !allowed {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		return fmt.Errorf("compare-endpoint rate limit exceeded")
@@ -183,15 +188,9 @@ func parseEmbeddingRequest(body []byte) *routingcore.EmbeddingRequestParams {
 	}
 	req.InputType = canonicalext.Get(body, "cohere", "input_type").String()
 	req.TaskType = canonicalext.Get(body, "gemini", "taskType").String()
-	// BatchSize: input is either a string (single = 1) or array (len).
-	if in := gjson.GetBytes(body, "input"); in.IsArray() {
-		req.BatchSize = int(in.Get("#").Int())
-		if req.BatchSize == 0 {
-			req.BatchSize = 1
-		}
-	} else {
-		req.BatchSize = 1
-	}
+	// BatchSize: single string / single token-id sequence = 1; an array of
+	// strings or an array of token-id sequences = its length.
+	req.BatchSize = embeddingBatchSize(gjson.GetBytes(body, "input"))
 	return req
 }
 
@@ -232,6 +231,51 @@ func estimateTokens(body []byte) int64 {
 	return est
 }
 
+// quotaHasCostLimit reports whether any level in the decision carries an
+// enforced cost limit (Engine.Check stamps HasLimit on every level that
+// resolved a positive cost cap). Used by the unpriced-model guard
+// to fail closed only when a cost quota actually applies.
+func quotaHasCostLimit(decision *quota.Decision) bool {
+	if decision == nil {
+		return false
+	}
+	for _, lvl := range decision.Levels {
+		if lvl.HasLimit {
+			return true
+		}
+	}
+	return false
+}
+
+// quotaDowngradeBudget returns, in USD, the remaining headroom under the
+// tightest enforced cap in the decision — the maximum spend a downgraded
+// model may incur while still satisfying EVERY level's cost cap. Levels
+// without a limit are ignored; a level already at/over its cap contributes
+// 0 (forcing selection of the cheapest available model). Returns 0 when no
+// level carries a limit.
+func quotaDowngradeBudget(decision *quota.Decision) float64 {
+	if decision == nil {
+		return 0
+	}
+	budgetCents := int64(-1)
+	for _, lvl := range decision.Levels {
+		if !lvl.HasLimit {
+			continue
+		}
+		remaining := lvl.LimitCents - lvl.CurrentCents
+		if remaining < 0 {
+			remaining = 0
+		}
+		if budgetCents < 0 || remaining < budgetCents {
+			budgetCents = remaining
+		}
+	}
+	if budgetCents < 0 {
+		budgetCents = 0
+	}
+	return float64(budgetCents) / 100
+}
+
 // checkQuota performs quota enforcement and downgrade logic via the Engine.
 // Returns pricing info and optional Decision.
 // Sets rec.StatusCode and writes a response if quota is rejected (caller must
@@ -246,19 +290,56 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 
 	firstTarget := result.Targets[0]
 	var quotaInPrice, quotaOutPrice float64
+	// modelPriced tracks whether the routed model has a pricing row at all.
+	// We distinguish "unpriced" (no price set — InputPricePM and
+	// OutputPricePM both nil) from "free" (price explicitly 0): an unpriced
+	// model estimates $0 and silently bypasses every cost cap,
+	// whereas a free model should be allowed. Defaults to true so a missing
+	// Models dependency or a transient lookup error fails OPEN (consistent
+	// with the quota subsystem's fail-open posture) rather than rejecting
+	// every request.
+	modelPriced := true
 	if h.deps.Models != nil {
-		qModel, _ := h.deps.Models.GetModel(r.Context(), firstTarget.ModelID)
-		if qModel != nil {
-			if qModel.InputPricePM != nil {
-				quotaInPrice = *qModel.InputPricePM
-			}
-			if qModel.OutputPricePM != nil {
-				quotaOutPrice = *qModel.OutputPricePM
+		qModel, qErr := h.deps.Models.GetModel(r.Context(), firstTarget.ModelID)
+		if qErr == nil {
+			modelPriced = qModel != nil && (qModel.InputPricePM != nil || qModel.OutputPricePM != nil)
+			if qModel != nil {
+				if qModel.InputPricePM != nil {
+					quotaInPrice = *qModel.InputPricePM
+				}
+				if qModel.OutputPricePM != nil {
+					quotaOutPrice = *qModel.OutputPricePM
+				}
 			}
 		}
 	}
 
+	// When the routed model has no price row configured, the
+	// estimated cost lands at $0 indistinguishably from a free model or a
+	// failed request. Stamp metadata.cost.unpriced=true here — the only
+	// place with the nil-vs-explicit-0 price distinction — so cost surfaces
+	// can show "$0 because no price is set" rather than silently reporting
+	// no spend. Independent of token count and of whether a cost cap
+	// applies; a model priced at 0 (genuinely free) is NOT flagged.
+	if !modelPriced {
+		rec.Metadata = stampUnpricedCost(rec.Metadata)
+	}
+
 	parsed := gjson.ParseBytes(body)
+	// Output-token reservation for the quota PRE-check. This is a soft,
+	// deliberately-conservative reservation, NOT the billed amount:
+	//   - When the caller pins max_tokens we reserve exactly that (the
+	//     provider cannot exceed it), which over-reserves whenever the real
+	//     completion is shorter — the safe direction for a cost cap.
+	//   - When max_tokens is omitted we reserve a fixed 4096-token default
+	//     because the true ceiling is unknown pre-call; a real completion
+	//     longer than 4096 would be under-reserved at pre-check, but the
+	//     post-call Reconcile corrects the counter to the actual usage, so
+	//     the only window is a single in-flight request.
+	// Combined with the rune/3 input heuristic in estimateTokens, the
+	// pre-check is an approximation; the authoritative cost is always the
+	// reconciled actual usage. See §6 of
+	// docs/developers/architecture/cross-cutting/safety/quota-architecture.md.
 	maxTokens := parsed.Get("max_tokens").Int()
 	if maxTokens <= 0 {
 		maxTokens = 4096
@@ -274,6 +355,23 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 	chain := quota.BuildCheckChain(vkMeta, h.deps.QuotaEngine.OrgParents())
 	decision := h.deps.QuotaEngine.Check(r.Context(), chain, estimate, vkMeta)
 
+	// An unpriced model estimates $0, so the pre-check never trips
+	// and reconcile adds nothing — the model bypasses every cost cap with no
+	// signal. When a cost limit is actually enforced for this caller, fail
+	// closed instead of serving unaccounted spend. Free models (price set to
+	// 0) are unaffected — only a missing price row triggers this.
+	if !modelPriced && quotaHasCostLimit(decision) {
+		logger := h.deps.Logger.With("model", firstTarget.ModelID, "vk", vkMeta.ID)
+		logger.Warn("quota: routed model has no price configured; rejecting under an active cost quota")
+		// 503, not 429: this is a server-side misconfiguration (a missing price
+		// row the operator must add), not the caller exceeding a rate/quota they
+		// could back off from — a 429 would mislead the client into retrying.
+		h.writeDetailedErr(w, rec, http.StatusServiceUnavailable, "QUOTA_MODEL_UNPRICED",
+			"routed model has no price configured; cost quota cannot be enforced",
+			"Ask an admin to set this model's pricing before it can be used under a cost quota")
+		return quotaInPrice, quotaOutPrice, decision
+	}
+
 	if !decision.Allowed {
 		if decision.Action == "reject" {
 			h.writeDetailedErr(w, rec, http.StatusTooManyRequests, "QUOTA_EXCEEDED",
@@ -288,11 +386,29 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 			storePricing, pErr := h.deps.Models.FetchModelPricing(r.Context(), modelIDs)
 			if pErr == nil {
 				pricing := quota.TargetPricingFromStore(storePricing)
-				// Use a budget based on remaining estimated cost.
-				idx := quota.SelectCheapestIndex(pricing, estimate, estimate.EstimatedCost()*0.5)
+				// The downgrade budget is the remaining headroom under
+				// the tightest enforced cap — NOT an arbitrary 0.5×estimate
+				// (which could pick a model that still blows the cap, or reject
+				// when a cheaper one would fit). A downgraded model must fit
+				// beneath EVERY enforced level, so use the minimum of
+				// (LimitCents-CurrentCents) across all levels that carry a limit.
+				budget := quotaDowngradeBudget(decision)
+				idx := quota.SelectCheapestIndex(pricing, estimate, budget)
 				if idx >= 0 && idx < len(result.Targets) {
 					selected := result.Targets[idx]
 					result.Targets = []routingcore.RoutingTarget{selected}
+					// Re-resolve the quota prices from the model we
+					// actually downgraded TO. Without this, Reconcile increments
+					// the quota counter and rec.EstimatedCostUsd uses the
+					// ORIGINAL (more expensive) model's price → over-throttle +
+					// overstated billed cost that never self-corrects.
+					for _, tp := range pricing {
+						if tp.ModelID == selected.ModelID {
+							quotaInPrice = tp.InputPricePM
+							quotaOutPrice = tp.OutputPricePM
+							break
+						}
+					}
 					w.Header().Set("X-Nexus-Quota-Downgrade", "true")
 					w.Header().Set("X-Nexus-Quota-Original-Model", requestedModel)
 					decision.Allowed = true // Allow with downgraded model.

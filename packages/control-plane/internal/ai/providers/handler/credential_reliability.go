@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
@@ -60,6 +61,7 @@ func (h *Handler) ProbeCredential(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, errJSON("Failed to build probe request: "+err.Error(), "bad_gateway", "PROBE_BUILD"))
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.proxy.AIGatewayInternalToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -133,9 +135,14 @@ func (h *Handler) UpdateCredentialReliabilityOverrides(c echo.Context) error {
 	}
 
 	// Tell the AI Gateway to invalidate its credentials cache so the new
-	// override flows through on the next attempt without a restart.
+	// override flows through on the next attempt without a restart. Fail
+	// loud: this rides the credentials key, so a dropped push leaves the
+	// gateway enforcing the old per-credential reliability override.
 	if h.hub != nil {
-		h.hub.InvalidateConfig(ctx, "ai-gateway", "credentials")
+		if err := h.hub.InvalidateConfigE(ctx, "ai-gateway", "credentials"); err != nil {
+			h.logger.Error("set reliability overrides: hub invalidate failed", "credentialId", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceCredential, iam.VerbUpdate)

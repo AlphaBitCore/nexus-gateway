@@ -40,12 +40,23 @@ type CatBLoader interface {
 // through to the legacy thing_config_template.state path unchanged.
 type CatBRegistry struct {
 	mu      sync.RWMutex
-	loaders map[string]CatBLoader
+	loaders map[registryKey]CatBLoader
+}
+
+// registryKey is the composite (thingType, configKey) lookup key for the
+// loader map. A struct key is used rather than a delimiter-joined string so
+// that no choice of delimiter can ever collide: with string concatenation
+// (`thingType+"|"+configKey`) the pair ("a", "b|c") and ("a|b", "c") map to
+// the same key. A struct key compares each field independently and is
+// collision-free for any field values.
+type registryKey struct {
+	thingType string
+	configKey string
 }
 
 // NewCatBRegistry constructs an empty registry.
 func NewCatBRegistry() *CatBRegistry {
-	return &CatBRegistry{loaders: make(map[string]CatBLoader)}
+	return &CatBRegistry{loaders: make(map[registryKey]CatBLoader)}
 }
 
 // Register stores a loader under the (thingType, configKey) key. Later
@@ -60,9 +71,9 @@ func (r *CatBRegistry) Register(thingType, configKey string, l CatBLoader) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.loaders == nil {
-		r.loaders = make(map[string]CatBLoader)
+		r.loaders = make(map[registryKey]CatBLoader)
 	}
-	r.loaders[registryKey(thingType, configKey)] = l
+	r.loaders[registryKey{thingType: thingType, configKey: configKey}] = l
 }
 
 // Lookup returns (loader, true) when a loader is registered for the
@@ -74,10 +85,6 @@ func (r *CatBRegistry) Lookup(thingType, configKey string) (CatBLoader, bool) {
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	l, ok := r.loaders[registryKey(thingType, configKey)]
+	l, ok := r.loaders[registryKey{thingType: thingType, configKey: configKey}]
 	return l, ok
-}
-
-func registryKey(thingType, configKey string) string {
-	return thingType + "|" + configKey
 }

@@ -24,6 +24,8 @@
 package proxy
 
 import (
+	"encoding/base64"
+
 	"github.com/tidwall/gjson"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/inputstaging"
@@ -50,14 +52,8 @@ func preStampEmbeddingRequestMeta(existing any, reqBody []byte, crossFormatRouti
 		emb["requested_dimension"] = int(d.Int())
 	}
 
-	// batch_size: 1 for single-string input, N for array input.
-	batchSize := 1
-	if in := gjson.GetBytes(reqBody, "input"); in.IsArray() {
-		if n := int(in.Get("#").Int()); n > 0 {
-			batchSize = n
-		}
-	}
-	emb["batch_size"] = batchSize
+	// batch_size: 1 for single input, N for a batch of N inputs.
+	emb["batch_size"] = embeddingBatchSize(gjson.GetBytes(reqBody, "input"))
 
 	// estimated_prompt_tokens: a local heuristic token count over the input
 	// text(s). Used as the cost/usage fallback when the upstream embeddings
@@ -97,27 +93,84 @@ func preStampEmbeddingRequestMeta(existing any, reqBody []byte, crossFormatRouti
 //
 //	{"data":[{"embedding":[…], "object":"embedding", "index":0}], …}
 //
-// `data.0.embedding.#` is a gjson length query that returns the array
-// length without allocating the full vector. If the response carries no
-// embedding vector (empty data array or parse failure) we leave dimension
-// absent and add a warning key so dashboards can surface the anomaly.
+// The vector may arrive in two shapes depending on encoding_format:
+//   - "float" (default): `data[0].embedding` is a JSON array; the length
+//     comes from the `data.0.embedding.#` gjson count query (no full-vector
+//     allocation).
+//   - "base64": `data[0].embedding` is a base64 STRING of packed float32s
+//     (OpenAI/Azure). `.#` returns 0 for a string, so the length is decoded
+//     from the base64 byte count (4 bytes per float32). Without this the
+//     valid base64 path was mis-stamped with warning="empty_data_array".
+//
+// If the response carries no usable vector (genuinely empty data array,
+// undecodable base64, or parse failure) we leave dimension absent and add a
+// warning key so dashboards can surface the anomaly.
 //
 // Returns the updated metadata value (assign back to rec.Metadata).
 func updateEmbeddingDimension(existing any, respBody []byte) any {
 	md := mergeIntoMetadataMap(existing)
 	emb := embeddingSubmap(md)
 
-	dim := int(gjson.GetBytes(respBody, "data.0.embedding.#").Int())
-	if dim > 0 {
+	if dim := embeddingResponseDimension(respBody); dim > 0 {
 		emb["dimension"] = dim
 	} else {
-		// Empty data array or parse failure — stamp a warning so
-		// dashboards can surface the anomaly.
+		// Empty data array, undecodable base64, or parse failure — stamp a
+		// warning so dashboards can surface the anomaly.
 		emb["warning"] = "empty_data_array"
 	}
 
 	md["embedding"] = emb
 	return md
+}
+
+// embeddingResponseDimension returns the vector length of the first
+// embedding in a canonical OpenAI-shape embeddings response, handling both
+// the float-array and base64-string encodings. Returns 0 when no usable
+// vector is present.
+func embeddingResponseDimension(respBody []byte) int {
+	v := gjson.GetBytes(respBody, "data.0.embedding")
+	switch {
+	case v.IsArray():
+		return len(v.Array())
+	case v.Type == gjson.String && v.Str != "":
+		// base64-packed float32 vector: 4 bytes per component. OpenAI emits
+		// padded standard base64; tolerate the unpadded raw variant too.
+		raw, err := base64.StdEncoding.DecodeString(v.Str)
+		if err != nil {
+			raw, err = base64.RawStdEncoding.DecodeString(v.Str)
+		}
+		if err != nil || len(raw) < 4 {
+			return 0
+		}
+		return len(raw) / 4
+	default:
+		return 0
+	}
+}
+
+// embeddingBatchSize returns the number of distinct inputs in an OpenAI-shape
+// embeddings `input` field. The wire shape is overloaded:
+//
+//	"text"               → 1   (single string)
+//	["a","b"]            → 2   (batch of strings)
+//	[1,2,3]              → 1   (ONE token-id sequence — NOT a batch of 3)
+//	[[1,2],[3,4]]        → 2   (batch of token-id sequences)
+//
+// A top-level array whose first element is a number is therefore a single
+// token-id sequence and must count as batch=1, otherwise it is false-rejected
+// against a small MaxBatchSize and mis-stamped in the audit row.
+func embeddingBatchSize(in gjson.Result) int {
+	if !in.IsArray() {
+		return 1
+	}
+	arr := in.Array()
+	if len(arr) == 0 {
+		return 1
+	}
+	if arr[0].Type == gjson.Number {
+		return 1
+	}
+	return len(arr)
 }
 
 // mergeIntoMetadataMap coerces an arbitrary existing metadata value into

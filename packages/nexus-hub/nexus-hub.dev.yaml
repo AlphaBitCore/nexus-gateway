@@ -107,6 +107,8 @@ hub:
   advertiseAddr: "127.0.0.1:3060"
   allowedOrigins:
     - "http://localhost:3000"
+  # Local development: accept localhost WebSocket origins. Never set true in prod.
+  devMode: true
 
 log:
   # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the

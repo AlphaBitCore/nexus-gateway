@@ -8,7 +8,9 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -107,6 +109,7 @@ func (h *Handler) CreateUserVirtualKey(c echo.Context) error {
 	vk, err := h.vks.CreateVirtualKey(c.Request().Context(), vkstore.CreateVirtualKeyParams{
 		Name:                        body.Name,
 		KeyHash:                     keyHash,
+		KeyVersion:                  auth.CurrentKeyVersion(),
 		KeyPrefix:                   keyPrefix,
 		SourceApp:                   body.SourceApp,
 		Enabled:                     enabled,
@@ -196,8 +199,11 @@ func (h *Handler) UpdateUserVirtualKey(c echo.Context) error {
 	// mirrors the admin path (admin_virtual_keys.go::UpdateVirtualKey).
 	// Without this, the personal-self-service edit (disable, change
 	// allowedModels, change rate limit) doesn't take effect until the
-	// gateway VK cache TTL elapses or the gateway restarts.
-	h.notifyVKInvalidate(c, existing.KeyHash)
+	// gateway VK cache TTL elapses or the gateway restarts. Fail loud so
+	// the user retries instead of believing a disable already took effect.
+	if err := h.notifyVKInvalidate(c, existing.KeyHash); err != nil {
+		return hub.RespondPropagationFailure(c, err)
+	}
 
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbUpdate)
 	ae.EntityID = updated.Name
@@ -231,7 +237,9 @@ func (h *Handler) DeleteUserVirtualKey(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
 	}
 
-	h.notifyVKInvalidate(c, existing.KeyHash)
+	if err := h.notifyVKInvalidate(c, existing.KeyHash); err != nil {
+		return hub.RespondPropagationFailure(c, err)
+	}
 
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbDelete)
 	ae.EntityID = existing.Name
@@ -262,15 +270,17 @@ func (h *Handler) RegenerateUserVirtualKey(c echo.Context) error {
 		h.logger.Error("rand.Read for regenerated user virtual key", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to regenerate virtual key", "server_error", ""))
 	}
-	if err := h.vks.RegenerateVirtualKeyHash(c.Request().Context(), id, keyHash, keyPrefix); err != nil {
+	if err := h.vks.RegenerateVirtualKeyHash(c.Request().Context(), id, keyHash, auth.CurrentKeyVersion(), keyPrefix); err != nil {
 		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
 	}
 
 	// Invalidate the OLD keyHash — captured pre-rotate above — so the
 	// gateway stops accepting the previous secret immediately. Without
 	// this the old key and the new key would both authenticate for the
-	// duration of the gateway's VK LRU window.
-	h.notifyVKInvalidate(c, vk.KeyHash)
+	// duration of the gateway's VK LRU window. Fail loud on push failure.
+	if err := h.notifyVKInvalidate(c, vk.KeyHash); err != nil {
+		return hub.RespondPropagationFailure(c, err)
+	}
 
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbUpdate)
 	ae.EntityID = id

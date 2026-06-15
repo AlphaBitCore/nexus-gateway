@@ -547,9 +547,9 @@ func StringifyContent(content gjson.Result) string {
 // the Tier-1 normalizer emits one assistant message per candidate, and
 // the shared projector turns each assistant message into a choices[]
 // entry with its own finish_reason.
-func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
+func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint == typology.WireShapeGeminiEmbedContent || endpoint == typology.WireShapeVertexEmbedContent {
-		return decodeGeminiEmbeddingResponse(nativeBody)
+		return decodeGeminiEmbeddingResponse(nativeBody, reqCtx.RequestBody)
 	}
 	if endpoint != typology.WireShapeGeminiGenerateContent && endpoint != typology.WireShapeVertexGenerateContent {
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil

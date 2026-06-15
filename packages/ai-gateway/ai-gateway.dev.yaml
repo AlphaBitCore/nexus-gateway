@@ -13,10 +13,11 @@ server:
   advertiseHost: "127.0.0.1"
   # Caps reading the request body. Upper bound on prompt upload time.
   readTimeout: "30s"
-  # Caps writing the response. Streaming (SSE) requests override this
-  # per-response to upstream.timeoutSec + 30s (see proxy.go SetWriteDeadline),
-  # so this only really binds non-streaming responses — bump it if a
-  # non-streaming upstream + headers takes longer than this.
+  # Caps writing the response. Both proxy paths override this per-response so
+  # long inference is governed by the upstream budget, not this flat value:
+  # streaming resets the deadline on every chunk (upstream.streamIdleTimeoutSec),
+  # and non-streaming extends it to upstream.timeoutSec. This value only binds
+  # responses that never hit the proxy override path.
   writeTimeout: "360s"
 
 database:
@@ -95,7 +96,7 @@ cache:
   # AI_GATEWAY_CACHE_TTL (any time.ParseDuration value). Streaming and
   # requests carrying x-nexus-aigw-no-cache always bypass.
   #
-  # Shadow-overridable via Hub admin UI (config_key: prompt_cache) — the
+  # Shadow-overridable via Hub admin UI (config_key: cache) — the
   # response-cache normaliser config (rule enable/disable, TTL strategy)
   # is live-tunable; the raw YAML enabled/ttl/prefix values here remain
   # the boot defaults. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
@@ -144,32 +145,30 @@ observability:
 # not admin business policy). specutil.Configure is called once at boot
 # from this block; there is no runtime override path.
 upstream:
-  # Per-call budget. The underlying http.Client.Timeout is set to
-  # timeoutSec + 5s so the per-request context deadline fires first
-  # and surfaces a clean error path.
-  timeoutSec: 300
+  # Request budget. Non-streaming: caps the whole exchange. Streaming: caps
+  # only time-to-first-byte (think time before the first token); after that
+  # streamIdleTimeoutSec governs. Raise for long-reasoning models.
+  timeoutSec: 600
+  # Streaming silence budget — the downstream write deadline resets on every
+  # chunk, so an active stream runs unbounded and only a stalled upstream is
+  # cut after this much quiet.
+  streamIdleTimeoutSec: 120
   # TCP connect budget per Dial.
   dialTimeoutSec: 15
   # TLS handshake budget per Dial.
   tlsHandshakeTimeoutSec: 10
   # TCP keep-alive interval on dialed connections.
   keepAliveSec: 30
-  # How long an idle pooled connection survives before being closed.
-  # Pumped from 90 → 300 (2026-05-19) so warm TLS connections stay
-  # available longer under bursty-but-spaced perf-test workloads;
-  # avoids paying the ~300ms OpenAI TLS handshake on every burst.
+  # Idle pooled connections survive longer so warm TLS connections stay
+  # available under bursty workloads, avoiding the ~300ms OpenAI TLS
+  # handshake on every burst.
   idleConnTimeoutSec: 300
-  # Global pool cap. Bumped 200 → 2000 (2026-05-19) for high-concurrency
-  # perf testing: a single OpenAI account can sustain hundreds of
-  # in-flight HTTP/1.1 streams; the prior 200 cap silently throttled
-  # the upstream client into opening fresh dials at the edge of the
-  # pool, adding hundreds of ms per request. 2000 is comfortably above
-  # any realistic burst and costs nothing when idle.
+  # Global pool cap, sized so a single account sustaining hundreds of
+  # in-flight streams never forces fresh dials at the pool edge. Comfortably
+  # above any realistic burst; costs nothing when idle.
   maxIdleConns: 2000
-  # Per-host pool cap. Bumped 50 → 500 (2026-05-19). OpenAI is the
-  # dominant target, so 50 was the effective ceiling for parallel
-  # OpenAI calls; 500 matches typical Go transport advice for
-  # high-concurrency single-host workloads.
+  # Per-host pool cap. OpenAI is the dominant target; 500 matches Go
+  # transport advice for high-concurrency single-host workloads.
   maxIdleConnsPerHost: 500
 
 # Named HTTP clients ai-gateway constructs at startup that are NOT the

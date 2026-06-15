@@ -9,6 +9,7 @@ import (
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/voyage"
+	"github.com/tidwall/gjson"
 )
 
 func TestEmbedRequestToCanonical_StringInput(t *testing.T) {
@@ -103,6 +104,37 @@ func TestEmbedRequestToCanonical_Extensions(t *testing.T) {
 	}
 	if !strings.Contains(s, "truncation") {
 		t.Errorf("truncation not in canonical: %s", s)
+	}
+}
+
+func TestEmbedRequestToCanonical_TruncationFalse_Stamped(t *testing.T) {
+	// F-0221: the truncation guard must stamp BOTH true and false. The
+	// false case is the one the old boolean-precedence smell relied on
+	// gjson-Null to handle; assert it explicitly round-trips false.
+	body := []byte(`{"model":"voyage-3","input":"hello","truncation":false}`)
+	canonical, err := voyage.EmbedRequestToCanonical(body, "")
+	if err != nil {
+		t.Fatalf("EmbedRequestToCanonical: %v", err)
+	}
+	tr := gjson.GetBytes(canonical, "nexus.ext.voyage.truncation")
+	if !tr.Exists() {
+		t.Fatalf("truncation extension missing: %s", canonical)
+	}
+	if tr.Type != gjson.False {
+		t.Errorf("truncation = %v, want false", tr.Raw)
+	}
+}
+
+func TestEmbedRequestToCanonical_TruncationAbsent_NotStamped(t *testing.T) {
+	// F-0221: when truncation is omitted entirely, no extension is stamped
+	// (the guard must not fire on a missing/Null field).
+	body := []byte(`{"model":"voyage-3","input":"hello"}`)
+	canonical, err := voyage.EmbedRequestToCanonical(body, "")
+	if err != nil {
+		t.Fatalf("EmbedRequestToCanonical: %v", err)
+	}
+	if tr := gjson.GetBytes(canonical, "nexus.ext.voyage.truncation"); tr.Exists() {
+		t.Errorf("truncation extension must be absent when omitted, got: %s", tr.Raw)
 	}
 }
 

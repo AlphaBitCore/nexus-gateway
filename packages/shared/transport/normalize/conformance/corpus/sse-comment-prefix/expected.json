@@ -1,0 +1,87 @@
+{
+  "kind": "http-sse",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "sseFrames": [
+        {
+          "event": "message",
+          "data": {
+            "$schema": "/mediawiki/recentchange/1.0.0",
+            "bot": true,
+            "comment": "补救1个来源，并将0个来源标记为失效。) #IABot (v2.0.9.5) ([[User:KCUSCBZMOGYNMYBGBBFRQQIZCGYNKGOC|KCUSCBZMOGYNMYBGBBFRQQIZCGYNKGOC]] - 29385",
+            "id": 199334963,
+            "length": {
+              "new": 1436,
+              "old": 1297
+            },
+            "meta": {
+              "domain": "zh.wikipedia.org",
+              "dt": "2026-06-12T13:52:35.978Z",
+              "id": "502dcebc-a8d0-411f-b9ac-050908062ee2",
+              "offset": 6235861342,
+              "partition": 0,
+              "request_id": "ec51e1c5-c7e9-4570-9d4b-bb8b24cbf386",
+              "stream": "mediawiki.recentchange",
+              "topic": "eqiad.mediawiki.recentchange",
+              "uri": "https://zh.wikipedia.org/wiki/%E5%8D%A1%E7%88%BE%C2%B7%E7%B4%84%E7%B4%8D%E6%96%AF%C2%B7%E6%B4%9B%E5%A4%AB%C2%B7%E9%98%BF%E7%88%BE%E5%A7%86%E5%A5%8E%E6%96%AF%E7%89%B9"
+            },
+            "minor": false,
+            "namespace": 0,
+            "notify_url": "https://zh.wikipedia.org/w/index.php?diff=93041376\u0026oldid=92662959\u0026rcid=199334963",
+            "parsedcomment": "补救1个来源，并将0个来源标记为失效。) #IABot (v2.0.9.5) (\u003ca href=\"/wiki/User:KCUSCBZMOGYNMYBGBBFRQQIZCGYNKGOC\" title=\"User:KCUSCBZMOGYNMYBGBBFRQQIZCGYNKGOC\"\u003eKCUSCBZMOGYNMYBGBBFRQQIZCGYNKGOC\u003c/a\u003e - 29385",
+            "patrolled": true,
+            "revision": {
+              "new": 93041376,
+              "old": 92662959
+            },
+            "server_name": "zh.wikipedia.org",
+            "server_script_path": "/w",
+            "server_url": "https://zh.wikipedia.org",
+            "timestamp": 1781272355,
+            "title": "卡爾·約納斯·洛夫·阿爾姆奎斯特",
+            "title_url": "https://zh.wikipedia.org/wiki/%E5%8D%A1%E7%88%BE%C2%B7%E7%B4%84%E7%B4%8D%E6%96%AF%C2%B7%E6%B4%9B%E5%A4%AB%C2%B7%E9%98%BF%E7%88%BE%E5%A7%86%E5%A5%8E%E6%96%AF%E7%89%B9",
+            "type": "edit",
+            "user": "InternetArchiveBot",
+            "wiki": "zhwiki"
+          }
+        },
+        {
+          "event": "message",
+          "data": {
+            "$schema": "/mediawiki/recentchange/1.0.0",
+            "bot": false,
+            "comment": "[[:Про Сидорова Вову]] добавлена в категорию",
+            "id": 536573068,
+            "meta": {
+              "domain": "ru.wikipedia.org",
+              "dt": "2026-06-12T13:52:36.007Z",
+              "id": "06cc8ea3-3b50-4951-af75-e22f0d213a5d",
+              "offset": 6235861343,
+              "partition": 0,
+              "request_id": "a5676696-eb7f-4c63-9406-9726df3ccaf3",
+              "stream": "mediawiki.recentchange",
+              "topic": "eqiad.mediawiki.recentchange",
+              "uri": "https://ru.wikipedia.org/wiki/%D0%9A%D0%B0%D1%82%D0%B5%D0%B3%D0%BE%D1%80%D0%B8%D1%8F:%D0%92%D0%B8%D0%BA%D0%B8%D0%BF%D0%B5%D0%B4%D0%B8%D1%8F:%D0%A1%D1%82%D0%B0%D1%82%D1%8C%D0%B8_%D0%B1%D0%B5%D0%B7_%D1%81%D0%BD%D0%BE%D1%81%D0%BE%D0%BA"
+            },
+            "namespace": 14,
+            "notify_url": "https://ru.wikipedia.org/w/index.php?diff=153513964\u0026oldid=152545295",
+            "parsedcomment": "\u003ca href=\"/wiki/%D0%9F%D1%80%D0%BE_%D0%A1%D0%B8%D0%B4%D0%BE%D1%80%D0%BE%D0%B2%D0%B0_%D0%92%D0%BE%D0%B2%D1%83\" title=\"Про Сидорова Вову\"\u003eПро Сидорова Вову\u003c/a\u003e добавлена в категорию",
+            "server_name": "ru.wikipedia.org",
+            "server_script_path": "/w",
+            "server_url": "https://ru.wikipedia.org",
+            "timestamp": 1781272352,
+            "title": "Категория:Википедия:Статьи без сносок",
+            "title_url": "https://ru.wikipedia.org/wiki/%D0%9A%D0%B0%D1%82%D0%B5%D0%B3%D0%BE%D1%80%D0%B8%D1%8F:%D0%92%D0%B8%D0%BA%D0%B8%D0%BF%D0%B5%D0%B4%D0%B8%D1%8F:%D0%A1%D1%82%D0%B0%D1%82%D1%8C%D0%B8_%D0%B1%D0%B5%D0%B7_%D1%81%D0%BD%D0%BE%D1%81%D0%BE%D0%BA",
+            "type": "categorize",
+            "user": "SomeFancyUsername",
+            "wiki": "ruwiki"
+          }
+        }
+      ]
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

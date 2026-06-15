@@ -34,9 +34,12 @@ import (
 // Puller fetches the live bytes for a Cat B shadow key from an
 // upstream source (typically Hub via HTTP). Server-side Things receive
 // the full bytes inline on the WS shadow tick and do not need a
-// puller; the desktop Agent receives a `{needsPull: true}` stub for
-// Cat B keys and must HTTP-pull the real payload from Hub before
-// applying.
+// puller; the desktop Agent registers its Cat B keys via
+// RegisterRawPull, and the Loader HTTP-pulls the real payload from Hub
+// before applying — regardless of what bytes the WS tick carried.
+// `needsPull` is the registration-time Handler flag below, NOT a field
+// Hub stamps into the pushed state; the Loader never inspects the
+// pushed bytes for a `{needsPull: true}` marker.
 //
 // The Loader invokes the puller for every key whose Handler.NeedsPull
 // is true. Returning an error fails that single key without aborting
@@ -80,12 +83,14 @@ type Handler[V any] struct {
 	// snapshot.
 	Apply func(ctx context.Context, v V, desiredVer int64) ([]byte, error)
 
-	// NeedsPull marks the key as Cat B (pull-on-signal): the desired
-	// bytes Hub pushes are a stub `{needsPull: true}`, and the real
-	// payload must be HTTP-pulled from Hub before Apply runs. The
-	// Loader invokes its configured Puller for these keys. Server-side
+	// NeedsPull marks the key as Cat B (pull-on-signal): the WS shadow
+	// tick is treated purely as a signal — whatever desired bytes Hub
+	// pushed are DISCARDED, and the real payload is HTTP-pulled from Hub
+	// before Apply runs. The Loader invokes its configured Puller for
+	// these keys based on this flag alone; it does not look for a
+	// `{needsPull: true}` marker inside the pushed state. Server-side
 	// Things leave this false (Hub pushes full bytes inline); the
-	// desktop Agent sets it true for `policy_rules`, `hooks`,
+	// desktop Agent sets it true for `exemptions`, `hooks`,
 	// `interception_domains`, etc.
 	NeedsPull bool
 }

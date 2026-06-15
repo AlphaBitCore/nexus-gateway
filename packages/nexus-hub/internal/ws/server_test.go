@@ -56,7 +56,7 @@ func newTestServer(t *testing.T) *Server {
 	wsPool := NewPool(opsReg, logger)
 	mgr := manager.New(st, nil, nil, wsPool, "test-hub", logger)
 
-	return NewServer(wsPool, mgr, "test-hub", testServiceToken, nil, logger)
+	return NewServer(wsPool, mgr, "test-hub", testServiceToken, nil, true, logger)
 }
 
 // TestAuthenticate_RejectsTokenQueryParam verifies that the ?token= query-

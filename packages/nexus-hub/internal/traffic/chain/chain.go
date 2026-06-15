@@ -99,20 +99,17 @@ func NewHashPayload(action, actorID, entityType, entityID string) (HashPayload, 
 // avoids that whole class of bugs in VerifyChain.
 //
 // The (omitempty)-marked fields drop out of the JSON when empty so the
-// canonical hash for a row without, say, a clientSessionId is the same
+// canonical hash for a row without, say, a nexusRequestId is the same
 // whether that field is absent or empty in the payload struct.
 type HashPayload struct {
-	TimestampMs     int64           `json:"timestampMs"`
-	Action          string          `json:"action"`
-	ActorID         string          `json:"actorId"`
-	EntityType      string          `json:"entityType"`
-	EntityID        string          `json:"entityId,omitempty"`
-	BeforeState     json.RawMessage `json:"beforeState,omitempty"`
-	AfterState      json.RawMessage `json:"afterState,omitempty"`
-	NexusRequestID  string          `json:"nexusRequestId,omitempty"`
-	ClientRequestID string          `json:"clientRequestId,omitempty"`
-	ClientUserID    string          `json:"clientUserId,omitempty"`
-	ClientSessionID string          `json:"clientSessionId,omitempty"`
+	TimestampMs    int64           `json:"timestampMs"`
+	Action         string          `json:"action"`
+	ActorID        string          `json:"actorId"`
+	EntityType     string          `json:"entityType"`
+	EntityID       string          `json:"entityId,omitempty"`
+	BeforeState    json.RawMessage `json:"beforeState,omitempty"`
+	AfterState     json.RawMessage `json:"afterState,omitempty"`
+	NexusRequestID string          `json:"nexusRequestId,omitempty"`
 	// Via records the channel that initiated the mutation — "assistant" for an
 	// AI-initiated admin write performed by the web assistant, empty for a direct
 	// human/UI action. It is hashed (omitempty) so the AI-attribution marker is

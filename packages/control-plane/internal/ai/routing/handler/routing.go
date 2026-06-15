@@ -13,6 +13,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/routing/routingstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
@@ -97,6 +98,98 @@ func extractJSONFieldForUpdate(body []byte, field string) (raw json.RawMessage, 
 func extractRetryPolicyForUpdate(body []byte) (raw json.RawMessage, present bool, errMsg string) {
 	r, p := extractJSONFieldForUpdate(body, "retryPolicy")
 	return r, p, ""
+}
+
+// validStrategyTypes is the closed set of routing-rule strategy types the
+// AI Gateway resolver can dispatch. It is kept in lockstep with the
+// StrategyNode discriminated union (packages/ai-gateway/internal/routing/
+// core/types.go) and the strategies registered by RegisterAllStrategies
+// (packages/ai-gateway/internal/routing/strategies/strategy.go). A rule
+// persisted with any other strategyType would broadcast fleet-wide via
+// InvalidateConfig and then fail to resolve on every gateway, so the admin
+// write path rejects unknown values up front rather than letting them land.
+var validStrategyTypes = map[string]struct{}{
+	"single":      {},
+	"fallback":    {},
+	"loadbalance": {},
+	"conditional": {},
+	"ab_split":    {},
+	"policy":      {},
+	"smart":       {},
+}
+
+// strategyTypeList renders validStrategyTypes as a stable, comma-separated
+// string for the 400 error body so an operator sees the accepted set.
+func strategyTypeList() string {
+	ordered := []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "policy", "smart"}
+	return strings.Join(ordered, ", ")
+}
+
+// validateStrategyType rejects any strategyType outside the known set.
+// Returns ("", true) when valid; (operator-facing message, false) otherwise.
+func validateStrategyType(strategyType string) (string, bool) {
+	if _, ok := validStrategyTypes[strategyType]; !ok {
+		return fmt.Sprintf("strategyType %q is not a recognized routing strategy (allowed: %s)", strategyType, strategyTypeList()), false
+	}
+	return "", true
+}
+
+// strategyConfigShape is the structural projection of the strategy config
+// JSON the resolver unmarshals into core.StrategyNode. The CP module cannot
+// import the AI-Gateway internal package, so this mirrors the discriminated
+// union's wire shape closely enough to reject configs that the resolver
+// would later fail to parse (e.g. a JSON array, a string, or an object whose
+// strongly-typed fields carry the wrong JSON type). Fields are intentionally
+// a superset projection — anything that parses into core.StrategyNode also
+// parses into this struct.
+type strategyConfigShape struct {
+	Type             string            `json:"type"`
+	ProviderID       string            `json:"providerId"`
+	ModelID          string            `json:"modelId"`
+	Targets          []json.RawMessage `json:"targets"`
+	OnStatusCodes    []int             `json:"onStatusCodes"`
+	Algorithm        string            `json:"algorithm"`
+	WeightedTargets  []json.RawMessage `json:"weightedTargets"`
+	StickyOn         string            `json:"stickyOn"`
+	StickyTTLMs      int               `json:"stickyTtlMs"`
+	Conditions       []json.RawMessage `json:"conditions"`
+	ABTargets        []json.RawMessage `json:"abTargets"`
+	RouterProviderID string            `json:"routerProviderId"`
+	RouterModelID    string            `json:"routerModelId"`
+	MaxTokens        int               `json:"maxTokens"`
+	TimeoutMs        int               `json:"timeoutMs"`
+	AllowModelIDs    []string          `json:"allowModelIds"`
+	DenyModelIDs     []string          `json:"denyModelIds"`
+	AllowProviderIDs []string          `json:"allowProviderIds"`
+	DenyProviderIDs  []string          `json:"denyProviderIds"`
+}
+
+// validateStrategyConfig shape-checks the config JSON RawMessage against the
+// strategy node wire shape. raw == nil/empty/`null` is treated as "no config
+// supplied" and left to the caller's required-field check. A non-object JSON
+// document (array, string, number) or an object whose typed fields carry the
+// wrong JSON type is rejected with a 400, so a malformed config can never be
+// persisted and broadcast fleet-wide. Also enforces that the embedded node
+// `type` (when present) is one of the known strategy node types — the
+// resolver dispatches on this field, and an unknown value resolves to zero
+// targets on every gateway.
+//
+// Returns ("", true) when valid; (operator-facing message, false) otherwise.
+func validateStrategyConfig(raw json.RawMessage) (string, bool) {
+	s := string(raw)
+	if len(raw) == 0 || s == "null" {
+		return "", true
+	}
+	var shape strategyConfigShape
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		return fmt.Sprintf("config is not a valid strategy object: %v", err), false
+	}
+	if shape.Type != "" {
+		if _, ok := validStrategyTypes[shape.Type]; !ok {
+			return fmt.Sprintf("config.type %q is not a recognized strategy node type (allowed: %s)", shape.Type, strategyTypeList()), false
+		}
+	}
+	return "", true
 }
 
 // validateMatchConditions rejects the legacy field name "organizations" in
@@ -186,6 +279,7 @@ func (h *Handler) RoutingSimulate(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]any{"error": "Failed to build request: " + err.Error()})
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.proxy.AIGatewayInternalToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -254,6 +348,12 @@ func (h *Handler) CreateRoutingRule(c echo.Context) error {
 	if body.Name == "" || body.StrategyType == "" || body.Config == nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Missing required fields: name, strategyType, config", "validation_error", ""))
 	}
+	if msg, ok := validateStrategyType(body.StrategyType); !ok {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "strategy_type_invalid", ""))
+	}
+	if msg, ok := validateStrategyConfig(body.Config); !ok {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "strategy_config_invalid", ""))
+	}
 	if msg, ok := validateMatchConditions(body.MatchConditions); !ok {
 		return c.JSON(http.StatusUnprocessableEntity, errJSON(msg, "match_conditions_legacy_field", ""))
 	}
@@ -291,7 +391,10 @@ func (h *Handler) CreateRoutingRule(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "routing_rules")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "routing_rules"); err != nil {
+			h.logger.Error("routing rule: hub invalidate failed", "id", c.Param("id"), "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceRoutingRule, iam.VerbCreate)
@@ -336,6 +439,12 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
 	}
 
+	if body.StrategyType != nil {
+		if msg, ok := validateStrategyType(*body.StrategyType); !ok {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "strategy_type_invalid", ""))
+		}
+	}
+
 	params := routingstore.UpdateRoutingRuleParams{
 		Name:         body.Name,
 		Description:  body.Description,
@@ -345,6 +454,9 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 	}
 	if body.Config != nil {
 		raw, _ := json.Marshal(body.Config)
+		if msg, ok := validateStrategyConfig(raw); !ok {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "strategy_config_invalid", ""))
+		}
 		params.Config = raw
 	}
 	if body.MatchConditions != nil {
@@ -394,7 +506,10 @@ func (h *Handler) UpdateRoutingRule(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "routing_rules")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "routing_rules"); err != nil {
+			h.logger.Error("routing rule: hub invalidate failed", "id", c.Param("id"), "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceRoutingRule, iam.VerbUpdate)
@@ -421,7 +536,10 @@ func (h *Handler) DeleteRoutingRule(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "routing_rules")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "routing_rules"); err != nil {
+			h.logger.Error("routing rule: hub invalidate failed", "id", c.Param("id"), "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceRoutingRule, iam.VerbDelete)

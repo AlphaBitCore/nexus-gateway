@@ -27,13 +27,12 @@ type hubSpy struct {
 	invalidateCalls    []hubInvalidateCall
 	enrollmentCalls    []hub.CreateEnrollmentTokenRequest
 	forceResyncCalls   []string
-	rotateCertCalls    []string
 	notifyResponse     *hub.ConfigChangeResponse
 	enrollmentResponse *hub.CreateEnrollmentTokenResponse
 	notifyErr          error
+	invalidateErr      error
 	enrollmentErr      error
 	forceResyncErr     error
-	rotateCertErr      error
 	baseURL            string
 	token              string
 	serviceMeta        *hub.ThingServiceMeta
@@ -62,11 +61,19 @@ func (s *hubSpy) NotifyConfigChange(_ context.Context, req hub.ConfigChangeReque
 	return &hub.ConfigChangeResponse{OK: true, Version: 1, ThingsNotified: 1, ThingsOnline: 1}, nil
 }
 
-// InvalidateConfig records the call (fire-and-forget, no error return).
-func (s *hubSpy) InvalidateConfig(_ context.Context, thingType, configKey string) {
+// InvalidateConfigE records the call and returns the spy's injectable error so
+// tests can drive the fail-loud (HTTP 502) branch of security-sensitive
+// handlers wired through this aggregate spy.
+func (s *hubSpy) InvalidateConfigE(_ context.Context, thingType, configKey string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.invalidateCalls = append(s.invalidateCalls, hubInvalidateCall{ThingType: thingType, ConfigKey: configKey})
+	return s.invalidateErr
+}
+
+// InvalidateConfig records the call (fire-and-forget, no error return).
+func (s *hubSpy) InvalidateConfig(ctx context.Context, thingType, configKey string) {
+	_ = s.InvalidateConfigE(ctx, thingType, configKey)
 }
 
 // ForceResyncAll records the thingID passed to the force-resync helper so tests
@@ -76,15 +83,6 @@ func (s *hubSpy) ForceResyncAll(_ context.Context, thingID string) (map[string]a
 	defer s.mu.Unlock()
 	s.forceResyncCalls = append(s.forceResyncCalls, thingID)
 	return map[string]any{"ok": true}, s.forceResyncErr
-}
-
-// RotateAgentCert records the thingID passed to the rotate-cert helper so tests
-// can assert the admin rotate-cert handler called through to the Hub.
-func (s *hubSpy) RotateAgentCert(_ context.Context, thingID string) (map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.rotateCertCalls = append(s.rotateCertCalls, thingID)
-	return map[string]any{"ok": true}, s.rotateCertErr
 }
 
 // ListDLQ is a stub satisfying the HubNotifier surface for the DLQ admin

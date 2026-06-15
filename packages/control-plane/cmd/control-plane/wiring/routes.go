@@ -64,7 +64,7 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 	// routing, for every request). The web assistant marks its in-process self-calls
 	// via an unforgeable context value, never this header, so a copy arriving from a
 	// client is a forgery attempt — dropped here so it can never reach the audit
-	// writer or be echoed downstream (E90 I5 / #18b H1).
+	// writer or be echoed downstream.
 	e.Pre(audit.StripInitiatorHeader)
 
 	spillStore, err := spillfactory.New(cfg.Spill, d.Logger)
@@ -86,6 +86,7 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 			ComplianceProxyRuntimeURL: cfg.BFF.ComplianceProxyRuntimeURL,
 			ComplianceProxyAPIToken:   cfg.BFF.ComplianceProxyAPIToken,
 			AIGatewayURL:              cfg.BFF.AIGatewayURL,
+			AIGatewayInternalToken:    cfg.Auth.InternalServiceToken,
 		},
 		Revocation:      d.RevocationService,
 		RevocationStore: d.RevocationStore,
@@ -135,12 +136,13 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 			semanticPoison = cachehandler.NewRedisPoisonAdder(d.RedisClient)
 		}
 		adminHandler.SemanticCache = cachehandler.NewSemanticCacheHandler(cachehandler.SemanticCacheHandlerDeps{
-			Store:        configstore.NewSemanticCacheStore(d.DB.Pool),
-			Hub:          d.HubClient,
-			Audit:        d.AuditWriter,
-			Logger:       d.Logger,
-			AIGatewayURL: cfg.BFF.AIGatewayURL,
-			Poison:       semanticPoison,
+			Store:                  configstore.NewSemanticCacheStore(d.DB.Pool),
+			Hub:                    d.HubClient,
+			Audit:                  d.AuditWriter,
+			Logger:                 d.Logger,
+			AIGatewayURL:           cfg.BFF.AIGatewayURL,
+			AIGatewayInternalToken: cfg.Auth.InternalServiceToken,
+			Poison:                 semanticPoison,
 		})
 		adminHandler.ExtractCache = cachehandler.NewExtractCacheHandler(cachehandler.ExtractCacheHandlerDeps{
 			Store:  configstore.NewExtractCacheStore(d.DB.Pool),
@@ -164,21 +166,29 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 
 	// Mount admin routes.
 	var apiKeyLookup middleware.AdminAPIKeyLookup
+	// apiKeyRehasher lazy-migrates an admin key to the current HMAC keyring
+	// version after it admits under an older one. The same
+	// apikeystore.Store satisfies both seams.
+	var apiKeyRehasher middleware.AdminAPIKeyRehasher
 	if d.DB != nil {
-		apiKeyLookup = apikeystore.New(d.DB.InternalPool())
+		akStore := apikeystore.New(d.DB.InternalPool())
+		apiKeyLookup = akStore
+		apiKeyRehasher = akStore
 	}
 	adminGroup := e.Group("/api/admin")
 	adminGroup.Use(middleware.AdminAuth(middleware.AdminAuthConfig{
-		JWTVerifier:  d.JWTVerifier,
-		APIKeyLookup: apiKeyLookup,
-		Logger:       d.Logger,
+		JWTVerifier:    d.JWTVerifier,
+		APIKeyLookup:   apiKeyLookup,
+		APIKeyRehasher: apiKeyRehasher,
+		Logger:         d.Logger,
 	}))
 	adminHandler.RegisterAdminRoutes(adminGroup)
 
-	// Web assistant ("Chat with Nexus") — streaming chat under the admin group
-	// (login-only; each tool self-calls admin APIs under the caller's IAM, so no
-	// new IAM action). System VK + model come from env (secret never in yaml); the
-	// AI Gateway + self-call base URL come from config.
+	// Web assistant ("Chat with Nexus") — streaming chat under the admin group.
+	// Every assistant route additionally gates on the dedicated assistant IAM
+	// resource; each tool self-calls admin APIs under the caller's own IAM. The
+	// system VK + model come from env (secret never in yaml); the AI Gateway +
+	// self-call base URL come from config.
 	assistantModel := os.Getenv("NEXUS_ASSISTANT_MODEL")
 	if assistantModel == "" {
 		assistantModel = "claude-sonnet-4-6"
@@ -199,7 +209,12 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 		Model:        assistantModel,
 		Models:       assistantModels,
 		Spill:        spillStore,
-		// §8 governance posture: set NEXUS_ASSISTANT_DISABLE_BODY_READS=1 to withhold
+		// Production posture: tells the agent's system prompt the truth about the
+		// environment AND arms the prod second-confirm challenge on write actions.
+		// Unset ⇒ the assistant presents (and behaves) as non-prod, so prod
+		// deployments MUST set it.
+		IsProd: os.Getenv("NEXUS_ASSISTANT_PROD") == "1",
+		// Governance posture: set NEXUS_ASSISTANT_DISABLE_BODY_READS=1 to withhold
 		// the raw-body read tools (the assistant cannot reach raw traffic bodies).
 		DisableBodyReads: os.Getenv("NEXUS_ASSISTANT_DISABLE_BODY_READS") == "1",
 		// Wall-clock turn backstop (e.g. "10m"); blank/invalid → built-in default.
@@ -211,19 +226,31 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 		// Redis (single replica / no Redis) disables it.
 		Redis:   d.RedisClient,
 		OwnerID: assistantOwnerID(),
-		// In-process self-call (R3): dispatch the agent's admin tools straight into
+		// In-process self-call: dispatch the agent's admin tools straight into
 		// this CP router (no loopback HTTP, unforgeable AI-initiated audit stamp).
 		Dispatcher: e,
+		Logger:     d.Logger,
+	}
+	// The prod posture is a safety knob whose forgotten state is the unsafe
+	// state (weaker confirms + the model told it is non-prod), so the boot log
+	// states it explicitly either way — the deploy preflight greps for this.
+	if assistantCfg.IsProd {
+		d.Logger.Info("assistant production posture: ENABLED (NEXUS_ASSISTANT_PROD=1)")
+	} else {
+		d.Logger.Warn("assistant production posture: disabled (NEXUS_ASSISTANT_PROD unset) — REQUIRED on production deployments")
 	}
 	// d.DB is nil when CP boots without a database (a supported mode); leave Pool nil
 	// so the assistant degrades to in-memory stores rather than nil-dereferencing.
 	if d.DB != nil {
 		assistantCfg.Pool = d.DB.Pool
 	}
-	assistant.New(assistantCfg).RegisterAssistantRoutes(adminGroup)
+	assistant.New(assistantCfg).RegisterAssistantRoutes(adminGroup, d.IAMEngine)
 
-	// AI Gateway simulator — bypasses AdminAuth, enforces VK credential itself.
-	e.POST("/api/admin/ai-gateway-simulator/forward",
+	// AI Gateway simulator — admin debugging proxy. Mounts on adminGroup so the
+	// admin-session middleware gates it (matching the handler's own doc); the
+	// gateway-side VK stays the upstream credential and no extra IAM action gate
+	// is applied. Final path is unchanged: /api/admin/ai-gateway-simulator/forward.
+	adminGroup.POST("/ai-gateway-simulator/forward",
 		aigwsim.New(aigwsim.Deps{Logger: d.Logger}).AIGatewaySimulatorForward)
 
 	// Internal Hub→CP routes.
@@ -242,9 +269,10 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 	// Personal self-service routes.
 	myGroup := e.Group("/api/my")
 	myGroup.Use(middleware.AdminAuth(middleware.AdminAuthConfig{
-		JWTVerifier:  d.JWTVerifier,
-		APIKeyLookup: apiKeyLookup,
-		Logger:       d.Logger,
+		JWTVerifier:    d.JWTVerifier,
+		APIKeyLookup:   apiKeyLookup,
+		APIKeyRehasher: apiKeyRehasher,
+		Logger:         d.Logger,
 	}))
 	me.New(me.Deps{Pool: d.DB.Pool, Hub: d.HubClient, Audit: d.AuditWriter, Logger: d.Logger}).RegisterMyRoutes(myGroup)
 

@@ -60,7 +60,11 @@ func ProbeOIDC(ctx context.Context, cfg map[string]any) Result {
 	// Resolve any missing endpoint from the issuer's discovery document. A
 	// fresh resolver (no shared cache) keeps the probe honest: an admin who
 	// just changed the issuer must see the live document, not a cached one.
-	eps, err := oidcdisco.NewResolver().Resolve(ctx, issuer, oidcdisco.Endpoints{
+	// The resolver carries the SSRF host guard: an admin probing an
+	// internal/loopback issuer is rejected before any fetch. NewProbeResolver is
+	// an exported test seam (overridden to skip the guard for loopback httptest
+	// servers in both this package and external handler tests).
+	eps, err := NewProbeResolver().Resolve(ctx, issuer, oidcdisco.Endpoints{
 		AuthorizeURL: authCfg,
 		TokenURL:     tokenCfg,
 		JwksURI:      jwksCfg,
@@ -188,3 +192,10 @@ func Probe(ctx context.Context, idpType string, cfg map[string]any) (Result, err
 func newClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout}
 }
+
+// NewProbeResolver builds the discovery resolver the OIDC probe uses. It is an
+// exported package var so both internal and external tests can substitute a
+// resolver that skips the SSRF host guard (their discovery server runs on
+// 127.0.0.1); production keeps the guarded default. Never use a
+// guard-disabled resolver outside tests.
+var NewProbeResolver = func() *oidcdisco.Resolver { return oidcdisco.NewResolver() }

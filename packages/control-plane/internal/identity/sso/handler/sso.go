@@ -241,8 +241,7 @@ func (h *AgentEnrollHandler) SSOEnroll(c echo.Context) error {
 		action := sharediam.ResourceDeviceEnrollment.Action(sharediam.VerbEnroll)
 		resource := iam.BuildRequestNRNForAction(action)
 		condCtx := iam.ConditionContext{
-			"nexus:SourceIp":    c.RealIP(),
-			"nexus:CurrentTime": "",
+			"nexus:SourceIp": c.RealIP(),
 		}
 		result, err := h.IAM.Evaluate(ctx, "nexus_user", entry.UserID, action, resource, condCtx)
 		if err != nil {

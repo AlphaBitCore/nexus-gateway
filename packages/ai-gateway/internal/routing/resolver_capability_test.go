@@ -267,6 +267,144 @@ func TestCapabilityPreFilter_AllRejected(t *testing.T) {
 	}
 }
 
+// TestCapabilityPreFilter_RecoveryTargetsAlsoFiltered (F-0233) — the capability
+// pre-filter must run on plan.RecoveryTargets (fallback-rule recovery), not only
+// plan.Targets. ResolveTargets flattens primary + recovery into allTargets and
+// gates the rich-400 on the combined count; a recovery target that bypassed the
+// filter would let a capability-incompatible request dispatch instead of
+// returning the 400.
+//
+// Scenario: primary (Gemini, supports 1536) and recovery (Cohere, 1024 only),
+// both behind a dimensions=1536 request.
+//   - Cohere recovery target MUST be rejected (was previously kept).
+//   - Gemini primary MUST survive, so ResolveTargets returns it (no 400).
+func TestCapabilityPreFilter_RecoveryTargetsAlsoFiltered(t *testing.T) {
+	f := newCapFixture()
+	f.addProvider("gemini", "gemini", true)
+	f.addProvider("cohere", "cohere", true)
+
+	geminiCapJSON := mustJSONCapability(t, map[string]any{
+		"embeddings": map[string]any{
+			"supported_dimensions": []int{256, 512, 768, 1024, 1536},
+			"max_batch_size":       100,
+		},
+	})
+	cohereCapJSON := mustJSONCapability(t, map[string]any{
+		"embeddings": map[string]any{
+			"supported_dimensions": []int{1024},
+			"max_batch_size":       96,
+		},
+	})
+	f.addEmbeddingModel("gemini-embed", "gemini", geminiCapJSON)
+	f.addEmbeddingModel("cohere-embed", "cohere", cohereCapJSON)
+	f.rebuildCapCache()
+
+	// Primary rule → Gemini.
+	f.addRule(store.RoutingRule{
+		ID:            "r-gemini-primary",
+		PipelineStage: 1,
+		StrategyType:  "single",
+		Config: mustJSONCapability(t, map[string]any{
+			"type": "single", "providerId": "gemini", "modelId": "gemini-embed",
+		}),
+	})
+	// Fallback rule → Cohere (populates plan.RecoveryTargets).
+	f.addRule(store.RoutingRule{
+		ID:            "r-cohere-fallback",
+		PipelineStage: 1,
+		StrategyType:  "fallback",
+		Config: mustJSONCapability(t, map[string]any{
+			"type": "single", "providerId": "cohere", "modelId": "cohere-embed",
+		}),
+	})
+
+	dims := 1536
+	rctx := &core.RoutingContext{
+		RequestedModel:   core.RequestedModel{ID: "gemini-embed"},
+		EndpointType:     "embeddings",
+		EmbeddingRequest: &core.EmbeddingRequestParams{Dimensions: &dims, BatchSize: 1},
+	}
+
+	plan, err := f.resolver.Resolve(context.Background(), rctx)
+	if err != nil {
+		t.Fatalf("Resolve error: %v", err)
+	}
+	for _, tgt := range plan.RecoveryTargets {
+		if tgt.ModelID == "cohere-embed" {
+			t.Error("cohere-embed recovery target should have been rejected by the capability pre-filter")
+		}
+	}
+	// Gemini primary survives → ResolveTargets must not return the 400.
+	res, err := f.resolver.ResolveTargets(context.Background(), rctx)
+	if err != nil {
+		t.Fatalf("ResolveTargets should succeed (Gemini primary survives), got: %v", err)
+	}
+	if len(res.Targets) != 1 || res.Targets[0].ModelID != "gemini-embed" {
+		t.Fatalf("expected only gemini-embed in targets, got %+v", res.Targets)
+	}
+}
+
+// TestCapabilityPreFilter_AllPrimaryAndRecoveryRejected (F-0233) — when EVERY
+// primary AND EVERY recovery target fails the capability filter, the combined
+// allTargets is empty and ResolveTargets returns the rich-400
+// (*core.NoCompatibleProviderError). Before the fix, a surviving-but-unchecked
+// recovery target suppressed this error.
+func TestCapabilityPreFilter_AllPrimaryAndRecoveryRejected(t *testing.T) {
+	f := newCapFixture()
+	f.addProvider("openai", "openai", true)
+	f.addProvider("cohere", "cohere", true)
+
+	// Both models are fixed-dimension and cannot satisfy dimensions=4096.
+	openaiCapJSON := mustJSONCapability(t, map[string]any{
+		"embeddings": map[string]any{"supported_dimensions": []int{1536}},
+	})
+	cohereCapJSON := mustJSONCapability(t, map[string]any{
+		"embeddings": map[string]any{"supported_dimensions": []int{1024}},
+	})
+	f.addEmbeddingModel("openai-embed", "openai", openaiCapJSON)
+	f.addEmbeddingModel("cohere-embed", "cohere", cohereCapJSON)
+	f.rebuildCapCache()
+
+	f.addRule(store.RoutingRule{
+		ID:            "r-openai-primary",
+		PipelineStage: 1,
+		StrategyType:  "single",
+		Config: mustJSONCapability(t, map[string]any{
+			"type": "single", "providerId": "openai", "modelId": "openai-embed",
+		}),
+	})
+	f.addRule(store.RoutingRule{
+		ID:            "r-cohere-fallback",
+		PipelineStage: 1,
+		StrategyType:  "fallback",
+		Config: mustJSONCapability(t, map[string]any{
+			"type": "single", "providerId": "cohere", "modelId": "cohere-embed",
+		}),
+	})
+
+	dims := 4096 // neither model supports this
+	rctx := &core.RoutingContext{
+		RequestedModel:   core.RequestedModel{ID: "openai-embed"},
+		EndpointType:     "embeddings",
+		EmbeddingRequest: &core.EmbeddingRequestParams{Dimensions: &dims, BatchSize: 1},
+	}
+
+	// Sanity: both primary and recovery were filtered to empty.
+	plan, err := f.resolver.Resolve(context.Background(), rctx)
+	if err != nil {
+		t.Fatalf("Resolve error: %v", err)
+	}
+	if len(plan.Targets) != 0 || len(plan.RecoveryTargets) != 0 {
+		t.Fatalf("expected all targets filtered, got primary=%d recovery=%d", len(plan.Targets), len(plan.RecoveryTargets))
+	}
+
+	_, err = f.resolver.ResolveTargets(context.Background(), rctx)
+	var ncpErr *core.NoCompatibleProviderError
+	if !errors.As(err, &ncpErr) {
+		t.Fatalf("expected *core.NoCompatibleProviderError, got %T: %v", err, err)
+	}
+}
+
 // TestCapabilityPreFilter_DisabledWhenNilCache — resolver with nil capCache never
 // applies the pre-filter.
 func TestCapabilityPreFilter_DisabledWhenNilCache(t *testing.T) {

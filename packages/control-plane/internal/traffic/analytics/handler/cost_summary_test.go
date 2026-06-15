@@ -268,7 +268,7 @@ func TestAnalyticsCostSummary_DirectFallback(t *testing.T) {
 	expectCascade5mEmptyN(mock, 8)
 
 	// direct byProvider query
-	mock.ExpectQuery(`GROUP BY provider_id`).
+	mock.ExpectQuery(`GROUP BY 1`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "cost"}).
 			AddRow("prov-A", float64(50.0)))
@@ -344,7 +344,7 @@ func TestAnalyticsCostSummary_DirectProviderError(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"org_id", "cost"}))
 	expectCascade5mEmptyN(mock, 8)
-	mock.ExpectQuery(`GROUP BY provider_id`).
+	mock.ExpectQuery(`GROUP BY 1`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnError(errors.New("boom"))
 
@@ -377,7 +377,7 @@ func TestAnalyticsCostSummary_DirectScanError(t *testing.T) {
 			AddRow("o2", float64(5.0)))
 
 	expectCascade5mEmptyN(mock, 8)
-	mock.ExpectQuery(`GROUP BY provider_id`).
+	mock.ExpectQuery(`GROUP BY 1`).
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "cost"}).
 			AddRow("p1", "notafloat").

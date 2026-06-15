@@ -2,7 +2,7 @@
 // Together AI's OpenAI-compatible API at api.together.xyz and
 // api.together.ai. Both hostnames resolve to the same backend.
 //
-// Per session policy: every vendor / surface gets its own adapter ID
+// Convention: every vendor / surface gets its own adapter ID
 // even when the wire is shared. The adapter delegates to openai-compat
 // for parsing while attributing traffic to "together" for audit.
 package together

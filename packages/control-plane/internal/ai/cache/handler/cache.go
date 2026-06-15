@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/cacheconfig"
 )
@@ -92,7 +93,7 @@ func (h *Handler) CachePutGlobal(c echo.Context) error {
 
 	if err := h.propagateCacheConfig(ctx, a.UserID, a.Name); err != nil {
 		h.logger.Error("notify hub cache (global PUT)", "error", err)
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 
 	ae := audit.EntryFor(c, iam.ResourcePromptCache, iam.VerbUpdate)
@@ -148,7 +149,7 @@ func (h *Handler) CachePutAdapter(c echo.Context) error {
 
 	if err := h.propagateCacheConfig(ctx, a.UserID, a.Name); err != nil {
 		h.logger.Error("notify hub cache (adapter PUT)", "adapter_type", adapter, "error", err)
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 
 	ae := audit.EntryFor(c, iam.ResourcePromptCache, iam.VerbUpdate)
@@ -198,7 +199,7 @@ func (h *Handler) CachePutProvider(c echo.Context) error {
 
 	if err := h.propagateCacheConfig(ctx, a.UserID, a.Name); err != nil {
 		h.logger.Error("notify hub cache (provider PUT)", "provider_id", providerID, "error", err)
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 
 	ae := audit.EntryFor(c, iam.ResourcePromptCache, iam.VerbUpdate)
@@ -221,7 +222,7 @@ func (h *Handler) CacheDeleteProvider(c echo.Context) error {
 	a := actorFromContext(c)
 	if err := h.propagateCacheConfig(ctx, a.UserID, a.Name); err != nil {
 		h.logger.Error("notify hub cache (provider DELETE)", "provider_id", providerID, "error", err)
-		return c.JSON(http.StatusBadGateway, hubPropagationErrorJSON(err))
+		return hub.RespondPropagationFailure(c, err)
 	}
 
 	ae := audit.EntryFor(c, iam.ResourcePromptCache, iam.VerbUpdate)

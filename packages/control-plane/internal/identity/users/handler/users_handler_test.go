@@ -31,6 +31,8 @@ import (
 	authn "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
 	cpiam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/idptest"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/scim/scimstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/governancestore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/iamstore"
@@ -71,35 +73,36 @@ func adminAuthCtx(method, path string, body []byte, userID, principalType string
 // stubs: iamUserStore
 
 type stubUserStore struct {
-	listResult    []userstore.NexusUserSafe
-	listTotal     int
-	listErr       error
-	getSafeResult *userstore.NexusUserSafe
-	getSafeErr    error
-	orgID         string
-	orgName       string
-	orgErr        error
-	findResult    *userstore.NexusUser
-	findErr       error
-	createResult  *userstore.NexusUserSafe
-	createErr     error
-	updateResult  *userstore.NexusUserSafe
-	updateErr     error
-	deleteErr     error
-	listKeys      []userstore.AdminAPIKey
-	listKeysErr   error
-	getKey        *userstore.AdminAPIKey
-	getKeyErr     error
-	createKey     *userstore.AdminAPIKey
-	createKeyErr  error
-	updateKey     *userstore.AdminAPIKey
-	updateKeyErr  error
-	regenErr      error
-	rotateResult  *userstore.RotateAdminAPIKeyResult
-	rotateErr     error
-	retireKey     *userstore.AdminAPIKey
-	retireErr     error
-	deleteKeyErr  error
+	listResult      []userstore.NexusUserSafe
+	listTotal       int
+	listErr         error
+	getSafeResult   *userstore.NexusUserSafe
+	getSafeErr      error
+	orgID           string
+	orgName         string
+	orgErr          error
+	findResult      *userstore.NexusUser
+	findErr         error
+	createResult    *userstore.NexusUserSafe
+	createErr       error
+	updateResult    *userstore.NexusUserSafe
+	updateErr       error
+	deleteErr       error
+	listKeys        []userstore.AdminAPIKey
+	listKeysErr     error
+	getKey          *userstore.AdminAPIKey
+	getKeyErr       error
+	createKey       *userstore.AdminAPIKey
+	createKeyErr    error
+	createKeyCalled bool
+	updateKey       *userstore.AdminAPIKey
+	updateKeyErr    error
+	regenErr        error
+	rotateResult    *userstore.RotateAdminAPIKeyResult
+	rotateErr       error
+	retireKey       *userstore.AdminAPIKey
+	retireErr       error
+	deleteKeyErr    error
 }
 
 func (s *stubUserStore) ListNexusUsers(_ context.Context, _ userstore.NexusUserListParams) ([]userstore.NexusUserSafe, int, error) {
@@ -128,12 +131,13 @@ func (s *stubUserStore) GetAdminAPIKey(_ context.Context, _ string) (*userstore.
 	return s.getKey, s.getKeyErr
 }
 func (s *stubUserStore) CreateAdminAPIKey(_ context.Context, _ userstore.CreateAdminAPIKeyParams) (*userstore.AdminAPIKey, error) {
+	s.createKeyCalled = true
 	return s.createKey, s.createKeyErr
 }
 func (s *stubUserStore) UpdateAdminAPIKey(_ context.Context, _ string, _ userstore.UpdateAdminAPIKeyParams) (*userstore.AdminAPIKey, error) {
 	return s.updateKey, s.updateKeyErr
 }
-func (s *stubUserStore) RegenerateAdminAPIKey(_ context.Context, _, _, _ string) error {
+func (s *stubUserStore) RegenerateAdminAPIKey(_ context.Context, _, _, _, _ string) error {
 	return s.regenErr
 }
 func (s *stubUserStore) RotateAdminAPIKey(_ context.Context, _ userstore.RotateAdminAPIKeyParams) (*userstore.RotateAdminAPIKeyResult, error) {
@@ -154,8 +158,10 @@ type stubIAMStore struct {
 	policyErr         error
 	createdPolicy     *iamstore.PolicyRow
 	createPolicyErr   error
+	createCalled      bool
 	updatedPolicy     *iamstore.PolicyRow
 	updatePolicyErr   error
+	updateCalled      bool
 	deletePolicyErr   error
 	policyGroups      []iamstore.PolicyGroupRow
 	policyGroupsErr   error
@@ -211,9 +217,11 @@ func (s *stubIAMStore) GetIamPolicy(_ context.Context, _ string) (*iamstore.Poli
 	return s.policy, s.policyErr
 }
 func (s *stubIAMStore) CreateIamPolicy(_ context.Context, _ string, _ *string, _ json.RawMessage, _ string) (*iamstore.PolicyRow, error) {
+	s.createCalled = true
 	return s.createdPolicy, s.createPolicyErr
 }
 func (s *stubIAMStore) UpdateIamPolicy(_ context.Context, _ string, _ iamstore.UpdateIamPolicyParams) (*iamstore.PolicyRow, error) {
+	s.updateCalled = true
 	return s.updatedPolicy, s.updatePolicyErr
 }
 func (s *stubIAMStore) DeleteIamPolicy(_ context.Context, _ string) error { return s.deletePolicyErr }
@@ -820,13 +828,77 @@ func TestCreateIAMPolicy_MissingName_Returns400(t *testing.T) {
 func TestCreateIAMPolicy_Success_Returns201(t *testing.T) {
 	is := &stubIAMStore{createdPolicy: &iamstore.PolicyRow{ID: "p-new", Name: "New Policy"}}
 	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
-	body, _ := json.Marshal(map[string]any{"name": "New Policy", "document": json.RawMessage(`{"Statement":[]}`)})
+	h.iamEngine = superAdminTestEngine() // SEC-M6-02 ceiling: caller must hold the granted perms
+	body, _ := json.Marshal(map[string]any{"name": "New Policy", "document": json.RawMessage(`{"Version":"2026-05-12","Statement":[{"Effect":"Allow","Action":["settings:read"],"Resource":["*"]}]}`)})
 	c, rec := adminAuthCtx(http.MethodPost, "/iam/policies", body, "admin", "admin_user")
 	if err := h.CreateIAMPolicy(c); err != nil {
 		t.Fatal(err)
 	}
 	if rec.Code != http.StatusCreated {
 		t.Errorf("code=%d want 201; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestCreateIAMPolicy_InvalidDocument_Returns400 asserts the F-0064 fix: a
+// syntactically-well-formed but semantically-invalid policy document (here a
+// "**" wildcard, which ValidatePolicyDocument rejects) is refused with 400
+// instead of being persisted unvalidated.
+func TestCreateIAMPolicy_InvalidDocument_Returns400(t *testing.T) {
+	is := &stubIAMStore{createdPolicy: &iamstore.PolicyRow{ID: "p-new", Name: "New Policy"}}
+	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{"name": "Bad Policy", "document": json.RawMessage(`{"Version":"2026-05-12","Statement":[{"Effect":"Allow","Action":["s3:**"],"Resource":["*"]}]}`)})
+	c, rec := adminAuthCtx(http.MethodPost, "/iam/policies", body, "admin", "admin_user")
+	if err := h.CreateIAMPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code=%d want 400; body=%s", rec.Code, rec.Body)
+	}
+	if is.createCalled {
+		t.Error("invalid document must not reach the store")
+	}
+}
+
+// TestCreateIAMPolicy_NonObjectDocument_Returns400 asserts F-0064 rejects a
+// document that is valid JSON but not a policy object (a bare JSON string),
+// which the structural decode cannot map onto a PolicyDocument.
+func TestCreateIAMPolicy_NonObjectDocument_Returns400(t *testing.T) {
+	is := &stubIAMStore{createdPolicy: &iamstore.PolicyRow{ID: "p-new", Name: "New Policy"}}
+	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{"name": "Bad Policy", "document": json.RawMessage(`"notapolicy"`)})
+	c, rec := adminAuthCtx(http.MethodPost, "/iam/policies", body, "admin", "admin_user")
+	if err := h.CreateIAMPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code=%d want 400; body=%s", rec.Code, rec.Body)
+	}
+	if is.createCalled {
+		t.Error("undecodable document must not reach the store")
+	}
+}
+
+// TestUpdateIAMPolicy_InvalidDocument_Returns400 asserts F-0064 on the update
+// path: an invalid document body (bad Effect enum) is rejected with 400 and
+// never persisted.
+func TestUpdateIAMPolicy_InvalidDocument_Returns400(t *testing.T) {
+	is := &stubIAMStore{updatedPolicy: &iamstore.PolicyRow{ID: "p1", Name: "Updated"}}
+	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	body, _ := json.Marshal(map[string]any{"document": map[string]any{
+		"Version":   "2026-05-12",
+		"Statement": []map[string]any{{"Effect": "Maybe", "Action": []string{"settings:read"}, "Resource": []string{"*"}}},
+	}})
+	c, rec := adminAuthCtx(http.MethodPut, "/iam/policies/p1", body, "admin", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("p1")
+	if err := h.UpdateIAMPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code=%d want 400; body=%s", rec.Code, rec.Body)
+	}
+	if is.updateCalled {
+		t.Error("invalid document must not reach the store")
 	}
 }
 
@@ -2322,6 +2394,56 @@ func TestRevokeUserAccess_Success_Returns200(t *testing.T) {
 	}
 }
 
+// TestRevokeUserAccess_PushesVKInvalidate locks SEC-M3-01: revoking a user's
+// access must push a virtual_keys cache invalidate to the AI Gateway so the
+// disabled keys stop authenticating immediately, not after the ≤30s cache TTL.
+func TestRevokeUserAccess_PushesVKInvalidate(t *testing.T) {
+	email := "u1@example.com"
+	us := &stubUserStore{findResult: &userstore.NexusUser{ID: "u1", Email: &email, Status: "active"}}
+	gs := &stubGovernanceStore{disabledVKs: 2, revokedDevices: 1}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, gs)
+	sh := &stubHub{}
+	h.hub = sh
+	c, rec := adminAuthCtx(http.MethodPost, "/users/u1/revoke", nil, "admin", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("u1")
+	if err := h.RevokeUserAccess(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	found := false
+	for _, k := range sh.invalidatedKeys {
+		if k == "virtual_keys" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("RevokeUserAccess did not push a virtual_keys invalidate (got %v)", sh.invalidatedKeys)
+	}
+}
+
+// TestRevokeUserAccess_InvalidateFailure_Returns502 locks the fail-loud contract:
+// if the VK invalidate push fails, the admin gets a 502 (retry) rather than a
+// false success that leaves the revoked keys authenticating from cache.
+func TestRevokeUserAccess_InvalidateFailure_Returns502(t *testing.T) {
+	email := "u1@example.com"
+	us := &stubUserStore{findResult: &userstore.NexusUser{ID: "u1", Email: &email, Status: "active"}}
+	gs := &stubGovernanceStore{disabledVKs: 1}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, gs)
+	h.hub = &stubHub{invalidateErr: errors.New("hub unreachable")}
+	c, rec := adminAuthCtx(http.MethodPost, "/users/u1/revoke", nil, "admin", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("u1")
+	if err := h.RevokeUserAccess(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("code=%d want 502 on invalidate failure; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestListUserDeviceAssignments_Returns200(t *testing.T) {
 	fs := &stubFleetStore{assignments: []fleetstore.DeviceAssignmentDetail{}}
 	h := buildHandler(&stubUserStore{}, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, fs, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
@@ -3347,7 +3469,11 @@ func (f *flexOrgStore) CountProjectVirtualKeys(_ context.Context, _ string) (int
 func TestUpdateIAMPolicy_WithDocument_Returns200(t *testing.T) {
 	is := &stubIAMStore{updatedPolicy: &iamstore.PolicyRow{ID: "p1", Name: "P"}}
 	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
-	body, _ := json.Marshal(map[string]any{"document": map[string]any{"Statement": []any{}}})
+	h.iamEngine = superAdminTestEngine() // SEC-M6-02 ceiling: caller must hold the new document's perms
+	body, _ := json.Marshal(map[string]any{"document": map[string]any{
+		"Version":   "2026-05-12",
+		"Statement": []map[string]any{{"Effect": "Allow", "Action": []string{"settings:read"}, "Resource": []string{"*"}}},
+	}})
 	c, rec := adminAuthCtx(http.MethodPut, "/iam/policies/p1", body, "admin", "admin_user")
 	c.SetParamNames("id")
 	c.SetParamValues("p1")
@@ -3373,6 +3499,162 @@ func TestCreateAPIKey_AdminUserPrincipal_SetsOwner(t *testing.T) {
 	}
 	if rec.Code != http.StatusCreated {
 		t.Errorf("code=%d want 201; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// F-0365 — CreateAPIKey ownerUserId grant ceiling.
+//
+// An admin API key whose ownerUserId is set authenticates AS that owner
+// (authn.EffectivePrincipal). Without the ceiling, a caller holding only
+// admin:api-key.create could mint a key owned by a super-admin and inherit
+// super-admin authority. The ceiling requires the caller to already cover the
+// target owner's full permission set before the key is created.
+
+// perPrincipalLoader returns a distinct policy set per (type,id) so the ceiling
+// can distinguish a narrowly-scoped caller from a super-admin owner. The default
+// (unknown principal) is no policies.
+type perPrincipalLoader struct {
+	byID map[string][]cpiam.LoadedPolicy
+	err  error
+}
+
+func (l *perPrincipalLoader) LoadPolicies(_ context.Context, pt, pid string) ([]cpiam.LoadedPolicy, error) {
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.byID[pt+":"+pid], nil
+}
+
+func allowAllPolicy(name string) cpiam.LoadedPolicy {
+	return cpiam.LoadedPolicy{ID: name, Name: name, Source: "direct",
+		Document: cpiam.PolicyDocument{Version: cpiam.PolicyVersion, Statement: []cpiam.Statement{{
+			Effect: "Allow", Action: []string{"*"}, Resource: []string{"nrn:nexus:*:*:*/*"},
+		}}}}
+}
+
+func scopedPolicy(name string, actions, resources []string) cpiam.LoadedPolicy {
+	return cpiam.LoadedPolicy{ID: name, Name: name, Source: "direct",
+		Document: cpiam.PolicyDocument{Version: cpiam.PolicyVersion, Statement: []cpiam.Statement{{
+			Effect: "Allow", Action: actions, Resource: resources,
+		}}}}
+}
+
+// TestCreateAPIKey_OwnerEscalation_Blocked: a caller holding only
+// admin:api-key.create that tries to mint a key owned by a super-admin is
+// rejected with 403 PRIVILEGE_ESCALATION_BLOCKED and NO key row is written.
+func TestCreateAPIKey_OwnerEscalation_Blocked(t *testing.T) {
+	loader := &perPrincipalLoader{byID: map[string][]cpiam.LoadedPolicy{
+		"nexus_user:weak":  {scopedPolicy("weak", []string{"admin:api-key.create"}, []string{"nrn:nexus:*:*:*/*"})},
+		"nexus_user:super": {allowAllPolicy("super")},
+	}}
+	us := &stubUserStore{createKey: &userstore.AdminAPIKey{ID: "k1", Name: "Key"}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+
+	body, _ := json.Marshal(map[string]any{"name": "Key", "ownerUserId": "super"})
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys", body, "weak", "admin_user")
+	if err := h.CreateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "PRIVILEGE_ESCALATION_BLOCKED") {
+		t.Errorf("missing PRIVILEGE_ESCALATION_BLOCKED code; body=%s", rec.Body)
+	}
+	if us.createKeyCalled {
+		t.Error("key row must NOT be written when the ceiling blocks the mint")
+	}
+}
+
+// TestCreateAPIKey_OwnerSelf_Unchanged: minting a key owned by the caller's own
+// user id skips the ceiling entirely (behavior unchanged) and succeeds even with
+// a scoped caller.
+func TestCreateAPIKey_OwnerSelf_Unchanged(t *testing.T) {
+	loader := &perPrincipalLoader{byID: map[string][]cpiam.LoadedPolicy{
+		"nexus_user:weak": {scopedPolicy("weak", []string{"admin:api-key.create"}, []string{"nrn:nexus:*:*:*/*"})},
+	}}
+	uid := "weak"
+	us := &stubUserStore{createKey: &userstore.AdminAPIKey{ID: "k1", Name: "Key", OwnerUserID: &uid}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+
+	body, _ := json.Marshal(map[string]any{"name": "Key", "ownerUserId": "weak"})
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys", body, "weak", "admin_user")
+	if err := h.CreateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d want 201; body=%s", rec.Code, rec.Body)
+	}
+	if !us.createKeyCalled {
+		t.Error("self-owned key must be written")
+	}
+}
+
+// TestCreateAPIKey_OwnerCovered_Success: a caller that DOES cover the target
+// owner's permissions may mint a key for that owner.
+func TestCreateAPIKey_OwnerCovered_Success(t *testing.T) {
+	loader := &perPrincipalLoader{byID: map[string][]cpiam.LoadedPolicy{
+		"nexus_user:strong": {allowAllPolicy("strong")},
+		"nexus_user:weak":   {scopedPolicy("weak", []string{"admin:api-key.read"}, []string{"nrn:nexus:*:*:*/*"})},
+	}}
+	owner := "weak"
+	us := &stubUserStore{createKey: &userstore.AdminAPIKey{ID: "k1", Name: "Key", OwnerUserID: &owner}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+
+	body, _ := json.Marshal(map[string]any{"name": "Key", "ownerUserId": "weak"})
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys", body, "strong", "admin_user")
+	if err := h.CreateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d want 201; body=%s", rec.Code, rec.Body)
+	}
+	if !us.createKeyCalled {
+		t.Error("covered owner key must be written")
+	}
+}
+
+// TestCreateAPIKey_OwnerCeiling_NilEngine_FailsClosed: a cross-owner mint with no
+// IAM engine fails closed (503) and writes no key.
+func TestCreateAPIKey_OwnerCeiling_NilEngine_FailsClosed(t *testing.T) {
+	us := &stubUserStore{createKey: &userstore.AdminAPIKey{ID: "k1", Name: "Key"}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	// iamEngine left nil
+
+	body, _ := json.Marshal(map[string]any{"name": "Key", "ownerUserId": "super"})
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys", body, "weak", "admin_user")
+	if err := h.CreateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code=%d want 503 (nil engine fail-closed); body=%s", rec.Code, rec.Body)
+	}
+	if us.createKeyCalled {
+		t.Error("key row must NOT be written on fail-closed")
+	}
+}
+
+// TestCreateAPIKey_OwnerCeiling_EvalError_FailsClosed: a loader error during the
+// owner-coverage check fails closed (500) and writes no key.
+func TestCreateAPIKey_OwnerCeiling_EvalError_FailsClosed(t *testing.T) {
+	loader := &perPrincipalLoader{err: errors.New("db down")}
+	us := &stubUserStore{createKey: &userstore.AdminAPIKey{ID: "k1", Name: "Key"}}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+
+	body, _ := json.Marshal(map[string]any{"name": "Key", "ownerUserId": "super"})
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys", body, "weak", "admin_user")
+	if err := h.CreateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code=%d want 500 (eval error fail-closed); body=%s", rec.Code, rec.Body)
+	}
+	if us.createKeyCalled {
+		t.Error("key row must NOT be written on fail-closed")
 	}
 }
 
@@ -3589,6 +3871,32 @@ type stubPolicyLoader struct {
 
 func (l *stubPolicyLoader) LoadPolicies(_ context.Context, _, _ string) ([]cpiam.LoadedPolicy, error) {
 	return l.policies, l.err
+}
+
+// superAdminTestEngine returns an IAM engine whose caller holds "*" on the
+// universal NRN — i.e. covers any grant. Used to satisfy the SEC-M6-02/03 grant
+// ceiling on handler happy-path tests that are not exercising the ceiling itself.
+func superAdminTestEngine() *cpiam.Engine {
+	loader := &stubPolicyLoader{policies: []cpiam.LoadedPolicy{{
+		ID: "super", Name: "super", Source: "direct",
+		Document: cpiam.PolicyDocument{Version: cpiam.PolicyVersion, Statement: []cpiam.Statement{{
+			Effect: "Allow", Action: []string{"*"}, Resource: []string{"nrn:nexus:*:*:*/*"},
+		}}},
+	}}}
+	return cpiam.NewEngine(loader, slog.Default())
+}
+
+// scopedTestEngine returns an IAM engine whose caller holds exactly the given
+// (action,resource) grants and nothing else — used to drive the SEC-M6-02/03
+// escalation-blocked regression tests.
+func scopedTestEngine(actions, resources []string) *cpiam.Engine {
+	loader := &stubPolicyLoader{policies: []cpiam.LoadedPolicy{{
+		ID: "scoped", Name: "scoped", Source: "direct",
+		Document: cpiam.PolicyDocument{Version: cpiam.PolicyVersion, Statement: []cpiam.Statement{{
+			Effect: "Allow", Action: actions, Resource: resources,
+		}}},
+	}}}
+	return cpiam.NewEngine(loader, slog.Default())
 }
 
 func TestSimulateIAM_EngineReturnsAllow_Returns200(t *testing.T) {
@@ -4739,9 +5047,13 @@ func TestUpdateIAMGroup_StoreError_Returns500(t *testing.T) {
 func TestCreateIAMPolicy_StoreError_Returns500(t *testing.T) {
 	is := &stubIAMStore{createPolicyErr: errors.New("db")}
 	h := buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = superAdminTestEngine() // SEC-M6-02 ceiling passes; store error is the path under test
 	body, _ := json.Marshal(map[string]any{
-		"name":     "My Policy",
-		"document": map[string]any{"Statement": []any{}},
+		"name": "My Policy",
+		"document": map[string]any{
+			"Version":   "2026-05-12",
+			"Statement": []map[string]any{{"Effect": "Allow", "Action": []string{"settings:read"}, "Resource": []string{"*"}}},
+		},
 	})
 	c, rec := adminAuthCtx(http.MethodPost, "/iam/policies", body, "admin", "admin_user")
 	if err := h.CreateIAMPolicy(c); err != nil {
@@ -5798,12 +6110,19 @@ func TestUpdateIdentityProvider_WithJIT_Returns200(t *testing.T) {
 
 // stubHub satisfies HubAPI for tests that need the hub to be non-nil so the
 // `if h.hub != nil` branches are exercised without a real Hub server.
-type stubHub struct{}
+type stubHub struct {
+	invalidateErr   error    // injected error for InvalidateConfigE
+	invalidatedKeys []string // configKeys passed to InvalidateConfigE (SEC-M3-01)
+}
 
 func (s *stubHub) NotifyConfigChange(_ context.Context, _ hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error) {
 	return &hub.ConfigChangeResponse{}, nil
 }
 func (s *stubHub) InvalidateConfig(_ context.Context, _, _ string) {}
+func (s *stubHub) InvalidateConfigE(_ context.Context, _, configKey string) error {
+	s.invalidatedKeys = append(s.invalidatedKeys, configKey)
+	return s.invalidateErr
+}
 
 // validSessionRows is a pgx.Rows stub that yields exactly one row with
 // 7 columns matching the ListAuthSessions scan:
@@ -6201,6 +6520,13 @@ func selfSignedCertPEM(t *testing.T) string {
 // clientSecret on create". With `id` supplied the secret is restored from
 // storage and the probe runs.
 func TestCandidateIdentityProvider_OIDCMaskedSecretWithID_Returns200(t *testing.T) {
+	// oidcProbeServer runs on 127.0.0.1; bypass SSRF guard for this test.
+	prev := idptest.NewProbeResolver
+	idptest.NewProbeResolver = func() *oidcdisco.Resolver {
+		return oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck())
+	}
+	t.Cleanup(func() { idptest.NewProbeResolver = prev })
+
 	srv := oidcProbeServer(t)
 	storedCfg, _ := json.Marshal(map[string]any{
 		"issuer": srv.URL, "clientId": "cid", "clientSecret": "real-secret", "redirectUri": "https://app/cb",
@@ -6294,6 +6620,13 @@ func TestCandidateIdentityProvider_IDStoreError_Returns500(t *testing.T) {
 // reach the probe: the test path validates with isCreate=false because the
 // OIDC probe never reads the secret.
 func TestCandidateIdentityProvider_NoIDNoSecret_ReachesProbe(t *testing.T) {
+	// oidcProbeServer runs on 127.0.0.1; bypass SSRF guard for this test.
+	prev := idptest.NewProbeResolver
+	idptest.NewProbeResolver = func() *oidcdisco.Resolver {
+		return oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck())
+	}
+	t.Cleanup(func() { idptest.NewProbeResolver = prev })
+
 	srv := oidcProbeServer(t)
 	h := defaultHandler()
 	body, _ := json.Marshal(map[string]any{
@@ -6644,5 +6977,120 @@ func TestListUserDeviceAssignments_NilAssignments_Returns200(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Errorf("code=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// --- SEC-M6-02 / SEC-M6-03 grant-ceiling (permission boundary) regression ---
+
+// adminStarPolicyDoc grants admin:* on every resource — the escalation payload a
+// delegated IAM operator would try to author/attach to become super-admin.
+var adminStarPolicyDoc = json.RawMessage(`{"Version":"2026-05-12","Statement":[{"Effect":"Allow","Action":["admin:*"],"Resource":["*"]}]}`)
+
+func ceilingBuildHandler(is *stubIAMStore) *Handler {
+	return buildHandler(&stubUserStore{}, is, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+}
+
+// TestCreateIAMPolicy_ExceedsCallerCeiling_Returns403: a delegated IAM operator
+// (holds only iam-policy/iam-group CRUD) cannot author an admin:* policy.
+func TestCreateIAMPolicy_ExceedsCallerCeiling_Returns403(t *testing.T) {
+	is := &stubIAMStore{createdPolicy: &iamstore.PolicyRow{ID: "p-new"}}
+	h := ceilingBuildHandler(is)
+	h.iamEngine = scopedTestEngine([]string{"admin:iam-policy.*", "admin:iam-group.*"}, []string{"*"})
+	body, _ := json.Marshal(map[string]any{"name": "Escalate", "document": adminStarPolicyDoc})
+	c, rec := adminAuthCtx(http.MethodPost, "/iam/policies", body, "operator", "admin_user")
+	if err := h.CreateIAMPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "PRIVILEGE_ESCALATION_BLOCKED") {
+		t.Errorf("body missing escalation code: %s", rec.Body)
+	}
+	if is.createCalled {
+		t.Error("policy was persisted despite exceeding the caller's ceiling")
+	}
+}
+
+// TestAttachPrincipalPolicy_ExceedsCallerCeiling_Returns403: the operator cannot
+// attach a pre-existing admin:* policy to itself (the core self-escalation path).
+func TestAttachPrincipalPolicy_ExceedsCallerCeiling_Returns403(t *testing.T) {
+	is := &stubIAMStore{attachPPID: "att", policy: &iamstore.PolicyRow{ID: "p1", Document: adminStarPolicyDoc}}
+	h := ceilingBuildHandler(is)
+	h.iamEngine = scopedTestEngine([]string{"admin:iam-policy.*"}, []string{"*"})
+	body, _ := json.Marshal(map[string]any{"policyId": "p1"})
+	c, rec := adminAuthCtx(http.MethodPost, "/iam/principals/nexus_user/operator/policies", body, "operator", "admin_user")
+	c.SetParamNames("type", "id")
+	c.SetParamValues("nexus_user", "operator")
+	if err := h.AttachPrincipalPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "PRIVILEGE_ESCALATION_BLOCKED") {
+		t.Errorf("body missing escalation code: %s", rec.Body)
+	}
+}
+
+// TestAttachPrincipalPolicy_WithinCeiling_Returns201: a super-admin caller CAN
+// attach an admin:* policy — this exercises the real GetIamPolicy → ceiling path
+// (not the not-found skip) and proves the guard does not over-reject.
+func TestAttachPrincipalPolicy_WithinCeiling_Returns201(t *testing.T) {
+	is := &stubIAMStore{attachPPID: "att", policy: &iamstore.PolicyRow{ID: "p1", Document: adminStarPolicyDoc}}
+	h := ceilingBuildHandler(is)
+	h.iamEngine = superAdminTestEngine()
+	body, _ := json.Marshal(map[string]any{"policyId": "p1"})
+	c, rec := adminAuthCtx(http.MethodPost, "/iam/principals/nexus_user/u1/policies", body, "admin", "admin_user")
+	c.SetParamNames("type", "id")
+	c.SetParamValues("nexus_user", "u1")
+	if err := h.AttachPrincipalPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d want 201; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestAddIAMGroupMember_PrivilegedGroup_Returns403: the operator cannot join a
+// group whose attached policy grants admin:* — the group-path escalation.
+func TestAddIAMGroupMember_PrivilegedGroup_Returns403(t *testing.T) {
+	is := &stubIAMStore{
+		memberID:      "m1",
+		groupPolicies: []iamstore.GroupPolicyRow{{PolicyID: "p1"}},
+		policy:        &iamstore.PolicyRow{ID: "p1", Document: adminStarPolicyDoc},
+	}
+	h := ceilingBuildHandler(is)
+	h.iamEngine = scopedTestEngine([]string{"admin:iam-group.*"}, []string{"*"})
+	body, _ := json.Marshal(map[string]any{"principalType": "nexus_user", "principalId": "operator"})
+	c, rec := adminAuthCtx(http.MethodPost, "/iam/groups/g1/members", body, "operator", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("g1")
+	if err := h.AddIAMGroupMember(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "PRIVILEGE_ESCALATION_BLOCKED") {
+		t.Errorf("body missing escalation code: %s", rec.Body)
+	}
+}
+
+// TestAttachIAMGroupPolicy_ExceedsCallerCeiling_Returns403: the operator cannot
+// attach an admin:* policy to a group it could then join.
+func TestAttachIAMGroupPolicy_ExceedsCallerCeiling_Returns403(t *testing.T) {
+	is := &stubIAMStore{attachGroupPolID: "agp", policy: &iamstore.PolicyRow{ID: "p1", Document: adminStarPolicyDoc}}
+	h := ceilingBuildHandler(is)
+	h.iamEngine = scopedTestEngine([]string{"admin:iam-group.*"}, []string{"*"})
+	body, _ := json.Marshal(map[string]any{"policyId": "p1"})
+	c, rec := adminAuthCtx(http.MethodPost, "/iam/groups/g1/policies", body, "operator", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("g1")
+	if err := h.AttachIAMGroupPolicy(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
 	}
 }

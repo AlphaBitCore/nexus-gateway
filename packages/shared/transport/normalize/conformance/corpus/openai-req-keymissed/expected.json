@@ -1,0 +1,31 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "openai-chat",
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "You are a concise infrastructure assistant."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "In one short sentence, what is a gateway?"
+        }
+      ]
+    }
+  ],
+  "params": {
+    "temperature": 0.7
+  },
+  "confidence": 0.9500000000000001,
+  "detectedSpec": "openai-chat"
+}

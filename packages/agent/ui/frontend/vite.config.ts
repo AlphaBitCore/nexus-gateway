@@ -37,24 +37,26 @@ export default defineConfig({
     deps: { optimizer: { web: { include: ['@nexus-gateway/ui-shared'] } } },
     // Coverage gate — see docs/developers/workflow/coverage-allowlist-methodology.md
     // (frontend section). Target core 100% / overall 95% (same as Go). The Agent
-    // dashboard is the least-tested UI surface (baseline ~12%); the floors below
-    // are a regression-guard ratchet — the bulk of the backfill (pages/panels)
-    // is the documented burn-down. Raise these as it lands, never lower.
+    // dashboard is the least-tested UI surface; the floors below are a
+    // regression-guard ratchet — the bulk of the backfill (pages/panels)
+    // is the documented burn-down. Raise these as it lands, never lower
+    // (re-pinning under a coverage-instrument change is the one exception —
+    // see the methodology doc).
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'json-summary'],
       include: ['src/**'],
-      exclude: ['src/main.tsx', 'src/test/**', 'src/**/*.d.ts', 'src/vite-env.d.ts', '**/*.test.{ts,tsx}'],
+      exclude: ['src/main.tsx', 'src/test/**', 'src/**/*.d.ts', 'src/vite-env.d.ts', '**/*.test.{ts,tsx}', 'src/**/*.json'],
       thresholds: {
         // Tests live in tests/ (mirrored), so the denominator is source-only.
-        // Earlier co-located tests were counted in src/** and inflated the
-        // number to ~21%; the honest source coverage is ~15.6% (lib/classify +
-        // lib/aiHosts + useAppliedConfig core logic at 100%, the ~3k-stmt
-        // presentational pages still the burn-down). Floors at the honest baseline.
-        statements: 71,
-        branches: 60,
-        functions: 64,
-        lines: 71,
+        // Floors are pinned at the honest baseline as measured by the
+        // current Vitest major's V8 remapping; a Vitest major upgrade
+        // re-measures the same code to different numbers and re-pins these
+        // in the same PR (see the methodology doc's instrument-change rule).
+        statements: 65,
+        branches: 51,
+        functions: 68,
+        lines: 66,
       },
     },
   },

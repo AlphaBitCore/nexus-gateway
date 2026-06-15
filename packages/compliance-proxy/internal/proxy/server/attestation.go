@@ -14,9 +14,11 @@ import (
 )
 
 // AttestationOutcome is the closed enum of verification results. The
-// label set is what `nexus_cp_attestation_total{outcome=...}` carries
-// — operators alert on the non-valid / non-missing rates per the
-// architecture doc § 6.
+// label set is what `nexus_attestation_verify_total{outcome=...}` carries
+// — operators alert on a sustained non-valid, non-missing outcome rate
+// (a steady invalid/replayed share indicates a bad agent rollout or a
+// forgery attempt; "missing" is just non-agent traffic and stays out of
+// the alert).
 type AttestationOutcome string
 
 const (
@@ -160,7 +162,7 @@ func (v *AttestationVerifier) Verify(ctx context.Context, header string) Attesta
 	}
 
 	// 2. Agent identity lookup (positive + negative cache).
-	pub, err := v.keys.Get(ctx, fields.AgentID)
+	ak, err := v.keys.Get(ctx, fields.AgentID)
 	if err != nil {
 		if errors.Is(err, tlsbump.ErrUnknownAgent) {
 			v.warn("attestation agent_id unknown to Hub",
@@ -180,11 +182,25 @@ func (v *AttestationVerifier) Verify(ctx context.Context, header string) Attesta
 			Reason:  "loader error: " + err.Error(),
 		}
 	}
+	pub := ak.Key
 	if len(pub) != ed25519.PublicKeySize {
 		v.warn("attestation key size invalid",
 			"agent_id", fields.AgentID, "got_bytes", len(pub))
 		v.observe(AttestationOutcomeInvalidSig)
 		return AttestationResult{Outcome: AttestationOutcomeInvalidSig, AgentID: fields.AgentID}
+	}
+
+	// 2b. Attestation cert expiry. A key whose 90-day
+	// attestation cert has lapsed must stop being trusted — otherwise a
+	// compromised or exfiltrated key would bypass compliance inspection forever.
+	// expired maps to MITM fallback at the caller, exactly like unknown_agent.
+	// A zero CertExpiresAt (legacy stamp with no expiry on record) is treated as
+	// non-expiring to stay fail-open.
+	if !ak.CertExpiresAt.IsZero() && now.After(ak.CertExpiresAt) {
+		v.warn("attestation cert expired",
+			"agent_id", fields.AgentID, "cert_expires_at", ak.CertExpiresAt.Format(time.RFC3339))
+		v.observe(AttestationOutcomeExpired)
+		return AttestationResult{Outcome: AttestationOutcomeExpired, AgentID: fields.AgentID, Reason: "attestation cert expired"}
 	}
 
 	// 3. Ed25519 signature verify over the canonical pre-image.

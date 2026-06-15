@@ -15,6 +15,7 @@ func TestNullableString_NonEmptyReturnsFreshPointer(t *testing.T) {
 	got := nullableString("approve")
 	if got == nil {
 		t.Fatal("non-empty: got nil")
+		return
 	}
 	if *got != "approve" {
 		t.Errorf("got %q, want approve", *got)
@@ -194,6 +195,7 @@ func TestExtractUserAgent_PresentReturnsPointer(t *testing.T) {
 	got := extractUserAgent(h)
 	if got == nil {
 		t.Fatal("present UA should yield non-nil pointer")
+		return
 	}
 	if *got != "curl/8.0" {
 		t.Errorf("got %q", *got)
@@ -207,6 +209,7 @@ func TestExtractUserAgent_TruncatesLongUA(t *testing.T) {
 	got := extractUserAgent(map[string][]string{"User-Agent": {long}})
 	if got == nil {
 		t.Fatal("got nil")
+		return
 	}
 	if len(*got) != 512 {
 		t.Errorf("truncated length: %d, want 512", len(*got))

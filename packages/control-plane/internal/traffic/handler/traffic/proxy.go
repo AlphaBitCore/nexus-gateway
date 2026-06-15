@@ -26,7 +26,7 @@ import (
 //     compliance-proxy HTTP runtime (/healthz, /connections, /metrics). Answers
 //     come from process memory and Prometheus, not PostgreSQL.
 //   - registerForwardProxyPostgresReadRoutes — Control Plane reads Postgres
-//     (traffic_event, rollups, system_metadata). Nothing here is forwarded to
+//     (traffic_event, rollups). Nothing here is forwarded to
 //     compliance-proxy; that binary has no HTTP audit/analytics surface anymore
 //     (runtimeapi-slimming).
 //
@@ -48,7 +48,6 @@ func (h *Handler) registerForwardProxyPostgresReadRoutes(g *echo.Group, iamMW fu
 	g.GET("/proxy/compliance/hook-health", h.ProxyComplianceHookHealth, iamMW(iam.ResourceAuditLog.Action(iam.VerbRead)))
 	g.GET("/proxy/compliance/reject-stats", h.ProxyComplianceRejectStats, iamMW(iam.ResourceAuditLog.Action(iam.VerbRead)))
 	g.GET("/proxy/compliance/export", h.ProxyComplianceExport, iamMW(iam.ResourceAuditLog.Action(iam.VerbRead)))
-	g.GET("/proxy/reject-config", h.ProxyRejectConfigGet, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
 }
 
 // defaultProxyHTTPClient is the fallback used when AdminHandler.ComplianceProxyClient
@@ -258,19 +257,21 @@ func (h *Handler) ProxyComplianceExport(c echo.Context) error {
 		return nil
 	}
 	for _, r := range data {
+		// Neutralize spreadsheet-formula injection on every
+		// attacker-influenceable cell (see csvSafeCell in compliance_reports.go).
 		row := []string{
 			formatCSVTimestamp(r.Timestamp),
 			r.ID,
 			r.TransactionID,
-			r.SourceIP,
-			r.TargetHost,
-			derefString(r.Method),
-			derefString(r.Path),
+			csvSafeCell(r.SourceIP),
+			csvSafeCell(r.TargetHost),
+			csvSafeCell(derefString(r.Method)),
+			csvSafeCell(derefString(r.Path)),
 			formatOptionalInt(r.StatusCode),
-			derefString(r.HookDecision),
-			derefString(r.HookReasonCode),
+			csvSafeCell(derefString(r.HookDecision)),
+			csvSafeCell(derefString(r.HookReasonCode)),
 			formatOptionalInt(r.LatencyMs),
-			strings.Join(r.ComplianceTags, ","),
+			csvSafeCell(strings.Join(r.ComplianceTags, ",")),
 		}
 		if err := w.Write(row); err != nil {
 			h.logger.Error("csv write row", "error", err, "id", r.ID)
@@ -309,19 +310,6 @@ func formatOptionalInt(p *int) string {
 		return ""
 	}
 	return strconv.Itoa(*p)
-}
-
-// ProxyRejectConfigGet returns the reject config from system_metadata.
-func (h *Handler) ProxyRejectConfigGet(c echo.Context) error {
-	val, err := h.meta.GetSystemMetadata(c.Request().Context(), "reject_config")
-	if err != nil {
-		h.logger.Error("proxy reject-config get", "error", err)
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-	if val == nil {
-		return c.JSON(http.StatusOK, map[string]any{"defaultLevel": 0, "contactInfo": ""})
-	}
-	return c.JSONBlob(http.StatusOK, val)
 }
 
 // ComplianceAudit returns unified compliance traffic events across all three

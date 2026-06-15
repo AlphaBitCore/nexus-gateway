@@ -152,7 +152,7 @@ func TestAnthropic_Codec_DecodeResponse(t *testing.T) {
 		"stop_reason":"end_turn",
 		"usage":{"input_tokens":10,"output_tokens":5}
 	}`)
-	decRes, err := anthropic.NewSpec(slog.Default()).SchemaCodec.DecodeResponse(typology.WireShapeAnthropicMessages, native, "")
+	decRes, err := anthropic.NewSpec(slog.Default()).SchemaCodec.DecodeResponse(typology.WireShapeAnthropicMessages, native, "", provcore.DecodeContext{})
 	canon := decRes.CanonicalBody
 	usage := decRes.Usage
 	if err != nil {

@@ -639,7 +639,7 @@ func TestRollupCorrection_Run_1hBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 
-	// 288 × 5m processOneBucket (empty traffic_event)
+	// 288 × 5m processBucket (empty traffic_event) — no watermark INSERT (F-0165).
 	for range 288 {
 		mock.ExpectBegin()
 		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).
@@ -648,13 +648,10 @@ func TestRollupCorrection_Run_1hBucketError(t *testing.T) {
 		mock.ExpectQuery(`FROM traffic_event`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows(trafficEventCols))
-		mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
-			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 		mock.ExpectCommit()
 	}
 
-	// First 1h mergeOneBucket: source query fails.
+	// First 1h mergeBucket: source query fails.
 	sentinel := errors.New("1h boom")
 	mock.ExpectQuery(`FROM "metric_rollup_5m"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -669,7 +666,8 @@ func TestRollupCorrection_Run_1hBucketError(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 24*time.Hour, testLogger())
+	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	j.nowFn = func() time.Time { return time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC) }
 	if err := j.Run(context.Background()); !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want 1h sentinel", err)
 	}
@@ -681,7 +679,7 @@ func TestRollupCorrection_Run_1dBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 
-	// 288 × 5m processOneBucket
+	// 288 × 5m processBucket — no watermark INSERT (F-0165).
 	for range 288 {
 		mock.ExpectBegin()
 		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).
@@ -690,20 +688,17 @@ func TestRollupCorrection_Run_1dBucketError(t *testing.T) {
 		mock.ExpectQuery(`FROM traffic_event`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows(trafficEventCols))
-		mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
-			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 		mock.ExpectCommit()
 	}
 
-	// 24 × 1h mergeOneBucket (all empty source → early return)
+	// 24 × 1h mergeBucket (all empty source → early return)
 	for range 24 {
 		mock.ExpectQuery(`FROM "metric_rollup_5m"`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"id", "bucketStart", "metricName", "dimensionKey", "subDimension", "value", "metadata", "updatedAt"}))
 	}
 
-	// 1d mergeOneBucket: source query fails.
+	// 1d mergeBucket: source query fails.
 	sentinel := errors.New("1d boom")
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -718,7 +713,8 @@ func TestRollupCorrection_Run_1dBucketError(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 24*time.Hour, testLogger())
+	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	j.nowFn = func() time.Time { return time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC) }
 	if err := j.Run(context.Background()); !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want 1d sentinel", err)
 	}

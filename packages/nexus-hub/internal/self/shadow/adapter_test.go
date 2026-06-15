@@ -5,36 +5,32 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// fakePooledConn drives the poolConnAdapter through its three methods
-// without standing up a real Postgres listener. Mirrors the cp/store
-// pgxmock seam pattern used 13+ times elsewhere in the repo: the
-// adapter holds a *pooledConn* interface field, the wrapper around
-// *pgxpool.Conn satisfies it in production, and this fake satisfies it
-// in tests so Exec / WaitForNotification / Release become unit-testable.
-type fakePooledConn struct {
-	execErr      error
-	waitErr      error
-	waitNotif    *pgconn.Notification
+// fakePooledListener is a test double for pooledListener. It lets us
+// drive the listen loop's Exec / WaitForNotification / Release paths
+// without standing up a real Postgres listener or holding a *pgxpool.Conn.
+// After the selfshadow adapter-ladder simplification (F-0260d) tests inject
+// this directly as what a fakeNotifier.Acquire returns — one layer rather than
+// the former two (fakePooledConn → poolConnAdapter).
+type fakePooledListener struct {
+	execErr   error
+	waitErr   error
+	waitNotif *pgconnNotification
+
 	execCalls    atomic.Int32
 	waitCalls    atomic.Int32
 	releaseCalls atomic.Int32
 	lastSQL      atomic.Value // string
 }
 
-func (f *fakePooledConn) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+func (f *fakePooledListener) Exec(_ context.Context, sql string) error {
 	f.execCalls.Add(1)
 	f.lastSQL.Store(sql)
-	if f.execErr != nil {
-		return pgconn.CommandTag{}, f.execErr
-	}
-	return pgconn.CommandTag{}, nil
+	return f.execErr
 }
 
-func (f *fakePooledConn) WaitForNotification(_ context.Context) (*pgconn.Notification, error) {
+func (f *fakePooledListener) WaitForNotification(_ context.Context) (*pgconnNotification, error) {
 	f.waitCalls.Add(1)
 	if f.waitErr != nil {
 		return nil, f.waitErr
@@ -42,53 +38,58 @@ func (f *fakePooledConn) WaitForNotification(_ context.Context) (*pgconn.Notific
 	return f.waitNotif, nil
 }
 
-func (f *fakePooledConn) Release() { f.releaseCalls.Add(1) }
+func (f *fakePooledListener) Release() { f.releaseCalls.Add(1) }
 
-// TestPoolConnAdapter_ExecForwardsToInner asserts that poolConnAdapter.Exec
-// forwards the SQL string to the underlying pooledConn and returns nil on
-// success. This is the production wiring's `_, err := c.conn.Exec(...)`
-// happy path, previously only reachable against a live Postgres.
-func TestPoolConnAdapter_ExecForwardsToInner(t *testing.T) {
-	fc := &fakePooledConn{}
-	a := &poolConnAdapter{conn: fc}
+// fakeNotifier is an Acquire factory that returns a pre-built fakePooledListener.
+// This is the single test-seam injection point for the listen loop.
+type fakeNotifier struct {
+	listener   *fakePooledListener
+	acquireErr error
+}
 
-	if err := a.Exec(context.Background(), "LISTEN config_changed"); err != nil {
+func (fn *fakeNotifier) Acquire(_ context.Context) (pooledListener, error) {
+	if fn.acquireErr != nil {
+		return nil, fn.acquireErr
+	}
+	return fn.listener, nil
+}
+
+// Compile-time assertion: fakePooledListener satisfies pooledListener.
+var _ pooledListener = (*fakePooledListener)(nil)
+
+// TestFakePooledListener_ExecForwards asserts that fakePooledListener.Exec
+// records the SQL and returns nil on success — verifying the test double
+// itself is correct.
+func TestFakePooledListener_ExecForwards(t *testing.T) {
+	f := &fakePooledListener{}
+	if err := f.Exec(context.Background(), "LISTEN config_changed"); err != nil {
 		t.Fatalf("Exec returned err: %v", err)
 	}
-	if fc.execCalls.Load() != 1 {
-		t.Errorf("Exec call count = %d, want 1", fc.execCalls.Load())
+	if f.execCalls.Load() != 1 {
+		t.Errorf("execCalls = %d, want 1", f.execCalls.Load())
 	}
-	if got, _ := fc.lastSQL.Load().(string); got != "LISTEN config_changed" {
-		t.Errorf("Exec SQL = %q, want LISTEN config_changed", got)
+	if got, _ := f.lastSQL.Load().(string); got != "LISTEN config_changed" {
+		t.Errorf("lastSQL = %q, want LISTEN config_changed", got)
 	}
 }
 
-// TestPoolConnAdapter_ExecSurfacesError asserts the err-branch: a failure
-// inside the inner Exec propagates back to the listen loop so it can bail
-// out and reacquire (covered by TestListen_ExecLISTENFailureReacquires).
-func TestPoolConnAdapter_ExecSurfacesError(t *testing.T) {
+// TestFakePooledListener_ExecSurfacesError verifies the error branch.
+func TestFakePooledListener_ExecSurfacesError(t *testing.T) {
 	sentinel := errors.New("listen denied")
-	fc := &fakePooledConn{execErr: sentinel}
-	a := &poolConnAdapter{conn: fc}
-
-	if err := a.Exec(context.Background(), "LISTEN x"); !errors.Is(err, sentinel) {
-		t.Errorf("Exec err = %v, want %v", err, sentinel)
+	f := &fakePooledListener{execErr: sentinel}
+	if err := f.Exec(context.Background(), "LISTEN x"); !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want %v", err, sentinel)
 	}
 }
 
-// TestPoolConnAdapter_WaitForNotificationProjects asserts the success
-// branch: the inner *pgconn.Notification is projected onto the package's
-// internal pgconnNotification shape so the listen loop never imports
-// pgconn directly. Channel + Payload must survive the projection.
-func TestPoolConnAdapter_WaitForNotificationProjects(t *testing.T) {
-	fc := &fakePooledConn{waitNotif: &pgconn.Notification{
-		PID:     42,
+// TestFakePooledListener_WaitForNotification_Success verifies the success path:
+// Channel and Payload survive the round-trip through fakePooledListener.
+func TestFakePooledListener_WaitForNotification_Success(t *testing.T) {
+	f := &fakePooledListener{waitNotif: &pgconnNotification{
 		Channel: "config_changed",
 		Payload: "hub-self",
 	}}
-	a := &poolConnAdapter{conn: fc}
-
-	n, err := a.WaitForNotification(context.Background())
+	n, err := f.WaitForNotification(context.Background())
 	if err != nil {
 		t.Fatalf("WaitForNotification: %v", err)
 	}
@@ -103,15 +104,11 @@ func TestPoolConnAdapter_WaitForNotificationProjects(t *testing.T) {
 	}
 }
 
-// TestPoolConnAdapter_WaitForNotificationSurfacesError asserts the err
-// branch: a failure inside WaitForNotification returns (nil, err) so the
-// listen loop can release the conn and reacquire.
-func TestPoolConnAdapter_WaitForNotificationSurfacesError(t *testing.T) {
+// TestFakePooledListener_WaitForNotification_Error verifies the error branch.
+func TestFakePooledListener_WaitForNotification_Error(t *testing.T) {
 	sentinel := errors.New("conn broken")
-	fc := &fakePooledConn{waitErr: sentinel}
-	a := &poolConnAdapter{conn: fc}
-
-	n, err := a.WaitForNotification(context.Background())
+	f := &fakePooledListener{waitErr: sentinel}
+	n, err := f.WaitForNotification(context.Background())
 	if !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want %v", err, sentinel)
 	}
@@ -120,44 +117,11 @@ func TestPoolConnAdapter_WaitForNotificationSurfacesError(t *testing.T) {
 	}
 }
 
-// TestPoolConnAdapter_ReleaseForwards asserts the trivial Release plumbing
-// — the inner conn's Release is called exactly once.
-func TestPoolConnAdapter_ReleaseForwards(t *testing.T) {
-	fc := &fakePooledConn{}
-	a := &poolConnAdapter{conn: fc}
-	a.Release()
-	if fc.releaseCalls.Load() != 1 {
-		t.Errorf("Release call count = %d, want 1", fc.releaseCalls.Load())
-	}
-}
-
-// fakeNotifierForAcquire pretends to be a notifier so we can drive
-// poolAdapter.Acquire's success path. The real poolAdapter holds a
-// *pgxpool.Pool; covering its success branch via the real type requires a
-// live Postgres. Instead, we directly construct &poolConnAdapter{conn: …}
-// here in a separate test to lock down the wiring shape: the listen loop
-// expects a *poolConnAdapter and the adapter expects a pooledConn field.
-func TestPoolConnAdapter_FieldShapeWiring(t *testing.T) {
-	// Compile-time assertion mirrored at runtime: an instance built with
-	// only the pooledConn seam must satisfy pooledListener and round-trip
-	// every method without nil-pointer panics. This protects against
-	// future refactors that might inadvertently re-introduce a hard
-	// dependency on *pgxpool.Conn inside poolConnAdapter.
-	var _ pooledListener = (*poolConnAdapter)(nil)
-
-	fc := &fakePooledConn{waitNotif: &pgconn.Notification{Channel: "c", Payload: "p"}}
-	a := &poolConnAdapter{conn: fc}
-
-	if err := a.Exec(context.Background(), "X"); err != nil {
-		t.Errorf("Exec: %v", err)
-	}
-	if _, err := a.WaitForNotification(context.Background()); err != nil {
-		t.Errorf("WaitForNotification: %v", err)
-	}
-	a.Release()
-
-	if fc.execCalls.Load() != 1 || fc.waitCalls.Load() != 1 || fc.releaseCalls.Load() != 1 {
-		t.Errorf("call counts unexpected: exec=%d wait=%d release=%d",
-			fc.execCalls.Load(), fc.waitCalls.Load(), fc.releaseCalls.Load())
+// TestFakePooledListener_ReleaseForwards verifies Release is tracked.
+func TestFakePooledListener_ReleaseForwards(t *testing.T) {
+	f := &fakePooledListener{}
+	f.Release()
+	if f.releaseCalls.Load() != 1 {
+		t.Errorf("releaseCalls = %d, want 1", f.releaseCalls.Load())
 	}
 }

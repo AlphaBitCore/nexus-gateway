@@ -36,10 +36,19 @@ type Adapter interface {
 	Probe(ctx context.Context, target CallTarget) (*ProbeResult, error)
 
 	// PrepareBody is the pure-function part of Execute up to but
-	// excluding the network call. Returns the final body to send
-	// to upstream and the list of in-place rewrites applied (for
-	// the x-nexus-coerced header). Idempotent; no side effects.
-	PrepareBody(req Request) ([]byte, []string, error)
+	// excluding the network call. Returns the final body to send to
+	// upstream, the list of in-place rewrites applied (for the
+	// x-nexus-coerced header), and the codec's URLOverride (empty when
+	// the transport's default URL applies). Idempotent; no side effects.
+	//
+	// urlOverride is the EncodeResult.URLOverride the codec emitted for
+	// this body (e.g. the Gemini embedding codec selects ":embedContent"
+	// vs ":batchEmbedContents" by input shape). Callers that reuse the
+	// prepared body on the cache-MISS fast path MUST pass it back into
+	// ExecuteWithBody so the override reaches the dispatched URL — without
+	// it a batch-shaped Gemini body lands on the single-embed action and
+	// 400s.
+	PrepareBody(req Request) (body []byte, rewrites []string, urlOverride string, err error)
 
 	// ExecuteWithBody is Execute with the body already prepared by
 	// PrepareBody. The cache layer calls this on a MISS so PrepareBody
@@ -55,5 +64,7 @@ type Adapter interface {
 	//     nil body is required.
 	//   - rewrites is propagated verbatim into Response.Coerced and
 	//     surfaced as the x-nexus-coerced audit header.
-	ExecuteWithBody(ctx context.Context, req Request, body []byte, rewrites []string) (*Response, error)
+	//   - urlOverride is the PrepareBody URLOverride for this body; pass
+	//     "" when the transport's default URL applies.
+	ExecuteWithBody(ctx context.Context, req Request, body []byte, rewrites []string, urlOverride string) (*Response, error)
 }

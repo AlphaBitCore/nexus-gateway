@@ -12,8 +12,12 @@
 //
 //   - BypassHooks: skip request hooks + response hooks + SSE live compliance.
 //   - BypassCache: skip cache lookup + cache write for matched traffic.
-//   - BypassNormalize: skip normalize.Registry.Normalize + response-side
-//     normalize emission to traffic_event_normalized.
+//   - BypassNormalize: skip emission of the response-side normalized
+//     projection to traffic_event_normalized. It does NOT change request
+//     normalization or cache-key derivation — PrepareBody + the cache-key
+//     NormalizeKey step run unconditionally in proxy.go regardless of this
+//     flag. (The admin API couples it with BypassCache as a product rule,
+//     not because the cache key depends on it.)
 //
 // The toggles are guarded by a master Enabled flag and a mandatory
 // ExpiresAt (≤ 8h). When Enabled is false or the effective ExpiresAt is

@@ -6,14 +6,17 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pashagolub/pgxmock/v4"
+	"github.com/prometheus/client_golang/prometheus"
 
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
+	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -60,10 +63,14 @@ func inlineBodyEnvelope(t *testing.T, raw []byte) []byte {
 	return b
 }
 
-// expectScan queues the SELECT and the returned rows.
+// expectScan queues the version-aware SELECT and the returned rows. The
+// regex pins two load-bearing clauses: version-awareness (the schema-bump
+// healing mechanism) AND the governed-row exclusion (rows carrying
+// redaction spans are never re-normalized — their span offsets reference
+// the projection they were stamped over).
 func expectScan(mock pgxmock.PgxPoolIface, rows *pgxmock.Rows) {
-	mock.ExpectQuery(`FROM traffic_event te`).
-		WithArgs(normalizeBackfillBatchSize).
+	mock.ExpectQuery(`normalize_version IS DISTINCT FROM(?s).*redaction_spans IS NULL`).
+		WithArgs(normalizeBackfillBatchSize, normcore.SchemaVersion).
 		WillReturnRows(rows)
 }
 
@@ -79,10 +86,12 @@ func TestNormalizeBackfill_HappyPath(t *testing.T) {
 		"id", "path", "adapter_type", "model",
 		"request_content_type", "response_content_type",
 		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
 	}).AddRow(
 		"evt-1", "/v1/chat/completions", "openai", "gpt-4o",
 		ptrStr("application/json"), ptrStr("application/json"),
 		inlineBodyEnvelope(t, rawReq), inlineBodyEnvelope(t, rawResp),
+		nil, nil,
 	)
 	expectScan(mock, rows)
 
@@ -123,17 +132,23 @@ func TestNormalizeBackfill_RegistryError(t *testing.T) {
 		"id", "path", "adapter_type", "model",
 		"request_content_type", "response_content_type",
 		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
 	}).AddRow(
 		"evt-2", "/v1/chat/completions", "anthropic", "claude",
 		ptrStr("application/json"), ptrStr("application/json"),
 		inlineBodyEnvelope(t, []byte(`malformed`)), inlineBodyEnvelope(t, []byte(`{"ok":true}`)),
+		nil, nil,
 	)
 	expectScan(mock, rows)
 
 	// UPSERT still fires because at least one direction (response) produced
 	// a valid normalized payload. Request lands as request_status='failed'
-	// + request_normalized=NULL.
-	mock.ExpectExec(`INSERT INTO traffic_event_normalized`).
+	// + request_normalized=NULL. The tightened regex pins the
+	// status-honesty guard: on conflict, a status may overwrite only
+	// together with a new payload (or when no older payload exists), so a
+	// failed re-normalize can never stamp 'failed' over a surviving older
+	// payload the drawer still renders.
+	mock.ExpectExec(`CASE WHEN EXCLUDED.request_normalized IS NOT NULL OR traffic_event_normalized.request_normalized IS NULL`).
 		WithArgs(
 			"evt-2",
 			nil,              // request_normalized NULL (failed)
@@ -170,6 +185,7 @@ func TestNormalizeBackfill_NoCandidates(t *testing.T) {
 		"id", "path", "adapter_type", "model",
 		"request_content_type", "response_content_type",
 		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
 	})
 	expectScan(mock, rows)
 
@@ -186,7 +202,8 @@ func TestNormalizeBackfill_NoCandidates(t *testing.T) {
 
 // TestNormalizeBackfill_SpillRefOnlySkipped pins the spill-ref-only skip:
 // when both inline bodies are nil (spill-ref-only payload), the row is
-// skipped without firing the registry or the UPSERT.
+// not normalized or UPSERTed — but it IS recorded in the skip ledger so
+// the scan stops returning it (the starvation fix).
 func TestNormalizeBackfill_SpillRefOnlySkipped(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -195,13 +212,19 @@ func TestNormalizeBackfill_SpillRefOnlySkipped(t *testing.T) {
 		"id", "path", "adapter_type", "model",
 		"request_content_type", "response_content_type",
 		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
 	}).AddRow(
 		"evt-3", "/v1/messages", "anthropic", "claude",
 		(*string)(nil), (*string)(nil),
 		nil, nil,
+		nil, nil,
 	)
 	expectScan(mock, rows)
-	// NO UPSERT expected — the row is skipped.
+	// NO normalized UPSERT, but a terminal skip-mark must be written so the
+	// row leaves the scan set.
+	mock.ExpectExec(`INSERT INTO traffic_event_normalize_skip`).
+		WithArgs("evt-3", "spill_ref_only", normcore.SchemaVersion).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	reg := &stubNormalizeRegistry{}
 	job := newBackfillJob(mock, reg)
@@ -217,6 +240,112 @@ func TestNormalizeBackfill_SpillRefOnlySkipped(t *testing.T) {
 	}
 }
 
+// TestNormalizeBackfill_NoPayloadProducedSkipMarked pins the second
+// unfillable class: inline bytes exist but normalize produces nothing for
+// both directions → the row is skip-marked (reason no_payload_produced),
+// not re-scanned forever.
+func TestNormalizeBackfill_NoPayloadProducedSkipMarked(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	rows := pgxmock.NewRows([]string{
+		"id", "path", "adapter_type", "model",
+		"request_content_type", "response_content_type",
+		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
+	}).AddRow(
+		"evt-4", "/v1/chat/completions", "openai", "gpt",
+		ptrStr("application/json"), ptrStr("application/json"),
+		inlineBodyEnvelope(t, []byte(`req`)), inlineBodyEnvelope(t, []byte(`resp`)),
+		nil, nil,
+	)
+	expectScan(mock, rows)
+	mock.ExpectExec(`INSERT INTO traffic_event_normalize_skip`).
+		WithArgs("evt-4", "no_payload_produced", normcore.SchemaVersion).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	// Both directions fail to normalize → no payload produced for either.
+	reg := &stubNormalizeRegistry{err: errors.New("no payload")}
+	job := newBackfillJob(mock, reg)
+
+	if err := job.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestNormalizeBackfill_UpsertFailureNonFatal proves a failed normalized
+// UPSERT is logged, not fatal — Run completes and the next tick retries.
+func TestNormalizeBackfill_UpsertFailureNonFatal(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	rows := pgxmock.NewRows([]string{
+		"id", "path", "adapter_type", "model",
+		"request_content_type", "response_content_type",
+		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
+	}).AddRow(
+		"evt-6", "/v1/chat/completions", "openai", "gpt",
+		ptrStr("application/json"), ptrStr("application/json"),
+		inlineBodyEnvelope(t, []byte(`req`)), inlineBodyEnvelope(t, []byte(`resp`)),
+		nil, nil,
+	)
+	expectScan(mock, rows)
+	mock.ExpectExec(`INSERT INTO traffic_event_normalized`).
+		WithArgs(
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+		).
+		WillReturnError(context.DeadlineExceeded)
+
+	reg := &stubNormalizeRegistry{payload: normcore.NormalizedPayload{Kind: "ai-chat"}}
+	job := newBackfillJob(mock, reg)
+
+	if err := job.Run(context.Background()); err != nil {
+		t.Fatalf("Run must not surface an upsert failure: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestNormalizeBackfill_SkipMarkFailureNonFatal proves a failed skip-mark
+// is logged, not fatal — the row is simply retried next tick, no data
+// lost.
+func TestNormalizeBackfill_SkipMarkFailureNonFatal(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	rows := pgxmock.NewRows([]string{
+		"id", "path", "adapter_type", "model",
+		"request_content_type", "response_content_type",
+		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
+	}).AddRow(
+		"evt-5", "/v1/messages", "anthropic", "claude",
+		(*string)(nil), (*string)(nil),
+		nil, nil,
+		nil, nil,
+	)
+	expectScan(mock, rows)
+	mock.ExpectExec(`INSERT INTO traffic_event_normalize_skip`).
+		WithArgs("evt-5", "spill_ref_only", normcore.SchemaVersion).
+		WillReturnError(context.DeadlineExceeded)
+
+	reg := &stubNormalizeRegistry{}
+	job := newBackfillJob(mock, reg)
+
+	if err := job.Run(context.Background()); err != nil {
+		t.Fatalf("Run must not surface a skip-mark write failure: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
 // TestNormalizeBackfill_ScanError pins the SCAN-error surface: a Query
 // failure surfaces wrapped to the scheduler.
 func TestNormalizeBackfill_ScanError(t *testing.T) {
@@ -224,7 +353,7 @@ func TestNormalizeBackfill_ScanError(t *testing.T) {
 	defer mock.Close()
 
 	mock.ExpectQuery(`FROM traffic_event te`).
-		WithArgs(normalizeBackfillBatchSize).
+		WithArgs(normalizeBackfillBatchSize, normcore.SchemaVersion).
 		WillReturnError(errors.New("conn refused"))
 
 	job := newBackfillJob(mock, &stubNormalizeRegistry{})
@@ -245,10 +374,12 @@ func TestNormalizeBackfill_BothDirectionsFailed(t *testing.T) {
 		"id", "path", "adapter_type", "model",
 		"request_content_type", "response_content_type",
 		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
 	}).AddRow(
 		"evt-4", "/v1/chat/completions", "openai", "gpt-4o",
 		ptrStr("application/json"), ptrStr("application/json"),
 		inlineBodyEnvelope(t, []byte(`bad`)), inlineBodyEnvelope(t, []byte(`bad`)),
+		nil, nil,
 	)
 	expectScan(mock, rows)
 	// NO UPSERT expected.
@@ -261,6 +392,92 @@ func TestNormalizeBackfill_BothDirectionsFailed(t *testing.T) {
 	}
 	if reg.calls != 2 {
 		t.Errorf("registry called %d times, want 2 (both directions tried)", reg.calls)
+	}
+}
+
+// TestNormalizeBackfill_MarshalFailureRecordsFailedStatus pins the
+// payload-marshal failure: a payload the encoder cannot serialize (NaN in
+// Params) records status=failed with the marshal reason instead of
+// silently writing nothing for the direction.
+func TestNormalizeBackfill_MarshalFailureRecordsFailedStatus(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	rows := pgxmock.NewRows([]string{
+		"id", "path", "adapter_type", "model",
+		"request_content_type", "response_content_type",
+		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
+	}).AddRow(
+		"evt-8", "/v1/chat/completions", "openai", "gpt",
+		ptrStr("application/json"), ptrStr("application/json"),
+		inlineBodyEnvelope(t, []byte(`req`)), inlineBodyEnvelope(t, []byte(`resp`)),
+		nil, nil,
+	)
+	expectScan(mock, rows)
+	// Both directions fail to marshal → no payload produced → skip-marked.
+	mock.ExpectExec(`INSERT INTO traffic_event_normalize_skip`).
+		WithArgs("evt-8", "no_payload_produced", normcore.SchemaVersion).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	nan := math.NaN()
+	reg := &stubNormalizeRegistry{payload: normcore.NormalizedPayload{
+		Kind:   "ai-chat",
+		Params: &normcore.SamplingParam{Temperature: &nan},
+	}}
+	job := newBackfillJob(mock, reg)
+	if err := job.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestNormalizeBackfill_MetricsCounters proves the job reports its work
+// when metrics are wired: a spill-ref skip bumps skipped{reason} and a
+// successful fill bumps filled — the dashboards operators use to see the
+// backfill making progress.
+func TestNormalizeBackfill_MetricsCounters(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	rows := pgxmock.NewRows([]string{
+		"id", "path", "adapter_type", "model",
+		"request_content_type", "response_content_type",
+		"inline_request_body", "inline_response_body",
+		"request_spill_ref", "response_spill_ref",
+	}).AddRow(
+		"evt-9", "/v1/messages", "anthropic", "claude",
+		(*string)(nil), (*string)(nil),
+		nil, nil, // spill-ref-only → skipped{spill_ref_only}
+		nil, nil,
+	).AddRow(
+		"evt-10", "/v1/chat/completions", "openai", "gpt",
+		ptrStr("application/json"), ptrStr("application/json"),
+		inlineBodyEnvelope(t, []byte(`req`)), inlineBodyEnvelope(t, []byte(`resp`)), // → filled
+		nil, nil,
+	)
+	expectScan(mock, rows)
+	mock.ExpectExec(`INSERT INTO traffic_event_normalize_skip`).
+		WithArgs("evt-9", "spill_ref_only", normcore.SchemaVersion).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec(`INSERT INTO traffic_event_normalized`).
+		WithArgs(
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+		).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+
+	opsReg := opsmetrics.NewRegistry(prometheus.NewRegistry())
+	job := NewNormalizeBackfill(nil, &stubNormalizeRegistry{payload: normcore.NormalizedPayload{Kind: "ai-chat"}}, nil, time.Minute, opsReg, silentLogger())
+	job.pool = mock
+
+	if err := job.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 

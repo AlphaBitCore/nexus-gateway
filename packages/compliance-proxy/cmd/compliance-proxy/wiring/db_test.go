@@ -77,7 +77,7 @@ func TestInitPayloadCaptureStore_DBRowNotFound_FallsBackToDefault(t *testing.T) 
 	_ = mock
 }
 
-// InitStreamingPolicyStore — DB-present paths (#115)
+// InitStreamingPolicyStore — DB-present paths
 
 func TestInitStreamingPolicyStore_DBQueryError_ReturnsDefaultPolicyStore(t *testing.T) {
 	db, mock := newMockDB(t)

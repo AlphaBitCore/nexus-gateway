@@ -46,7 +46,7 @@ func TestLogoutHandler(t *testing.T) {
 		cfg, _ := json.Marshal(map[string]any{"issuer": disco.URL, "clientId": "cli-1"})
 		mock.ExpectQuery(idpRowQuery).WithArgs("idp-1").WillReturnRows(oidcIdPRows("idp-1", "Okta", cfg))
 
-		d := StartDeps{IdPs: store.NewIdPStoreWithPool(mock), Issuer: "https://cp.test/", Resolver: oidcdisco.NewResolver()}
+		d := StartDeps{IdPs: store.NewIdPStoreWithPool(mock), Issuer: "https://cp.test/", Resolver: oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck())}
 		c, rec := newLogoutCtx("idp-1")
 		if err := LogoutHandler(d)(c); err != nil {
 			t.Fatalf("handler: %v", err)
@@ -71,7 +71,7 @@ func TestLogoutHandler(t *testing.T) {
 		t.Cleanup(mock.Close)
 		mock.ExpectQuery(idpRowQuery).WithArgs("idp-2").
 			WillReturnRows(samlIdPRows("idp-2", "Acme", true, true, []byte(`{}`)))
-		d := StartDeps{IdPs: store.NewIdPStoreWithPool(mock), Issuer: "https://cp.test", Resolver: oidcdisco.NewResolver()}
+		d := StartDeps{IdPs: store.NewIdPStoreWithPool(mock), Issuer: "https://cp.test", Resolver: oidcdisco.NewResolver(oidcdisco.WithInsecureSkipHostCheck())}
 		c, rec := newLogoutCtx("idp-2")
 		_ = LogoutHandler(d)(c)
 		if rec.Code != http.StatusFound || rec.Header().Get("Location") != loginPagePath {

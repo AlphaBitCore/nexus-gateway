@@ -11,44 +11,38 @@ import (
 
 // AdminAuditLogEntry represents a row from the AdminAuditLog table.
 type AdminAuditLogEntry struct {
-	ID              string          `json:"id"`
-	SequenceNumber  int             `json:"sequenceNumber"`
-	Timestamp       time.Time       `json:"timestamp"`
-	ActorID         string          `json:"actorId"`
-	ActorLabel      string          `json:"actorLabel"`
-	ActorRole       *string         `json:"actorRole"`
-	SourceIP        *string         `json:"sourceIp"`
-	Action          string          `json:"action"`
-	EntityType      string          `json:"entityType"`
-	EntityID        *string         `json:"entityId"`
-	BeforeState     json.RawMessage `json:"beforeState"`
-	AfterState      json.RawMessage `json:"afterState"`
-	NexusRequestID  *string         `json:"nexusRequestId"`
-	ClientRequestID *string         `json:"clientRequestId"`
-	ClientUserID    *string         `json:"clientUserId"`
-	ClientSessionID *string         `json:"clientSessionId"`
+	ID             string          `json:"id"`
+	SequenceNumber int             `json:"sequenceNumber"`
+	Timestamp      time.Time       `json:"timestamp"`
+	ActorID        string          `json:"actorId"`
+	ActorLabel     string          `json:"actorLabel"`
+	ActorRole      *string         `json:"actorRole"`
+	SourceIP       *string         `json:"sourceIp"`
+	Action         string          `json:"action"`
+	EntityType     string          `json:"entityType"`
+	EntityID       *string         `json:"entityId"`
+	BeforeState    json.RawMessage `json:"beforeState"`
+	AfterState     json.RawMessage `json:"afterState"`
+	NexusRequestID *string         `json:"nexusRequestId"`
 }
 
 // AdminAuditLogListParams holds filter/pagination for admin audit logs.
 type AdminAuditLogListParams struct {
-	StartTime       *time.Time
-	EndTime         *time.Time
-	ActorID         string
-	ActorLabel      string
-	ActorRole       string
-	Action          string
-	EntityType      string
-	NexusRequestID  string
-	ClientRequestID string
-	ClientUserID    string
-	ClientSessionID string
-	Limit           int
-	Offset          int
+	StartTime      *time.Time
+	EndTime        *time.Time
+	ActorID        string
+	ActorLabel     string
+	ActorRole      string
+	Action         string
+	EntityType     string
+	NexusRequestID string
+	Limit          int
+	Offset         int
 }
 
 const adminAuditColumns = `id, "sequenceNumber", timestamp, "actorId", "actorLabel", "actorRole",
 	"sourceIp", action, "entityType", "entityId", "beforeState", "afterState",
-	"nexusRequestId", "clientRequestId", "clientUserId", "clientSessionId"`
+	"nexusRequestId"`
 
 // ListAdminAuditLogs returns admin audit logs with filtering.
 func (store *Store) ListAdminAuditLogs(ctx context.Context, p AdminAuditLogListParams) ([]AdminAuditLogEntry, int, error) {
@@ -104,7 +98,7 @@ func scanAdminAuditRows(rows pgx.Rows) ([]AdminAuditLogEntry, int, error) {
 		if err := rows.Scan(
 			&e.ID, &e.SequenceNumber, &e.Timestamp, &e.ActorID, &e.ActorLabel, &e.ActorRole,
 			&e.SourceIP, &e.Action, &e.EntityType, &e.EntityID, &e.BeforeState, &e.AfterState,
-			&e.NexusRequestID, &e.ClientRequestID, &e.ClientUserID, &e.ClientSessionID,
+			&e.NexusRequestID,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan admin audit log: %w", err)
 		}

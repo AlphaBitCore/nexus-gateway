@@ -56,11 +56,13 @@ func buildGetChatReqWire(messages []struct {
 	return out
 }
 
-// buildConnectFrame wraps a payload in a Connect-RPC envelope.
+// buildConnectFrame wraps a payload in a Connect-RPC envelope. The end-of-stream
+// (trailer) frame is flagged 0x02 per the Connect protocol — 0x01 is the
+// per-message compression flag, a distinct bit.
 func buildConnectFrame(payload []byte, eos bool) []byte {
 	hdr := make([]byte, 5)
 	if eos {
-		hdr[0] = 0x01
+		hdr[0] = 0x02
 	}
 	binary.BigEndian.PutUint32(hdr[1:], uint32(len(payload)))
 	return append(hdr, payload...)
@@ -357,10 +359,12 @@ func TestPatternNormalizer_Tier2_ClaimsBatchExecuteWithoutAdapter(t *testing.T) 
 
 func TestPatternNormalizer_Tier2_JSONStillClaims(t *testing.T) {
 	// Existing JSON-shape probe behaviour must not regress when
-	// detectors are added.
+	// detectors are added — the consumer-web chatgpt-web spec still
+	// claims its shape through the JSON probe pass.
 	body := []byte(`{
-		"model": "gpt-4o-mini",
-		"messages": [{"role": "user", "content": "still a JSON chat"}]
+		"model": "gpt-5-5",
+		"messages": [{"author": {"role": "user"}, "content": {"parts": ["still a JSON chat"]}}],
+		"suggestion_type": "autocomplete"
 	}`)
 	pn := NewPatternNormalizer()
 	pn.MinConfidence = 0.7
@@ -372,8 +376,8 @@ func TestPatternNormalizer_Tier2_JSONStillClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if payload.DetectedSpec != "pattern:openai-chat" {
-		t.Errorf("DetectedSpec: %q want pattern:openai-chat", payload.DetectedSpec)
+	if payload.DetectedSpec != "pattern:chatgpt-web" {
+		t.Errorf("DetectedSpec: %q want pattern:chatgpt-web", payload.DetectedSpec)
 	}
 }
 

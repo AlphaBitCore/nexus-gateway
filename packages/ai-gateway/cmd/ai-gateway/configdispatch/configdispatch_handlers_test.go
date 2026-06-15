@@ -28,7 +28,6 @@ import (
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
-	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
@@ -36,7 +35,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 	"github.com/alicebob/miniredis/v2"
@@ -99,37 +97,43 @@ func miniredisCache(t *testing.T) (*cachecore.Cache, *miniredis.Miniredis) {
 	return c, mini
 }
 
-func TestHandler_RoutingRules_NilDB_NoOp(t *testing.T) {
+// F-0126: routing_rules / credentials / providers / models / virtual_keys are
+// all registered ai-gateway keys backed by structurally-required deps (DB,
+// CacheLayer, CredManager). A nil dep there is a wiring regression, NOT a
+// disabled module — the applier must return an ERROR so the loader records a
+// failed outcome and does not falsely advance the reportedVer to "converged".
+
+func TestHandler_RoutingRules_NilDB_Errors(t *testing.T) {
 	d := newTestDeps(t)
 	d.DB = nil
-	if err := applyKey(t, d, "routing_rules", []byte(`{}`)); err != nil {
-		t.Fatalf("routing_rules with nil DB: unexpected error: %v", err)
+	if err := applyKey(t, d, "routing_rules", []byte(`{}`)); err == nil {
+		t.Fatal("routing_rules with nil DB must error (F-0126), got nil")
 	}
 }
 
-func TestHandler_Credentials_NilCacheLayer_NoOp(t *testing.T) {
+func TestHandler_Credentials_NilCredManager_Errors(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
 	d.CredManager = nil
-	if err := applyKey(t, d, "credentials", []byte(`{}`)); err != nil {
-		t.Fatalf("credentials with nil cacheLayer: unexpected error: %v", err)
+	if err := applyKey(t, d, "credentials", []byte(`{}`)); err == nil {
+		t.Fatal("credentials with nil CredManager must error (F-0126), got nil")
 	}
 }
 
-func TestHandler_Providers_NilCacheLayer_NoOp(t *testing.T) {
+func TestHandler_Providers_NilCacheLayer_Errors(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
 	d.GeminiCacheMgrSet = nil
-	if err := applyKey(t, d, "providers", []byte(`{}`)); err != nil {
-		t.Fatalf("providers with nil deps: unexpected error: %v", err)
+	if err := applyKey(t, d, "providers", []byte(`{}`)); err == nil {
+		t.Fatal("providers with nil CacheLayer must error (F-0126), got nil")
 	}
 }
 
-func TestHandler_Models_NilCacheLayer_NoOp(t *testing.T) {
+func TestHandler_Models_NilCacheLayer_Errors(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
-	if err := applyKey(t, d, "models", []byte(`{}`)); err != nil {
-		t.Fatalf("models with nil cacheLayer: unexpected error: %v", err)
+	if err := applyKey(t, d, "models", []byte(`{}`)); err == nil {
+		t.Fatal("models with nil CacheLayer must error (F-0126), got nil")
 	}
 }
 
@@ -193,42 +197,19 @@ func TestHandler_PayloadCapture_NilDB_NoOp(t *testing.T) {
 	}
 }
 
-// #115 streaming_compliance handler — three branches (mirrors cp test):
-//   (1) nil Store: handler skips silently
-//   (2) valid JSON: Store.Get() reflects admin policy after apply
-//   (3) malformed JSON: ApplyShadowState error propagated with wrap
-
-func TestHandler_StreamingCompliance_NilStore_Skipped(t *testing.T) {
+// F-0125: ai-gateway intentionally registers NO streaming_compliance applier
+// (the key is absent from ValidByThingType["ai-gateway"], so Hub never pushes
+// it). A streaming_compliance shadow tick must therefore be treated as an
+// unknown key and skipped — never applied — so no Store mutation can ride in
+// from a key the gateway is not a registered consumer of.
+func TestHandler_StreamingCompliance_NotRegistered_Skipped(t *testing.T) {
 	d := newTestDeps(t)
-	if err := applyKey(t, d, "streaming_compliance", []byte(`{}`)); err != nil {
-		t.Fatalf("nil-Store path should not error; got %v", err)
+	if BuildConfigLoader(d).Has("streaming_compliance") {
+		t.Fatal("ai-gateway must not register a streaming_compliance applier (F-0125)")
 	}
-}
-
-func TestHandler_StreamingCompliance_ValidRaw_Applied(t *testing.T) {
-	store := streampolicy.NewStore(streampolicy.DefaultPolicy())
-	d := newTestDeps(t)
-	d.StreamingPolicyStore = store
-	rawJSON := []byte(`{"default_mode":"buffer_full_block","fail_behavior":"fail_close","chunk_bytes":4096}`)
-	if err := applyKey(t, d, "streaming_compliance", rawJSON); err != nil {
-		t.Fatalf("valid raw apply: %v", err)
-	}
-	got := store.Get()
-	if got.Mode != streampolicy.ModeBufferFullBlock {
-		t.Errorf("Mode = %q, want %q", got.Mode, streampolicy.ModeBufferFullBlock)
-	}
-	if got.FailBehavior != streampolicy.FailClose {
-		t.Errorf("FailBehavior = %q, want %q", got.FailBehavior, streampolicy.FailClose)
-	}
-}
-
-func TestHandler_StreamingCompliance_MalformedRaw_ErrorWrapped(t *testing.T) {
-	store := streampolicy.NewStore(streampolicy.DefaultPolicy())
-	d := newTestDeps(t)
-	d.StreamingPolicyStore = store
-	err := applyKey(t, d, "streaming_compliance", []byte(`{not valid json`))
-	if err == nil {
-		t.Fatal("expected error on malformed raw")
+	// An unknown-key tick is a no-op (logged + skipped), never an error.
+	if err := applyKey(t, d, "streaming_compliance", []byte(`{"default_mode":"buffer_full_block"}`)); err != nil {
+		t.Fatalf("unknown streaming_compliance key should be skipped, got %v", err)
 	}
 }
 
@@ -274,19 +255,19 @@ func TestHandler_QuotaPolicies_NilPolicyCache_NoOp(t *testing.T) {
 	}
 }
 
-func TestHandler_VirtualKeys_NilCacheLayer_NoOp(t *testing.T) {
+func TestHandler_VirtualKeys_NilCacheLayer_Errors(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
-	if err := applyKey(t, d, "virtual_keys", []byte(`{}`)); err != nil {
-		t.Fatalf("virtual_keys with nil cacheLayer: unexpected error: %v", err)
+	if err := applyKey(t, d, "virtual_keys", []byte(`{}`)); err == nil {
+		t.Fatal("virtual_keys with nil CacheLayer must error (F-0126), got nil")
 	}
 }
 
-func TestHandler_VirtualKeys_EmptyPayload_NilCacheLayer_NoOp(t *testing.T) {
+func TestHandler_VirtualKeys_EmptyPayload_NilCacheLayer_Errors(t *testing.T) {
 	d := newTestDeps(t)
 	d.CacheLayer = nil
-	if err := applyKey(t, d, "virtual_keys", nil); err != nil {
-		t.Fatalf("virtual_keys with nil payload and nil cacheLayer: unexpected error: %v", err)
+	if err := applyKey(t, d, "virtual_keys", nil); err == nil {
+		t.Fatal("virtual_keys with nil payload and nil CacheLayer must error (F-0126), got nil")
 	}
 }
 
@@ -808,7 +789,7 @@ func TestKeys_ReturnsExpectedCount(t *testing.T) {
 		ObservabilityState: &obs,
 	})
 	keys := l.Keys()
-	const want = 20 // 20 registered keys total (#115 added streaming_compliance)
+	const want = 19 // registered keys total (F-0125 removed the dead streaming_compliance applier)
 	if len(keys) != want {
 		t.Fatalf("Keys(): got %d keys, want %d: %v", len(keys), want, keys)
 	}
@@ -897,6 +878,7 @@ func TestHandler_Credentials_WithCacheLayer_ReloadsCredentials(t *testing.T) {
 	mock, layer := newMockLayer(t)
 	expectCredentialReload(mock)
 	d.CacheLayer = layer
+	d.CredManager = &fakeCredInvalidator{} // required dep (F-0126)
 	if err := applyKey(t, d, "credentials", []byte(`{}`)); err != nil {
 		t.Fatalf("credentials with non-nil CacheLayer: unexpected error: %v", err)
 	}
@@ -909,6 +891,7 @@ func TestHandler_Credentials_CacheLayerReloadError_Propagates(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery(`FROM "Credential"`).WillReturnError(fmt.Errorf("db error"))
 	d.CacheLayer = layer
+	d.CredManager = &fakeCredInvalidator{} // required dep (F-0126)
 	if err := applyKey(t, d, "credentials", []byte(`{}`)); err == nil {
 		t.Fatal("credentials: expected error when CacheLayer.ReloadCredentials fails")
 	}
@@ -1082,17 +1065,56 @@ func TestHandler_CredentialReliability_WithReliabilityAndDB_CallsReload(t *testi
 	}
 }
 
-// credentials — non-nil CredManager branch
+// credentials — F-0097 granular vs full invalidation (non-nil CredManager branch)
 
-func TestHandler_Credentials_WithCredManager_CallsClearCache(t *testing.T) {
+// fakeCredInvalidator records which credential cache ops the credentials
+// applier performed so the F-0097 granular-vs-full decision is observable.
+type fakeCredInvalidator struct {
+	invalidated []string
+	cleared     int
+}
+
+func (f *fakeCredInvalidator) Invalidate(id string) { f.invalidated = append(f.invalidated, id) }
+func (f *fakeCredInvalidator) ClearCache()          { f.cleared++ }
+
+// F-0097: a targeted invalidate-by-id payload must evict ONLY the named
+// credentials (per-id Invalidate), never a full ClearCache storm.
+func TestHandler_Credentials_TargetedIDs_CallsInvalidatePerID(t *testing.T) {
+	fake := &fakeCredInvalidator{}
 	d := newTestDeps(t)
-	// NewManager with nil source/decryptor — ClearCache only touches in-memory cache map.
-	mgr := credmanager.NewManager(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	d.CredManager = mgr
-	// CacheLayer nil → ReloadCredentials not called; only ClearCache matters here.
-	d.CacheLayer = nil
+	mock, layer := newMockLayer(t)
+	expectCredentialReload(mock)
+	d.CacheLayer = layer
+	d.CredManager = fake
+	if err := applyKey(t, d, "credentials", []byte(`{"op":"invalidate","ids":["cred-a","cred-b"]}`)); err != nil {
+		t.Fatalf("targeted invalidate: unexpected error: %v", err)
+	}
+
+	if got := fake.invalidated; len(got) != 2 || got[0] != "cred-a" || got[1] != "cred-b" {
+		t.Errorf("Invalidate calls = %v, want [cred-a cred-b]", got)
+	}
+	if fake.cleared != 0 {
+		t.Errorf("ClearCache called %d times on a targeted payload, want 0", fake.cleared)
+	}
+}
+
+// F-0097: a non-targeted payload (full reload signal) falls back to ClearCache.
+func TestHandler_Credentials_NoIDs_FallsBackToClearCache(t *testing.T) {
+	fake := &fakeCredInvalidator{}
+	d := newTestDeps(t)
+	mock, layer := newMockLayer(t)
+	expectCredentialReload(mock)
+	d.CacheLayer = layer
+	d.CredManager = fake
 	if err := applyKey(t, d, "credentials", []byte(`{}`)); err != nil {
-		t.Fatalf("credentials with non-nil CredManager: unexpected error: %v", err)
+		t.Fatalf("full-reload fallback: unexpected error: %v", err)
+	}
+
+	if fake.cleared != 1 {
+		t.Errorf("ClearCache calls = %d, want 1 (full-reload fallback)", fake.cleared)
+	}
+	if len(fake.invalidated) != 0 {
+		t.Errorf("Invalidate called %v on a non-targeted payload, want none", fake.invalidated)
 	}
 }
 

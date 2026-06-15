@@ -10,32 +10,44 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 )
 
-// CacheStats returns a summary of in-process caches (IAM policy cache
-// size + the well-known config categories propagated by Hub shadows).
-// Mounted at GET /api/admin/cache/stats.
-func (h *Handler) CacheStats(c echo.Context) error {
-	// IAM engine cache size is not available from settings/; the zero value
-	// is acceptable here — the endpoint is informational only.
-	return c.JSON(http.StatusOK, map[string]any{
-		"iamPolicyCacheEntries": 0,
-		"configCategories":      []string{"providers", "models", "credentials", "routing", "hooks", "virtual-keys", "quotas", "interceptionDomains"},
-	})
-}
-
 // CacheFlush triggers a Hub shadow invalidation for every AI-traffic
 // config category and logs an audit entry. Mounted at POST /api/admin/cache/flush.
+//
+// Several of these keys are security-sensitive (credentials, virtual_keys,
+// routing_rules, quota_*). A flush whose purpose is to re-propagate them must
+// fail loud (HTTP 502) on a Hub push failure rather than report a false
+// success — otherwise the admin believes the fleet was flushed when it was not.
 func (h *Handler) CacheFlush(c echo.Context) error {
 	ctx := c.Request().Context()
 	if h.hub != nil {
-		h.hub.InvalidateConfig(ctx, "ai-gateway", configkey.Providers)
-		h.hub.InvalidateConfig(ctx, "ai-gateway", configkey.Credentials)
-		h.hub.InvalidateConfig(ctx, "ai-gateway", configkey.RoutingRules)
-		h.hub.InvalidateConfig(ctx, "ai-gateway", configkey.Hooks)
-		h.hub.InvalidateConfig(ctx, "ai-gateway", configkey.VirtualKeys)
-		h.hub.InvalidateConfig(ctx, "ai-gateway", configkey.QuotaPolicies)
-		h.hub.InvalidateConfig(ctx, "ai-gateway", configkey.QuotaOverrides)
-		h.hub.InvalidateConfig(ctx, "compliance-proxy", configkey.Hooks)
-		h.hub.InvalidateConfig(ctx, "agent", configkey.Exemptions)
+		type fanout struct {
+			thingType string
+			configKey string
+		}
+		for _, f := range []fanout{
+			{"ai-gateway", configkey.Providers},
+			{"ai-gateway", configkey.Credentials},
+			{"ai-gateway", configkey.RoutingRules},
+			{"ai-gateway", configkey.Hooks},
+			{"ai-gateway", configkey.VirtualKeys},
+			{"ai-gateway", configkey.QuotaPolicies},
+			{"ai-gateway", configkey.QuotaOverrides},
+			{"compliance-proxy", configkey.Hooks},
+			{"agent", configkey.Exemptions},
+		} {
+			if err := h.hub.InvalidateConfigE(ctx, f.thingType, f.configKey); err != nil {
+				h.logger.Error("cache flush: hub invalidate failed",
+					"thingType", f.thingType, "configKey", f.configKey, "error", err)
+				return c.JSON(http.StatusBadGateway, map[string]any{
+					"error": map[string]any{
+						"message": "Cache flush did not reach the gateway fleet; verify Hub health and retry.",
+						"type":    "propagation_error",
+						"code":    "HUB_PROPAGATION_FAILED",
+						"detail":  err.Error(),
+					},
+				})
+			}
+		}
 	}
 
 	categories := []string{"providers", "models", "credentials", "routing", "hooks", "virtual-keys", "quotas", "interceptionDomains"}

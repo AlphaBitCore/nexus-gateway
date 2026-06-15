@@ -8,11 +8,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
 )
@@ -89,13 +92,20 @@ func (h *Handler) CreateCredential(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON("name, providerId, and apiKey are required", "validation_error", "VALIDATION_ERROR"))
 	}
 
+	// Generate the credential id app-side BEFORE sealing so the
+	// ciphertext is AAD-bound to its own immutable row identity. A blob copied
+	// from another credential's row then fails GCM auth on decrypt instead of
+	// yielding the wrong upstream key.
+	credID := uuid.New().String()
+	aad := keyderive.ProviderCredentialAAD(credID, body.ProviderID)
+
 	var enc *crypto.EncryptResult
 	var keyID string
 	var encErr error
 	if h.multiVault != nil {
-		enc, keyID, encErr = h.multiVault.Encrypt(body.APIKey)
+		enc, keyID, encErr = h.multiVault.Encrypt(body.APIKey, aad)
 	} else {
-		enc, encErr = h.vault.Encrypt(body.APIKey)
+		enc, encErr = h.vault.Encrypt(body.APIKey, aad)
 		keyID = "v1"
 	}
 	if encErr != nil {
@@ -117,6 +127,7 @@ func (h *Handler) CreateCredential(c echo.Context) error {
 		weight = *body.SelectionWeight
 	}
 	cred, err := h.creds.CreateCredential(c.Request().Context(), credstore.CreateCredentialParams{
+		ID:              credID,
 		Name:            body.Name,
 		ProviderID:      body.ProviderID,
 		EncryptedKey:    enc.Ciphertext,
@@ -134,13 +145,18 @@ func (h *Handler) CreateCredential(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "credentials")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "credentials"); err != nil {
+			h.logger.Error("create credential: hub invalidate failed", "id", cred.ID, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceCredential, iam.VerbCreate)
 	ae.EntityID = cred.ID
 	ae.AfterState = map[string]any{"id": cred.ID, "name": cred.Name, "providerId": cred.ProviderID}
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", "AUDIT_FAILURE"))
+	}
 
 	return c.JSON(http.StatusCreated, cred)
 }
@@ -205,13 +221,16 @@ func (h *Handler) UpdateCredential(c echo.Context) error {
 		if h.multiVault == nil && h.vault == nil {
 			return c.JSON(http.StatusServiceUnavailable, errJSON("Credential vault not available", "server_error", "VAULT_UNAVAILABLE"))
 		}
+		// Re-seal under the same row-identity AAD (immutable id +
+		// provider) as the create path, so the rotated ciphertext stays bound.
+		aad := keyderive.ProviderCredentialAAD(id, existing.ProviderID)
 		var enc *crypto.EncryptResult
 		var keyID string
 		var encErr error
 		if h.multiVault != nil {
-			enc, keyID, encErr = h.multiVault.Encrypt(body.APIKey)
+			enc, keyID, encErr = h.multiVault.Encrypt(body.APIKey, aad)
 		} else {
-			enc, encErr = h.vault.Encrypt(body.APIKey)
+			enc, encErr = h.vault.Encrypt(body.APIKey, aad)
 			keyID = "v1"
 		}
 		if encErr != nil {
@@ -300,12 +319,17 @@ func (h *Handler) UpdateCredential(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(ctx, "ai-gateway", "credentials")
+		if err := h.hub.InvalidateConfigE(ctx, "ai-gateway", "credentials"); err != nil {
+			h.logger.Error("update credential: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceCredential, iam.VerbUpdate)
 	ae.EntityID = id
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", "AUDIT_FAILURE"))
+	}
 
 	return c.JSON(http.StatusOK, updated)
 }
@@ -325,12 +349,17 @@ func (h *Handler) DeleteCredential(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "credentials")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "credentials"); err != nil {
+			h.logger.Error("delete credential: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceCredential, iam.VerbDelete)
 	ae.EntityID = id
-	h.audit.LogObserved(c.Request().Context(), ae)
+	if err := h.audit.LogCritical(c.Request().Context(), ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", "AUDIT_FAILURE"))
+	}
 
 	return c.JSON(http.StatusOK, map[string]any{"deleted": true, "id": id})
 }
@@ -416,7 +445,9 @@ func (h *Handler) CircuitReset(c echo.Context) error {
 	}
 	ae := audit.EntryFor(c, iam.ResourceCredential, iam.VerbUpdate)
 	ae.EntityID = id
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", "AUDIT_FAILURE"))
+	}
 	return c.JSON(http.StatusOK, map[string]any{"reset": true, "id": id})
 }
 

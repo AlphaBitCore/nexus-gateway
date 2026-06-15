@@ -75,3 +75,31 @@ func (store *Store) FindAPIKeyByHash(ctx context.Context, keyHash string) (*APIK
 func (store *Store) FindByKeyHash(ctx context.Context, keyHash string) (*APIKeyWithOwner, error) {
 	return store.FindAPIKeyByHash(ctx, keyHash)
 }
+
+// UpdateKeyHashAndVersion lazy-migrates an admin key's stored hash to a new HMAC
+// keyring version, called from the CP auth path after the key authenticated
+// under an older version. It updates ONLY keyHash + key_version — deliberately
+// NOT updatedAt or any rotation-lifecycle column (status/rotatedAt/
+// rotatedFromId): the keyring version is orthogonal to the admin-key rotation
+// state machine, and a re-hash is an internal at-rest migration, not a
+// user-visible mutation.
+//
+// matchedHash is the stored hash that admitted the key, and the UPDATE is a
+// compare-and-swap on it: if the row's keyHash changed between admission and
+// this write (an admin regenerated the key mid-flight), the UPDATE matches no
+// rows and the migration is silently skipped. Without the guard, the lazy
+// re-hash would overwrite the regenerated hash and resurrect the superseded
+// key. Concurrent admissions of the SAME key recompute the same deterministic
+// current hash, so the first writer wins and the second matches zero rows —
+// idempotent either way.
+func (store *Store) UpdateKeyHashAndVersion(ctx context.Context, id, keyHash, keyVersion, matchedHash string) error {
+	_, err := store.pool.Exec(ctx, `
+		UPDATE "AdminApiKey"
+		SET "keyHash" = $2, "key_version" = $3
+		WHERE id = $1 AND "keyHash" = $4
+	`, id, keyHash, keyVersion, matchedHash)
+	if err != nil {
+		return fmt.Errorf("update key hash and version: %w", err)
+	}
+	return nil
+}

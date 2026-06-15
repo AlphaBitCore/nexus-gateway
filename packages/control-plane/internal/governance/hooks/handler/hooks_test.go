@@ -418,30 +418,81 @@ func TestEnrichHook_NonRequestStage_PhaseLabelPassthrough(t *testing.T) {
 
 func TestValidateHookEnums(t *testing.T) {
 	tests := []struct {
-		name   string
-		stage  string
-		fb     string
-		typ    string
-		impl   string
-		wantOK bool
+		name     string
+		stage    string
+		fb       string
+		typ      string
+		impl     string
+		wantOK   bool
+		wantCode string // expected error code when !wantOK
 	}{
-		{"all empty", "", "", "", "", true},
-		{"good values", "request", "fail-open", "webhook", "pii-detector", true},
-		{"bad stage", "weird", "", "", "", false},
-		{"bad fail behavior", "", "weird", "", "", false},
-		{"bad type", "", "", "weird", "", false},
-		{"unknown impl", "", "", "", "nonexistent", false},
-		{"good response stage + fail-closed", "response", "fail-closed", "script", "noop", true},
-		{"good builtin", "", "", "builtin", "", true},
+		{"all empty", "", "", "", "", true, ""},
+		{"good values", "request", "fail-open", "webhook", "pii-detector", true, ""},
+		{"bad stage", "weird", "", "", "", false, "validation_error"},
+		{"bad fail behavior", "", "weird", "", "", false, "validation_error"},
+		{"bad type", "", "", "weird", "", false, "validation_error"},
+		{"unknown impl", "", "", "", "nonexistent", false, "unknown_implementation_id"},
+		{"mistyped webhook", "", "", "", "web_hook", false, "unknown_implementation_id"},
+		{"good response stage + fail-closed", "response", "fail-closed", "script", "noop", true, ""},
+		{"good builtin", "", "", "builtin", "", true, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ValidateHookEnums(tc.stage, tc.fb, tc.typ, tc.impl)
-			ok := got == ""
+			msg, code := ValidateHookEnums(tc.stage, tc.fb, tc.typ, tc.impl)
+			ok := msg == ""
 			if ok != tc.wantOK {
-				t.Errorf("got=%q wantOK=%v", got, tc.wantOK)
+				t.Errorf("msg=%q wantOK=%v", msg, tc.wantOK)
+			}
+			if code != tc.wantCode {
+				t.Errorf("code=%q want %q", code, tc.wantCode)
+			}
+			if code == "unknown_implementation_id" && !strings.Contains(msg, "must be one of") {
+				t.Errorf("unknown-impl message should list valid ids; got %q", msg)
 			}
 		})
+	}
+}
+
+func TestKnownImplementationIDs_SortedAndComplete(t *testing.T) {
+	ids := KnownImplementationIDs()
+	if len(ids) != len(HookImplRegistry) {
+		t.Fatalf("len(ids)=%d want %d", len(ids), len(HookImplRegistry))
+	}
+	for i := 1; i < len(ids); i++ {
+		if ids[i-1] > ids[i] {
+			t.Errorf("not sorted at %d: %q > %q", i, ids[i-1], ids[i])
+		}
+	}
+	for _, want := range []string{"noop", "webhook-forward", "pii-detector"} {
+		found := false
+		for _, id := range ids {
+			if id == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %q in known ids %v", want, ids)
+		}
+	}
+}
+
+func TestCreateHookConfig_UnknownImpl_Returns400WithCode(t *testing.T) {
+	h := newHandler(nil, nil, nil, audit.NewWriter(nil, "", slog.Default()))
+	body := `{"name":"x","type":"webhook","implementationId":"web_hook"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u1")
+	_ = h.CreateHookConfig(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "unknown_implementation_id") {
+		t.Errorf("missing error code; body: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "must be one of") {
+		t.Errorf("missing valid-id list; body: %s", rec.Body.String())
 	}
 }
 
@@ -862,6 +913,29 @@ func TestUpdateHookConfig_BadEnum_Returns400(t *testing.T) {
 	_ = h.UpdateHookConfig(c)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateHookConfig_UnknownImpl_Returns400WithCode(t *testing.T) {
+	mock, meta := newMockStore(t)
+	now := time.Now().UTC()
+	mock.ExpectQuery(`SELECT .* FROM "HookConfig" WHERE id`).
+		WithArgs("hc-1").
+		WillReturnRows(pgxmock.NewRows(hookConfigCols).AddRow(makeHookConfigRow(now)...))
+
+	h := newHandler(mock, meta, nil, audit.NewWriter(nil, "", slog.Default()))
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"implementationId":"web_hook"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u1")
+	c.SetParamNames("id")
+	c.SetParamValues("hc-1")
+	_ = h.UpdateHookConfig(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "unknown_implementation_id") {
+		t.Errorf("missing error code; body: %s", rec.Body.String())
 	}
 }
 

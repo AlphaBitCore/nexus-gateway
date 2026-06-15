@@ -23,6 +23,7 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
@@ -58,6 +59,11 @@ func (h *Handler) handleStreamHit(
 	if entry.Usage.ReasoningTokens != nil {
 		rec.ReasoningTokens = int64(*entry.Usage.ReasoningTokens)
 	}
+	// reasoning_cost_usd breakdown of the would-have-paid cost — consistent
+	// with the live + broker paths. Stamped against quotaOutPrice
+	// after EstimatedCostUsd is set below; safe to stamp here since both use
+	// the same output price.
+	stampReasoningCost(rec, quotaOutPrice)
 	// Embeddings never stream, so a stream cache HIT is never an embeddings
 	// request — no embeddingTokenFallback here (it lives on the non-stream
 	// HIT, live, and broker paths). Keeping it here would be dead code.
@@ -99,7 +105,7 @@ func (h *Handler) handleStreamHit(
 
 	sub := streamcache.NewReplaySubscription(entry, h.deps.CacheMetrics)
 
-	// B2 cross-ingress reshape — if the entry was tagged with the
+	// Cross-ingress reshape — if the entry was tagged with the
 	// writer's origin shape and the current ingress differs, stamp the
 	// origin on the context so handleStreamWithSubscription picks a
 	// transcoder that re-encodes from the entry's wire shape into the
@@ -157,6 +163,9 @@ func (h *Handler) handleNonStreamHit(
 	if entry.Usage.ReasoningTokens != nil {
 		rec.ReasoningTokens = int64(*entry.Usage.ReasoningTokens)
 	}
+	// reasoning_cost_usd breakdown of the would-have-paid cost — consistent
+	// with the live + broker paths.
+	stampReasoningCost(rec, quotaOutPrice)
 	// EstimatedCostUsd is the would-have-paid upstream cost (tokens ×
 	// current Model prices), not zero. HIT doesn't change it; the savings
 	// is the separate GatewayCacheSavingsUsd field. Actual spend =
@@ -242,6 +251,9 @@ func (h *Handler) handleNonStreamHit(
 	// Response-stage hooks: identical to handleNonStream's response
 	// hook block. On Reject we write the rejection and return; on
 	// Modify we swap respBody.
+	// Pre-rewrite snapshot for the audit record under storageAction=redact
+	// (span offsets address the original text; see handleNonStream).
+	origRespBody := respBody
 	{
 		extractor := h.trafficAdapterFor(ingress.BodyFormat)
 		ingressFormat := string(ingress.BodyFormat)
@@ -265,7 +277,7 @@ func (h *Handler) handleNonStreamHit(
 			"response", "AI_GATEWAY",
 			cacheHitEpType,
 			respInput.OutputModality,
-			5*time.Second, 15*time.Second, false, logger,
+			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
 		)
 		if pErr != nil {
 			logger.Error("failed to build response hook pipeline (cache HIT)", "error", pErr)
@@ -284,6 +296,12 @@ func (h *Handler) handleNonStreamHit(
 			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
 				rec.BlockingRule = br
 			}
+			// Propagate spans + storage policy so the audit writer can
+			// redact (or drop) the persisted response copies.
+			rec.ResponseTransformSpans = hookResult.TransformSpans
+			rec.ResponseStorageAction = string(hookResult.StorageAction)
+			rec.ResponseRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
+			rec.ResponseRedetect = hookResult.Redetect
 			if h.deps.Metrics != nil {
 				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
 			}
@@ -312,6 +330,8 @@ func (h *Handler) handleNonStreamHit(
 						h.writeError(w, rec, http.StatusInternalServerError, "response rewrite failed")
 						return
 					default:
+						// Storage-safe raw copy under storageAction=redact.
+						rec.ResponseBodyRedacted = rewritten
 						respBody = rewritten
 						rec.ResponseHookRewriteCount = n
 						rec.ResponseHookRewritten = true
@@ -321,9 +341,16 @@ func (h *Handler) handleNonStreamHit(
 		}
 	}
 
+	// Under storageAction=redact the audit record carries the pre-rewrite
+	// bytes (the writer applies the spans itself; raw storage comes from
+	// ResponseBodyRedacted) — otherwise it mirrors the client bytes.
+	respBodyForAudit := respBody
+	if rec.ResponseStorageAction == string(hookcore.StorageRedact) {
+		respBodyForAudit = origRespBody
+	}
 	pcCfg := h.payloadCaptureConfig()
-	if pcCfg.StoreResponseBody && len(respBody) > 0 {
-		rec.ResponseBody = respBody
+	if pcCfg.StoreResponseBody && len(respBodyForAudit) > 0 {
+		rec.ResponseBody = respBodyForAudit
 		rec.ResponseContentType = "application/json"
 	}
 	rec.StatusCode = http.StatusOK

@@ -88,7 +88,8 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 }
 
 // RecordLookup increments the lookups counter for the given result label.
-// result must be one of: hit, hit_live, miss, skip_no_cache, disabled.
+// result must be one of: hit, hit_live, hit_inflight, miss, skip_no_cache,
+// passthrough_skip, skip_embeddings, disabled.
 func (m *Metrics) RecordLookup(result string) {
 	if m == nil {
 		return

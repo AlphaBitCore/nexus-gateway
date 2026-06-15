@@ -42,7 +42,7 @@ func InitPayloadCaptureStore(configDB *sql.DB, emitter *compliance.AuditEmitter,
 // Store seeded with the admin-configured Policy (loaded from
 // system_metadata['streaming_compliance.config']) or DefaultPolicy()
 // when DB is unavailable / the row is missing. Three-service alignment
-// (#115): agent / compliance-proxy / ai-gateway all wire a *Store
+// across agent / compliance-proxy / ai-gateway — all wire a *Store
 // through the shared streampolicy.BootStore helper; CP's
 // configdispatch handler reloads the Store via Store.ApplyShadowState
 // on every Hub shadow push of the streaming_compliance key.

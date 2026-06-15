@@ -442,3 +442,16 @@ func (store *Store) GetIamGroupSource(ctx context.Context, id string) (source st
 	}
 	return source, idpID, err
 }
+
+// UserOwnedByIdP reports whether a UserFederatedIdentity row links userID to
+// idpID — i.e. whether the given IdP provisioned/owns that user. It backs the
+// SCIM per-user ownership guard: a SCIM token scoped to one IdP must
+// not be able to read or mutate a user provisioned by a different IdP.
+func (store *Store) UserOwnedByIdP(ctx context.Context, userID, idpID string) (bool, error) {
+	var exists bool
+	err := store.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM "UserFederatedIdentity" WHERE "userId" = $1 AND "idpId" = $2)`,
+		userID, idpID,
+	).Scan(&exists)
+	return exists, err
+}

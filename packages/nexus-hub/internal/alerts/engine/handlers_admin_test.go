@@ -946,6 +946,26 @@ func TestMaskChannelConfig_MasksKnownKeys(t *testing.T) {
 	}
 }
 
+// TestMaskChannelConfig_MasksWebhookURL verifies F-0247: a Slack webhookUrl
+// (secret token in the path) is masked in API responses.
+func TestMaskChannelConfig_MasksWebhookURL(t *testing.T) {
+	cfg := map[string]any{
+		"webhookUrl": "https://hooks.slack.com/services/T00/B00/Xsecret9999",
+		"channel":    "#alerts",
+	}
+	got := alerting.MaskChannelConfig(cfg)
+	wh, _ := got["webhookUrl"].(string)
+	if !strings.HasPrefix(wh, "xxxx-••••-") {
+		t.Errorf("webhookUrl=%q not masked", wh)
+	}
+	if strings.Contains(wh, "hooks.slack.com") {
+		t.Errorf("masked webhookUrl still leaks the host/path: %q", wh)
+	}
+	if got["channel"] != "#alerts" {
+		t.Errorf("non-secret channel altered: %v", got["channel"])
+	}
+}
+
 func TestMaskChannelConfig_IgnoresNonSensitive(t *testing.T) {
 	cfg := map[string]any{
 		"url":     "https://hooks.slack.com/services/T00/B00/XXX",

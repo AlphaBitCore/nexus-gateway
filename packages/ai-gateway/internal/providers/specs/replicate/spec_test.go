@@ -88,7 +88,7 @@ func TestReplicate_Codec_EncodeRequest(t *testing.T) {
 func TestReplicate_Codec_DecodeResponse_StringOutput(t *testing.T) {
 	s := NewSpec(slog.Default())
 	body := []byte(`{"id":"pred_1","status":"succeeded","output":"Paris.","version":"meta/x","created_at":"2024-01-01T00:00:00Z"}`)
-	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -102,7 +102,7 @@ func TestReplicate_Codec_DecodeResponse_StringOutput(t *testing.T) {
 func TestReplicate_Codec_DecodeResponse_ArrayOutput(t *testing.T) {
 	s := NewSpec(slog.Default())
 	body := []byte(`{"id":"pred_1","status":"succeeded","output":["The ","capital ","is Paris."],"version":"meta/x","created_at":"2024-01-01T00:00:00Z"}`)
-	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 	out := decRes.CanonicalBody
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -115,7 +115,7 @@ func TestReplicate_Codec_DecodeResponse_ArrayOutput(t *testing.T) {
 func TestReplicate_Codec_DecodeResponse_Usage(t *testing.T) {
 	s := NewSpec(slog.Default())
 	body := []byte(`{"id":"x","status":"succeeded","output":"hi","metrics":{"input_token_count":7,"output_token_count":12}}`)
-	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+	decRes, err := s.SchemaCodec.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 	usage := decRes.Usage
 	if err != nil {
 		t.Fatalf("err=%v", err)

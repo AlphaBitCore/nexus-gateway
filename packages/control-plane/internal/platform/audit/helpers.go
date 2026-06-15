@@ -6,16 +6,18 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/initiator"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/subagentmark"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
-// InitiatedByHeader is the legacy HTTP request header that once marked the channel
-// which initiated an admin request. As of the P2b in-process self-call (#16) the
-// channel is an UNFORGEABLE in-process context signal (see WithInitiator), NOT a
-// wire header — so EntryFor no longer reads this header, and StripInitiatorHeader
-// deletes any inbound copy at ingress. The constant is retained only so the strip
-// middleware names the header it scrubs.
+// InitiatedByHeader names the HTTP request header that is scrubbed at ingress.
+// The initiating channel is an UNFORGEABLE in-process context signal
+// (initiator.With), NOT a wire header — EntryFor never reads this header, and
+// StripInitiatorHeader deletes any inbound copy at ingress so a client-supplied
+// value can never masquerade as a privileged channel. The constant exists only
+// so the strip middleware names the header it scrubs.
 //
 // Deliberately NOT "X-Nexus-Via": that name is already owned by the data-plane
 // service-hop chain marker (packages/shared/traffic/markers.go HeaderVia), a
@@ -23,37 +25,9 @@ import (
 // on a different plane. A distinct name keeps the two from ever colliding.
 const InitiatedByHeader = "X-Nexus-Initiated-By"
 
-// ViaAssistant is the channel value the web assistant's in-process self-call
-// transport stamps (via WithInitiator) on the admin calls it performs on the user's
-// behalf, and the AdminAuditLog.via column value, so AI-initiated writes are
-// distinguishable from human ones in the tamper-evident audit chain (E90 I5).
-const ViaAssistant = "assistant"
-
-// initiatorCtxKey types the request-context value that carries the initiating
-// channel. Unexported so only this package can set it (via WithInitiator).
-type initiatorCtxKey struct{}
-
-// WithInitiator returns a context that records via as the channel that initiated the
-// request. It is set ONLY by the web assistant's in-process self-call transport
-// (packages/control-plane/internal/assistant): the transport dispatches the request
-// straight into the CP router with this context, so the value rides in-process and
-// can never be forged from the wire — a Go context value has no HTTP representation,
-// so an authenticated admin hitting the public ingress cannot set it (closing the
-// #18b H1 forgery residual). EntryFor reads it back via InitiatorFromContext.
-func WithInitiator(ctx context.Context, via string) context.Context {
-	return context.WithValue(ctx, initiatorCtxKey{}, via)
-}
-
-// InitiatorFromContext returns the initiating channel recorded by WithInitiator, or
-// "" for an ordinary human/UI request (no in-process initiator stamp).
-func InitiatorFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(initiatorCtxKey{}).(string)
-	return v
-}
-
 // StripInitiatorHeader is a middleware that deletes any inbound InitiatedByHeader on
 // every request before handlers run. The channel marker is now an in-process context
-// signal (WithInitiator), never a trusted wire header, so a copy arriving from a
+// signal (initiator.With), never a trusted wire header, so a copy arriving from a
 // client is a forgery attempt — dropped here so it can never reach EntryFor or be
 // echoed downstream. Apply globally at the ingress edge.
 func StripInitiatorHeader(next echo.HandlerFunc) echo.HandlerFunc {
@@ -89,11 +63,28 @@ func EntryFor(c echo.Context, resource *iam.ResourceDef, verb iam.Verb) Entry {
 		Action:         string(verb),
 		SourceIP:       c.RealIP(),
 		NexusRequestID: middleware.NexusRequestIDFromContext(c),
-		Via:            InitiatorFromContext(c.Request().Context()),
+		Via:            viaFor(c.Request().Context()),
 	}
 	if aa := middleware.AdminAuthFromContext(c); aa != nil {
 		e.ActorID = aa.KeyID
 		e.ActorLabel = aa.KeyName
 	}
 	return e
+}
+
+// viaFor composes the audit via channel. It is the initiator channel
+// (initiator.From: "assistant" / "workflow" / "") optionally suffixed with the
+// sub-agent marker when the call was made on a child agent's behalf — yielding
+// "assistant ▸ subagent 2". The suffix only appears for in-process
+// sub-agent tool calls; an ordinary call (empty marker) returns the bare channel
+// unchanged, so existing rows and human/UI writes are byte-identical to before.
+func viaFor(ctx context.Context) string {
+	via := initiator.From(ctx)
+	if label := subagentmark.From(ctx); label != "" {
+		if via == "" {
+			return label
+		}
+		return via + " ▸ " + label
+	}
+	return via
 }

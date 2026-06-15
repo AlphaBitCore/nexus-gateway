@@ -334,8 +334,8 @@ func isJSONObjectAdmin(raw json.RawMessage) bool {
 // SetNodeOverride handles PUT /api/admin/nodes/:id/overrides/:configKey.
 //
 // CP performs RBAC type-scope + body validation locally, then forwards
-// to Hub which writes the override + audit row in-tx. Per the P-B1
-// review constraint this handler MUST NOT call AuditWriter.Log — Hub
+// to Hub which writes the override + audit row in-tx. This handler
+// MUST NOT call AuditWriter.Log — Hub
 // already wrote the audit row, and a second CP write would break the
 // "exactly one admin_audit_log row per mutation" invariant.
 func (h *Handler) SetNodeOverride(c echo.Context) error {
@@ -366,7 +366,7 @@ func (h *Handler) SetNodeOverride(c echo.Context) error {
 		return h.writePreflightError(c, "set override", id, pre)
 	}
 	if !thingTypeRBACDecision(h.listAdminGroups(c), pre.ThingType) {
-		return c.JSON(http.StatusForbidden, errJSON("role cannot operate on this thing type", "forbidden", "TYPE_SCOPE_DENIED"))
+		return c.JSON(http.StatusForbidden, errJSON("your role does not have access to this node type", "forbidden", "TYPE_SCOPE_DENIED"))
 	}
 
 	// Restore the buffered body for the proxy hop.
@@ -397,7 +397,7 @@ func (h *Handler) ClearNodeOverride(c echo.Context) error {
 		return h.writePreflightError(c, "clear override", id, pre)
 	}
 	if !thingTypeRBACDecision(h.listAdminGroups(c), pre.ThingType) {
-		return c.JSON(http.StatusForbidden, errJSON("role cannot operate on this thing type", "forbidden", "TYPE_SCOPE_DENIED"))
+		return c.JSON(http.StatusForbidden, errJSON("your role does not have access to this node type", "forbidden", "TYPE_SCOPE_DENIED"))
 	}
 
 	return h.hubForward(c, http.MethodDelete,
@@ -449,7 +449,7 @@ func (h *Handler) AdminResyncNode(c echo.Context) error {
 		return h.writePreflightError(c, "resync", id, pre)
 	}
 	if !thingTypeRBACDecision(h.listAdminGroups(c), pre.ThingType) {
-		return c.JSON(http.StatusForbidden, errJSON("role cannot operate on this thing type", "forbidden", "TYPE_SCOPE_DENIED"))
+		return c.JSON(http.StatusForbidden, errJSON("your role does not have access to this node type", "forbidden", "TYPE_SCOPE_DENIED"))
 	}
 
 	// Re-serialize a clean Hub-contract body — do not forward the admin

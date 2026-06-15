@@ -141,6 +141,7 @@ type RequestedModel struct {
 	ID              string
 	Type            string // chat | embedding | image | audio
 	ProviderID      string
+	ProviderName    string
 	ProviderModelID string
 	CandidateIDs    []string
 }
@@ -310,6 +311,16 @@ type RouteResult struct {
 	RuleName        string
 	Substituted     bool   // true when the routing engine replaced the requested model
 	OriginalModelID string // model ID as requested by the client before substitution
+	// Requested-side identity for the traffic_event REQUESTED columns
+	// (model_id / provider_id / provider_name). Populated ONLY when the
+	// client asked for a specific model that resolves unambiguously to
+	// exactly one catalog model (not "auto", not a code that fans out to
+	// multiple providers). Empty otherwise — for "auto" / multi-candidate /
+	// unresolved the client did not pin a model, so the requested columns
+	// stay NULL and the routed_* columns carry the actually-served target.
+	RequestedModelID      string
+	RequestedProviderID   string
+	RequestedProviderName string
 	// RuleRetryPolicyJSON carries the matched primary rule's
 	// RoutingRule.retryPolicy JSONB column verbatim (may be empty/null).
 	// The proxy handler field-merges it on top of cfg.Routing.DefaultRetryPolicy

@@ -36,7 +36,7 @@ func TestConnectionStage_UniformIngressDecision(t *testing.T) {
 	ingresses := []string{"AI_GATEWAY", "COMPLIANCE_PROXY", "AGENT"}
 	for _, ing := range ingresses {
 		t.Run(ing, func(t *testing.T) {
-			pipe, err := resolver.BuildPipeline("connection", ing, "", nil, 5*time.Second, 30*time.Second, false, logger)
+			pipe, err := resolver.BuildPipeline("connection", ing, "", nil, 5*time.Second, 30*time.Second, false, false, logger)
 			if err != nil {
 				t.Fatalf("BuildPipeline(%q) error: %v", ing, err)
 			}

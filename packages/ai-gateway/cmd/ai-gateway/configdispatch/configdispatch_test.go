@@ -12,10 +12,11 @@ import (
 )
 
 // TestBuildConfigLoader_AllKeysRegistered locks in the registered key
-// list. AI Gateway consumes 19 shadow keys (was 18 before #115 added
-// streaming_compliance). A future edit that silently drops a known
-// shadow key would degrade the gateway back to the default-echo
-// branch and Hub would never see it apply.
+// list. AI Gateway consumes 19 shadow keys (streaming_compliance was removed
+// in F-0125 — it was never in ValidByThingType["ai-gateway"], so its applier
+// was dead code). A future edit that silently drops a known shadow key would
+// degrade the gateway back to the default-echo branch and Hub would never see
+// it apply.
 func TestBuildConfigLoader_AllKeysRegistered(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	tracker := thingclient.NewOutcomeTracker()
@@ -50,7 +51,6 @@ func TestBuildConfigLoader_AllKeysRegistered(t *testing.T) {
 		"response_cache.time_sensitive_patterns", // time-sensitive cache patterns
 		"routing_rules",
 		"semantic_cache.config", // semantic cache config
-		"streaming_compliance",  // #115 — admin streaming policy → Store.ApplyShadowState
 		"virtual_keys",
 	}
 	got := loader.Keys()

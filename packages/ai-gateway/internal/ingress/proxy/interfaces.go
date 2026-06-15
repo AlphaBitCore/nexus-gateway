@@ -45,11 +45,11 @@ type ModelLookup interface {
 	FetchModelPricing(ctx context.Context, modelIDs []string) ([]store.ModelPricing, error)
 }
 
-// CachePricingLookup resolves the best-matching provider_pricing row for a
-// given (adapter type, provider ID, model ID) triple. Returns nil when no
-// rule matches; callers treat a nil result as zero cache costs.
+// CachePricingLookup resolves the per-million-token prices for a model from the
+// Models snapshot (the single pricing source of truth). Returns nil when the
+// model has no configured price; callers treat a nil result as zero cache costs.
 type CachePricingLookup interface {
-	LookupCachePricing(adapterType, providerID, modelID string) *store.ProviderPricing
+	LookupCachePricing(modelID string) *store.CachePricing
 }
 
 // RateLimiter checks per-key rate limits.

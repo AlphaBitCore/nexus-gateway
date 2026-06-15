@@ -1,6 +1,7 @@
 package issuer
 
 import (
+	"context"
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
@@ -525,8 +526,8 @@ func TestCommandSigner_Sign_WriteDigestFails_ReturnsWrappedError(t *testing.T) {
 
 // TestNewIssuerWithRemoteSigner_HKDFReadFails_ReturnsWrappedError drives the
 // io.ReadFull error arm in NewIssuerWithRemoteSigner. The HKDF reader from a
-// valid cert's raw bytes never errors in production; this seam proves the
-// wrapping is wired and no partial Issuer is returned.
+// valid DEK never errors in production; this seam proves the wrapping is
+// wired and no partial Issuer is returned.
 func TestNewIssuerWithRemoteSigner_HKDFReadFails_ReturnsWrappedError(t *testing.T) {
 	dir := t.TempDir()
 	certPath, _, err := testutil.WriteTestCA(dir)
@@ -536,21 +537,21 @@ func TestNewIssuerWithRemoteSigner_HKDFReadFails_ReturnsWrappedError(t *testing.
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
 
-	injectedErr := errors.New("hkdf: short read from cert bytes")
+	injectedErr := errors.New("hkdf: short read from DEK")
 	restore := swapHKDFReadRemoteFn(t, func(_ io.Reader, _ []byte) (int, error) {
 		return 0, injectedErr
 	})
 	defer restore()
 
-	iss, err := NewIssuerWithRemoteSigner(certPath, stub)
+	iss, err := NewIssuerWithRemoteSigner(context.Background(), certPath, stub, &inMemoryDEKStore{}, identityKMS(), identityKMS())
 	if err == nil {
 		t.Fatal("expected error when HKDF read fails in NewIssuerWithRemoteSigner")
 	}
 	if iss != nil {
 		t.Error("must return nil Issuer on HKDF failure (no partial state)")
 	}
-	if !strings.Contains(err.Error(), "HKDF derive AES key from cert") {
-		t.Errorf("err must wrap 'HKDF derive AES key from cert'; got %q", err)
+	if !strings.Contains(err.Error(), "HKDF derive AES key from DEK") {
+		t.Errorf("err must wrap 'HKDF derive AES key from DEK'; got %q", err)
 	}
 	if !errors.Is(err, injectedErr) {
 		t.Errorf("err must chain injected error via %%w; got %q", err)

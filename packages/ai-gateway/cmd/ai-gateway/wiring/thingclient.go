@@ -51,7 +51,7 @@ func InitCredManager(cfg *config.Config, db *store.DB, cacheLayer *cachelayer.La
 			return nil, err
 		}
 		slog.Info("credential decryptor initialized (multi-key)")
-		return credmanager.NewMultiKeyManager(cacheLayer, md, logger), nil
+		return credmanager.NewMultiKeyManager(cacheLayer, md), nil
 	}
 	var decryptor *creddecrypt.Decryptor
 	if key := cfg.Auth.CredentialMasterKey; key != "" {
@@ -61,7 +61,7 @@ func InitCredManager(cfg *config.Config, db *store.DB, cacheLayer *cachelayer.La
 			return nil, err
 		}
 	}
-	return credmanager.NewManager(cacheLayer, decryptor, logger), nil
+	return credmanager.NewManager(cacheLayer, decryptor), nil
 }
 
 // --- MQ Producer ---
@@ -322,7 +322,7 @@ func MountRoutes(
 	cfg *config.Config,
 	logger *slog.Logger,
 ) http.Handler {
-	MountRuntimeAPI(tcClient, mux)
+	MountRuntimeAPI(tcClient, cfg.Auth.InternalServiceToken, mux)
 	InitIntrospectRegistry(IntrospectDeps{
 		AgID: agID, BuildVersion: buildVersion, CacheLayer: d.CacheLayer,
 		PolicyCache:         d.PolicyCache,
@@ -333,7 +333,7 @@ func MountRoutes(
 		ConfigKeyRecorder:   d.ConfigKeyRecorder, AuthToken: cfg.Auth.InternalServiceToken,
 	}, mux)
 	if d.AiguardConfigCache != nil {
-		MountAIGuardRoutes(mux, cfg, d.Rdb, d.CredManager, d.AdapterReg, d.PtResolver,
+		MountAIGuardRoutes(mux, cfg, d.Rdb, d.AdapterReg, d.PtResolver,
 			d.CacheLayer, d.AuditWriter, d.AiguardConfigCache, logger)
 	}
 	return MountCoreRoutes(mux, RouteDeps{
@@ -362,7 +362,6 @@ func MountAIGuardRoutes(
 	mux *http.ServeMux,
 	cfg *config.Config,
 	rdb redis.UniversalClient,
-	credManager *credmanager.Manager,
 	adapterReg *provcore.Registry,
 	ptResolver *provtarget.PgResolver,
 	cacheLayer *cachelayer.Layer,
@@ -371,13 +370,12 @@ func MountAIGuardRoutes(
 	logger *slog.Logger,
 ) {
 	aiguardClient := &LiveClassifier{
-		Cache:         aiguard.NewCache(rdb),
-		Sink:          &WriterBackedTrafficSink{Writer: auditWriter},
-		ConfigCache:   configCache,
-		CredentialMgr: credManager,
-		Adapters:      adapterReg,
-		Resolver:      ptResolver,
-		DB:            cacheLayer,
+		Cache:       aiguard.NewCache(rdb),
+		Sink:        &WriterBackedTrafficSink{Writer: auditWriter},
+		ConfigCache: configCache,
+		Adapters:    adapterReg,
+		Resolver:    ptResolver,
+		DB:          cacheLayer,
 		ExtHTTPClient: nexushttp.New(nexushttp.Config{
 			Timeout: time.Duration(cfg.HTTPClients.External.TimeoutSec) * time.Second,
 			Caller:  "aiguard-external",
@@ -386,12 +384,19 @@ func MountAIGuardRoutes(
 	}
 	serviceToken := cfg.Auth.InternalServiceToken
 	if serviceToken == "" {
-		logger.Warn("internal service token unset; /v1/ai-guard/classify will reject all calls")
+		logger.Warn("internal service token unset; /v1/ai-guard/* endpoints will reject all calls")
 	}
 	classifyHandler := classify.NewClassifyHandler(aiguardClient)
+	// Both AI Guard endpoints reach a billable judge-model call on caller-supplied
+	// content, so both are gated by the shared internal-service token (empty token →
+	// 503, missing/wrong → 401). Never mount either on the public listener unguarded.
+	gate := rstokenauth.MiddlewareHTTP(serviceToken)
 	mux.Handle(
 		"POST /v1/ai-guard/classify",
-		rstokenauth.MiddlewareHTTP(serviceToken)(http.HandlerFunc(classifyHandler.ServeClassifyHTTP)),
+		gate(http.HandlerFunc(classifyHandler.ServeClassifyHTTP)),
 	)
-	mux.HandleFunc("POST /v1/ai-guard/compliance-webhook", classifyHandler.ServeComplianceWebhookHTTP)
+	mux.Handle(
+		"POST /v1/ai-guard/compliance-webhook",
+		gate(http.HandlerFunc(classifyHandler.ServeComplianceWebhookHTTP)),
+	)
 }

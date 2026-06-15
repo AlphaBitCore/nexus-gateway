@@ -200,13 +200,6 @@
         }
       }
     },
-    "deviceGroup": {
-      "title": "设备组",
-      "subtitle": "本设备所属的舰队组。",
-      "empty": "未分配到任何组。",
-      "id": "ID",
-      "name": "名称"
-    },
     "diagMode": {
       "title": "诊断模式",
       "subtitle": "详细诊断时间窗。",
@@ -585,7 +578,16 @@
     "tier": {
       "tier1": "Tier 1",
       "tier2": "Tier 2",
-      "hint": "哪一层 normalizer 处理了这条数据：Tier 1 = 精确的 per-host 解析；Tier 2 = 多 spec 模式探测；无徽章 = Tier 3 原文兜底。"
+      "structural": "结构化",
+      "hostMatched": "按 host 匹配",
+      "hint": "哪一层解码器处理了这条数据：Tier 1 = 精确协议解码器（按 key、host 或内容嗅探匹配）；Tier 2 = 面向消费级 Web 表面的模式探测；结构化 = 对原始 HTTP 报文的类型化投影（不做协议解码）；无徽章 = 旧版原文逐字数据。当 adapter 按 host 选中时，用\"按 host 匹配\"替代置信度数字：其覆盖率诚实，但不是可与嗅探解码相比的信任分。"
+    },
+    "emptyBody": "内容为空。",
+    "sse": {
+      "framesTitle": "SSE 帧",
+      "eventFallbackLabel": "message",
+      "showAllFrames": "显示全部 {{count}} 帧",
+      "truncatedNote": "帧视图已截断 — 完整流已被捕获，可在\"原始\"标签查看。"
     },
     "modelLabel": "模型",
     "finishReason": "结束原因",
@@ -600,7 +602,8 @@
       "completion": "补全",
       "total": "总计",
       "cacheRead": "缓存命中",
-      "cacheCreate": "缓存写入"
+      "cacheCreate": "缓存写入",
+      "reasoning": "推理"
     },
     "banner": {
       "failedTitle": "该方向的规范化失败。",
@@ -612,7 +615,17 @@
     "dropped": {
       "title": "内容已按存储策略丢弃。",
       "hint": "匹配该 hook 的操作员设置了 storageAction=drop-content。审计日志仅保留决策和元数据。",
-      "ruleIds": "触发规则"
+      "ruleIds": "触发规则",
+      "degradedTitle": "内容已丢弃——脱敏策略无法安全地应用到存储副本。",
+      "degradedHint": "该 hook 的存储策略为 redact；由于脱敏无法安全地应用到存储副本，该副本已被丢弃。原因：{{cause}}。",
+      "degradedAddresses": "未解析的内容地址",
+      "neutralHint": "内容未按存储策略存储。该记录未注明丢弃是配置的动作还是脱敏的降级处理。",
+      "cause": {
+        "no-spans": "策略未产生可脱敏的位置（no-spans）",
+        "payload-unmarshal": "存储副本无法解析（payload-unmarshal）",
+        "spans-unresolved": "脱敏位置无法在存储副本上解析（spans-unresolved）",
+        "marshal-failed": "脱敏后的副本无法重新序列化（marshal-failed）"
+      }
     },
     "binary": {
       "title": "二进制内容",
@@ -630,6 +643,6 @@
   "trafficDetail": {
     "tabRaw": "原始",
     "tabNormalized": "规范化",
-    "tabNormalizedDisabled": "此事件无规范化负载(非 AI 流量或未拦截的流)。"
+    "tabNormalizedDisabled": "此事件未捕获规范化投影（该流量未被检视）。"
   }
 }

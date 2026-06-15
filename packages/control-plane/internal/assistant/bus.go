@@ -3,13 +3,15 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// bus.go is the P2b command/data-stream split (e90-s2 T1/T2). Before P2b a single
+// bus.go is the command/data-stream split. Previously a single
 // POST both started a turn AND was the SSE stream, so a dropped connection killed the
-// turn and there was no reconnect. P2b detaches the two:
+// turn and there was no reconnect. The bus detaches the two:
 //   - POST /sessions/:id/chat starts a turn in a BACKGROUND goroutine (it outlives the
 //     POST request) and returns immediately.
 //   - GET  /sessions/:id/stream is a long-lived SSE channel that attaches to the turn's
@@ -41,6 +43,22 @@ const (
 // ungraceful drop relies on this grace. A var (not const) only so tests can shrink it.
 var streamGrace = 30 * time.Second
 
+// maxConcurrentTurnsPerUser caps how many of a user's sessions can have a turn in
+// flight at the same time. All turns share ONE system virtual key, so without
+// this cap a single user could open N distinct sessionIDs, fire N concurrent turns, and
+// drain the shared system-VK budget — denying the assistant to every other user. Each
+// turn can run up to StepCap tool rounds × tokens/step, so even a handful of concurrent
+// turns is a meaningful share of the budget; 5 is generous for legitimate parallel use
+// (a couple of chats open at once) yet tight enough that one user cannot monopolise the
+// key. The concurrent-turn cap is the FIRST per-user spend gate: it bounds the MAXIMUM
+// instantaneous per-user spend (≤ 5 × per-turn ceiling). A persistent per-user token/
+// cost budget is a heavier, telemetry-backed second gate that can layer on top later;
+// this cap stands on its own and requires no spend-tracking pipeline.
+// A const, not a cfg knob: there is no demonstrated need for per-deployment divergence,
+// and a sensible default beats an admin-facing field (less-is-more). Promote to a cfg
+// field only when a concrete deployment justifies a different ceiling.
+const maxConcurrentTurnsPerUser = 5
+
 // busEvent is one SSE event: a monotonic per-session sequence number, the event name,
 // and its JSON payload. Seq lets a reconnecting stream request only events it missed.
 type busEvent struct {
@@ -61,26 +79,114 @@ type liveSession struct {
 	running bool          // a turn is in flight (serialization guard: no second concurrent chat)
 	cancel  context.CancelFunc
 	graceT  *time.Timer // cancels the turn if no stream reconnects within streamGrace
+
+	// userID is the owning principal, parsed from the bus key (userID:sessionID) at
+	// startTurn. It is the slot key for the per-user concurrent-turn cap.
+	userID string
+	// userSlotHeld records whether THIS session currently holds one of the owning
+	// user's concurrent-turn slots. It makes slot release idempotent per liveSession:
+	// the slot is claimed when running flips false→true and released exactly once on
+	// the terminal path (finishTurn / drop), so a finishTurn-then-drop or a never-
+	// started session can never double-decrement or under-flow the user counter.
+	userSlotHeld bool
 }
 
 // sessionBus owns the live sessions, keyed by the isolation key (userID:sessionID) so
-// one user's session can never be addressed by another (I3).
+// one user's session can never be addressed by another.
 type sessionBus struct {
 	mu       sync.Mutex
 	sessions map[string]*liveSession
+
+	// userSlots maps userID → *atomic.Int32 tracking how many of that user's sessions
+	// currently have a turn in flight (the per-user concurrent-turn cap). A sync.Map
+	// because the key set is the (unbounded, churny) live user population; the counter
+	// is atomic so claim/release never need the bus mutex. Entries are left in place
+	// after they drain to zero — a bounded-cardinality leak (one small struct per user
+	// ever seen on this pod) that avoids a delete/recreate race on the hot path.
+	userSlots sync.Map
 }
 
 func newSessionBus() *sessionBus {
 	return &sessionBus{sessions: make(map[string]*liveSession)}
 }
 
+// startResult distinguishes WHY startTurn refused, so the handler can map each to the
+// correct HTTP status: a per-session in-flight turn is 409 (turn_in_progress), a per-
+// user concurrency-cap breach is 429 (user_turn_limit_exceeded).
+type startResult int
+
+const (
+	startOK           startResult = iota // a fresh turn was claimed
+	startTurnInFlight                    // a turn is already running for THIS session (409)
+	startUserLimitHit                    // the user is at the per-user concurrent-turn cap (429)
+)
+
+// userSlotCounter returns the per-user atomic counter, creating it on first use. The
+// LoadOrStore makes concurrent first-claims for the same user converge on one counter.
+func (b *sessionBus) userSlotCounter(userID string) *atomic.Int32 {
+	if v, ok := b.userSlots.Load(userID); ok {
+		return v.(*atomic.Int32)
+	}
+	v, _ := b.userSlots.LoadOrStore(userID, new(atomic.Int32))
+	return v.(*atomic.Int32)
+}
+
+// claimUserSlot atomically reserves one of userID's concurrent-turn slots if the user
+// is below maxConcurrentTurnsPerUser, returning true on success. It uses a CAS loop so
+// that two simultaneous claims for the same user can never both succeed past the cap
+// (a plain Add-then-check could transiently exceed the limit and admit an extra turn).
+// An empty userID (pool-less / test paths with no authenticated principal) is never
+// rate-limited — there is no per-user budget to protect.
+func (b *sessionBus) claimUserSlot(userID string) bool {
+	if userID == "" {
+		return true
+	}
+	ctr := b.userSlotCounter(userID)
+	for {
+		cur := ctr.Load()
+		if cur >= maxConcurrentTurnsPerUser {
+			return false
+		}
+		if ctr.CompareAndSwap(cur, cur+1) {
+			return true
+		}
+	}
+}
+
+// releaseUserSlot frees one of userID's concurrent-turn slots. It is only ever called
+// against a slot a prior claimUserSlot reserved (guarded by liveSession.userSlotHeld),
+// so the counter cannot under-flow; the >0 check is belt-and-braces. An empty userID
+// never claimed a slot, so it is a no-op.
+func (b *sessionBus) releaseUserSlot(userID string) {
+	if userID == "" {
+		return
+	}
+	ctr := b.userSlotCounter(userID)
+	for {
+		cur := ctr.Load()
+		if cur <= 0 {
+			return
+		}
+		if ctr.CompareAndSwap(cur, cur-1) {
+			return
+		}
+	}
+}
+
 // startTurn registers a turn as running for key and returns its liveSession + the
-// turn context (cancelled by interrupt, the disconnect grace, or turnDeadline). It
-// reports ok=false when a turn is ALREADY running for key — the serialization guard
-// behind the "no new command while one is in flight" rule (enforced server-side as
-// defense-in-depth on top of the disabled-input client guard). The caller runs the
-// turn in a background goroutine and MUST call finishTurn(key) when it returns.
-func (b *sessionBus) startTurn(key string, parent context.Context, deadline time.Duration) (*liveSession, context.Context, bool) {
+// turn context (cancelled by interrupt, the disconnect grace, or turnDeadline). The
+// startResult reports why a turn was refused:
+//   - startTurnInFlight: a turn is ALREADY running for key — the serialization guard
+//     behind the "no new command while one is in flight" rule (enforced server-side as
+//     defense-in-depth on top of the disabled-input client guard).
+//   - startUserLimitHit: the owning user already has maxConcurrentTurnsPerUser turns in
+//     flight across distinct sessions — the per-user concurrent-turn cap that
+//     stops one user monopolising the shared system VK.
+//
+// The owning user is parsed from key (userID:sessionID). The caller runs the turn in a
+// background goroutine and MUST call finishTurn(key) when it returns, which releases the
+// per-user slot this claim reserved.
+func (b *sessionBus) startTurn(key string, parent context.Context, deadline time.Duration) (*liveSession, context.Context, startResult) {
 	b.mu.Lock()
 	ls := b.sessions[key]
 	if ls == nil {
@@ -89,12 +195,24 @@ func (b *sessionBus) startTurn(key string, parent context.Context, deadline time
 	}
 	b.mu.Unlock()
 
+	// The userID is the slot key for the per-user cap. The bus key is "userID:sessionID";
+	// a userID may itself contain ':' so we split on the FIRST separator only.
+	userID, _, _ := strings.Cut(key, ":")
+
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
 	if ls.running {
-		return nil, nil, false // a turn is already in flight for this session
+		return nil, nil, startTurnInFlight // a turn is already in flight for this session
+	}
+	// Per-user concurrency gate: reserve one of the user's slots BEFORE flipping
+	// running, so a refused turn leaves no state to unwind. claimUserSlot is the only
+	// place the counter goes up; finishTurn/drop release it exactly once.
+	if !b.claimUserSlot(userID) {
+		return nil, nil, startUserLimitHit
 	}
 	ctx, cancel := context.WithTimeout(parent, deadline)
+	ls.userID = userID
+	ls.userSlotHeld = true
 	ls.running = true
 	ls.cancel = cancel
 	ls.closed = false
@@ -106,7 +224,31 @@ func (b *sessionBus) startTurn(key string, parent context.Context, deadline time
 	// would otherwise bill the system VK until turnDeadline. The first attach cancels
 	// this timer; a later detach re-arms it. Bounds billing on the never-streamed case.
 	ls.armGraceLocked()
-	return ls, ctx, true
+	ls.mu.Unlock()
+	// Re-bind the entry under b.mu: a drop (session delete) racing between the
+	// insert above and the claim removes the map entry, and the turn's eventual
+	// finishTurn(key) would then miss it and leak the user's concurrent-turn
+	// slot permanently. Re-inserting the SAME entry keeps finishTurn/drop
+	// reachable for this already-authorized turn. Taken after ls.mu is released
+	// so the b.mu → ls.mu lock order used everywhere else is never inverted.
+	b.mu.Lock()
+	if b.sessions[key] != ls {
+		b.sessions[key] = ls
+	}
+	b.mu.Unlock()
+	ls.mu.Lock()
+	return ls, ctx, startOK
+}
+
+// releaseUserSlotLocked frees the per-user concurrent-turn slot this session holds, if
+// any, and clears the held flag so a later terminal path (finishTurn then drop) cannot
+// double-release. Caller holds ls.mu.
+func (b *sessionBus) releaseUserSlotLocked(ls *liveSession) {
+	if !ls.userSlotHeld {
+		return
+	}
+	ls.userSlotHeld = false
+	b.releaseUserSlot(ls.userID)
 }
 
 // armGraceLocked starts the disconnect-grace timer (caller holds ls.mu) if the turn is
@@ -167,6 +309,7 @@ func (b *sessionBus) finishTurn(key string) {
 	ls.running = false
 	ls.closed = true
 	ls.cancel = nil
+	b.releaseUserSlotLocked(ls) // the turn ended → free the user's concurrent-turn slot
 	if ls.graceT != nil {
 		ls.graceT.Stop()
 		ls.graceT = nil
@@ -287,6 +430,8 @@ func (b *sessionBus) drop(key string) {
 		return
 	}
 	ls.mu.Lock()
+	ls.running = false
+	b.releaseUserSlotLocked(ls) // reclaiming a session frees any slot it still held
 	if ls.graceT != nil {
 		ls.graceT.Stop()
 		ls.graceT = nil

@@ -36,9 +36,9 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// providerCols / modelCols / credentialCols / pricingCols mirror the
-// exact SELECT lists in loaders.go and pricing.go. Drift here means a
-// test will silently rest on an undefined-row scan.
+// providerCols / modelCols / credentialCols mirror the exact SELECT lists
+// in loaders.go. Drift here means a test will silently rest on an
+// undefined-row scan.
 var (
 	providerCols = []string{
 		"id", "name", "displayName", "adapter_type", "baseUrl",
@@ -57,12 +57,6 @@ var (
 		"id", "name", "providerId", "encryptedKey", "encryptionIv", "encryptionTag",
 		"encryption_key_id", "enabled", "rotationState", "selectionWeight",
 		"status", "createdAt",
-	}
-	pricingCols = []string{
-		"id", "provider_id", "model_pattern", "adapter_type",
-		"input_usd_per_m", "output_usd_per_m",
-		"cache_write_usd_per_m", "cache_read_usd_per_m",
-		"priority",
 	}
 	vkCols = []string{
 		"id", "name", "keyHash", "keyPrefix",

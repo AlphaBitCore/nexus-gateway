@@ -12,6 +12,7 @@ import (
 	hubopsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/opsmetrics"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // maxDiagDrainBatchSize caps the events the agent can drop in a single
@@ -66,30 +67,18 @@ type DiagDrainAPI struct {
 // the agent-audit handler.
 func (h *DiagDrainAPI) UploadDiagEvents(c echo.Context) error {
 	if h.Pool == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]any{
-			"error": "diag store temporarily unavailable, retry later",
-			"code":  "SERVICE_UNAVAILABLE",
-		})
+		return serviceUnavailable(c, "diag store temporarily unavailable, retry later")
 	}
 
 	var req DiagDrainRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error": "invalid request body: expected {\"events\": [...]}",
-			"code":  "BAD_REQUEST",
-		})
+		return badRequest(c, "invalid request body: expected {\"events\": [...]}")
 	}
 	if len(req.Events) == 0 {
-		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error": "empty event batch",
-			"code":  "BAD_REQUEST",
-		})
+		return badRequest(c, "empty event batch")
 	}
 	if len(req.Events) > maxDiagDrainBatchSize {
-		return c.JSON(http.StatusRequestEntityTooLarge, map[string]any{
-			"error": "batch exceeds maximum size of 500 events",
-			"code":  "PAYLOAD_TOO_LARGE",
-		})
+		return c.JSON(http.StatusRequestEntityTooLarge, nexushttperr.ErrJSON("batch exceeds maximum size of 500 events", "validation_error", "PAYLOAD_TOO_LARGE"))
 	}
 
 	// Resolve thingID + thingType from the auth context. DeviceOrServiceAuth

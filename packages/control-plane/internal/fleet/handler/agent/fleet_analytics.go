@@ -43,6 +43,15 @@ func (h *Handler) FleetAnalyticsTrends(c echo.Context) error {
 
 // FleetAnalyticsTopDest returns the top-50 agent destination hosts by
 // request count over the last 24 h.
+//
+// DeviceCount reads MetricActiveEntities, a distinct-cardinality metric. The
+// read window spans many rollup buckets, and distinct counts cannot be summed
+// across buckets without over-counting (a 24h read at 1h granularity would sum
+// up to 288 per-5m-bucket counts). BuildResult therefore folds this metric
+// with MAX (see CombineValues), so DeviceCount is the peak distinct-device
+// count observed in any single constituent bucket — a lower bound on the true
+// 24h union, but free of the prior inflation. A fully accurate union would
+// require an HLL sketch on the emit side (tracked as a follow-up).
 func (h *Handler) FleetAnalyticsTopDest(c echo.Context) error {
 	const windowHours = 24
 	const limit = 50

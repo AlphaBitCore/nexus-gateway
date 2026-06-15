@@ -84,17 +84,20 @@ func TestCohereCodec_EncodeRequest_embeddings_tokenBatchArray_returns400(t *test
 	}
 }
 
-func TestCohereCodec_EncodeRequest_embeddings_v3Model_missingInputType_returns400(t *testing.T) {
-	// Cohere v3 models require input_type — observed 400 "input_type is
-	// required for Cohere embed-english-v3.0" (Cohere API docs, observed behavior).
+func TestCohereCodec_EncodeRequest_embeddings_v3Model_missingInputType_defaultsSearchDocument(t *testing.T) {
+	// Cohere v3 models require input_type on the wire. When the caller omits
+	// nexus.ext.cohere.input_type the codec defaults to "search_document"
+	// rather than rejecting — matching the Bedrock-Cohere codec and avoiding
+	// the filter/codec disagreement where the capability filter admits a
+	// request the codec then 400s (audit F-0216).
 	c := newCohereCodec()
 	body := []byte(`{"model":"embed-english-v3.0","input":"hello"}`)
-	_, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{ProviderModelID: "embed-english-v3.0"})
-	if err == nil {
-		t.Fatal("expected error for v3 model without input_type")
+	encRes, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{ProviderModelID: "embed-english-v3.0"})
+	if err != nil {
+		t.Fatalf("EncodeRequest should not error for v3 without input_type: %v", err)
 	}
-	if !strings.Contains(err.Error(), "missing_required_extension") {
-		t.Errorf("error should mention missing_required_extension: %v", err)
+	if got := gjson.GetBytes(encRes.Body, "input_type").Str; got != "search_document" {
+		t.Errorf("input_type = %q, want defaulted %q; wire=%s", got, "search_document", encRes.Body)
 	}
 }
 
@@ -111,13 +114,17 @@ func TestCohereCodec_EncodeRequest_embeddings_v3Model_withInputType_ok(t *testin
 	}
 }
 
-func TestCohereCodec_EncodeRequest_embeddings_multilingualV3_requiresInputType(t *testing.T) {
-	// embed-multilingual-v3.0 also requires input_type.
+func TestCohereCodec_EncodeRequest_embeddings_multilingualV3_defaultsInputType(t *testing.T) {
+	// embed-multilingual-v3.0 also requires input_type on the wire; the codec
+	// defaults it to "search_document" when omitted (audit F-0216).
 	c := newCohereCodec()
 	body := []byte(`{"model":"embed-multilingual-v3.0","input":"hello"}`)
-	_, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{ProviderModelID: "embed-multilingual-v3.0"})
-	if err == nil {
-		t.Fatal("expected error for multilingual v3 model without input_type")
+	encRes, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{ProviderModelID: "embed-multilingual-v3.0"})
+	if err != nil {
+		t.Fatalf("EncodeRequest should not error for multilingual v3 without input_type: %v", err)
+	}
+	if got := gjson.GetBytes(encRes.Body, "input_type").Str; got != "search_document" {
+		t.Errorf("input_type = %q, want defaulted %q; wire=%s", got, "search_document", encRes.Body)
 	}
 }
 
@@ -262,7 +269,7 @@ func TestCohereCodec_DecodeResponse_embeddings_flatArray(t *testing.T) {
 		"texts":["a","b"],
 		"meta":{"billed_units":{"input_tokens":10}}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -282,13 +289,43 @@ func TestCohereCodec_DecodeResponse_embeddings_flatArray(t *testing.T) {
 	}
 }
 
+// TestCohereCodec_DecodeResponse_embeddings_countMismatch_rejected pins
+// F-0220: a response with fewer vectors than the request `texts` must fail
+// the decode (→ 502) instead of returning misaligned vectors.
+func TestCohereCodec_DecodeResponse_embeddings_countMismatch_rejected(t *testing.T) {
+	c := newCohereCodec()
+	reqBody := []byte(`{"model":"embed-english-v3.0","texts":["a","b","c"]}`)
+	body := []byte(`{"id":"emb","embeddings":[[0.1],[0.2]],"texts":["a","b"]}`)
+	_, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err == nil || !strings.Contains(err.Error(), "embedding count mismatch") {
+		t.Fatalf("expected count-mismatch error, got %v", err)
+	}
+}
+
+// TestCohereCodec_DecodeResponse_embeddings_countMatch_passes is the
+// F-0220 positive arm with the request context present.
+func TestCohereCodec_DecodeResponse_embeddings_countMatch_passes(t *testing.T) {
+	c := newCohereCodec()
+	reqBody := []byte(`{"model":"embed-english-v3.0","texts":["a","b"]}`)
+	body := []byte(`{"id":"emb","embeddings":[[0.1],[0.2]],"texts":["a","b"]}`)
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json",
+		provcore.DecodeContext{RequestBody: reqBody})
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if got := gjson.GetBytes(decRes.CanonicalBody, "data.#").Int(); got != 2 {
+		t.Errorf("data count=%d want 2", got)
+	}
+}
+
 func TestCohereCodec_DecodeResponse_embeddings_usageExtracted(t *testing.T) {
 	c := newCohereCodec()
 	body := []byte(`{
 		"embeddings":[[0.1,0.2]],
 		"meta":{"billed_units":{"input_tokens":7}}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -310,7 +347,7 @@ func TestCohereCodec_DecodeResponse_embeddings_multiTypeObject_prefersFloat(t *t
 		},
 		"meta":{"billed_units":{"input_tokens":5}}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -334,7 +371,7 @@ func TestCohereCodec_DecodeResponse_embeddings_multiTypeObject_firstKeyFallback(
 		},
 		"meta":{"billed_units":{"input_tokens":3}}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -346,7 +383,7 @@ func TestCohereCodec_DecodeResponse_embeddings_multiTypeObject_firstKeyFallback(
 
 func TestCohereCodec_DecodeResponse_embeddings_emptyBody_passthrough(t *testing.T) {
 	c := newCohereCodec()
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, []byte{}, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, []byte{}, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -359,7 +396,7 @@ func TestCohereCodec_DecodeResponse_embeddings_indexPreserved(t *testing.T) {
 	// Index field on each data item should reflect position.
 	c := newCohereCodec()
 	body := []byte(`{"embeddings":[[0.1],[0.2],[0.3]],"meta":{"billed_units":{"input_tokens":3}}}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -387,7 +424,7 @@ func TestCohereEmbed_MultiType_StampsReturnedType(t *testing.T) {
 		},
 		"meta":{"billed_units":{"input_tokens":5}}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -421,7 +458,7 @@ func TestCohereEmbed_MultiType_FirstKeyFallback_StampsReturnedType(t *testing.T)
 		},
 		"meta":{"billed_units":{"input_tokens":3}}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}
@@ -443,7 +480,7 @@ func TestCohereEmbed_FlatArray_NoReturnedTypeField(t *testing.T) {
 		"embeddings":[[0.1,0.2],[0.3,0.4]],
 		"meta":{"billed_units":{"input_tokens":4}}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeCohereEmbed, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse: %v", err)
 	}

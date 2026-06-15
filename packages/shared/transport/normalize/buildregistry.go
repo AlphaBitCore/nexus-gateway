@@ -35,7 +35,8 @@ func BuildRegistry() *core.Registry {
 	// Tier 1 — AI builtins (anthropic, gemini, openai-chat, openai-responses, …).
 	codecs.RegisterDefaultAIBuiltins(reg)
 	// Tier 1 — per-host adapters (chatgpt-web, claude-web, gemini-web,
-	// openai-compat, …). Skips IDs already covered by AI builtins.
+	// openai-compat, …). Adapter IDs and AI-builtin keys must stay
+	// disjoint: a collision panics inside Registry.Register at startup.
 	adapters.RegisterTier1AdapterNormalizers(reg)
 	// Tier 2 — pattern-based extraction fallback. Tier 3 (GenericHTTP
 	// verbatim → http-text) is the registry's default fallthrough.

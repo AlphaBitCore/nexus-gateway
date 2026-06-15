@@ -480,18 +480,16 @@ func TestRollupMerge_RunCalendarMonth_ProcessesMonth(t *testing.T) {
 
 // RollupCorrectionJob.Run — happy path (no errors)
 
-// TestRollupCorrection_Run_HappyPath drives Run() so that all 24 × 5m buckets,
-// 24 × 1h buckets, and 1 × 1d bucket are processed. Each sub-job's pool is
-// set to a shared pgxmock that expects the right sequence of calls.
-//
-// To keep the harness simple, each processOneBucket/mergeOneBucket call is
-// satisfied by returning empty rows from the source queries — the transaction
-// path is covered by the other tests above.
+// TestRollupCorrection_Run_HappyPath drives Run() with lookbackDays=1 so that
+// exactly 288 × 5m buckets, 24 × 1h buckets, and 1 × 1d bucket are processed.
+// Crucially it asserts NO `rollup_watermark` INSERT happens (F-0165): the
+// correction backfill must not advance the live watermark, so the per-bucket
+// transaction is Begin → DELETE → SELECT(empty) → Commit with no watermark write.
 func TestRollupCorrection_Run_HappyPath(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 
-	// 24 × 5m processOneBucket: Begin → DELETE → SELECT (empty) → watermark → Commit
+	// 288 × 5m processBucket(writeWatermark=false): Begin → DELETE → SELECT (empty) → Commit.
 	for range 288 { // 24h / 5m = 288 buckets
 		mock.ExpectBegin()
 		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).
@@ -500,20 +498,17 @@ func TestRollupCorrection_Run_HappyPath(t *testing.T) {
 		mock.ExpectQuery(`FROM traffic_event`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows(trafficEventCols))
-		mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
-			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 		mock.ExpectCommit()
 	}
 
-	// 24 × 1h mergeOneBucket: source query → empty → early return (no tx)
+	// 24 × 1h mergeBucket: source query → empty → early return (no tx)
 	for range 24 {
 		mock.ExpectQuery(`FROM "metric_rollup_5m"`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"id", "bucketStart", "metricName", "dimensionKey", "subDimension", "value", "metadata", "updatedAt"}))
 	}
 
-	// 1 × 1d mergeOneBucket: source query → empty → early return
+	// 1 × 1d mergeBucket: source query → empty → early return
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "bucketStart", "metricName", "dimensionKey", "subDimension", "value", "metadata", "updatedAt"}))
@@ -527,11 +522,10 @@ func TestRollupCorrection_Run_HappyPath(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 24*time.Hour, testLogger())
-	// Pin a mid-month date so the monthly re-merge branch does NOT fire — the
-	// expectations above cover only the 5m/1h/1d layers. Without this seam the test
-	// failed every 1st of the month (yesterday a month-end → an unexpected 1mo
-	// source Query). The month-end path has its own test below.
+	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	// Pin a mid-month date so the monthly re-merge branch does NOT fire (the
+	// single lookback day stays within the unsealed current month). The
+	// month-end path has its own test below.
 	j.nowFn = func() time.Time { return time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC) }
 
 	if err := j.Run(context.Background()); err != nil {
@@ -550,7 +544,7 @@ func TestRollupCorrection_Run_MonthEnd_RemergesMonthly(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 
-	// 24 × 5m processOneBucket for yesterday (2026-05-31).
+	// 288 × 5m processBucket for yesterday (2026-05-31) — no watermark INSERT (F-0165).
 	for range 288 {
 		mock.ExpectBegin()
 		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).
@@ -559,9 +553,6 @@ func TestRollupCorrection_Run_MonthEnd_RemergesMonthly(t *testing.T) {
 		mock.ExpectQuery(`FROM traffic_event`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows(trafficEventCols))
-		mock.ExpectExec(`INSERT INTO "rollup_watermark"`).
-			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 		mock.ExpectCommit()
 	}
 	mergeCols := []string{"id", "bucketStart", "metricName", "dimensionKey", "subDimension", "value", "metadata", "updatedAt"}
@@ -589,8 +580,9 @@ func TestRollupCorrection_Run_MonthEnd_RemergesMonthly(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 24*time.Hour, testLogger())
-	// 2026-06-01: yesterday = 2026-05-31 (month-end) → monthly re-merge fires.
+	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
+	// 2026-06-01: the single lookback day = 2026-05-31, in the now-sealed month
+	// of May → monthly re-merge of May fires.
 	j.nowFn = func() time.Time { return time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC) }
 
 	if err := j.Run(context.Background()); err != nil {
@@ -623,7 +615,7 @@ func TestRollupCorrection_Run_5mBucketError(t *testing.T) {
 	m1mo := NewRollupMerge1mo(nil, 24*time.Hour, testLogger())
 	m1mo.pool = mock
 
-	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 24*time.Hour, testLogger())
+	j := NewRollupCorrection(r5m, m1h, m1d, m1mo, 1, 24*time.Hour, testLogger())
 
 	if err := j.Run(context.Background()); err == nil {
 		t.Fatal("expected error from 5m bucket failure")

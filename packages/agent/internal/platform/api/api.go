@@ -135,6 +135,25 @@ type InterceptionHealth struct {
 	// gap is normal on idle hosts and is NOT treated as degraded on
 	// its own — only the absence of an initial connect is.
 	LastFlowAt time.Time
+	// SelfReported tells the status collector to trust this platform's
+	// own health assessment (DegradedReason) instead of the generic
+	// connection-count heuristic. The count heuristic treats
+	// ConnectionsTotal==0 as "not connected", which is correct for
+	// connection-driven capture layers (macOS NE: zero attaches means
+	// the user never approved the proxy dialog) but WRONG for
+	// always-on layers (Linux iptables: the redirect chain is live the
+	// instant the reconciler installs it, so an idle host with zero
+	// flows is perfectly healthy). Platforms whose "healthy" state is
+	// not connection-driven set SelfReported=true and populate
+	// DegradedReason; the collector then ignores the counters for the
+	// health verdict and uses them for diagnostics only.
+	SelfReported bool
+	// DegradedReason is the platform's own one-line explanation of why
+	// the capture layer is unhealthy, used verbatim as the degraded
+	// state reason. Empty + SelfReported means healthy. Only consulted
+	// when SelfReported is true. Example (Linux): "iptables redirect
+	// chain repair failing".
+	DegradedReason string
 }
 
 // InterceptionGracePeriod is how long the status collector waits after

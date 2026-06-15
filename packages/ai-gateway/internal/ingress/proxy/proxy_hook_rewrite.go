@@ -3,7 +3,6 @@ package proxy
 import (
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // contentBlocksToNormalized converts the hook pipeline's ModifiedContent
@@ -26,26 +25,4 @@ func contentBlocksToNormalized(blocks []hookcore.ContentBlock) traffic.Normalize
 		segments = append(segments, b.Text)
 	}
 	return traffic.NormalizedContent{Segments: segments}
-}
-
-// collectRuleIDs returns the deduplicated SourceID list from a TransformSpan
-// slice — used to populate the {redacted:true, ruleIds} placeholder when
-// audit.Writer drops normalized content per storageAction=drop-content.
-func collectRuleIDs(spans []normcore.TransformSpan) []string {
-	if len(spans) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(spans))
-	out := make([]string, 0, len(spans))
-	for _, s := range spans {
-		if s.SourceID == "" {
-			continue
-		}
-		if _, ok := seen[s.SourceID]; ok {
-			continue
-		}
-		seen[s.SourceID] = struct{}{}
-		out = append(out, s.SourceID)
-	}
-	return out
 }

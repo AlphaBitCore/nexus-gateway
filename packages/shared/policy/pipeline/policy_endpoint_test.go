@@ -91,6 +91,7 @@ func TestBuildPipeline_EmbeddingsDropsTextClassAHooks(t *testing.T) {
 		[]core.Modality{core.ModalityText},
 		5*time.Second, 30*time.Second,
 		false,
+		false,
 		logger,
 	)
 	if err != nil {
@@ -98,6 +99,7 @@ func TestBuildPipeline_EmbeddingsDropsTextClassAHooks(t *testing.T) {
 	}
 	if pipe == nil {
 		t.Fatal("expected non-nil pipeline for embeddings request")
+		return
 	}
 
 	// All 4 hooks (2 Class-A + 2 Class-B) must be present in the request pipeline.
@@ -181,6 +183,7 @@ func TestBuildPipeline_EmbeddingsResponseDropsTextClassAHooks(t *testing.T) {
 		[]core.Modality{core.ModalityText},
 		5*time.Second, 30*time.Second,
 		false,
+		false,
 		logger,
 	)
 	if err != nil {
@@ -188,6 +191,7 @@ func TestBuildPipeline_EmbeddingsResponseDropsTextClassAHooks(t *testing.T) {
 	}
 	if pipe == nil {
 		t.Fatal("expected non-nil pipeline (Class-B hook request-size-validator should be present)")
+		return
 	}
 
 	// Only the Class-B hook (request-size-validator) should survive —
@@ -254,6 +258,7 @@ func TestBuildPipeline_ChatIncludesClassAAndClassBHooks(t *testing.T) {
 		[]core.Modality{core.ModalityText},
 		5*time.Second, 30*time.Second,
 		false,
+		false,
 		logger,
 	)
 	if err != nil {
@@ -261,6 +266,7 @@ func TestBuildPipeline_ChatIncludesClassAAndClassBHooks(t *testing.T) {
 	}
 	if pipe == nil {
 		t.Fatal("expected non-nil pipeline for chat endpoint")
+		return
 	}
 	if len(pipe.hooks) != 2 {
 		t.Errorf("expected 2 hooks for chat, got %d", len(pipe.hooks))

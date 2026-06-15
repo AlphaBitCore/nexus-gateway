@@ -76,15 +76,13 @@ func TestNDJSONWriter_Rotation(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	// 1 byte max file size (in MB would be too large); we override directly.
+	// maxFileSizeMB=1: three ~0.6 MB events (padded TargetHost) force the
+	// writer to roll over into a second spool file.
 	w, err := NewNDJSONWriter(dir, "inst-rotate", 1, 100, logger)
 	if err != nil {
 		t.Fatalf("NewNDJSONWriter: %v", err)
 	}
 	defer w.Close() //nolint:errcheck
-
-	// Override maxFileSize to a very small value to force rotation.
-	w.maxFileSize = 100 // 100 bytes
 
 	event := AuditEvent{
 		ID:                  "evt-rot",
@@ -94,16 +92,13 @@ func TestNDJSONWriter_Rotation(t *testing.T) {
 		IngressType:         "CONNECT",
 		BumpStatus:          "BUMP_SUCCESS",
 		SourceIP:            "10.0.0.1",
-		TargetHost:          "example.com",
+		TargetHost:          strings.Repeat("a", 600*1024),
 		RequestHookDecision: "ALLOW",
 		LatencyMs:           10,
 		Timestamp:           time.Now().UTC(),
 	}
 
-	// Write multiple events to force rotation.
-	for i := range 10 {
-		event.ID = "evt-rot-" + strings.Repeat("x", 10)
-		event.TransactionID = "tx-rot-" + strings.Repeat("y", 10)
+	for i := range 3 {
 		if err := w.Write(event); err != nil {
 			t.Fatalf("Write %d: %v", i, err)
 		}
@@ -123,14 +118,15 @@ func TestNDJSONWriter_QuotaExceeded(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	w, err := NewNDJSONWriter(dir, "inst-quota", 1, 1, logger)
+	// 1 MB total quota. The quota gate is a pre-write check, so a single
+	// oversized event (>1 MB once marshalled) lands, and the next write is
+	// refused because the spool now exceeds the quota — driven through the
+	// public API rather than poking internals.
+	w, err := NewNDJSONWriter(dir, "inst-quota", 2, 1, logger)
 	if err != nil {
 		t.Fatalf("NewNDJSONWriter: %v", err)
 	}
 	defer w.Close() //nolint:errcheck
-
-	// Override maxTotalSize to a very small value.
-	w.maxTotalSize = 200 // 200 bytes
 
 	event := AuditEvent{
 		ID:                  "evt-quota",
@@ -140,25 +136,19 @@ func TestNDJSONWriter_QuotaExceeded(t *testing.T) {
 		IngressType:         "CONNECT",
 		BumpStatus:          "BUMP_SUCCESS",
 		SourceIP:            "10.0.0.1",
-		TargetHost:          "example.com",
+		TargetHost:          strings.Repeat("a", 1100*1024), // pushes the line past the 1 MB quota
 		RequestHookDecision: "ALLOW",
 		LatencyMs:           5,
 		Timestamp:           time.Now().UTC(),
 	}
 
-	// Write until we exceed the quota.
-	var quotaErr error
-	for range 100 {
-		quotaErr = w.Write(event)
-		if quotaErr != nil {
-			break
-		}
+	if err := w.Write(event); err != nil {
+		t.Fatalf("first (oversized) write should land: %v", err)
 	}
-
+	quotaErr := w.Write(event)
 	if quotaErr == nil {
-		t.Fatal("expected quota exceeded error, but all writes succeeded")
+		t.Fatal("expected quota exceeded error on the second write")
 	}
-
 	if !strings.Contains(quotaErr.Error(), "exceeds quota") {
 		t.Fatalf("expected quota error, got: %v", quotaErr)
 	}

@@ -2,12 +2,15 @@ package assistant
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
+	sharediam "github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
@@ -24,7 +27,7 @@ type Config struct {
 	IsProd       bool
 	// DisableBodyReads withholds the raw-body read tools (observe_traffic_event /
 	// observe_traffic_list / resource_read / resource_invoke) from the agent — the
-	// §8 governance posture for deployments that do not want raw traffic bodies
+	// governance posture for deployments that do not want raw traffic bodies
 	// reachable by the assistant at all. The aggregate/analysis tools stay.
 	DisableBodyReads bool
 	// TurnDeadline overrides the wall-clock turn backstop. Zero → the default
@@ -39,10 +42,13 @@ type Config struct {
 	Redis   redis.UniversalClient
 	OwnerID string
 	// Dispatcher is the CP echo router. When set, the agent's admin self-calls are
-	// dispatched in-process (R3): no loopback HTTP, an unforgeable AI-initiated audit
+	// dispatched in-process: no loopback HTTP, an unforgeable AI-initiated audit
 	// stamp, and the caller's IP preserved for the audit actor. nil → the agent's
 	// core.Client falls back to a network transport (pool-less dev / tests).
 	Dispatcher http.Handler
+	// Logger records operational anomalies the assistant should not swallow.
+	// nil → no logging (tests / pool-less dev).
+	Logger *slog.Logger
 }
 
 // turnDeadline is the wall-clock backstop on a single chat turn. The agent loop's
@@ -53,16 +59,23 @@ type Config struct {
 const turnDeadline = 10 * time.Minute
 
 // Handler serves the web assistant endpoints under the admin group.
+//
+// Per-user system-VK spend gate: every turn runs on the single shared system
+// virtual key, so the bus enforces a per-user concurrent-turn cap (maxConcurrentTurnsPerUser
+// in bus.go). That cap is the first per-user spend gate — it bounds a user's MAXIMUM
+// instantaneous draw on the shared key (≤ cap × per-turn ceiling) and needs no spend-
+// tracking infrastructure. A persistent per-user token/cost budget would be a heavier,
+// telemetry-backed second gate; the concurrent cap stands on its own without it.
 type Handler struct {
 	cfg            Config
 	confirms       *confirmRegistry
 	confirmTimeout time.Duration   // injectable for tests; defaults to confirmTimeout
-	impactTimeout  time.Duration   // bounds the FR-22 impact-preview read; defaults to impactTimeout
+	impactTimeout  time.Duration   // bounds the confirm impact-preview read; defaults to impactTimeout
 	turnDeadline   time.Duration   // wall-clock backstop on one turn; injectable for tests
-	situations     *situationCache // per-caller TTL cache for the ~8-call situation snapshot (NFR-11)
-	redactor       agent.Redactor  // §8: scrubs PII from tool output before prompt entry; nil only on construction failure
+	situations     *situationCache // per-caller TTL cache for the ~8-call situation snapshot
+	redactor       agent.Redactor  // scrubs PII from tool output before prompt entry; nil only on construction failure
 	owners         *ownerRegistry  // multi-replica session-owner registry (421 safety net); nil → single-replica
-	bus            *sessionBus     // P2b command/data-stream split: detached turns + reconnectable SSE
+	bus            *sessionBus     // command/data-stream split: detached turns + reconnectable SSE
 }
 
 // New builds the assistant handler.
@@ -96,38 +109,62 @@ func New(cfg Config) *Handler {
 }
 
 // RegisterAssistantRoutes mounts the assistant endpoints on the admin group
-// (already behind AdminAuth). No new IAM action is minted: the endpoint is
-// login-only and every tool the agent runs is IAM-checked at the admin API it
-// self-calls (I1).
+// (already behind AdminAuth). Every route additionally carries an IAM gate on
+// the dedicated `assistant` resource: GET endpoints require
+// admin:assistant.read and the mutating endpoints require admin:assistant.write.
+// Login alone is NOT a sufficient gate — inference (and the system-VK
+// spend it incurs) happens before any tool self-call, so a session user with
+// zero admin permissions could otherwise open the assistant and burn budget.
+// The per-tool admin self-calls remain independently IAM-checked at the admin
+// API each tool hits, so this is defense in depth on the surface itself.
+//
+// engine may be nil in pool-less dev / tests; in that case the IAM middleware
+// is omitted and the routes fall back to login-only (AdminAuth on the group),
+// matching the behavior of the rest of the admin surface when no IAM engine is
+// wired.
 //
 // The name is unique (not the generic `RegisterRoutes`) so the structural
 // OpenAPI generator (`nexus openapi-gen`) can use it as an additional walk root:
 // the assistant is runtime-wired in cmd/control-plane/wiring (outside
 // `RegisterAdminRoutes`, the generator's default root), so without a distinct
 // registrar name its routes would be invisible to the generated admin-API spec.
-func (h *Handler) RegisterAssistantRoutes(g *echo.Group) {
-	// P2b command/data-stream split: a turn is STARTED by POST .../chat (runs detached
+func (h *Handler) RegisterAssistantRoutes(g *echo.Group, engine *iam.Engine) {
+	read := assistantIAM(engine, sharediam.ResourceAssistant.Action(sharediam.VerbRead))
+	write := assistantIAM(engine, sharediam.ResourceAssistant.Action(sharediam.VerbWrite))
+
+	// Command/data-stream split: a turn is STARTED by POST .../chat (runs detached
 	// in the background) and OBSERVED over the long-lived GET .../stream SSE channel,
 	// which can reconnect with ?lastSeq= to replay missed events. Stop = POST
 	// .../interrupt. confirm stays a separate POST (the turn parks server-side on it).
-	g.POST("/assistant/sessions/:id/chat", h.StartChat)
-	g.GET("/assistant/sessions/:id/stream", h.StreamSession)
-	g.POST("/assistant/sessions/:id/interrupt", h.InterruptSession)
-	g.POST("/assistant/confirm", h.Confirm)
-	g.GET("/assistant/sessions", h.ListSessions)
-	g.GET("/assistant/sessions/:id", h.GetSession)
-	g.DELETE("/assistant/sessions/:id", h.DeleteSession)
-	g.GET("/assistant/files/:id", h.DownloadFile)
-	g.GET("/assistant/models", h.ListModels)
+	g.POST("/assistant/sessions/:id/chat", h.StartChat, write)
+	g.GET("/assistant/sessions/:id/stream", h.StreamSession, read)
+	g.POST("/assistant/sessions/:id/interrupt", h.InterruptSession, write)
+	g.POST("/assistant/confirm", h.Confirm, write)
+	g.GET("/assistant/sessions", h.ListSessions, read)
+	g.GET("/assistant/sessions/:id", h.GetSession, read)
+	g.DELETE("/assistant/sessions/:id", h.DeleteSession, write)
+	g.GET("/assistant/files/:id", h.DownloadFile, read)
+	g.GET("/assistant/models", h.ListModels, read)
 }
 
-func errJSON(c echo.Context, status int, typ, msg string) error {
+// assistantIAM returns the IAM middleware for the given action, or a no-op
+// pass-through when engine is nil (pool-less dev / tests). A no-op middleware
+// (rather than omitting the variadic entry) keeps the registration call sites
+// uniform regardless of whether IAM is wired.
+func assistantIAM(engine *iam.Engine, action string) echo.MiddlewareFunc {
+	if engine == nil {
+		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
+	}
+	return middleware.RequireIAMPermission(engine, action, nil)
+}
+
+func writeErrJSON(c echo.Context, status int, typ, msg string) error {
 	return c.JSON(status, map[string]any{"error": map[string]any{"message": msg, "type": typ}})
 }
 
-// validSessionID bounds the client-supplied session id (now a path param, since the
+// validSessionID bounds the client-supplied session id (a path param, since the
 // command/data-stream split needs the id BEFORE the turn's events exist). It is only
-// ever resolved within the caller's own userId namespace (I3), so this is an input-
+// ever resolved within the caller's own userId namespace, so this is an input-
 // hygiene guard, not an authorization check: non-empty, ≤128 chars, and a safe id
 // charset (letters/digits/-_.: — covers the server's hex ids and client UUIDs).
 func validSessionID(s string) bool {
@@ -146,7 +183,7 @@ func validSessionID(s string) bool {
 }
 
 // callerBearer extracts the forwardable bearer + userId, or returns ok=false with a
-// written HTTP error. The agent self-calls admin APIs AS THE CALLER (R3/I1), which
+// written HTTP error. The agent self-calls admin APIs AS THE CALLER, which
 // requires a real bearer; a non-bearer principal (x-admin-key / bootstrap / dev /
 // delegated API key) has none, so its tools would all 401 while still billing the
 // system VK — reject before any inference. The adminGroup's AdminAuth already
@@ -154,7 +191,7 @@ func validSessionID(s string) bool {
 func (h *Handler) callerBearer(c echo.Context) (authorization, userID string, ok bool) {
 	authorization = c.Request().Header.Get("Authorization")
 	if !strings.HasPrefix(authorization, "Bearer ") {
-		_ = errJSON(c, http.StatusUnprocessableEntity, "unsupported_auth",
+		_ = writeErrJSON(c, http.StatusUnprocessableEntity, "unsupported_auth",
 			"the assistant requires an interactive bearer admin session; API-key/service principals are not supported")
 		return "", "", false
 	}
@@ -162,7 +199,7 @@ func (h *Handler) callerBearer(c echo.Context) (authorization, userID string, ok
 		userID = aa.KeyID
 	}
 	if userID == "" {
-		_ = errJSON(c, http.StatusUnprocessableEntity, "unsupported_auth", "an interactive admin session is required")
+		_ = writeErrJSON(c, http.StatusUnprocessableEntity, "unsupported_auth", "an interactive admin session is required")
 		return "", "", false
 	}
 	return authorization, userID, true

@@ -223,6 +223,41 @@ func TestHeartbeat(t *testing.T) {
 			t.Errorf("missing prefix: %v", err)
 		}
 	})
+	// F-0208: the HTTP heartbeat must only promote offline→online and otherwise
+	// leave the status untouched — writing $2 unconditionally clobbered
+	// drift→online (premature drift clear) and revoked→online (revocation
+	// bypass). The SQL-text expectation fails if anyone reverts the gate to the
+	// old unconditional `SET status = $2`. The offline→online edge must also
+	// re-stamp process_started_at and reset reported_outcomes, mirroring
+	// RefreshLiveness.
+	t.Run("status gate: only offline→online, drift/revoked untouched", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		mock.ExpectQuery(`SET status\s+= CASE WHEN status = 'offline' THEN \$2 ELSE status END`).
+			WithArgs("thing-1", "online", pgxmock.AnyArg(),
+				nil, nil, nil, nil).
+			WillReturnRows(pgxmock.NewRows([]string{"desired_ver", "desired"}).
+				AddRow(int64(2), []byte(`{}`)),
+			)
+		store := New(mock)
+		if _, err := store.Heartbeat(context.Background(), "thing-1", "online", nil, 2); err != nil {
+			t.Fatalf("Heartbeat: %v", err)
+		}
+	})
+	t.Run("status gate: offline→online edge re-stamps process_started_at + resets outcomes", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		defer mock.Close()
+		mock.ExpectQuery(`process_started_at = CASE WHEN status = 'offline' THEN NOW\(\) ELSE process_started_at END,\s+reported_outcomes\s+= CASE WHEN status = 'offline' THEN '\{\}'::jsonb ELSE reported_outcomes END`).
+			WithArgs("thing-1", "online", pgxmock.AnyArg(),
+				nil, nil, nil, nil).
+			WillReturnRows(pgxmock.NewRows([]string{"desired_ver", "desired"}).
+				AddRow(int64(2), []byte(`{}`)),
+			)
+		store := New(mock)
+		if _, err := store.Heartbeat(context.Background(), "thing-1", "online", nil, 2); err != nil {
+			t.Fatalf("Heartbeat: %v", err)
+		}
+	})
 }
 
 // Sanity — keep json import live for any future need.

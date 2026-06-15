@@ -39,6 +39,15 @@ const prewarmMaxEntries = 500
 // prewarmMinTTLSeconds and prewarmMaxTTLSeconds bound the per-entry TTL.
 // prewarmDefaultTTLSeconds is applied when the caller omits ttlSeconds
 // (i.e. the field arrives as the Go zero value 0).
+// prewarmCorpusScope is the reserved, non-VK vk_scope tag every prewarmed entry
+// is forced to. The live L2 read resolves a lookup's scope to
+// "vk:<id>" (or "" under varyBy=none) — never "corpus" — so a prewarmed entry
+// can never be returned under a real VK's scope. This makes prewarm a shared,
+// non-targetable corpus rather than a primitive for planting attacker-chosen
+// responses into a victim VK's cache lane. (A future opt-in that lets a VK
+// consult the corpus is a feature, not a security regression.)
+const prewarmCorpusScope = "corpus"
+
 const (
 	prewarmMinTTLSeconds     = 60
 	prewarmMaxTTLSeconds     = 7 * 86400 // 7 days
@@ -54,8 +63,10 @@ type prewarmEntryInput struct {
 	// Model is the upstream model name stored in the entry tag (e.g. "gpt-4o").
 	// May be empty — stored as an empty tag.
 	Model string `json:"model"`
-	// VKScope is the virtual-key scope tag (e.g. "v1:vk:nvk_xxx").
-	// May be empty — visible to all scopes unless filtered.
+	// VKScope is IGNORED on input and server-forced to the reserved corpus
+	// scope — a prewarm caller may not target a virtual key's cache
+	// lane. Retained in the struct only so an old client that still sends the
+	// field decodes cleanly; PrewarmCache overwrites it before forwarding.
 	VKScope string `json:"vkScope"`
 	// TTLSeconds is the cache entry TTL in seconds. Must be in [60, 604800].
 	// Optional — when omitted (Go zero value 0) the handler substitutes
@@ -132,6 +143,18 @@ func (h *SemanticCacheHandler) PrewarmCache(c echo.Context) error {
 				),
 			})
 		}
+		// A prewarm caller MUST NOT choose the vk_scope. Letting the
+		// caller tag an entry with a victim VK's scope plants attacker-chosen
+		// content into that VK's cache lane (cross-VK poisoning), since the read
+		// path's only isolation filter is @vk_scope. Force every entry to the
+		// reserved, non-VK corpus scope so it can never be served under a real
+		// VK's scope. Any caller-supplied scope is dropped; we log it once for
+		// visibility rather than silently swallowing an attempted target.
+		if e.VKScope != "" && e.VKScope != prewarmCorpusScope {
+			h.logger.Warn("semantic prewarm: dropping caller-supplied vkScope (forced to corpus)",
+				"suppliedScope", e.VKScope, "entryIndex", i)
+		}
+		e.VKScope = prewarmCorpusScope
 	}
 
 	// Check if semantic cache is enabled by reading the singleton config row.
@@ -198,6 +221,7 @@ func (h *SemanticCacheHandler) PrewarmCache(c echo.Context) error {
 		})
 	}
 	fwdReq.Header.Set("Content-Type", "application/json")
+	fwdReq.Header.Set("Authorization", "Bearer "+h.aiGatewayToken)
 
 	resp, err := client.Do(fwdReq)
 	if err != nil {

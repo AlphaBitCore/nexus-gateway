@@ -73,7 +73,8 @@ func normaliseAgentBootstrapMode(rawMode string) string {
 func (h *AgentBootstrapHandler) Handle(c echo.Context) error {
 	body, err := h.body(c.Request().Context())
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		// Canonical {error, code} envelope via the package error helper.
+		return internalError(c, err.Error())
 	}
 	return c.JSONBlob(http.StatusOK, body)
 }

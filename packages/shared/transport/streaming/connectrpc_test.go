@@ -21,50 +21,85 @@ func makeConnectRPCFrame(flag byte, payload []byte) []byte {
 	return append(hdr, payload...)
 }
 
-// TestReadConnectRPCFrame_StandardFrame — non-EOS frame returns payload
-// + eos=false + nil err.
+// TestReadConnectRPCFrame_StandardFrame — a plain data frame (no flags) returns
+// the payload with neither the compressed nor the end-of-stream bit set.
 func TestReadConnectRPCFrame_StandardFrame(t *testing.T) {
 	frame := makeConnectRPCFrame(0x00, []byte("hello"))
-	eos, payload, err := ReadConnectRPCFrame(bytes.NewReader(frame))
+	flags, payload, err := ReadConnectRPCFrame(bytes.NewReader(frame))
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if eos {
-		t.Error("eos = true, want false for flag 0x00")
+	if flags&ConnectFlagEndStream != 0 || flags&ConnectFlagCompressed != 0 {
+		t.Errorf("flags = 0x%02x, want 0x00 for a plain data frame", flags)
 	}
 	if !bytes.Equal(payload, []byte("hello")) {
 		t.Errorf("payload = %q, want hello", payload)
 	}
 }
 
-// TestReadConnectRPCFrame_EndOfStreamFlag — flag bit 0 set marks end-of-stream.
+// TestReadConnectRPCFrame_EndOfStreamFlag — bit 0x02 marks the end-of-stream
+// (trailer) frame. The compressed bit (0x01) must NOT be mistaken for it — that
+// conflation made the reader stop after the first compressed data frame.
 func TestReadConnectRPCFrame_EndOfStreamFlag(t *testing.T) {
-	frame := makeConnectRPCFrame(0x01, []byte(`{"trailer":"x"}`))
-	eos, payload, err := ReadConnectRPCFrame(bytes.NewReader(frame))
+	frame := makeConnectRPCFrame(ConnectFlagEndStream, []byte(`{"trailer":"x"}`))
+	flags, payload, err := ReadConnectRPCFrame(bytes.NewReader(frame))
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if !eos {
-		t.Error("eos = false, want true for flag 0x01")
+	if flags&ConnectFlagEndStream == 0 {
+		t.Errorf("flags = 0x%02x, want end-of-stream bit set", flags)
 	}
 	if !bytes.Equal(payload, []byte(`{"trailer":"x"}`)) {
 		t.Errorf("payload = %q", payload)
 	}
+
+	// Regression guard: a compressed data frame (0x01) is NOT end-of-stream.
+	cf, _, err := ReadConnectRPCFrame(bytes.NewReader(makeConnectRPCFrame(ConnectFlagCompressed, []byte("data"))))
+	if err != nil {
+		t.Fatalf("compressed frame err = %v", err)
+	}
+	if cf&ConnectFlagEndStream != 0 {
+		t.Errorf("compressed flag 0x01 misread as end-of-stream (flags=0x%02x)", cf)
+	}
+	if cf&ConnectFlagCompressed == 0 {
+		t.Errorf("flags = 0x%02x, want compressed bit set", cf)
+	}
 }
 
-// TestReadConnectRPCFrame_ZeroLengthFrame — length=0 returns (eos, nil, nil)
+// TestReadConnectRPCFrame_ZeroLengthFrame — length=0 returns (flags, nil, nil)
 // without attempting to read a body.
 func TestReadConnectRPCFrame_ZeroLengthFrame(t *testing.T) {
-	frame := makeConnectRPCFrame(0x01, nil) // EOS marker, zero body
-	eos, payload, err := ReadConnectRPCFrame(bytes.NewReader(frame))
+	frame := makeConnectRPCFrame(ConnectFlagEndStream, nil) // trailer, zero body
+	flags, payload, err := ReadConnectRPCFrame(bytes.NewReader(frame))
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if !eos {
-		t.Error("eos = false, want true")
+	if flags&ConnectFlagEndStream == 0 {
+		t.Errorf("flags = 0x%02x, want end-of-stream bit set", flags)
 	}
 	if payload != nil {
 		t.Errorf("payload = %v, want nil for zero-length frame", payload)
+	}
+}
+
+// TestMaybeGunzipConnectFrame — compressed frames are decompressed; uncompressed
+// frames and undecodable bodies pass through unchanged.
+func TestMaybeGunzipConnectFrame(t *testing.T) {
+	var gz bytes.Buffer
+	gw := gzip.NewWriter(&gz)
+	_, _ = gw.Write([]byte("payload text"))
+	_ = gw.Close()
+
+	if got := MaybeGunzipConnectFrame(ConnectFlagCompressed, gz.Bytes()); string(got) != "payload text" {
+		t.Errorf("compressed frame = %q, want decompressed 'payload text'", got)
+	}
+	// Not flagged compressed → returned verbatim even if it happens to be gzip.
+	if got := MaybeGunzipConnectFrame(0x00, gz.Bytes()); !bytes.Equal(got, gz.Bytes()) {
+		t.Errorf("unflagged frame was modified")
+	}
+	// Flagged compressed but not actually gzip → best-effort returns raw.
+	if got := MaybeGunzipConnectFrame(ConnectFlagCompressed, []byte("not-gzip")); string(got) != "not-gzip" {
+		t.Errorf("bad gzip = %q, want raw fall-through", got)
 	}
 }
 
@@ -118,7 +153,6 @@ func TestPassthroughWithConnectRPCExtract_RelaysBytesAndAccumulates(t *testing.T
 		&client,
 		nil,
 		extractor,
-		false,
 	)
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -144,7 +178,6 @@ func TestPassthroughWithConnectRPCExtract_NilExtractor(t *testing.T) {
 		&client,
 		nil,
 		nil,
-		false,
 	)
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -157,9 +190,9 @@ func TestPassthroughWithConnectRPCExtract_NilExtractor(t *testing.T) {
 	}
 }
 
-// TestPassthroughWithConnectRPCExtract_GzippedPayloads — payloadGzip=true
-// causes the extractor to receive the decompressed bytes while the client
-// still receives the original gzipped wire bytes.
+// TestPassthroughWithConnectRPCExtract_GzippedPayloads — a frame flagged
+// ConnectFlagCompressed (0x01) is decompressed for the extractor while the
+// client still receives the original gzipped wire bytes.
 func TestPassthroughWithConnectRPCExtract_GzippedPayloads(t *testing.T) {
 	// Build a gzipped payload "hidden message".
 	var gzBuf bytes.Buffer
@@ -182,7 +215,6 @@ func TestPassthroughWithConnectRPCExtract_GzippedPayloads(t *testing.T) {
 		&client,
 		nil,
 		extractor,
-		true,
 	); err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -195,9 +227,9 @@ func TestPassthroughWithConnectRPCExtract_GzippedPayloads(t *testing.T) {
 	}
 }
 
-// TestPassthroughWithConnectRPCExtract_GzippedBadPayload — when payloadGzip
-// is on but the bytes aren't gzip, extractor is called with the raw payload
-// (gracefully falls through, no panic).
+// TestPassthroughWithConnectRPCExtract_GzippedBadPayload — a frame flagged
+// compressed whose bytes are not gzip falls through: extractor gets the raw
+// payload, no panic.
 func TestPassthroughWithConnectRPCExtract_GzippedBadPayload(t *testing.T) {
 	// Non-gzip bytes inside the frame.
 	frame := makeConnectRPCFrame(0x01, []byte("not-a-gzip-stream"))
@@ -214,7 +246,6 @@ func TestPassthroughWithConnectRPCExtract_GzippedBadPayload(t *testing.T) {
 		&client,
 		nil,
 		extractor,
-		true,
 	)
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -239,7 +270,6 @@ func TestPassthroughWithConnectRPCExtract_CapturedBuffer(t *testing.T) {
 		&client,
 		cap,
 		nil,
-		false,
 	); err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -266,7 +296,7 @@ func TestPassthroughWithConnectRPCExtract_ContextCancel(t *testing.T) {
 	cancel()
 
 	var client bytes.Buffer
-	_, err := PassthroughWithConnectRPCExtract(ctx, pr, &client, nil, nil, false)
+	_, err := PassthroughWithConnectRPCExtract(ctx, pr, &client, nil, nil)
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
@@ -302,7 +332,6 @@ func TestPassthroughWithConnectRPCExtract_UpstreamReadError(t *testing.T) {
 		&client,
 		nil,
 		func(p []byte) string { return string(p) },
-		false,
 	)
 	if !errors.Is(err, myErr) {
 		t.Errorf("err = %v, want %v", err, myErr)
@@ -330,7 +359,6 @@ func TestPassthroughWithConnectRPCExtract_ClientWriteError(t *testing.T) {
 		&errWriter{err: myErr},
 		nil,
 		nil,
-		false,
 	)
 	if !errors.Is(err, myErr) {
 		t.Errorf("err = %v, want %v", err, myErr)
@@ -366,7 +394,6 @@ func TestPassthroughWithConnectRPCExtract_FlushCalled(t *testing.T) {
 		client,
 		nil,
 		nil,
-		false,
 	); err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -389,5 +416,73 @@ func TestReadConnectRPCFrame_LargePayload(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Errorf("payload mismatch: len got=%d want=%d", len(got), len(payload))
+	}
+}
+
+// TestReadConnectRPCFrame_OversizedLengthRejected — a header declaring a
+// payload above MaxConnectRPCFrameLen returns ErrConnectRPCFrameTooLarge
+// before any payload allocation. Bodies that are not actually Connect-framed
+// can spell multi-GB lengths out of arbitrary bytes, so the guard must fire
+// on the declared length alone, never on the (absent) body.
+func TestReadConnectRPCFrame_OversizedLengthRejected(t *testing.T) {
+	for _, declared := range []uint32{MaxConnectRPCFrameLen + 1, 0xF6F5F4F3} {
+		buf := make([]byte, 5)
+		buf[0] = 0x00
+		binary.BigEndian.PutUint32(buf[1:5], declared)
+		_, payload, err := ReadConnectRPCFrame(bytes.NewReader(buf))
+		if !errors.Is(err, ErrConnectRPCFrameTooLarge) {
+			t.Fatalf("declared=%d: err = %v, want ErrConnectRPCFrameTooLarge", declared, err)
+		}
+		if payload != nil {
+			t.Errorf("declared=%d: payload = %d bytes, want nil", declared, len(payload))
+		}
+	}
+}
+
+// TestReadConnectRPCFrame_CapBoundaryAccepted — a declared length of exactly
+// MaxConnectRPCFrameLen passes the guard; the subsequent body read fails on
+// the truncated input, proving rejection did not happen at the guard.
+func TestReadConnectRPCFrame_CapBoundaryAccepted(t *testing.T) {
+	buf := make([]byte, 5+3)
+	buf[0] = 0x00
+	binary.BigEndian.PutUint32(buf[1:5], MaxConnectRPCFrameLen)
+	copy(buf[5:], "abc")
+	_, _, err := ReadConnectRPCFrame(bytes.NewReader(buf))
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("err = %v, want io.ErrUnexpectedEOF (boundary length must pass the guard)", err)
+	}
+}
+
+// TestPassthroughWithConnectRPCExtract_GzipDecompressionCapped — a frame
+// whose gzip payload inflates past MaxConnectRPCFrameLen hands the extractor
+// at most MaxConnectRPCFrameLen bytes; the relay bytes stay verbatim.
+func TestPassthroughWithConnectRPCExtract_GzipDecompressionCapped(t *testing.T) {
+	var compressed bytes.Buffer
+	gw := gzip.NewWriter(&compressed)
+	if _, err := gw.Write(make([]byte, MaxConnectRPCFrameLen+4096)); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+
+	frame := makeConnectRPCFrame(0x01, compressed.Bytes())
+	var client bytes.Buffer
+	var extractorSaw int
+	_, err := PassthroughWithConnectRPCExtract(
+		context.Background(),
+		bytes.NewReader(frame),
+		&client,
+		nil,
+		func(p []byte) string { extractorSaw = len(p); return "" },
+	)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if !bytes.Equal(client.Bytes(), frame) {
+		t.Errorf("client bytes diverged from upstream")
+	}
+	if extractorSaw != MaxConnectRPCFrameLen {
+		t.Errorf("extractor saw %d bytes, want exactly MaxConnectRPCFrameLen (%d)", extractorSaw, MaxConnectRPCFrameLen)
 	}
 }

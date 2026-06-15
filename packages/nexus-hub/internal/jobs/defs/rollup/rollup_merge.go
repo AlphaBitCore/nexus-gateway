@@ -205,13 +205,29 @@ func (j *RollupMergeJob) runCalendarMonth(ctx context.Context) error {
 
 // mergeOneBucket reads source rows for [bucketStart, bucketEnd), merges rows
 // sharing (MetricName, DimensionKey, SubDimension), and writes the result
-// + watermark in one transaction. Empty buckets are skipped (no-op).
+// + watermark in one transaction. Used by the live catch-up loop, which must
+// advance the watermark.
 func (j *RollupMergeJob) mergeOneBucket(ctx context.Context, bucketStart, bucketEnd time.Time) error {
+	return j.mergeBucket(ctx, bucketStart, bucketEnd, true)
+}
+
+// mergeBucket merges one coarse bucket inside a single transaction. When
+// writeWatermark is false (the correction backfill path) the live merge
+// watermark is left untouched so re-merging historical buckets does not rewind
+// the live cursor. Empty buckets are skipped (no-op).
+//
+// Gauge-snapshot metrics (device_fleet_status / device_fleet_os) are excluded
+// from the merge so the SUM cascade never folds N hourly snapshots into one
+// coarse bucket (~24x at 1d, ~720x at 1mo). These metrics are written directly
+// into metric_rollup_1h by the metrics-rollup job and read only from that tier;
+// they have no meaningful coarser aggregate.
+func (j *RollupMergeJob) mergeBucket(ctx context.Context, bucketStart, bucketEnd time.Time, writeWatermark bool) error {
 	sourceRows, err := rollupstore.QueryRollupMergeSource(ctx, j.pool, j.cfg.sourceTable, bucketStart, bucketEnd)
 	if err != nil {
 		return fmt.Errorf("read source %s [%v, %v): %w", j.cfg.sourceTable, bucketStart, bucketEnd, err)
 	}
 
+	sourceRows = excludeGaugeRows(sourceRows)
 	if len(sourceRows) == 0 {
 		return nil
 	}
@@ -235,11 +251,47 @@ func (j *RollupMergeJob) mergeOneBucket(ctx context.Context, bucketStart, bucket
 	if err := rollupstore.InsertRollupRows(ctx, tx, j.cfg.targetTable, merged); err != nil {
 		return err
 	}
-	if err := rollupstore.SetWatermark(ctx, tx, j.cfg.watermarkName, bucketStart); err != nil {
-		return err
+	if writeWatermark {
+		if err := rollupstore.SetWatermark(ctx, tx, j.cfg.watermarkName, bucketStart); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit(ctx)
+}
+
+// gaugeMergeMetrics is the set of current-state GAUGE snapshot metrics that
+// must NOT propagate through the SUM merge cascade. They are point-in-time
+// counts (agent Things grouped by status / OS) written directly into
+// metric_rollup_1h; summing successive hourly snapshots into a coarser bucket
+// over-counts by the number of snapshots folded.
+var gaugeMergeMetrics = map[string]struct{}{
+	metrics.MetricDeviceFleetStatus: {},
+	metrics.MetricDeviceFleetOS:     {},
+}
+
+// excludeGaugeRows drops gauge-snapshot rows from a merge source slice so they
+// never enter a coarser rollup tier. Returns the input unchanged when no gauge
+// rows are present (the common case) to avoid an allocation.
+func excludeGaugeRows(rows []metrics.RollupRow) []metrics.RollupRow {
+	hasGauge := false
+	for i := range rows {
+		if _, ok := gaugeMergeMetrics[rows[i].MetricName]; ok {
+			hasGauge = true
+			break
+		}
+	}
+	if !hasGauge {
+		return rows
+	}
+	out := rows[:0:0]
+	for i := range rows {
+		if _, ok := gaugeMergeMetrics[rows[i].MetricName]; ok {
+			continue
+		}
+		out = append(out, rows[i])
+	}
+	return out
 }
 
 // nextMonth returns the first day of the month following t.

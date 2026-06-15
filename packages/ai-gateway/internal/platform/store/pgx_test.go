@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pashagolub/pgxmock/v4"
@@ -16,6 +17,29 @@ func TestNew_BadDSN(t *testing.T) {
 	_, err := New(context.Background(), "not-a-valid-dsn://!@#$")
 	if err == nil {
 		t.Fatal("expected parse-config error")
+	}
+	if !strings.Contains(err.Error(), "store:") {
+		t.Errorf("missing wrap prefix: %v", err)
+	}
+}
+
+// TestNew_PoolConfigAppliedThenPingFails drives the PoolConfig tuning path:
+// a well-formed DSN to a dead port means ParseConfig + NewWithConfig succeed
+// (pgxpool connects lazily), the non-zero MaxConns/MinConns/MaxConnLifetime
+// overrides are applied to the config, and then Ping fails fast — so New
+// returns the ping error with the wrap prefix. Exercises every PoolConfig
+// branch (the live-DB happy return still needs an integration DB).
+func TestNew_PoolConfigAppliedThenPingFails(t *testing.T) {
+	dsn := "postgres://u:p@127.0.0.1:1/db?connect_timeout=1&sslmode=disable"
+	opts := PoolConfig{MaxConns: 4, MinConns: 1, MaxConnLifetime: time.Minute}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := New(ctx, dsn, opts)
+	if err == nil {
+		if db != nil {
+			db.Close()
+		}
+		t.Fatal("Ping against a dead port must return an error")
 	}
 	if !strings.Contains(err.Error(), "store:") {
 		t.Errorf("missing wrap prefix: %v", err)

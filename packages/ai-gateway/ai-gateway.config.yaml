@@ -1,13 +1,18 @@
 # Nexus AI Gateway — production config template.
-# Every field in internal/config/config.go.Config appears here.
+# Covers the COMMON fields of internal/config/config.go.Config; the full
+# field set lives in internal/config/config.go.
 # Env var overrides (applied after YAML): DATABASE_URL, REDIS_* (see
 # packages/shared/storage/redisfactory for the full universal Redis env
 # contract), ADMIN_KEY_HMAC_SECRET, CREDENTIAL_ENCRYPTION_KEY,
-# CREDENTIAL_KEY_MAP, AI_GATEWAY_PORT, LOG_LEVEL, LOG_FORMAT,
-# NEXUS_HUB_URL, INTERNAL_SERVICE_TOKEN, MQ_DRIVER, NATS_URL,
+# CREDENTIAL_KEY_MAP, AI_GATEWAY_PORT, AI_GATEWAY_PUBLIC_URL, LOG_LEVEL,
+# LOG_FORMAT, NEXUS_HUB_URL, INTERNAL_SERVICE_TOKEN, MQ_DRIVER, NATS_URL,
 # AI_GATEWAY_CORS_ENABLED, AI_GATEWAY_CORS_ALLOWED_ORIGINS,
 # AI_GATEWAY_CACHE_ENABLED, AI_GATEWAY_CACHE_TTL,
 # AI_GATEWAY_CACHE_PREFIX, OTEL_ENDPOINT, OTEL_SERVICE_NAME.
+
+# REQUIRED. Externally-reachable base URL for this service; startup
+# validation fails when empty. Env AI_GATEWAY_PUBLIC_URL overrides.
+# publicURL: "https://gateway.example.com"
 
 server:
   port: 3050
@@ -16,6 +21,25 @@ server:
 
 database:
   url: ""
+  # Connection-pool sizing. The steady-state request path does NOT touch
+  # Postgres — VK / provider / model / credential lookups come from the
+  # in-memory config cache, rate-limit / quota / response cache from
+  # Redis, and traffic_event rows go to NATS. Postgres is a COLD-PATH
+  # backstop (config cache miss / TTL expiry / snapshot reload), so the
+  # pool only needs to absorb a cold-cache burst without serializing —
+  # NOT serve every request. The real per-request concurrency resource
+  # here is Redis (see redis.poolSize below), not this pool.
+  #
+  # TUNING:
+  #   - maxConns: 25 absorbs a cold-cache burst above the pgx fallback of
+  #     max(4, NumCPU). Coordinate across services: the SUM of every
+  #     service's maxConns must stay below Postgres `max_connections`
+  #     (appliance default 200; see docs/operators/ops/ami-build.md).
+  #   - minConns: small warm floor (pool is mostly idle in steady state).
+  #   - maxConnLifetimeSec: recycle conns to survive LB/NAT idle cutoffs.
+  maxConns: 25
+  minConns: 5
+  maxConnLifetimeSec: 300
 
 redis:
   # Universal Redis configuration. See packages/shared/storage/redisfactory
@@ -50,18 +74,11 @@ redis:
   writeTimeout: 3s
   poolTimeout: 4s
 
-auth:
-  # 32+ byte hex string, required.
-  hmacSecret: ""
-  # 64-hex AES-256 key (single-key mode).
-  credentialMasterKey: ""
-  # Optional multi-key: "v1:hex64,v2:hex64" — takes precedence over
-  # credentialMasterKey when set.
-  credentialKeyMap: ""
-  # Shared secret for inter-service auth (Bearer on Hub calls,
-  # X-RS-Token on /v1/ai-guard/classify). Must match Hub
-  # auth.internalServiceToken. Overridable via INTERNAL_SERVICE_TOKEN.
-  internalServiceToken: ""
+# The auth secrets are env-only; the yaml fields are ignored by the loader:
+#   hmacSecret           → ADMIN_KEY_HMAC_SECRET
+#   credentialMasterKey  → CREDENTIAL_ENCRYPTION_KEY
+#   credentialKeyMap     → CREDENTIAL_KEY_MAP
+#   internalServiceToken → INTERNAL_SERVICE_TOKEN (must match Hub)
 
 log:
   level: "info"
@@ -74,6 +91,9 @@ registry:
 mq:
   driver: "nats"
   nats:
+    # url is the only per-service knob; NATS server-side limits (max_payload,
+    # max_connections) live in the appliance (nexus-ami/scripts/install-nats.sh)
+    # and docker-compose.yml.
     url: "nats://localhost:4222"
 
 cors:
@@ -91,8 +111,11 @@ cache:
   enabled: true
   ttl: 5m
   prefix: "ai-gw:"
-  # In-flight same-key dedupe broker. Default true preserves cache
-  # fill on MISS. Flip false for same-key high-concurrency perf tests.
+  # In-flight same-key dedupe broker. Code default is false (every MISS
+  # opens its own upstream session; MISS responses fill the cache only
+  # via the broker pump). Set true to restore 1-leader-N-joiners
+  # semantics + cache fill on MISS at the cost of serialising same-key
+  # concurrency.
   broker: true
 
 # OpenTelemetry file-level settings. Runtime toggles
@@ -109,6 +132,26 @@ observability:
   # during the perf-investigation window; flip to false to keep prod
   # rows compact.
   latencyDetail: true
+
+# Audit pipeline durable spill. The traffic_event writer buffers records in
+# memory and publishes them to NATS asynchronously; when that buffer is full
+# after the bounded-backpressure window, overflow records are written here as
+# NDJSON instead of being dropped, so no billing/audit row is lost silently
+# under a burst or a transient NATS/Hub-DB outage. An operator (or a sweeper)
+# re-ingests the spool once the pipeline recovers.
+audit:
+  # On-disk spill root. Empty disables disk spill — a genuine overflow then
+  # becomes a loud, counted drop (audit.mq_dropped_total). The default is
+  # writable on the appliance (the ai-gateway unit's ReadWritePaths covers
+  # /var/lib/nexus); for a local `go run` dev box without that path the spill
+  # auto-disables with a warning (set AI_GATEWAY_AUDIT_SPOOL_DIR to enable).
+  # Env override: AI_GATEWAY_AUDIT_SPOOL_DIR.
+  spoolDir: "/var/lib/nexus/audit-spool"
+  # Rotate a spool file once it reaches this size (MB).
+  spoolMaxFileMb: 64
+  # Cap the total on-disk spool (MB); writes past it are refused (loud) rather
+  # than filling the disk.
+  spoolMaxTotalMb: 512
 
 # Platform-wide routing defaults. Per-rule RetryPolicy on a RoutingRule
 # field-merges over these values at evaluation time, so an admin can

@@ -60,6 +60,29 @@ func applyChain(ctx context.Context, family iptablesFamily, restoreScript string
 	return nil
 }
 
+// chainAbsentErr reports whether an `iptables -t nat -S <chain>` stderr
+// indicates the chain simply does not exist yet, as opposed to a real
+// failure. The wording differs across netfilter backends:
+//
+//   - legacy iptables: "No chain/target/match by that name".
+//   - iptables-nft:    "chain `X' in table `nat' is incompatible, use 'nft'
+//     tool." — emitted when probing a NON-EXISTENT chain in a `nat` table
+//     that ALSO holds nft-native rules (libvirt, docker, kube-proxy — i.e.
+//     most real servers). The chain is genuinely absent; iptables-nft just
+//     can't enumerate a missing chain cleanly once the table carries nft
+//     constructs it can't translate.
+//
+// Both mean "absent → install it". Treating the nft variant as a hard error
+// (the original behaviour) disabled interception on every such host even
+// though `iptables-restore` installs and manages the chain there without
+// issue — once the chain exists, `-S <chain>` reads it back fine.
+func chainAbsentErr(stderr string) bool {
+	if strings.Contains(stderr, "No chain") {
+		return true
+	}
+	return strings.Contains(stderr, "incompatible") && strings.Contains(stderr, "nft")
+}
+
 // dumpChain returns the current rule lines of the named chain in the
 // `nat` table for the given family, normalised by stripping the
 // `iptables -t nat` prefix every line carries. Empty result + nil
@@ -80,10 +103,11 @@ func dumpChain(ctx context.Context, family iptablesFamily, chain string) ([]stri
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		// iptables prints "No chain/target/match by that name" + exits
-		// non-zero when the chain does not exist; treat that as a
-		// non-error empty result.
-		if strings.Contains(stderr.String(), "No chain") {
+		// A non-zero exit here usually just means the chain does not exist
+		// yet (first install) — treat that as an empty result so the
+		// reconciler proceeds to install it. The "chain absent" wording
+		// differs by backend; see chainAbsentErr.
+		if chainAbsentErr(stderr.String()) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("%s -t nat -S %s: %w (stderr=%q)",

@@ -18,8 +18,9 @@ import (
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 )
 
-// expectAllSnapshotLoads queues the 4 SELECTs Start dispatches in
-// parallel. Caller sets the rows that come back.
+// expectAllSnapshotLoads queues the 3 SELECTs Start dispatches in
+// parallel (provider_pricing was retired — pricing rides on the Model
+// snapshot). Caller sets the rows that come back.
 func expectAllSnapshotLoads(mock pgxmock.PgxPoolIface) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery(`FROM "Provider"`).
@@ -28,8 +29,6 @@ func expectAllSnapshotLoads(mock pgxmock.PgxPoolIface) {
 		WillReturnRows(pgxmock.NewRows(modelCols))
 	mock.ExpectQuery(`FROM "Credential"`).
 		WillReturnRows(pgxmock.NewRows(credentialCols))
-	mock.ExpectQuery(`FROM provider_pricing`).
-		WillReturnRows(pgxmock.NewRows(pricingCols))
 }
 
 func TestNew_RejectsNilDB(t *testing.T) {
@@ -125,7 +124,7 @@ func TestStart_HappyPath_PopulatesEverySnapshot(t *testing.T) {
 	}
 	// LookupCachePricing keys on Model.code now, so use "gpt-4o" instead
 	// of "anything" (which wouldn't exist in the Models snapshot).
-	got := l.LookupCachePricing("openai", "p1", "gpt-4o")
+	got := l.LookupCachePricing("gpt-4o")
 	if got == nil || got.InputUSDPerM != 3.0 || got.CacheReadUSDPerM != 0.3 || got.CacheWriteUSDPerM != 3.75 {
 		t.Errorf("pricing lookup wrong after Start: %+v", got)
 	}
@@ -144,8 +143,6 @@ func TestStart_AggregatesPerLoaderErrors(t *testing.T) {
 		WillReturnError(errors.New("boom-models"))
 	mock.ExpectQuery(`FROM "Credential"`).
 		WillReturnError(errors.New("boom-credentials"))
-	mock.ExpectQuery(`FROM provider_pricing`).
-		WillReturnError(errors.New("boom-pricing"))
 
 	err := l.Start(context.Background())
 	if err == nil {
@@ -182,10 +179,7 @@ func TestReloadSnapshots_RoundTripsAndFiresMetricsHook(t *testing.T) {
 	if err := l.ReloadCredentials(context.Background()); err != nil {
 		t.Fatalf("ReloadCredentials: %v", err)
 	}
-	if err := l.ReloadProviderPricing(context.Background()); err != nil {
-		t.Fatalf("ReloadProviderPricing: %v", err)
-	}
-	if got := fires.Load(); got != 3 { // 3 snapshot reloads; pricing reload bypasses the hook
+	if got := fires.Load(); got != 3 { // providers + models + credentials
 		t.Errorf("snapshot reload fires = %d, want 3", got)
 	}
 }

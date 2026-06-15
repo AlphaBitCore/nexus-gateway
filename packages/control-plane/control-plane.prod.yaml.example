@@ -51,8 +51,8 @@ redis:
     certFile: ""
     keyFile: ""
     serverName: ""
-  poolSize: 20
-  minIdleConns: 5
+  poolSize: 200
+  minIdleConns: 50
   maxRetries: 3
   dialTimeout: 5s
   readTimeout: 3s
@@ -78,19 +78,14 @@ bff:
 registry:
   nexusHubUrl: "http://127.0.0.1:3060"
 
-auth:
-  # hmacSecret + internalServiceToken are env-only:
-  #   hmacSecret           → ADMIN_KEY_HMAC_SECRET    [MUST MATCH ai-gateway]
-  #   internalServiceToken → INTERNAL_SERVICE_TOKEN   [MUST MATCH all 4 services]
-  allowDevAuth: false
+# auth.hmacSecret + auth.internalServiceToken are env-only:
+#   hmacSecret           → ADMIN_KEY_HMAC_SECRET    [MUST MATCH ai-gateway]
+#   internalServiceToken → INTERNAL_SERVICE_TOKEN   [MUST MATCH all 4 services]
 
 crypto:
-  # encryptionKey / encryptionPassphrase / encryptionSalt / credentialKeyMap
-  # are env-only:
-  #   encryptionKey         → CREDENTIAL_ENCRYPTION_KEY    [MUST MATCH ai-gateway credentialMasterKey, 64 hex chars]
-  #   encryptionPassphrase  → CREDENTIAL_ENCRYPTION_PASSPHRASE
-  #   encryptionSalt        → CREDENTIAL_ENCRYPTION_SALT
-  #   credentialKeyMap      → CREDENTIAL_KEY_MAP
+  # encryptionKey / credentialKeyMap are env-only:
+  #   encryptionKey     → CREDENTIAL_ENCRYPTION_KEY    [MUST MATCH ai-gateway credentialMasterKey, 64 hex chars]
+  #   credentialKeyMap  → CREDENTIAL_KEY_MAP
   production: true
 
 agent:
@@ -116,8 +111,10 @@ otel:
   endpoint: ""
   serviceName: "nexus-control-plane"
 
-scheduler:
-  enabled: true
+# costPolicy mirrors Hub's billed-cost policy so the CP-UI traffic drawer
+# renders the right "internal-ops counted/excluded" hint. Default false.
+# costPolicy:
+#   excludeInternalOpsFromBilledCost: false
 
 mq:
   driver: "nats"

@@ -6,7 +6,9 @@ import (
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -71,15 +73,49 @@ func (c codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, 
 //   - EndpointEmbeddings: dispatches to Titan or Cohere embed decoder by
 //     probing the response body shape. Titan returns `embedding` (singular,
 //     a flat float array) while Cohere returns `embeddings` (plural, an array
-//     of arrays). This shape-based dispatch avoids the need for a modelID in
-//     the codec interface (SchemaCodec.DecodeResponse does not carry CallTarget).
+//     of arrays). It then asserts the decoded vector count matches the
+//     request input count using the wire request body in
+//     reqCtx.
 //   - EndpointChatCompletions: delegates to the Anthropic codec.
-func (c codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, contentType string) (provcore.DecodeResult, error) {
+func (c codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, contentType string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint == typology.WireShapeBedrockEmbeddings {
-		return decodeBedrockEmbedResponseByShape(nativeBody)
+		res, err := decodeBedrockEmbedResponseByShape(nativeBody)
+		if err != nil {
+			return provcore.DecodeResult{}, err
+		}
+		// Guard against a provider silently dropping or reordering items:
+		// the canonical data[] is re-indexed by upstream position, so a
+		// count mismatch means the vectors no longer align with the request
+		// inputs. expected = request inputs (Titan single
+		// `inputText`→1, Cohere `texts`→len).
+		if err := specutil.ValidateEmbeddingRowCount(
+			bedrockEmbedInputCount(reqCtx.RequestBody),
+			int(gjson.GetBytes(res.CanonicalBody, "data.#").Int()),
+		); err != nil {
+			return provcore.DecodeResult{}, fmt.Errorf("bedrock embed response: %w", err)
+		}
+		return res, nil
 	}
 	// Bedrock Claude response body == Anthropic Messages shape; delegate
 	// decode with the Anthropic wire-shape so the codec's shape gate
 	// accepts it (mirrors EncodeRequest's same translation upstream).
-	return c.anthropic.DecodeResponse(typology.WireShapeAnthropicMessages, nativeBody, contentType)
+	return c.anthropic.DecodeResponse(typology.WireShapeAnthropicMessages, nativeBody, contentType, reqCtx)
+}
+
+// bedrockEmbedInputCount returns the number of inputs in a Bedrock embedding
+// wire request: Titan carries a single `inputText` (count 1); Cohere-on-
+// Bedrock carries `texts`[] (count len). Returns 0 when the body is absent
+// or neither field is present (disables the count guard rather than
+// rejecting).
+func bedrockEmbedInputCount(reqBody []byte) int {
+	if len(reqBody) == 0 {
+		return 0
+	}
+	if texts := gjson.GetBytes(reqBody, "texts"); texts.IsArray() {
+		return len(texts.Array())
+	}
+	if gjson.GetBytes(reqBody, "inputText").Exists() {
+		return 1
+	}
+	return 0
 }

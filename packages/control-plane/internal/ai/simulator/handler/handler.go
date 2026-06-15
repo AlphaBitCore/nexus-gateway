@@ -3,6 +3,7 @@
 package aigwsim
 
 import (
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 
@@ -25,11 +26,8 @@ func New(d Deps) *Handler {
 	return &Handler{logger: logger}
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{"message": message, "type": errType, "code": code},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 func internalServerError(c echo.Context, msg string) error {
 	return c.JSON(http.StatusInternalServerError, errJSON(msg, "server_error", ""))

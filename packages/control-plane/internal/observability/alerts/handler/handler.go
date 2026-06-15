@@ -11,6 +11,7 @@
 package alerts
 
 import (
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"io"
 	"log/slog"
 	"net/http"
@@ -85,15 +86,8 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 // handlers. Local copy of the helper in handler/helpers.go (R6
 // runbook §4.2 option 1: per-subpackage copy of small private
 // helpers).
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 var alertsHTTPClient = nexushttp.New(nexushttp.Config{
 	Timeout:        10 * time.Second,

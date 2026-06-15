@@ -7,12 +7,13 @@
 //     `append` / `replace` / `remove` / `patch` ops over an in-memory
 //     document tree. Re-usable by any per-host adapter that ships a
 //     similar delta stream (not just chatgpt-web).
-//   - Multi-spec chat-shape probe — recognises OpenAI / Anthropic /
-//     Gemini / ChatGPT-web / Anthropic-web / completions-legacy
-//     request and response shapes by byte-level locator + role-path +
-//     content-path inspection. Returns a Confidence score the
-//     Coordinator uses to decide whether the probe's result is the
-//     final audit answer or Tier-3 verbatim should win.
+//   - Multi-spec chat-shape probe — recognises the consumer-web
+//     shapes (ChatGPT-web, claude.ai) plus the flat-prompt legacy
+//     completions shape by byte-level locator + role-path +
+//     content-path inspection. Standard-API wires are decoded by the
+//     Tier-1 codecs, never patterned here. Returns a Confidence score
+//     the Coordinator uses to decide whether the probe's result is
+//     the final audit answer or Tier-3 verbatim should win.
 //
 // The package is intentionally narrow: it does NOT know about
 // providers.Format, HookConfig, IamPolicy, or the audit envelope. It
@@ -101,8 +102,6 @@ const (
 //   - ModelPath — optional top-level gjson path to the model identifier
 //     ("model" / "model_id" / "model_name"). When present, populates
 //     NormalizedPayload.Model.
-//   - SystemPath — optional top-level gjson path for separated system
-//     prompt (some specs hoist it out of messages).
 //   - ToolsPath — optional top-level path to the tools / functions
 //     array, copied wholesale into NormalizedPayload.Tools.
 //   - SignatureFields — additional optional probes (any field name
@@ -116,50 +115,33 @@ type ChatSpec struct {
 	ContentPath     string
 	Shape           ContentShape
 	ModelPath       string
-	SystemPath      string
 	ToolsPath       string
 	SignatureFields []string
 }
 
-// ChatResponseSpec mirrors ChatSpec for response bodies. Response specs
-// can also carry an SSE flag — when true, the probe runs WalkSSE first
-// and applies the spec's locator on the assembled accumulator state
-// rather than the raw bytes.
+// ChatResponseSpec mirrors ChatSpec for response bodies. The probe
+// folds the body as a JSON-Patch SSE stream (JSONPatchAccumulator) —
+// the only response framing Tier 2 recognises — and applies the
+// spec's paths on the assembled accumulator state.
 //
-//   - StreamFraming — "single-json" / "sse-event-data" / "ndjson". When
-//     not single-json, the probe walks the stream into a state object
-//     before applying ContentPath / RolePath.
-//   - AccumulatorRule — "none" / "concat-text" / "json-patch". Names the
-//     algorithm that turns a sequence of SSE data frames into a single
-//     document tree. "concat-text" appends `delta.text` (Anthropic-
-//     stream) / `delta.content` (OpenAI-stream) across frames.
-//     "json-patch" routes each frame through JSONPatchAccumulator.
-//   - AssistantTextPath — gjson path on the assembled state (or
-//     non-stream body) pointing at the assistant's final text content.
-//     For Anthropic this is "content.0.text"; for ChatGPT-web it's
+//   - AssistantTextPath — gjson path on the assembled state pointing
+//     at the assistant's final text content. For ChatGPT-web it's
 //     "message.content.parts.0".
-//   - UsagePath — optional gjson path to a Usage-shaped object (token
-//     counts). Often absent on consumer surfaces; when present,
-//     populates NormalizedPayload.Usage best-effort.
-//   - FinishReasonPath — optional path to a finish/stop reason string.
-//   - ModelPath — optional path to the model identifier reported in
-//     the response (some specs echo it back in a header frame).
+//   - SignatureFields — keys probed against each RAW frame's data
+//     JSON; at least one hit is required before the spec may claim
+//     the stream (identification), independent of the patch-coverage
+//     confidence.
+//   - ModelFramePaths — gjson paths probed against each RAW frame's
+//     data JSON for the model identifier (consumer-web streams carry
+//     it as frame metadata, e.g. chatgpt-web's `model_slug`, not as a
+//     top-level document field). The first hit wins and populates
+//     ChatDetection.Model → NormalizedPayload.Model. Best-effort and
+//     confidence-neutral, like AssistantTextPath.
 type ChatResponseSpec struct {
 	ID                string
-	StreamFraming     string
-	AccumulatorRule   string
 	AssistantTextPath string
-	UsagePath         string
-	FinishReasonPath  string
-	ModelPath         string
 	SignatureFields   []string
-	// StreamDeltaPath, when set on a "concat-text" spec, is the
-	// gjson path each SSE frame is checked against. Only frames where
-	// this path resolves to a non-empty string count toward the
-	// spec's frame counter (used in confidence scoring). Lets
-	// per-format specs (OpenAI / Anthropic / Gemini) avoid
-	// false-positive matches on each other's frame shapes.
-	StreamDeltaPath string
+	ModelFramePaths   []string
 }
 
 // ChatDetection is the probe's result. Confidence in [0, 1] is what the
@@ -172,10 +154,7 @@ type ChatDetection struct {
 	UserPrompts   []string
 	AssistantText string
 	Model         string
-	System        string
 	ToolsRaw      json.RawMessage
-	UsageRaw      json.RawMessage
-	FinishReason  string
 	// MessageRoles + MessageContents are the role-aware structured form,
 	// preserved so the normalizer wrapper can fill NormalizedPayload.Messages
 	// without re-parsing.

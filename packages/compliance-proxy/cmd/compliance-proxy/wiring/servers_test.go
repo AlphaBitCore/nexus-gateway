@@ -91,7 +91,7 @@ func TestInitServers_CustomRuntimeAddr(t *testing.T) {
 }
 
 func TestInitServers_DefaultRuntimeAddr(t *testing.T) {
-	// Empty ListenAddress → falls back to "127.0.0.1:3002".
+	// Empty ListenAddress → falls back to "127.0.0.1:3040".
 	d := buildServersDeps(t)
 	d.Cfg.RuntimeAPI.ListenAddress = ""
 	result := InitServers(d)

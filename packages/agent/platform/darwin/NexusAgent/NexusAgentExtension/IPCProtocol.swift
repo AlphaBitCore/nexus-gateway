@@ -20,111 +20,8 @@ import Foundation
 import Network
 import os.log
 
-// MARK: - Wire Types
-
-/// Message sent from the NE to the Go agent when a new flow is intercepted.
-struct NEFlowNewMessage: Encodable {
-    let flowId: String
-    let remoteHost: String
-    let remoteIp: String
-    let remotePort: Int
-    let localPort: Int
-    let pid: Int32
-    let transportProtocol: String
-
-    enum CodingKeys: String, CodingKey {
-        case type_ = "type"
-        case flowId, remoteHost, remoteIp, remotePort, localPort, pid
-        case transportProtocol = "protocol"
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode("flow_new", forKey: .type_)
-        try container.encode(flowId, forKey: .flowId)
-        try container.encode(remoteHost, forKey: .remoteHost)
-        try container.encode(remoteIp, forKey: .remoteIp)
-        try container.encode(remotePort, forKey: .remotePort)
-        try container.encode(localPort, forKey: .localPort)
-        try container.encode(pid, forKey: .pid)
-        try container.encode(transportProtocol, forKey: .transportProtocol)
-    }
-}
-
-/// Message sent from the NE when a flow closes.
-///
-/// E50 latency phase fields (`upstreamTtfbMs`, `upstreamTotalMs`,
-/// `interceptMs`) are optional; the Swift NE proxy populates them when
-/// the upstream call surfaces `URLSessionTaskMetrics` data (most flows
-/// do — Apple's NEAppProxyTCPFlow + URLSession path emits the metric
-/// pairs around request send / first response byte / last byte). When
-/// absent the field is omitted from the JSON envelope and the Go side
-/// leaves the corresponding `traffic_event` column NULL. See
-/// `docs/developers/architecture/services/agent/agent-macos-platform-architecture.md` for the cross-language contract.
-struct NEFlowClosedMessage: Encodable {
-    let flowId: String
-    let bytesIn: Int64
-    let bytesOut: Int64
-    let durationMs: Int
-    let bumpStatus: String
-
-    // E50 phase fields — nil means "not measured this flow". URLSession
-    // metrics are best-effort: passthrough flows that go directly via
-    // raw TCP relay (no URLSessionTask wrapping) report nil for all 3.
-    let upstreamTtfbMs: Int?
-    let upstreamTotalMs: Int?
-    let interceptMs: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case type_ = "type"
-        case flowId, bytesIn, bytesOut, durationMs, bumpStatus
-        case upstreamTtfbMs, upstreamTotalMs, interceptMs
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode("flow_closed", forKey: .type_)
-        try container.encode(flowId, forKey: .flowId)
-        try container.encode(bytesIn, forKey: .bytesIn)
-        try container.encode(bytesOut, forKey: .bytesOut)
-        try container.encode(durationMs, forKey: .durationMs)
-        try container.encode(bumpStatus, forKey: .bumpStatus)
-        // Omit nil phase fields — Go side treats absent + null identically.
-        if let v = upstreamTtfbMs { try container.encode(v, forKey: .upstreamTtfbMs) }
-        if let v = upstreamTotalMs { try container.encode(v, forKey: .upstreamTotalMs) }
-        if let v = interceptMs { try container.encode(v, forKey: .interceptMs) }
-    }
-}
-
-/// Decision response from the Go agent.
-struct NEDecisionResponse: Codable {
-    let flowId: String
-    let decision: String // "inspect" | "passthrough" | "deny"
-}
-
-/// One-shot upgrade message sent after we extract the SNI hostname
-/// from the flow's first TLS ClientHello frame. The daemon updates
-/// the in-flight flowState's destination host so the audit row
-/// (written on flow_closed) carries the real hostname instead of
-/// the IP literal that NEAppProxyFlow.remoteHostname surfaced
-/// (typically nil for browsers / Electron / anything that pre-
-/// resolves DNS itself).
-struct NEFlowHostUpdateMessage: Encodable {
-    let flowId: String
-    let hostname: String
-
-    enum CodingKeys: String, CodingKey {
-        case type_ = "type"
-        case flowId, hostname
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode("flow_update_host", forKey: .type_)
-        try container.encode(flowId, forKey: .flowId)
-        try container.encode(hostname, forKey: .hostname)
-    }
-}
+// Wire types (NEFlowNewMessage / NEFlowClosedMessage / NEDecisionResponse /
+// NEFlowHostUpdateMessage) live in IPCMessages.swift.
 
 // MARK: - IPC Client
 
@@ -135,6 +32,11 @@ class AgentIPCClient {
     private var connection: NWConnection?
     private let socketPath: String
     private let queue = DispatchQueue(label: "com.nexus-gateway.agent.ipc", qos: .userInitiated)
+    // Reconnect runs on a SEPARATE queue: attemptConnect blocks on a
+    // semaphore that the NWConnection.stateUpdateHandler (scheduled on
+    // `queue`) signals, so re-dialling must never run on `queue` itself or
+    // it would deadlock waiting for a callback that can't fire.
+    private let reconnectQueue = DispatchQueue(label: "com.nexus-gateway.agent.ipc.reconnect", qos: .utility)
     private var responseBuffer = Data()
     private let bufferLock = NSLock()
     private let pendingLock = NSLock()
@@ -142,6 +44,20 @@ class AgentIPCClient {
 
     /// Pending decision callbacks keyed by flowId.
     private var pending: [String: (NEDecisionResponse) -> Void] = [:]
+
+    // Liveness state for NE self-heal. The extension keeps running (macOS
+    // sysextd owns its lifecycle) even after the daemon dies, so without
+    // this the provider would keep CLAIMING flows it can no longer bridge —
+    // a "zombie" that floods relay-write failures and breaks the host's
+    // traffic. handleNewFlow consults daemonAbsentBeyondGrace() to DECLINE
+    // flows (native routing) once the daemon has been gone past the grace
+    // window, and an auto-reconnect loop restores interception when the
+    // daemon returns. All three fields are guarded by stateLock.
+    private let stateLock = NSLock()
+    private var connectedFlag = false
+    private var disconnectedSince: Date? = nil // nil while connected
+    private var shuttingDown = false           // set by shutdown(): suppress reconnect
+    private var reconnecting = false            // a reconnect attempt is in flight
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -184,8 +100,9 @@ class AgentIPCClient {
         // during install/upgrade, or a Hub-side enrollment delay
         // that holds runPendingEnrollment past the old 25 s mark.
         //
-        // Backoff: 50ms → 100ms → 200ms → 400ms → 800ms → 1.6s →
-        // capped at 1s. Tight initial spacing keeps menu-bar latency
+        // Backoff: 50ms → 100ms → 200ms → 400ms → 800ms → 1s, then
+        // held at 1s (min(backoffMs*2, 1000) caps the doubling before
+        // it reaches 1.6s). Tight initial spacing keeps menu-bar latency
         // sub-second on the happy path; the cap stops a stuck daemon
         // from burning CPU on a 10 ms-poll loop for 5 minutes.
         let totalDeadline = Date().addingTimeInterval(300.0)
@@ -288,6 +205,7 @@ class AgentIPCClient {
         }
 
         logger.info("attemptConnect: NWConnection ready in \(Int(Date().timeIntervalSince(t0) * 1000))ms; arming receive loop")
+        setConnected(true)
         receiveNext()
         return true
     }
@@ -308,6 +226,7 @@ class AgentIPCClient {
         logger.info("disconnect: cancelling NWConnection")
         connection?.cancel()
         connection = nil
+        setConnected(false)
 
         // Drain pending callbacks with a fail-open passthrough so any
         // in-flight user flow continues uninspected rather than being
@@ -323,6 +242,79 @@ class AgentIPCClient {
         for (flowId, callback) in stale {
             callback(NEDecisionResponse(flowId: flowId, decision: "passthrough"))
         }
+
+        // Auto-reconnect unless this was a deliberate stop. The daemon can
+        // restart (config reload, upgrade, crash-respawn under launchd)
+        // while the NE extension keeps running; without re-dialling, the
+        // provider would stay in decline-all mode forever and silently stop
+        // inspecting even after the daemon came back.
+        if !isShuttingDown() {
+            scheduleReconnect()
+        }
+    }
+
+    /// Intentional teardown (stopProxy): suppress the auto-reconnect loop so
+    /// a deliberate stop stays stopped, then tear down the connection.
+    func shutdown() {
+        stateLock.lock(); shuttingDown = true; stateLock.unlock()
+        disconnect()
+    }
+
+    private func setConnected(_ up: Bool) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        connectedFlag = up
+        if up {
+            disconnectedSince = nil
+        } else if disconnectedSince == nil {
+            disconnectedSince = Date()
+        }
+    }
+
+    private func isShuttingDown() -> Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return shuttingDown
+    }
+
+    /// True when the daemon IPC has been down longer than `grace`.
+    /// handleNewFlow uses this to DECLINE flows (return false → macOS
+    /// native routing) once the daemon is gone, rather than claiming them
+    /// and failing to bridge (the zombie). The grace window tolerates a
+    /// brief daemon restart without flapping interception off. Before the
+    /// first successful connect (disconnectedSince still nil) the daemon is
+    /// treated as absent — decline until it is reachable.
+    func daemonAbsentBeyondGrace(_ grace: TimeInterval) -> Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        if connectedFlag { return false }
+        guard let since = disconnectedSince else { return true }
+        return Date().timeIntervalSince(since) > grace
+    }
+
+    /// Re-dial the daemon socket on the dedicated reconnect queue (never on
+    /// `queue` — see field comment). Retries every 2s until connected or a
+    /// shutdown is requested; on success attemptConnect re-arms the receive
+    /// loop and flips connectedFlag back on, so interception resumes
+    /// automatically.
+    private func scheduleReconnect() {
+        stateLock.lock()
+        if reconnecting || shuttingDown { stateLock.unlock(); return }
+        reconnecting = true
+        stateLock.unlock()
+
+        reconnectQueue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self else { return }
+            if self.isShuttingDown() {
+                self.stateLock.lock(); self.reconnecting = false; self.stateLock.unlock()
+                return
+            }
+            self.logger.info("scheduleReconnect: re-dialling daemon IPC socket \(self.socketPath, privacy: .public)")
+            let ok = self.attemptConnect(timeout: 3.0)
+            self.stateLock.lock(); self.reconnecting = false; self.stateLock.unlock()
+            if ok {
+                self.logger.info("scheduleReconnect: re-connected to daemon IPC — interception resumes")
+            } else if !self.isShuttingDown() {
+                self.scheduleReconnect()
+            }
+        }
     }
 
     /// Request a decision for a new flow (async callback).
@@ -337,7 +329,7 @@ class AgentIPCClient {
     /// recorded for the timed-out flow because flow_closed never
     /// reaches the daemon either; that is the correct semantics — if
     /// the daemon is not reachable, we cannot persist anyway.
-    func requestDecision(flowId: String, host: String, ip: String, port: Int, localPort: Int, pid: Int32, completion: @escaping (NEDecisionResponse) -> Void) {
+    func requestDecision(flowId: String, host: String, ip: String, port: Int, localPort: Int, pid: Int32, bundleId: String, completion: @escaping (NEDecisionResponse) -> Void) {
         pendingLock.lock()
         pending[flowId] = completion
         pendingLock.unlock()
@@ -349,7 +341,8 @@ class AgentIPCClient {
             remotePort: port,
             localPort: localPort,
             pid: pid,
-            transportProtocol: "tcp"
+            transportProtocol: "tcp",
+            bundleId: bundleId
         )
         sendJSON(msg)
 

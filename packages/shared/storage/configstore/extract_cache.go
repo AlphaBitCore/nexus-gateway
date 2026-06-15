@@ -28,6 +28,21 @@ type ExtractCacheConfigRow struct {
 	UpdatedBy           *string   `json:"updatedBy"`
 }
 
+// WireState is the canonical Hub-shadow State for the
+// response_cache.extract_config key: the three behavioral fields the AI
+// Gateway receiver consumes, excluding bookkeeping columns (id/updatedAt/
+// updatedBy) so the pushed blob and the reconcile loader's source-of-truth
+// projection are byte-identical (modulo JSON normalization). Both the admin
+// push (extract-cache PutConfig) and the configreconcile SourceLoader call
+// this, so the two can never drift.
+func (r *ExtractCacheConfigRow) WireState() map[string]any {
+	return map[string]any{
+		"enabled":             r.Enabled,
+		"ttlSeconds":          r.TTLSeconds,
+		"applyFreshnessRules": r.ApplyFreshnessRules,
+	}
+}
+
 // ExtractCacheSaveInput is the caller-supplied mutation spec for
 // ExtractCacheStore.Save. Save validates each value into its allowed range
 // (TTL: [60, 604800]) and falls back to schema defaults on out-of-range

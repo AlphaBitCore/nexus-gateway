@@ -16,6 +16,5 @@ type RulePack struct {
 	Version     string    `db:"version"`
 	Maintainer  string    `db:"maintainer"`
 	Description *string   `db:"description"`
-	Signature   *string   `db:"signature"`
 	CreatedAt   time.Time `db:"created_at"`
 }

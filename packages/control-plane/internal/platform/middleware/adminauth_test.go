@@ -20,7 +20,24 @@ import (
 	jwtverifier "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/jwt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/hmackeyring"
 )
+
+// fakeRehasher records a lazy re-hash call so a test can assert the admin-key
+// migration fires with the current-version hash + version, and that the
+// matched (admission-time) hash is threaded through for the store's
+// compare-and-swap guard.
+type fakeRehasher struct {
+	called                         bool
+	id, hash, version, matchedHash string
+	err                            error
+}
+
+func (f *fakeRehasher) UpdateKeyHashAndVersion(_ context.Context, id, keyHash, keyVersion, matchedHash string) error {
+	f.called = true
+	f.id, f.hash, f.version, f.matchedHash = id, keyHash, keyVersion, matchedHash
+	return f.err
+}
 
 // fakeAPIKeyLookup is an in-memory AdminAPIKeyLookup for tests. When err is
 // non-nil it is returned verbatim; otherwise keys maps keyHash → row (nil
@@ -366,6 +383,101 @@ func TestAdminAuth_APIKey_HappyPath_AsAPIKey(t *testing.T) {
 	}
 	if captured.AuthPrincipalType != "api_key" {
 		t.Errorf("AuthPrincipalType=%q, want api_key", captured.AuthPrincipalType)
+	}
+}
+
+// TestAdminAuth_APIKey_LazyRehashOnOldVersion is the SEC-W2-01 Layer A core
+// regression: a key whose stored hash was sealed under an OLDER keyring version
+// still admits (try-all-versions, current-first) AND is lazy-migrated to the
+// current version (UpdateKeyHashAndVersion called with the current-version hash).
+// NOT parallel — it mutates the package-global injected keyring and restores the
+// TestMain default before the parallel tests resume.
+func TestAdminAuth_APIKey_LazyRehashOnOldVersion(t *testing.T) {
+	f := newAuthFixture(t)
+	kr, err := hmackeyring.New("v1:old-secret,*v2:current-secret")
+	if err != nil {
+		t.Fatalf("hmackeyring.New: %v", err)
+	}
+	if err := auth.InitHMACKeyring(kr); err != nil {
+		t.Fatalf("InitHMACKeyring: %v", err)
+	}
+	t.Cleanup(func() {
+		def, _ := hmackeyring.Single("test-hmac-secret")
+		_ = auth.InitHMACKeyring(def)
+	})
+
+	rawKey := "nxk_rotate-me"
+	// The row was sealed under v1 (the old version); current is v2.
+	var oldHash, curHash string
+	for _, v := range auth.HashAPIKeyVersions(rawKey) {
+		switch v.Version {
+		case "v1":
+			oldHash = v.Hash
+		case "v2":
+			curHash = v.Hash
+		}
+	}
+	if oldHash == curHash {
+		t.Fatal("old and current version hashes must differ for this test to be meaningful")
+	}
+	lookup := &fakeAPIKeyLookup{keys: map[string]*store.APIKeyWithOwner{
+		oldHash: {ID: "ak-old", Name: "rotated", Enabled: true},
+	}}
+	rehasher := &fakeRehasher{}
+
+	e, captured := mountEcho(t, middleware.AdminAuthConfig{
+		JWTVerifier:    f.verifier,
+		APIKeyLookup:   lookup,
+		APIKeyRehasher: rehasher,
+		Logger:         slog.Default(),
+	})
+
+	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q (a key sealed under an old version must still admit)", rec.Code, rec.Body.String())
+	}
+	if captured.KeyID != "ak-old" {
+		t.Errorf("admitted KeyID=%q, want ak-old", captured.KeyID)
+	}
+	if !rehasher.called {
+		t.Fatal("expected lazy re-hash to fire on old-version admission")
+	}
+	if rehasher.id != "ak-old" || rehasher.hash != curHash || rehasher.version != "v2" {
+		t.Errorf("rehash args = (%q,%q,%q), want (ak-old, <current-hash>, v2)", rehasher.id, rehasher.hash, rehasher.version)
+	}
+	// The admission-time hash must thread through for the store's
+	// compare-and-swap: it is the only value that lets the UPDATE detect a
+	// concurrent regenerate and skip instead of resurrecting the old key.
+	if rehasher.matchedHash != oldHash {
+		t.Errorf("rehash matchedHash = %q, want the v1 admission hash", rehasher.matchedHash)
+	}
+}
+
+// TestAdminAuth_APIKey_NoRehashOnCurrentVersion: a key already on the current
+// version admits on the first probe and is NOT re-hashed (no wasted UPDATE).
+// Uses the TestMain default single-version (v1) keyring.
+func TestAdminAuth_APIKey_NoRehashOnCurrentVersion(t *testing.T) {
+	f := newAuthFixture(t)
+	rawKey := "nxk_already-current"
+	hash := auth.HashAPIKey(rawKey) // current version
+	lookup := &fakeAPIKeyLookup{keys: map[string]*store.APIKeyWithOwner{
+		hash: {ID: "ak-cur", Name: "current", Enabled: true},
+	}}
+	rehasher := &fakeRehasher{}
+
+	e, _ := mountEcho(t, middleware.AdminAuthConfig{
+		JWTVerifier:    f.verifier,
+		APIKeyLookup:   lookup,
+		APIKeyRehasher: rehasher,
+		Logger:         slog.Default(),
+	})
+
+	rec := doRequest(e, map[string]string{"x-admin-key": rawKey})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if rehasher.called {
+		t.Error("a current-version key must NOT be lazy re-hashed")
 	}
 }
 

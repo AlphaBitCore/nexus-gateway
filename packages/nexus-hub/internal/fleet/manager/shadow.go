@@ -92,6 +92,14 @@ func (m *Manager) HandleShadowReport(ctx context.Context, req ShadowReportReques
 	if req.Reason == "break_glass" {
 		if bgErr := m.handleBreakGlassReport(ctx, req); bgErr != nil {
 			m.logger.Error("break-glass reconciliation", "thing_id", req.ID, "err", bgErr)
+			// A rejected break-glass (a key outside the writable
+			// allowlist or a schema-invalid state) is a node attempting a
+			// disallowed privileged config write — it MUST leave a durable
+			// security event, not just a rotatable Hub log line, so a rogue node
+			// probing/fuzzing the break-glass authority surface is visible to the
+			// audit/SIEM stream. Best-effort: failure to record must not change
+			// the shadow-report outcome.
+			m.emitBreakGlassDenied(ctx, req, bgErr)
 		}
 	}
 
@@ -115,6 +123,15 @@ type ShadowKeyDiff struct {
 	Desired  any  `json:"desired"`
 	Reported any  `json:"reported"`
 	Synced   bool `json:"synced"`
+	// InDesired is true when this key is present in thing.desired. It is false
+	// for a "reported-only" key — one the Thing still reports but the Hub no
+	// longer desires (desired keys are removed on template-unassign / override
+	// removal, but the reported map is merge-only and never prunes; see
+	// UpdateShadowReport in fleet/store). The admin shadow view still renders
+	// such a key as unsynced (operator-useful), but the content-drift
+	// auto-heal MUST ignore it: ForceResyncAll only pushes desired keys, so a
+	// reported-only key can never be reconciled and would loop forever.
+	InDesired bool `json:"inDesired"`
 }
 
 // GetShadowComparison builds a per-key desired vs reported comparison.
@@ -135,12 +152,14 @@ func (m *Manager) GetShadowComparison(ctx context.Context, id string) (*ShadowCo
 	for k := range allKeys {
 		d := thing.Desired[k]
 		r := thing.Reported[k]
+		_, inDesired := thing.Desired[k]
 		dj, _ := json.Marshal(d)
 		rj, _ := json.Marshal(r)
 		keys[k] = ShadowKeyDiff{
-			Desired:  d,
-			Reported: r,
-			Synced:   string(dj) == string(rj),
+			Desired:   d,
+			Reported:  r,
+			Synced:    string(dj) == string(rj),
+			InDesired: inDesired,
 		}
 	}
 

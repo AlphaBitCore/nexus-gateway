@@ -240,7 +240,6 @@ export interface AppliedConfig {
   userContext?: PolicyUserContext;
   /** Root → current-org chain (materialized path), one node per ancestor. */
   organizationTree?: PolicyOrganization[];
-  deviceGroup?: PolicyDeviceGroup;
   diagMode?: PolicyDiagMode;
 }
 
@@ -327,10 +326,18 @@ export interface PolicyDeviceDefaults {
 
 export interface PolicyKillSwitch {
   /**
-   * `true` = bumping allowed (normal posture); `false` = killswitch ENGAGED.
-   * UI consumers should treat `!enabled` as the danger / engaged state.
+   * `true` = kill switch ENGAGED (admin paused interception → passthrough, no
+   * TLS-bumping); `false` = normal operation (bumping active). Matches the
+   * backend `interception.Killswitch{engaged}` wire field — the engaged state
+   * is the danger state.
+   *
+   * NOTE: this field used to be `enabled` with the OPPOSITE meaning. The
+   * backend renamed it to `engaged` (no inversion); the frontend was missed in
+   * that rename, so `killSwitch.enabled` was always `undefined` and `!enabled`
+   * was always true — the Dashboard showed "Kill switch engaged" on every
+   * device regardless of the real state. Now read `engaged` directly.
    */
-  enabled: boolean;
+  engaged: boolean;
   reason?: string;
 }
 
@@ -376,11 +383,6 @@ export interface PolicyOrganization {
   path: string;
   description?: string;
   timezone?: string;
-}
-
-export interface PolicyDeviceGroup {
-  id?: string;
-  name?: string;
 }
 
 export interface PolicyDiagMode {

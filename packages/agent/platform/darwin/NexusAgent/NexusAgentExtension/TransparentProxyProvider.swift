@@ -12,36 +12,19 @@ class NexusProxyProvider: NETransparentProxyProvider {
     private let logger = Logger(subsystem: "com.nexus-gateway.agent", category: "ProxyProvider")
     private let ipcClient = AgentIPCClient()
     private let quicBundles = QUICFallbackBundles()
+    private let bypassBundles = BypassBundles()
     private let daemonPIDFilter = DaemonPIDFilter()
 
-    /// macOS system network services whose UDP must NEVER be claimed by
-    /// our proxy, regardless of destination port. handleNewFlow returns
-    /// false early when bundleId matches, before any QUIC kill logic.
-    /// Belt-and-suspenders with the rule-level excludedNetworkRules in
-    /// startProxy() — the rule layer catches well-known UDP ports, this
-    /// bundle list catches the long tail (e.g. mDNSResponder doing
-    /// DNS-over-HTTPS to UDP 443, apsd's varying Apple Push ports,
-    /// configd's misc discovery probes). Hard-coded because macOS's
-    /// system service bundle ids are stable across releases; new
-    /// system services would be a CLAUDE.md-binding-level event
-    /// requiring explicit update of this list. Adding to this list
-    /// requires triple-checking the bundle is genuinely macOS-system
-    /// (security risk: a user app on this list is invisible to us).
-    private let systemNetworkServiceBundles: Set<String> = [
-        "com.apple.mDNSResponder",
-        "com.apple.configd",
-        "com.apple.dhcpcd",
-        "com.apple.apsd",
-        "com.apple.nsurlsessiond",
-        "com.apple.kdc",
-        "com.apple.timed",
-        "com.apple.locationd",
-        "com.apple.bootpd",
-        "com.apple.symptomsd",
-        "ntpd",
-        "mdnsresponder",
-        "launchd",
-    ]
+    // The macOS system-network-service protection floor (the set of daemons
+    // whose UDP must NEVER be claimed by our proxy, regardless of destination
+    // port) now lives in SystemBundles.generated.swift — generated from the Go
+    // SSOT packages/shared/policy/systembundles so the two copies can never
+    // drift. handleNewFlow fast-declines via SystemBundles.covers(_:), which
+    // reproduces the Go equal/ancestor/descendant matching exactly. Belt-and-
+    // suspenders with the rule-level excludedNetworkRules in startProxy() — the
+    // rule layer catches well-known UDP ports, the bundle floor catches the
+    // long tail (mDNSResponder DNS-over-HTTPS on UDP 443, apsd's varying Apple
+    // Push ports, configd's misc discovery probes).
 
     /// Serial dispatch queue used for time-bounded callbacks
     /// (peekSNIThenDecide SNI-peek timeout, future watchdogs). Separate
@@ -226,8 +209,9 @@ class NexusProxyProvider: NETransparentProxyProvider {
             reportFlowClosed(flowId: flowId, state: state)
         }
 
-        ipcClient.disconnect()
-        logger.info("stopProxy: complete (ipcClient disconnected)")
+        // shutdown() (not disconnect()) suppresses auto-reconnect — stopProxy is a deliberate teardown.
+        ipcClient.shutdown()
+        logger.info("stopProxy: complete (ipcClient shut down)")
         completionHandler()
     }
 
@@ -237,10 +221,19 @@ class NexusProxyProvider: NETransparentProxyProvider {
         // SAFETY: this method MUST return true/false synchronously and
         // MUST NOT throw — any uncaught Swift error here causes macOS
         // to drop the flow without routing natively, which appears as
-        // a network outage to the user. The whole body is wrapped so
-        // unexpected nil / cast failures fall through to "decline +
-        // let macOS route natively" rather than crashing the provider.
+        // a network outage to the user. Swift cannot catch runtime
+        // traps, so the safety contract is structural, not a wrapper:
+        // every lookup below is a `guard`/`as?` that declines the flow
+        // on failure, and the body contains NO force-unwraps. Keep it
+        // that way — a single `!` added here can crash the provider on
+        // a malformed flow and take the host's networking with it.
         let bundleId = flow.metaData.sourceAppSigningIdentifier
+
+        // NE self-heal: daemon absent past grace → decline all (native routing), AgentIPCClient auto-reconnects. See agent-ne-fail-open-architecture.md.
+        if ipcClient.daemonAbsentBeyondGrace(6.0) {
+            logger.info("handleNewFlow: daemon IPC absent beyond grace — declining flow for native routing (self-heal, no zombie interception) bundleId=\(bundleId, privacy: .public)")
+            return false
+        }
 
         // E55 self-intercept guard: NE intercepts ALL outbound traffic
         // including the agent daemon's own connections.
@@ -260,14 +253,24 @@ class NexusProxyProvider: NETransparentProxyProvider {
         // before NE fully claims the daemon PID (this is how the
         // existing WebSocket gets established + reconnects).
         //
-        // Real fix (TODO, task #56): use NETransparentProxyNetwork-
-        // Settings.excludedNetworkRules to tell NECP not to route
-        // daemon-bound traffic to the proxy at the IP level. Needs
-        // daemon to DNS-resolve Hub + key upstreams at startup and
-        // push the IP list to the extension via ne.sock.
+        // Known limitation / future option (tracked: task #56): the
+        // clean fix would use NETransparentProxyNetworkSettings.
+        // excludedNetworkRules to tell NECP not to route daemon-bound
+        // traffic to the proxy at the IP level. That needs the daemon
+        // to DNS-resolve Hub + key upstreams at startup and push the IP
+        // list to the extension via ne.sock. Until that lands, the
+        // synchronous `return false` above remains the correct fail-open
+        // behavior — it is not a placeholder and must not be flipped to
+        // a claim+relay path (which returns "read: errno 403" here).
         let sourcePid = extractPID(from: flow)
         if daemonPIDFilter.isDaemon(pid: sourcePid) {
             logger.debug("handleNewFlow: skipping self-intercept from daemon PID \(sourcePid)")
+            return false
+        }
+
+        // Self-exemption: source bundle on bypassBundles → decline (native routing, no bump). Empty = inspect all. See agent-ne-fail-open-architecture.md Rule 3.
+        if bypassBundles.shouldBypass(bundleId: bundleId) {
+            logger.info("handleNewFlow: bypass — source bundle \(bundleId, privacy: .public) on exemption list; declining for native routing (no bump)")
             return false
         }
 
@@ -294,8 +297,8 @@ class NexusProxyProvider: NETransparentProxyProvider {
             // across macOS versions). Bundle-id check here ensures the
             // flow is never claimed regardless of port. Belt + suspenders
             // with the rule-level exclusion above.
-            if systemNetworkServiceBundles.contains(bundleId) {
-                logger.debug("handleNewFlow: decline UDP from system service \(bundleId, privacy: .public) — bundle in systemNetworkServiceBundles fast-decline list")
+            if SystemBundles.covers(bundleId) {
+                logger.debug("handleNewFlow: decline UDP from system service \(bundleId, privacy: .public) — bundle in SystemBundles protection floor (generated from Go SSOT)")
                 return false
             }
             if quicBundles.shouldForceFallback(bundleId: bundleId) {
@@ -309,6 +312,17 @@ class NexusProxyProvider: NETransparentProxyProvider {
             // binary), a system daemon, a game, or a custom UDP app.
             // Decline; macOS handles it natively. This is the
             // critical safety branch: never claim UDP we can't relay.
+            //
+            // Diagnostic (log only — does NOT change the decline decision, so
+            // fail-open is unaffected): a UDP flow from a *signed, non-system*
+            // app that is NOT on the QUIC-fallback list escapes here over UDP
+            // (likely QUIC/h3) and is never seen on the TCP path. Logging the
+            // bundle id reveals exactly which app/helper to add to the
+            // QUIC-fallback list (e.g. an AI client whose chat we're missing).
+            // Empty bundleId (unsigned) is skipped to avoid system noise.
+            if !bundleId.isEmpty {
+                logger.info("handleNewFlow: UDP flow declined — escapes uncaptured (likely QUIC). bundle=\(bundleId, privacy: .public). Add to QUIC-fallback list to capture this app.")
+            }
             return false
         }
 
@@ -343,15 +357,14 @@ class NexusProxyProvider: NETransparentProxyProvider {
 
         // IP captured separately. When remoteHostname differs from
         // endpointAddr (the common case), endpointAddr already holds the
-        // dotted-quad / colon-hex IP string and no DNS round-trip is
-        // needed. Only fall back to resolveIP() when both fields are
-        // hostnames (rare).
-        let ip: String
-        if isLikelyIPLiteral(endpointAddr) {
-            ip = endpointAddr
-        } else {
-            ip = resolveIP(host: host)
-        }
+        // dotted-quad / colon-hex IP string. When BOTH fields are
+        // hostnames (rare: the caller skipped name resolution), the IP
+        // stays empty: it feeds only a best-effort audit column, and
+        // resolving DNS here would put a blocking call on the
+        // handleNewFlow decision path — while it blocks, no other
+        // intercepted flow on the host gets a decision. Never resolve
+        // DNS synchronously in this method.
+        let ip = isLikelyIPLiteral(endpointAddr) ? endpointAddr : ""
 
         let localPort = extractLocalPort(from: flow)
 
@@ -385,7 +398,8 @@ class NexusProxyProvider: NETransparentProxyProvider {
             ip: ip,
             port: port,
             localPort: localPort,
-            pid: pid
+            pid: pid,
+            bundleId: bundleId
         )
 
         return true // we are handling this flow
@@ -415,9 +429,26 @@ class NexusProxyProvider: NETransparentProxyProvider {
                                    ip: String,
                                    port: Int,
                                    localPort: Int,
-                                   pid: Int32) {
+                                   pid: Int32,
+                                   bundleId: String) {
+        // Watchdog on flow.open itself: the 500ms peek timer below is
+        // armed INSIDE the open callback, so an open that never calls
+        // back would leave this claimed flow hanging with no timeout at
+        // all. A claimed-but-unusable flow gets the standard fail-open
+        // reset; a late open completion after the watchdog fired is
+        // dropped (the guard is one-shot).
+        let openGuard = TimeoutGuard()
+        queue.asyncAfter(deadline: .now() + relayEstablishTimeout) { [weak self] in
+            guard let self, openGuard.tryFire() else { return }
+            self.failOpenResetFlow(flowId: flowId, flow: flow,
+                                   reason: "flow.open never completed for \(initialHost):\(port)")
+        }
         flow.open(withLocalEndpoint: nil) { [weak self] err in
             guard let self else { return }
+            guard openGuard.tryFire() else {
+                // Watchdog already reset this flow; nothing to relay.
+                return
+            }
             if let err = err {
                 let nsErr = err as NSError
                 self.logger.error("peekSNIThenDecide: flow.open FAILED for flow=\(flowId, privacy: .public) host=\(initialHost, privacy: .public):\(port) — domain=\(nsErr.domain) code=\(nsErr.code)")
@@ -435,25 +466,37 @@ class NexusProxyProvider: NETransparentProxyProvider {
                 return
             }
             // Bound the SNI peek by 500ms so non-TLS protocols don't
-            // block decision indefinitely.
+            // block decision indefinitely. When the timer wins, the
+            // readData below is STILL OUTSTANDING — Apple permits one
+            // read in flight per flow, and whatever that read finally
+            // delivers is the app's real first bytes (a server-speaks-
+            // first protocol's first post-greeting write). lateRead
+            // hands that late completion to the relay instead of
+            // discarding it, and keeps the relay from racing a second
+            // readData against the outstanding one.
             let timeoutFired = TimeoutGuard()
+            let lateRead = LatePeekRead()
             self.queue.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self] in
                 guard let self else { return }
                 if timeoutFired.tryFire() {
                     self.logger.debug("peekSNIThenDecide: 500ms timeout for flow=\(flowId, privacy: .public) — falling back to initial host \(initialHost, privacy: .public)")
-                    self.dispatchDecision(flowId: flowId, flow: flow, host: initialHost, peeked: nil, ip: ip, port: port, localPort: localPort, pid: pid)
+                    self.dispatchDecision(flowId: flowId, flow: flow, host: initialHost, peeked: nil, lateRead: lateRead, ip: ip, port: port, localPort: localPort, pid: pid, bundleId: bundleId)
                 }
             }
             flow.readData { [weak self] data, readErr in
                 guard let self else { return }
                 guard timeoutFired.tryFire() else {
-                    // Timeout already dispatched the decision; the
-                    // peek result is a duplicate. Drop quietly.
+                    // Timeout already dispatched the decision with no
+                    // peek bytes. This completion carries the app's
+                    // real first payload (or its close/error) — hand it
+                    // to the relay adopter; the chosen relay path
+                    // forwards it as the first app→remote write.
+                    lateRead.deliver(data, readErr)
                     return
                 }
                 if let readErr = readErr {
                     self.logger.debug("peekSNIThenDecide: first read error for flow=\(flowId, privacy: .public): \(readErr.localizedDescription) — dispatching with initial host")
-                    self.dispatchDecision(flowId: flowId, flow: flow, host: initialHost, peeked: nil, ip: ip, port: port, localPort: localPort, pid: pid)
+                    self.dispatchDecision(flowId: flowId, flow: flow, host: initialHost, peeked: nil, lateRead: nil, ip: ip, port: port, localPort: localPort, pid: pid, bundleId: bundleId)
                     return
                 }
                 guard let data = data, !data.isEmpty else {
@@ -472,7 +515,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
                     // (decision and audit are independent paths).
                     self.ipcClient.notifyFlowHost(flowId: flowId, hostname: sni)
                 }
-                self.dispatchDecision(flowId: flowId, flow: flow, host: resolvedHost, peeked: data, ip: ip, port: port, localPort: localPort, pid: pid)
+                self.dispatchDecision(flowId: flowId, flow: flow, host: resolvedHost, peeked: data, lateRead: nil, ip: ip, port: port, localPort: localPort, pid: pid, bundleId: bundleId)
             }
         }
     }
@@ -488,15 +531,17 @@ class NexusProxyProvider: NETransparentProxyProvider {
                                   flow: NEAppProxyTCPFlow,
                                   host: String,
                                   peeked: Data?,
+                                  lateRead: LatePeekRead?,
                                   ip: String,
                                   port: Int,
                                   localPort: Int,
-                                  pid: Int32) {
+                                  pid: Int32,
+                                  bundleId: String) {
         let t0 = Date()
-        ipcClient.requestDecision(flowId: flowId, host: host, ip: ip, port: port, localPort: localPort, pid: pid) { [weak self] response in
+        ipcClient.requestDecision(flowId: flowId, host: host, ip: ip, port: port, localPort: localPort, pid: pid, bundleId: bundleId) { [weak self] response in
             let latencyMs = Int(Date().timeIntervalSince(t0) * 1000)
             self?.logger.info("dispatchDecision: response decision=\(response.decision, privacy: .public) latency_ms=\(latencyMs) flow=\(flowId, privacy: .public) host=\(host, privacy: .public):\(port) — handing off to applyDecisionAfterPeek")
-            self?.applyDecisionAfterPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked, decision: response.decision)
+            self?.applyDecisionAfterPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked, lateRead: lateRead, decision: response.decision)
         }
     }
 
@@ -512,9 +557,14 @@ class NexusProxyProvider: NETransparentProxyProvider {
                                         host: String,
                                         port: Int,
                                         peeked: Data?,
+                                        lateRead: LatePeekRead?,
                                         decision: String) {
         switch decision {
         case "deny":
+            // The adopted late read (if any) is deliberately never
+            // consumed here: the flow is being closed, so its pending
+            // completion fires against a closed flow and its bytes are
+            // policy-blocked anyway.
             logger.info("applyDecisionAfterPeek: DENY flow=\(flowId, privacy: .public) → \(host, privacy: .public):\(port)")
             updateBumpStatus(flowId: flowId, status: "")
             flow.closeReadWithError(NSError(domain: "NexusAgent", code: 403, userInfo: [NSLocalizedDescriptionKey: "Blocked by policy"]))
@@ -530,7 +580,7 @@ class NexusProxyProvider: NETransparentProxyProvider {
             // without enabling debug logs.
             logger.info("applyDecisionAfterPeek: INSPECT flow=\(flowId, privacy: .public) → \(host, privacy: .public):\(port) → bridge (peeked=\(peeked?.count ?? 0)B)")
             updateBumpStatus(flowId: flowId, status: "BUMP_SUCCESS")
-            relayInspectViaBridgePostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked)
+            relayInspectViaBridgePostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked, lateRead: lateRead)
 
         default: // "passthrough"
             // INFO level so the "Chrome went to chatgpt.com but wasn't
@@ -541,8 +591,34 @@ class NexusProxyProvider: NETransparentProxyProvider {
             // is invisible at default log level.
             logger.info("applyDecisionAfterPeek: PASSTHROUGH flow=\(flowId, privacy: .public) → \(host, privacy: .public):\(port) (peeked=\(peeked?.count ?? 0)B)")
             updateBumpStatus(flowId: flowId, status: "")
-            relayPassthroughPostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked)
+            relayPassthroughPostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked, lateRead: lateRead)
         }
+    }
+
+    /// relayEstablishTimeout bounds the claim-to-first-relay window
+    /// (SEC-M8-02). createTCPConnection to a black-holed upstream/bridge
+    /// (SYN routed but never answered — no RST, no SYN-ACK) leaves the
+    /// write completion (and the relay loops) waiting on the OS-default
+    /// TCP connect timeout (~75s), freezing the one claimed flow for the
+    /// user. The spec calls for a 2–5s watchdog; we use the upper end (5s)
+    /// so a legitimately slow but working WAN handshake is not reset
+    /// spuriously — and even a spurious reset is fail-open (the app gets
+    /// ECONNRESET and macOS retries the flow natively).
+    private let relayEstablishTimeout: DispatchTimeInterval = .seconds(5)
+
+    /// failOpenResetFlow applies the established fail-open reset shape
+    /// (the #82 / commit 61b597d93 contract) to a claimed-but-unusable
+    /// flow: the app sees an immediate ECONNRESET and macOS routes the
+    /// retry natively, rather than the flow hanging until the ~75s OS TCP
+    /// timeout. Idempotent via completeFlow (a second call no-ops once the
+    /// flow row is removed). code 60 = ETIMEDOUT (Darwin).
+    private func failOpenResetFlow(flowId: String, flow: NEAppProxyTCPFlow, reason: String) {
+        logger.info("failOpenResetFlow: flow=\(flowId, privacy: .public) reset — \(reason, privacy: .public)")
+        let err = NSError(domain: "NexusAgent", code: 60,
+                          userInfo: [NSLocalizedDescriptionKey: "upstream connect timeout (fail-open reset)"])
+        flow.closeReadWithError(err)
+        flow.closeWriteWithError(nil)
+        completeFlow(flowId: flowId)
     }
 
     /// relayInspectViaBridgePostPeek connects the inspect path to the Go
@@ -550,17 +626,37 @@ class NexusProxyProvider: NETransparentProxyProvider {
     /// it), so it writes the BRIDGE header, replays the peeked ClientHello
     /// bytes immediately after, then relays bidirectionally — so the
     /// Go-side bump pipeline's TLS terminator sees the full handshake.
-    private func relayInspectViaBridgePostPeek(flowId: String, flow: NEAppProxyTCPFlow, host: String, port: Int, peeked: Data?) {
+    private func relayInspectViaBridgePostPeek(flowId: String, flow: NEAppProxyTCPFlow, host: String, port: Int, peeked: Data?, lateRead: LatePeekRead? = nil) {
         let isIPv6 = host.contains(":")
         let hostPart = isIPv6 ? "[\(host)]" : host
         let header = "BRIDGE \(hostPart):\(port) \(flowId)\n"
         guard let headerData = header.data(using: .utf8) else {
             logger.error("relayInspectViaBridgePostPeek: header encode failed for flow=\(flowId, privacy: .public)")
-            relayPassthroughPostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked)
+            relayPassthroughPostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked, lateRead: lateRead)
             return
         }
         let bridgeEndpoint = NWHostEndpoint(hostname: "127.0.0.1", port: "9443")
         let bridgeConn = createTCPConnection(to: bridgeEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)
+
+        // SEC-M8-02: bound bridge establishment. If the bridge SYN is
+        // black-holed (Go listener hung), the write completion below never
+        // fires; without this watchdog the flow freezes ~75s. On timeout
+        // we cancel and fall back to direct passthrough — the same fail-
+        // open degradation the writeErr branch already takes — and the
+        // passthrough path arms its OWN watchdog, so the claim-to-relay
+        // window stays bounded end-to-end. tryFire() races the write
+        // completion: whoever fires first wins (TimeoutGuard is one-shot).
+        let establishGuard = TimeoutGuard()
+        queue.asyncAfter(deadline: .now() + relayEstablishTimeout) { [weak self] in
+            guard let self else { return }
+            guard establishGuard.tryFire() else { return }
+            self.logger.info("relayInspectViaBridgePostPeek: bridge establish timeout for flow=\(flowId, privacy: .public) — cancel + fail-open to direct passthrough")
+            bridgeConn.cancel()
+            // lateRead is forwarded un-consumed: the adopted read is only
+            // consumed AFTER a successful header write, which by this
+            // guard's one-shot semantics can no longer happen.
+            self.relayPassthroughPostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked, lateRead: lateRead)
+        }
 
         // Compose header + peeked bytes into a single write so the
         // bridge sees them as a contiguous stream (parseHeader
@@ -569,20 +665,31 @@ class NexusProxyProvider: NETransparentProxyProvider {
         if let peeked = peeked { combined.append(peeked) }
         bridgeConn.write(combined) { [weak self] writeErr in
             guard let self else { return }
+            // The establishment watchdog may already have fired (timed out
+            // and fell back to passthrough); a late write completion must
+            // not double-relay onto the same flow. tryFire() losing here
+            // means the watchdog won — drop quietly.
+            guard establishGuard.tryFire() else {
+                self.logger.debug("relayInspectViaBridgePostPeek: late write completion after establish timeout for flow=\(flowId, privacy: .public) — dropping")
+                return
+            }
             if let writeErr = writeErr {
                 self.logger.error("relayInspectViaBridgePostPeek: header+peek write FAILED for flow=\(flowId, privacy: .public): \(writeErr.localizedDescription) — falling back to direct")
                 bridgeConn.cancel()
-                self.relayPassthroughPostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked)
+                self.relayPassthroughPostPeek(flowId: flowId, flow: flow, host: host, port: port, peeked: peeked, lateRead: lateRead)
                 return
             }
             if let peeked = peeked {
                 self.addBytesOut(flowId: flowId, count: Int64(peeked.count))
             }
             // Now run the standard bidirectional relay loops with the
-            // bridge as remote. relayFlowToRemote starts reading
-            // FRESH bytes from the flow (the first chunk was already
-            // sent via combined above).
-            self.relayFlowToRemote(flowId: flowId, flow: flow, remote: bridgeConn)
+            // bridge as remote. The app→bridge direction must adopt the
+            // still-outstanding peek read when one exists (timed-out
+            // peek) instead of issuing a competing readData; otherwise
+            // it starts reading FRESH bytes (the first chunk was already
+            // sent via combined above). The watchdog is already disarmed
+            // (tryFire above), so no establishGuard is threaded onward.
+            self.startAppToRemoteRelay(flowId: flowId, flow: flow, remote: bridgeConn, lateRead: lateRead)
             self.relayRemoteToFlow(flowId: flowId, flow: flow, remote: bridgeConn)
         }
     }
@@ -590,28 +697,110 @@ class NexusProxyProvider: NETransparentProxyProvider {
     /// relayPassthroughPostPeek is the post-peek counterpart of the
     /// passthrough path. Connects directly to remote, replays peeked
     /// bytes, then bidir relay.
-    private func relayPassthroughPostPeek(flowId: String, flow: NEAppProxyTCPFlow, host: String, port: Int, peeked: Data?) {
+    private func relayPassthroughPostPeek(flowId: String, flow: NEAppProxyTCPFlow, host: String, port: Int, peeked: Data?, lateRead: LatePeekRead? = nil) {
         let remoteHost = NWHostEndpoint(hostname: host, port: String(port))
         let remoteConn = createTCPConnection(to: remoteHost, enableTLS: false, tlsParameters: nil, delegate: nil)
         logger.info("relayPassthroughPostPeek: opened direct upstream flow=\(flowId, privacy: .public) → \(host, privacy: .public):\(port) peek_bytes=\(peeked?.count ?? 0)")
+
+        // SEC-M8-02: bound direct-upstream establishment. A black-holed
+        // upstream SYN otherwise hangs the flow ~75s (the peek write below,
+        // or — when there is no peek to write — the first relay-loop write,
+        // never completes). This is the terminal fail-open path (no further
+        // fallback exists), so on timeout we cancel the dead connection and
+        // reset the flow so the app gets an immediate ECONNRESET and macOS
+        // retries natively. The guard is disarmed by the first evidence the
+        // connection is usable: the peek-write completion when a peek
+        // exists, otherwise the first data/error in EITHER relay direction
+        // (threaded into both relay loops below) — so a server-speaks-first
+        // protocol that legitimately sends nothing app-side is not falsely
+        // reset. (A genuinely established server that stays silent for >5s
+        // gets a fail-open reset+native-retry; acceptable and never worse
+        // than the ~75s freeze this replaces.)
+        let establishGuard = TimeoutGuard()
+        queue.asyncAfter(deadline: .now() + relayEstablishTimeout) { [weak self] in
+            guard let self else { return }
+            guard establishGuard.tryFire() else { return }
+            self.logger.info("relayPassthroughPostPeek: upstream establish timeout for flow=\(flowId, privacy: .public) → \(host, privacy: .public):\(port) — cancel + fail-open reset")
+            remoteConn.cancel()
+            self.failOpenResetFlow(flowId: flowId, flow: flow, reason: "upstream \(host):\(port) connect timeout")
+        }
+
         if let peeked = peeked, !peeked.isEmpty {
             addBytesOut(flowId: flowId, count: Int64(peeked.count))
             remoteConn.write(peeked) { [weak self] err in
                 guard let self else { return }
+                // Disarm the establishment watchdog; if it already fired
+                // (connection black-holed), drop this late completion.
+                guard establishGuard.tryFire() else {
+                    self.logger.debug("relayPassthroughPostPeek: late peek-write completion after establish timeout for flow=\(flowId, privacy: .public) — dropping")
+                    return
+                }
                 if let err = err {
                     self.logger.debug("relayPassthroughPostPeek: peek write error for flow=\(flowId, privacy: .public): \(err.localizedDescription)")
                     return
                 }
                 self.relayFlowToRemote(flowId: flowId, flow: flow, remote: remoteConn)
             }
+            relayRemoteToFlow(flowId: flowId, flow: flow, remote: remoteConn)
         } else {
-            relayFlowToRemote(flowId: flowId, flow: flow, remote: remoteConn)
+            // No peek bytes (timed-out/non-TLS peek): there is no upstream
+            // write to anchor establishment on, so thread the guard into
+            // BOTH relay loops — the first app→remote write success OR the
+            // first remote→app read completion disarms the watchdog,
+            // covering both client- and server-speaks-first protocols.
+            // The app→remote direction adopts the still-outstanding peek
+            // read when one exists, instead of racing a second readData.
+            startAppToRemoteRelay(flowId: flowId, flow: flow, remote: remoteConn, lateRead: lateRead, establishGuard: establishGuard)
+            relayRemoteToFlow(flowId: flowId, flow: flow, remote: remoteConn, establishGuard: establishGuard)
         }
-        relayRemoteToFlow(flowId: flowId, flow: flow, remote: remoteConn)
+    }
+
+    /// startAppToRemoteRelay begins the app→remote relay direction. When
+    /// the flow went through a timed-out SNI peek, its first readData is
+    /// STILL OUTSTANDING (Apple permits one read in flight per flow) and
+    /// the bytes it eventually delivers are the app's real first payload —
+    /// a server-speaks-first protocol's (SMTP/FTP/MySQL) first
+    /// post-greeting write. This helper consumes that adopted completion
+    /// as the relay's first chunk, then continues the normal read loop;
+    /// without it the relay would race a second readData and the adopted
+    /// completion's bytes would be silently dropped (app→upstream dead).
+    private func startAppToRemoteRelay(flowId: String, flow: NEAppProxyTCPFlow, remote: NWTCPConnection, lateRead: LatePeekRead?, establishGuard: TimeoutGuard? = nil) {
+        guard let lateRead = lateRead else {
+            relayFlowToRemote(flowId: flowId, flow: flow, remote: remote, establishGuard: establishGuard)
+            return
+        }
+        lateRead.consume { [weak self] data, error in
+            guard let self else { return }
+            if let error = error {
+                self.logger.debug("startAppToRemoteRelay: adopted peek read ended for \(flowId): \(error.localizedDescription)")
+                remote.cancel()
+                return
+            }
+            guard let data = data, !data.isEmpty else {
+                // App closed its write side before sending — propagate FIN.
+                remote.writeClose()
+                return
+            }
+            self.addBytesOut(flowId: flowId, count: Int64(data.count))
+            remote.write(data) { writeError in
+                if let writeError = writeError {
+                    self.logger.info("startAppToRemoteRelay: WRITE upstream FAILED flow=\(flowId, privacy: .public) bytes=\(data.count) err=\(writeError.localizedDescription, privacy: .public) — remote likely closed; relay tearing down")
+                    return
+                }
+                _ = establishGuard?.tryFire()
+                self.relayFlowToRemote(flowId: flowId, flow: flow, remote: remote)
+            }
+        }
     }
 
     /// Read data from the app (via flow.readData) and forward to the remote server.
-    private func relayFlowToRemote(flowId: String, flow: NEAppProxyTCPFlow, remote: NWTCPConnection) {
+    ///
+    /// establishGuard (SEC-M8-02) is non-nil only on the first call of a
+    /// passthrough flow that had no peek bytes to anchor establishment on;
+    /// the first successful upstream write disarms the establishment
+    /// watchdog. It is nil on every other call (recursion and paths whose
+    /// watchdog is already disarmed by a peek/header write).
+    private func relayFlowToRemote(flowId: String, flow: NEAppProxyTCPFlow, remote: NWTCPConnection, establishGuard: TimeoutGuard? = nil) {
         flow.readData(completionHandler: { [weak self] data, error in
             if let error = error {
                 self?.logger.debug("App→Remote read done for \(flowId): \(error.localizedDescription)")
@@ -635,14 +824,33 @@ class NexusProxyProvider: NETransparentProxyProvider {
                     self?.logger.info("relayFlowToRemote: WRITE upstream FAILED flow=\(flowId, privacy: .public) bytes=\(data.count) err=\(writeError.localizedDescription, privacy: .public) — remote likely closed; relay tearing down")
                     return
                 }
+                // First successful upstream write proves the connection is
+                // usable → disarm the establishment watchdog (SEC-M8-02).
+                // One-shot, so this no-ops on recursion; recurse with no
+                // guard.
+                _ = establishGuard?.tryFire()
                 self?.relayFlowToRemote(flowId: flowId, flow: flow, remote: remote)
             }
         })
     }
 
     /// Read data from the remote server and forward to the app (via flow.write).
-    private func relayRemoteToFlow(flowId: String, flow: NEAppProxyTCPFlow, remote: NWTCPConnection) {
+    ///
+    /// establishGuard (SEC-M8-02) is non-nil only on the first call of a
+    /// no-peek passthrough flow. ANY completion of the first remote read —
+    /// data delivered OR an error surfaced (e.g. RST / cancel) — proves the
+    /// connection is not black-holed and disarms the establishment
+    /// watchdog; a black-holed connection never fires this completion, so
+    /// the watchdog stays armed and resets the flow. This is the remote-
+    /// side establishment signal that complements relayFlowToRemote's
+    /// app→remote write-success signal, so a server-speaks-first protocol
+    /// (SSH/SMTP/FTP/IMAP) routed through no-peek passthrough is not reset
+    /// while it legitimately waits for the server's first bytes.
+    private func relayRemoteToFlow(flowId: String, flow: NEAppProxyTCPFlow, remote: NWTCPConnection, establishGuard: TimeoutGuard? = nil) {
         remote.readMinimumLength(1, maximumLength: 65536) { [weak self] data, error in
+            // First remote-read completion (data or error) disarms the
+            // establishment watchdog. One-shot; recursion passes no guard.
+            _ = establishGuard?.tryFire()
             if let error = error {
                 self?.logger.debug("Remote→App read done for \(flowId): \(error.localizedDescription)")
                 flow.closeReadWithError(nil)
@@ -758,11 +966,13 @@ class NexusProxyProvider: NETransparentProxyProvider {
         guard let tokenData = flow.metaData.sourceAppAuditToken else { return 0 }
         return tokenData.withUnsafeBytes { buf -> Int32 in
             guard buf.count >= MemoryLayout<audit_token_t>.size else { return 0 }
-            let token = buf.load(as: audit_token_t.self)
             // PID is at index 5 of the val[8] array in audit_token_t.
-            return Int32(bitPattern: withUnsafeBytes(of: token) { raw in
-                raw.load(fromByteOffset: 5 * MemoryLayout<UInt32>.stride, as: UInt32.self)
-            })
+            // loadUnaligned, because Data's backing buffer carries no
+            // alignment guarantee and an aligned load(as:) traps on a
+            // misaligned pointer — a crash in the packet path takes the
+            // host's networking down with the provider.
+            return Int32(bitPattern: buf.loadUnaligned(
+                fromByteOffset: 5 * MemoryLayout<UInt32>.stride, as: UInt32.self))
         }
     }
 
@@ -777,30 +987,12 @@ class NexusProxyProvider: NETransparentProxyProvider {
     }
 
     private func extractLocalPort(from flow: NEAppProxyFlow) -> Int {
-        // NEAppProxyFlow doesn't directly expose local port in all versions.
-        // Return 0 as a fallback — the Go agent doesn't require it for decisions.
+        // Intentional: NEAppProxyFlow doesn't reliably expose the local
+        // port across macOS versions, and the Go agent never reads this
+        // value for any routing/decision. Returning 0 is the deliberate,
+        // permanent fallback — not a stub. Do not "fix" this to chase a
+        // port the decision path doesn't consume.
         return 0
     }
 
-    /// Best-effort hostname → IP resolution.
-    private func resolveIP(host: String) -> String {
-        let host = CFHostCreateWithName(nil, host as CFString).takeRetainedValue()
-        CFHostStartInfoResolution(host, .addresses, nil)
-        var success: DarwinBoolean = false
-        guard let addresses = CFHostGetAddressing(host, &success)?.takeUnretainedValue() as? [Data],
-              let first = addresses.first else {
-            return ""
-        }
-        return first.withUnsafeBytes { buf -> String in
-            let sa = buf.load(as: sockaddr.self)
-            if sa.sa_family == sa_family_t(AF_INET) {
-                let addr4 = buf.load(as: sockaddr_in.self)
-                var ip = addr4.sin_addr
-                var str = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-                inet_ntop(AF_INET, &ip, &str, socklen_t(INET_ADDRSTRLEN))
-                return String(cString: str)
-            }
-            return ""
-        }
-    }
 }

@@ -112,10 +112,11 @@ type ServersResult struct {
 func InitServers(d ServersDeps) ServersResult {
 	runtimeAddr := d.Cfg.RuntimeAPI.ListenAddress
 	if runtimeAddr == "" {
-		runtimeAddr = "127.0.0.1:3002"
+		runtimeAddr = "127.0.0.1:3040"
 	}
 	runtimeSrv, _ := InitRuntimeAPIServer(RuntimeAPIDeps{
 		Addr:           runtimeAddr,
+		APIToken:       d.Cfg.Auth.APIToken,
 		Logger:         d.Logger,
 		KillSwitch:     d.KillSwitch,
 		ConnManager:    d.ConnManager,

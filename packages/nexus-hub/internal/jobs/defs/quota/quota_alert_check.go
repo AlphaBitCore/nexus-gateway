@@ -379,6 +379,17 @@ func (j *QuotaAlertCheckJob) resolveStale(ctx context.Context, evaluated map[str
 
 // loadRollupCosts returns a map of entityID → total cost for a dimension in
 // the given time range. Results are cached per-dimension within the run.
+//
+// The month-to-date total is stitched from two rollup tiers so the warning is
+// near-live, not 1-2h stale. A whole-month range hands
+// SelectGranularity a 1h table, and merge-1h seals ~1-2h behind live, so a
+// single 1h read would lag the in-flight hour(s). Instead the stable base of
+// the period is read from the 1h tier and the trailing window (the previous
+// full hour plus the in-flight hour) is topped up from the 5m tier, which seals
+// only ~5m behind live. The two windows meet on an hour boundary, so they are
+// disjoint and MetricBilledCostUSD (a Sum metric) is additive across them.
+// Enforcement on the live Redis counter is unaffected; only the warning timing
+// improves.
 func (j *QuotaAlertCheckJob) loadRollupCosts(
 	ctx context.Context,
 	cache map[string]map[string]float64,
@@ -389,28 +400,68 @@ func (j *QuotaAlertCheckJob) loadRollupCosts(
 		return cached, nil
 	}
 
-	// Read MetricBilledCostUSD (success-only, excludes cache hits) rather than
-	// gross EstimatedCostUSD to prevent quota.threshold over-firing on
-	// failed/cache-hit rows. EstimatedCostUSD is still emitted by rollup_5m
-	// and remains available for analytics.
-	rows, err := rollupstore.QueryRollup(ctx, j.pool, metrics.MetricsQuery{
-		Metrics:      []string{metrics.MetricBilledCostUSD},
-		DimensionKey: dim,
-		StartTime:    start,
-		EndTime:      end,
-	})
-	if err != nil {
-		return nil, err
+	now := time.Now().UTC()
+	// Clamp the read window to now: rollup data never exists past the present,
+	// and an end of next-month-start would inflate the span and force the 1h
+	// tier on the tail read too.
+	effectiveEnd := end
+	if effectiveEnd.After(now) {
+		effectiveEnd = now
+	}
+
+	// base1hEnd is the start of the previous full hour. Everything before it is
+	// read from the (stable) 1h tier; the two trailing hours are read from 5m so
+	// merge-1h lag never hides recent spend.
+	base1hEnd := now.Truncate(time.Hour).Add(-time.Hour)
+	if base1hEnd.Before(start) {
+		base1hEnd = start
+	}
+	if base1hEnd.After(effectiveEnd) {
+		base1hEnd = effectiveEnd
 	}
 
 	costs := make(map[string]float64)
 	prefix := dim + "="
-	for _, r := range rows {
-		if !strings.HasPrefix(r.DimensionKey, prefix) {
-			continue
+	accumulate := func(rows []metrics.RollupRow) {
+		for _, r := range rows {
+			if !strings.HasPrefix(r.DimensionKey, prefix) {
+				continue
+			}
+			entityID := strings.TrimPrefix(r.DimensionKey, prefix)
+			costs[entityID] += r.Value
 		}
-		entityID := strings.TrimPrefix(r.DimensionKey, prefix)
-		costs[entityID] += r.Value
+	}
+
+	// Read MetricBilledCostUSD (success-only, excludes cache hits) rather than
+	// gross EstimatedCostUSD to prevent quota.threshold over-firing on
+	// failed/cache-hit rows. EstimatedCostUSD is still emitted by rollup_5m
+	// and remains available for analytics.
+	if base1hEnd.After(start) {
+		baseRows, err := rollupstore.QueryRollup(ctx, j.pool, metrics.MetricsQuery{
+			Metrics:      []string{metrics.MetricBilledCostUSD},
+			DimensionKey: dim,
+			StartTime:    start,
+			EndTime:      base1hEnd,
+		})
+		if err != nil {
+			return nil, err
+		}
+		accumulate(baseRows)
+	}
+
+	// Trailing top-up from the 5m tier. A ≤6h span makes SelectGranularity pick
+	// the 5m table; the previous-full-hour + in-flight-hour window is ~1-2h.
+	if effectiveEnd.After(base1hEnd) {
+		tailRows, err := rollupstore.QueryRollup(ctx, j.pool, metrics.MetricsQuery{
+			Metrics:      []string{metrics.MetricBilledCostUSD},
+			DimensionKey: dim,
+			StartTime:    base1hEnd,
+			EndTime:      effectiveEnd,
+		})
+		if err != nil {
+			return nil, err
+		}
+		accumulate(tailRows)
 	}
 
 	cache[dim] = costs
@@ -445,12 +496,20 @@ func findThresholdsForOverride(o quotastore.QuotaOverride, policies []quotastore
 }
 
 // scopeToDimension maps a scope/targetType to the rollup dimension prefix.
+//
+// `project` maps to the `project` dimension (NOT `organization`): rollup_5m
+// emits a populated `project=<projectId>` dimension from
+// identity.project.id (see buildEventDims), so project-scoped overrides and
+// policies must read project-keyed spend. Mapping `project→organization`
+// would look a project UUID up in the org-keyed cost map (always 0, never
+// alerts in Phase A) and compare org-wide spend against a project limit in
+// Phase B.
 func scopeToDimension(scope string) (string, bool) {
 	m := map[string]string{
 		"user":         "user",
 		"vk":           "virtual_key",
 		"virtual_key":  "virtual_key",
-		"project":      "organization",
+		"project":      "project",
 		"organization": "organization",
 	}
 	dim, ok := m[scope]
@@ -463,6 +522,7 @@ func dimensionToTargetType(dim string) string {
 	m := map[string]string{
 		"user":         "user",
 		"virtual_key":  "vk",
+		"project":      "project",
 		"organization": "organization",
 	}
 	if t, ok := m[dim]; ok {

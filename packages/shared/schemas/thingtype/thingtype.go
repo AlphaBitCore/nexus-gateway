@@ -54,6 +54,19 @@ func IsKnown(t string) bool {
 	return known[t]
 }
 
+// IsBackendService reports whether t is one of the internal platform service
+// thing types (ai-gateway / compliance-proxy / control-plane / nexus-hub) — i.e.
+// a Thing that authenticates to Hub with the shared INTERNAL_SERVICE_TOKEN rather
+// than a per-device agent token. Agents and unknown/empty types return false.
+//
+// Used by the internal-things API to deny a service-token caller from
+// acting as an AGENT Thing: an honest backend service only ever self-operates on
+// its own service-type row, so a service-token request that targets an agent (or
+// any non-service type) is an impersonation attempt and is refused.
+func IsBackendService(t string) bool {
+	return known[t] && t != Agent
+}
+
 // All returns a fresh slice of the legal thing-type strings, suitable
 // for SQL IN-list construction or operator dashboards. Mutating the
 // returned slice does not affect the policy.

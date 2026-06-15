@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 func TestExtractRequest_ChatCompletions(t *testing.T) {
@@ -822,41 +821,6 @@ func TestExtractResponse_ResponsesAPI_OutputTextAndID(t *testing.T) {
 }
 
 // Normalize — Tier-1 dispatch via the unified extract helper.
-
-func TestNormalize_OpenAIChatShape(t *testing.T) {
-	body := []byte(`{
-		"model":"gpt-4o",
-		"messages":[{"role":"user","content":"hello"}]
-	}`)
-	a := &Adapter{}
-	payload, err := a.Normalize(context.Background(), body, normalize.Meta{
-		AdapterType:  "openai-compat",
-		Direction:    normalize.DirectionRequest,
-		ContentType:  "application/json",
-		EndpointPath: "/v1/chat/completions",
-	})
-	if err != nil {
-		t.Fatalf("Normalize err=%v", err)
-	}
-	if payload.Kind != normalize.KindAIChat {
-		t.Errorf("Kind=%v want ai-chat", payload.Kind)
-	}
-	if payload.DetectedSpec != "openai-compat" {
-		t.Errorf("DetectedSpec=%q want openai-compat", payload.DetectedSpec)
-	}
-}
-
-func TestNormalize_NonChatBody(t *testing.T) {
-	a := &Adapter{}
-	_, err := a.Normalize(context.Background(), []byte(`{"foo":"bar"}`), normalize.Meta{
-		AdapterType: "openai-compat",
-		Direction:   normalize.DirectionRequest,
-		ContentType: "application/json",
-	})
-	if err == nil {
-		t.Fatal("expected error for non-chat body")
-	}
-}
 
 // TestExtractRequest_AssistantToolOnlyMessage pins behavior for an
 // assistant message with content=null and only tool_calls (typical

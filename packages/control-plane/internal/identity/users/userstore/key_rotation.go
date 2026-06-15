@@ -10,10 +10,15 @@ import (
 )
 
 // RegenerateAdminAPIKey replaces the key hash and prefix for an existing API key.
-func (store *Store) RegenerateAdminAPIKey(ctx context.Context, id, keyHash, keyPrefix string) error {
+// keyVersion is the HMAC keyring version that produced keyHash
+// (auth.CurrentKeyVersion()): a regenerate rewrites the hash under the current
+// secret, so the key_version column is stamped current alongside it to stay
+// accurate for reporting/pruning. This does NOT touch the rotation-lifecycle
+// columns.
+func (store *Store) RegenerateAdminAPIKey(ctx context.Context, id, keyHash, keyVersion, keyPrefix string) error {
 	_, err := store.pool.Exec(ctx, `
-		UPDATE "AdminApiKey" SET "keyHash" = $2, "keyPrefix" = $3, "updatedAt" = NOW() WHERE id = $1
-	`, id, keyHash, keyPrefix)
+		UPDATE "AdminApiKey" SET "keyHash" = $2, "key_version" = $3, "keyPrefix" = $4, "updatedAt" = NOW() WHERE id = $1
+	`, id, keyHash, keyVersion, keyPrefix)
 	return err
 }
 
@@ -23,6 +28,9 @@ func (store *Store) RegenerateAdminAPIKey(ctx context.Context, id, keyHash, keyP
 type RotateAdminAPIKeyParams struct {
 	PredecessorID string
 	NewKeyHash    string
+	// NewKeyVersion is the HMAC keyring version that produced NewKeyHash
+	// (auth.CurrentKeyVersion()), stamped on the successor row.
+	NewKeyVersion string
 	NewKeyPrefix  string
 	NewCreatedBy  string
 	// NewExpiresAt is the absolute expiry stamped on the successor row.
@@ -89,13 +97,13 @@ func (store *Store) RotateAdminAPIKey(ctx context.Context, p RotateAdminAPIKeyPa
 	// Mint the successor with rotatedFromId pointing at the predecessor.
 	successorRow := tx.QueryRow(ctx, fmt.Sprintf(`
 		INSERT INTO "AdminApiKey" (
-			id, name, "keyHash", "keyPrefix", "createdBy", "expiresAt",
+			id, name, "keyHash", "key_version", "keyPrefix", "createdBy", "expiresAt",
 			"ownerUserId", "rotatedFromId", status, "createdAt", "updatedAt"
 		) VALUES (
-			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, 'active', NOW(), NOW()
+			gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW(), NOW()
 		) RETURNING %s
 	`, apiKeyListColumns),
-		predName, p.NewKeyHash, p.NewKeyPrefix, p.NewCreatedBy,
+		predName, p.NewKeyHash, p.NewKeyVersion, p.NewKeyPrefix, p.NewCreatedBy,
 		successorExpiresAt, predOwnerUserID, p.PredecessorID,
 	)
 	var successor AdminAPIKey

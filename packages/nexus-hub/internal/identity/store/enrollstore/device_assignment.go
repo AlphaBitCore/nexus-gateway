@@ -131,27 +131,6 @@ func (s *Store) UpdateThingAgentTrustLevel(ctx context.Context, thingID string, 
 	return nil
 }
 
-// ExpireAgentCert advances thing_agent.cert_expires_at to NOW() + window so
-// the agent's next heartbeat-time renewal check (which evaluates "near
-// expiry" against `degradedCertDays * 24 * time.Hour` in
-// packages/agent/internal/sync/status/status.go) triggers a fresh cert renewal
-// via the existing /api/internal/things/renew-cert path. Used by the
-// admin "Rotate cert" action — no new agent code path; the rotation flow
-// is identical to the auto-renew flow, just kicked off out of cycle.
-// Returns ErrNotFound when the thing_agent row does not exist.
-func (s *Store) ExpireAgentCert(ctx context.Context, thingID string, window time.Duration) error {
-	tag, err := s.db.Exec(ctx, `
-		UPDATE thing_agent SET cert_expires_at = NOW() + $2::interval WHERE thing_id = $1
-	`, thingID, window.String())
-	if err != nil {
-		return fmt.Errorf("expire agent cert: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // UpsertDeviceAssignmentParams holds the fields for a Hub-side
 // DeviceAssignment row. LoginMethod and IPAddress are surfaced in the
 // admin UI's "User Devices" tab (login method / IP address columns);

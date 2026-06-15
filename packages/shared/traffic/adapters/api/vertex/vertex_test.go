@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 func TestAdapter_ID(t *testing.T) {
@@ -214,40 +213,6 @@ func TestPublisherAndModel_NoMatch(t *testing.T) {
 }
 
 // Normalize — Tier-1 dispatch via the unified extract helper.
-
-func TestNormalize_GeminiGenerateShape(t *testing.T) {
-	body := []byte(`{
-		"contents":[{"role":"user","parts":[{"text":"hello vertex"}]}]
-	}`)
-	a := &Adapter{}
-	payload, err := a.Normalize(context.Background(), body, normalize.Meta{
-		AdapterType:  "vertex",
-		Direction:    normalize.DirectionRequest,
-		ContentType:  "application/json",
-		EndpointPath: "/v1/projects/p/locations/r/publishers/google/models/gemini-1.5-pro:generateContent",
-	})
-	if err != nil {
-		t.Fatalf("Normalize err=%v", err)
-	}
-	if payload.Kind != normalize.KindAIChat {
-		t.Errorf("Kind=%v want ai-chat", payload.Kind)
-	}
-	if payload.DetectedSpec != "vertex" {
-		t.Errorf("DetectedSpec=%q want vertex", payload.DetectedSpec)
-	}
-}
-
-func TestNormalize_UnrecognisedShape_FallsThrough(t *testing.T) {
-	a := &Adapter{}
-	_, err := a.Normalize(context.Background(), []byte(`{"foo":"bar"}`), normalize.Meta{
-		AdapterType: "vertex",
-		Direction:   normalize.DirectionRequest,
-		ContentType: "application/json",
-	})
-	if !errors.Is(err, normalize.ErrUnsupported) {
-		t.Errorf("err=%v want ErrUnsupported", err)
-	}
-}
 
 func TestDetectRequestMetaAnthropicOnVertex(t *testing.T) {
 	a := &Adapter{}

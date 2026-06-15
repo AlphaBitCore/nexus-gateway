@@ -16,6 +16,7 @@ package exemption
 import (
 	"context"
 	"errors"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -183,7 +184,14 @@ func (h *Handler) PostGrant(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create grant", "server_error", "INTERNAL_ERROR"))
 	}
 
-	h.invalidateExemptions(ctx, "create", a, c)
+	h.invalidateExemptions(ctx, "create", g.ID, map[string]any{
+		"sourceIP":        g.SourceIP,
+		"targetHost":      g.TargetHost,
+		"reason":          g.Reason,
+		"durationMinutes": g.DurationMinutes,
+		"effectiveFrom":   g.EffectiveFrom,
+		"expiresAt":       g.ExpiresAt,
+	}, a, c)
 	return c.JSON(http.StatusOK, map[string]any{"grant": g})
 }
 
@@ -210,7 +218,7 @@ func (h *Handler) PatchGrant(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to update grant", "server_error", "INTERNAL_ERROR"))
 	}
 	a := actorFromContext(c)
-	h.invalidateExemptions(ctx, "update", a, c)
+	h.invalidateExemptions(ctx, "update", id, map[string]any{"inactive": body.Inactive}, a, c)
 	return c.JSON(http.StatusOK, map[string]any{"id": id, "inactive": body.Inactive})
 }
 
@@ -241,7 +249,7 @@ func (h *Handler) DeleteGrant(c echo.Context) error {
 		return c.JSON(http.StatusForbidden, errJSON("Cannot delete a grant that has reached its effective window; disable it instead", "forbidden", "GRANT_ACTIVATED"))
 	}
 	a := actorFromContext(c)
-	h.invalidateExemptions(ctx, "delete", a, c)
+	h.invalidateExemptions(ctx, "delete", id, nil, a, c)
 	return c.JSON(http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 
@@ -288,7 +296,12 @@ func (h *Handler) ApproveRequest(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, errJSON("Failed to read grant", "server_error", "INTERNAL_ERROR"))
 		}
 		if g != nil {
-			h.invalidateExemptions(ctx, "reconcile", a, c)
+			h.invalidateExemptions(ctx, "reconcile", g.ID, map[string]any{
+				"exemptionRequestId": id,
+				"sourceIP":           g.SourceIP,
+				"targetHost":         g.TargetHost,
+				"expiresAt":          g.ExpiresAt,
+			}, a, c)
 			return c.JSON(http.StatusOK, map[string]any{
 				"id":        id,
 				"status":    "APPROVED",
@@ -313,7 +326,14 @@ func (h *Handler) ApproveRequest(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, errJSON("Exemption request not found", "not_found", "NOT_FOUND"))
 	}
 
-	h.invalidateExemptions(ctx, "approve", a, c)
+	h.invalidateExemptions(ctx, "approve", g.ID, map[string]any{
+		"exemptionRequestId": id,
+		"sourceIP":           g.SourceIP,
+		"targetHost":         g.TargetHost,
+		"reason":             g.Reason,
+		"effectiveFrom":      g.EffectiveFrom,
+		"expiresAt":          g.ExpiresAt,
+	}, a, c)
 	return c.JSON(http.StatusOK, map[string]any{
 		"id":      id,
 		"status":  "APPROVED",
@@ -412,7 +432,14 @@ func (h *Handler) CreateRequest(c echo.Context) error {
 // fire-and-forget; the Hub client retries internally and logs
 // failures at warn — there is no per-call error to surface because
 // each receiver is the source of truth from this point onward.
-func (h *Handler) invalidateExemptions(ctx context.Context, action string, a Actor, c echo.Context) {
+//
+// entityID is the affected grant/request id (so "who exempted which host"
+// is answerable from the audit row alone); scope carries the grant detail
+// (host, sourceIP, effectiveFrom, expiresAt, reason) — without these the
+// audit row could not reconstruct the compliance-bypass that was granted.
+// entityID may be "" and scope may be nil for actions that have
+// no single grant target.
+func (h *Handler) invalidateExemptions(ctx context.Context, action, entityID string, scope map[string]any, a Actor, c echo.Context) {
 	if h.hub != nil {
 		h.hub.InvalidateConfig(ctx, thingTypeComplianceProxy, configkey.Exemptions)
 		h.hub.InvalidateConfig(ctx, thingTypeAgent, configkey.Exemptions)
@@ -430,9 +457,14 @@ func (h *Handler) invalidateExemptions(ctx context.Context, action string, a Act
 	}
 	ae := audit.EntryFor(c, iam.ResourceComplianceExemption, verb)
 	// The actor identity (a.UserID / a.Name) is already attached by
-	// audit.EntryFor via the AdminAuth middleware in c; AfterState
-	// captures the fine-grained action label for diffability.
-	ae.AfterState = map[string]any{"action": action, "actorName": a.Name}
+	// audit.EntryFor via the AdminAuth middleware in c; EntityID + the grant
+	// scope make the row self-describing for a compliance reviewer.
+	ae.EntityID = entityID
+	after := map[string]any{"action": action, "actorName": a.Name}
+	for k, v := range scope {
+		after[k] = v
+	}
+	ae.AfterState = after
 	h.audit.LogObserved(ctx, ae)
 }
 
@@ -452,15 +484,8 @@ func actorFromContext(c echo.Context) Actor {
 	return Actor{UserID: aa.KeyID, Name: aa.KeyName}
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 func stringPtr(s string) *string {
 	if s == "" {

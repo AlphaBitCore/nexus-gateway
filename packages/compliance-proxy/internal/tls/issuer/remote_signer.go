@@ -3,8 +3,6 @@ package issuer
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
@@ -17,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/hkdf"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/kms"
 )
 
 // CommandSigner implements crypto.Signer by shelling out to an external
@@ -100,10 +100,21 @@ func (s *CommandSigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([
 }
 
 // NewIssuerWithRemoteSigner constructs an Issuer that uses a remote
-// crypto.Signer instead of a local private key. The AES key for the cert
-// cache is derived from the CA cert's raw bytes instead of the private key
-// (which does not exist locally in remote-signing mode).
-func NewIssuerWithRemoteSigner(caCertPath string, signer crypto.Signer) (*Issuer, error) {
+// crypto.Signer instead of a local private key (the CA private key never
+// exists locally in remote-signing mode).
+//
+// The cert-cache AES key is derived from a KMS-managed 32-byte DEK rather
+// than from any CA material. The DEK is self-bootstrapped at startup
+// (generate → KMS-wrap → SETNX in Redis, or KMS-unwrap the existing blob)
+// via bootstrapCertCacheDEK, then fed as the HKDF input keying material (same
+// salt "nexus-cert-cache" / info "aes-256-gcm" wrapping as local mode, so the
+// on-the-wire cache encryption format is unchanged). This closes the prior
+// flaw where the key was derived from PUBLIC CA-cert bytes — anyone with
+// Redis read access plus the published CA cert could decrypt every cached
+// leaf private key. The store/enc/dec dependencies are mandatory; a missing
+// one or any KMS/Redis failure returns a startup error (fail-closed) instead
+// of falling back to a CA-derived key.
+func NewIssuerWithRemoteSigner(ctx context.Context, caCertPath string, signer crypto.Signer, store CertCacheDEKStore, enc kms.Encryptor, dec kms.KMSProvider) (*Issuer, error) {
 	certPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("cert: read CA cert %s: %w", caCertPath, err)
@@ -116,15 +127,20 @@ func NewIssuerWithRemoteSigner(caCertPath string, signer crypto.Signer) (*Issuer
 	if err != nil {
 		return nil, fmt.Errorf("cert: parse CA cert: %w", err)
 	}
+	warnIfCAPathLenUnconstrained(caCert, caCertPath)
 
-	// Derive AES key from the cert raw bytes (no private key available).
-	// This means the cache encryption key changes if the CA cert is
-	// rotated, which is the correct behaviour — a new cert should not
-	// be able to decrypt caches encrypted under the old one.
+	// Resolve the KMS-managed cert-cache DEK (self-bootstrapping, fail-closed).
+	dek, err := bootstrapCertCacheDEK(ctx, store, enc, dec)
+	if err != nil {
+		return nil, err
+	}
+
+	// HKDF the DEK into the AES-256 cache key. Same wrapping as the local
+	// NewIssuer path — only the IKM source changed (CA private key → DEK).
 	aesKey := make([]byte, 32)
-	hkdfReader := hkdfFromBytes(caCert.Raw)
+	hkdfReader := hkdf.New(sha256.New, dek, []byte("nexus-cert-cache"), []byte("aes-256-gcm"))
 	if _, err := hkdfReadRemoteFn(hkdfReader, aesKey); err != nil {
-		return nil, fmt.Errorf("cert: HKDF derive AES key from cert: %w", err)
+		return nil, fmt.Errorf("cert: HKDF derive AES key from DEK: %w", err)
 	}
 
 	return &Issuer{
@@ -133,12 +149,6 @@ func NewIssuerWithRemoteSigner(caCertPath string, signer crypto.Signer) (*Issuer
 		remoteSigner: signer,
 		aesKey:       aesKey,
 	}, nil
-}
-
-// hkdfFromBytes is a small helper wrapping the same HKDF derivation used
-// by the standard NewIssuer path but from arbitrary seed bytes.
-func hkdfFromBytes(seed []byte) io.Reader {
-	return hkdf.New(sha256.New, seed, []byte("nexus-cert-cache"), []byte("aes-256-gcm"))
 }
 
 // tempWriteSignFn wraps the (*os.File).Write call inside Sign so tests can
@@ -152,16 +162,10 @@ var tempWriteSignFn = func(f interface{ Write([]byte) (int, error) }, b []byte) 
 }
 
 // hkdfReadRemoteFn wraps io.ReadFull for the HKDF key-derivation step in
-// NewIssuerWithRemoteSigner. An HKDF reader constructed from valid cert bytes
-// never errors; this seam lets tests inject a failure to exercise the
+// NewIssuerWithRemoteSigner. An HKDF reader constructed from the DEK never
+// errors; this seam lets tests inject a failure to exercise the
 // error-wrapping branch. Test-only override; production never reassigns.
 var hkdfReadRemoteFn = io.ReadFull
 
 // Ensure CommandSigner satisfies crypto.Signer at compile time.
 var _ crypto.Signer = (*CommandSigner)(nil)
-
-// Ensure ecdsa.PrivateKey is still a valid signer reference (backwards compat).
-var _ crypto.Signer = (*ecdsa.PrivateKey)(nil)
-
-// Ensure P256 curve is accessible (used by SignCert).
-var _ = elliptic.P256

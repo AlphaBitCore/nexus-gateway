@@ -131,7 +131,7 @@ func TestClient_StoreEntry_HSETsExpectedKey(t *testing.T) {
 	}
 
 	// Compute expected key.
-	expectedKey := entryKey(indexName, embInput)
+	expectedKey := entryKey(indexName, in)
 	if !strings.HasPrefix(expectedKey, indexName+":") {
 		t.Errorf("key %q does not start with index prefix", expectedKey)
 	}
@@ -185,13 +185,65 @@ func TestClient_StoreEntry_MaxEntryBytesGuard(t *testing.T) {
 
 // TestClient_EntryKey_Format verifies the key format is <indexName>:<16-char-hex>.
 func TestClient_EntryKey_Format(t *testing.T) {
-	k := entryKey("nexus:semantic-cache:v1", "hello world")
+	k := entryKey("nexus:semantic-cache:v1", StoreInput{EmbeddingInput: "hello world"})
 	if !strings.HasPrefix(k, "nexus:semantic-cache:v1:") {
 		t.Errorf("key %q missing index prefix", k)
 	}
 	suffix := strings.TrimPrefix(k, "nexus:semantic-cache:v1:")
 	if len(suffix) != keyHashLen {
 		t.Errorf("key suffix length = %d, want %d; key = %q", len(suffix), keyHashLen, k)
+	}
+}
+
+// TestClient_EntryKey_FoldsScopeModelKind verifies F-0050: the same embedding
+// text written under different vk_scope, model, or response_kind yields
+// DISTINCT keys, so the entries occupy separate HASH keys and cannot evict
+// each other via HSET overwrite. The bug folded only the embedding text into
+// the key, so all four below collapsed onto one key and the last write won.
+func TestClient_EntryKey_FoldsScopeModelKind(t *testing.T) {
+	const idx = "nexus:semantic-cache:v1"
+	base := StoreInput{
+		EmbeddingInput:   "what is the capital of france",
+		VKScope:          "v1:vk:tenant-a",
+		UpstreamProvider: "openai",
+		UpstreamModel:    "gpt-4o-mini",
+		ResponseKind:     "response",
+	}
+	diffScope := base
+	diffScope.VKScope = "v1:vk:tenant-b"
+	diffModel := base
+	diffModel.UpstreamModel = "gpt-4o"
+	diffKind := base
+	diffKind.ResponseKind = "stream"
+
+	keys := map[string]string{
+		"base":      entryKey(idx, base),
+		"diffScope": entryKey(idx, diffScope),
+		"diffModel": entryKey(idx, diffModel),
+		"diffKind":  entryKey(idx, diffKind),
+	}
+	seen := map[string]string{}
+	for name, k := range keys {
+		if prev, dup := seen[k]; dup {
+			t.Errorf("entries %q and %q collide on key %q (mutual eviction)", prev, name, k)
+		}
+		seen[k] = name
+	}
+
+	// AllowCrossModel=true drops the model from the key: two models then share
+	// a key (interchangeable for cross-model retrieval), but scope still
+	// isolates them.
+	crossA := base
+	crossA.AllowCrossModel = true
+	crossB := diffModel
+	crossB.AllowCrossModel = true
+	if entryKey(idx, crossA) != entryKey(idx, crossB) {
+		t.Error("AllowCrossModel=true should make differing models share a key")
+	}
+	crossScope := crossA
+	crossScope.VKScope = "v1:vk:tenant-b"
+	if entryKey(idx, crossA) == entryKey(idx, crossScope) {
+		t.Error("AllowCrossModel=true must still isolate distinct vk_scope")
 	}
 }
 

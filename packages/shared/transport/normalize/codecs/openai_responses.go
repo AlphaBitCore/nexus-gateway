@@ -62,6 +62,32 @@ func NewOpenAIResponsesNormalizer() *OpenAIResponsesNormalizer {
 
 func (n *OpenAIResponsesNormalizer) ID() string { return "openai-responses" }
 
+// LooksLike implements core.Sniffer for key-missed Responses-API
+// traffic. Two mutually exclusive wire forms, both unambiguous:
+//
+//   - Non-stream body: the `"object":"response"` discriminator (also
+//     accepted with a space after the colon — pretty-printed captures).
+//     Chat Completions stamps `"object":"chat.completion"` — a
+//     different value under the same key — so the two sniffers cannot
+//     both match one body.
+//   - SSE stream: every Responses-API stream opens with an
+//     `event: response.<name>` framing line (response.created is
+//     always first). Chat SSE leads with `data:` and Anthropic SSE
+//     with `event: message_start`, so the `response.` event-name
+//     prefix is decisive within the first frame.
+func (n *OpenAIResponsesNormalizer) LooksLike(raw []byte, _ core.Meta) bool {
+	probe := sniffProbe(raw)
+	if bytes.Contains(probe, []byte(`"object":"response"`)) ||
+		bytes.Contains(probe, []byte(`"object": "response"`)) {
+		return true
+	}
+	s := bytes.TrimLeft(probe, " \r\n\t")
+	if rest, ok := bytes.CutPrefix(s, []byte("event:")); ok {
+		return bytes.HasPrefix(bytes.TrimLeft(rest, " "), []byte("response."))
+	}
+	return false
+}
+
 func (n *OpenAIResponsesNormalizer) Normalize(_ context.Context, raw []byte, meta core.Meta) (core.NormalizedPayload, error) {
 	if len(raw) == 0 {
 		return zeroPayloadForKind(meta), fmt.Errorf("openai-responses: empty body: %w", core.ErrUnsupported)
@@ -491,6 +517,18 @@ func foldResponsesSSE(raw []byte) []byte {
 		}
 	}
 	if len(terminal) > 0 {
+		// Codex's response.completed can carry an EMPTY output[] while the actual
+		// assistant text lives only in the streamed output_text.delta frames
+		// (standard OpenAI puts the full text in the terminal output[]). When the
+		// terminal has no assistant output_text of its own but deltas were
+		// accumulated, splice them in so the reply is never lost — usage/status/
+		// model from the terminal are preserved. For standard OpenAI captures the
+		// terminal already carries the text and is returned unchanged.
+		if deltas.Len() > 0 {
+			if merged, ok := spliceDeltasIntoTerminal(terminal, deltas.String()); ok {
+				return merged
+			}
+		}
 		return terminal
 	}
 	// Truncated capture: synthesise from the accumulated output_text deltas.

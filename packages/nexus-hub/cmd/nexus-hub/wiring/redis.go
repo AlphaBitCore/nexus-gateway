@@ -16,7 +16,14 @@ import (
 // without Redis when the cache is down. The returned client must be closed
 // by the caller.
 func InitRedis(ctx context.Context, cfg *config.HubConfig, logger *slog.Logger) (redis.UniversalClient, error) {
-	client, err := redisfactory.New(cfg.Redis, redisfactory.LoadEnv(), logger)
+	// Skip the factory's hard startup PING (which returns an error on an
+	// unreachable cache and would defeat graceful degradation). Hub treats
+	// Redis as an optional pure cache: we ping below and degrade to nil on
+	// failure rather than failing Hub startup. Config errors (bad mode/addrs/
+	// TLS) still surface from New.
+	redisCfg := cfg.Redis
+	redisCfg.NoPing = true
+	client, err := redisfactory.New(redisCfg, redisfactory.LoadEnv(), logger)
 	if err != nil {
 		return nil, err
 	}

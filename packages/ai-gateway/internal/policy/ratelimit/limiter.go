@@ -8,6 +8,19 @@ import (
 
 // Limiter dispatches rate limit checks to Redis (distributed) with automatic
 // fallback to a local in-memory sliding window on Redis errors.
+//
+// REDIS-OUTAGE DEGRADATION (deliberate tradeoff). Redis is the only
+// cross-instance coordination point. When the Redis Allow call errors, each
+// gateway instance falls through to its OWN in-process LocalLimiter, which has
+// no visibility into the other instances' counters. With N instances behind a
+// load balancer, the effective cluster-wide limit during a Redis outage is
+// therefore approximately N × the configured per-key limit (each instance
+// independently admits up to `limit` requests per window). This is a fail-OPEN
+// degradation: a Redis outage loosens enforcement rather than rejecting all
+// traffic. It is accepted because (a) the alternative — fail closed — would
+// turn a cache outage into a full availability outage, and (b) rate limits are
+// an abuse-mitigation guardrail, not a hard correctness boundary like quota
+// spend. Single-instance deployments (NewLocalOnly) are unaffected: N=1.
 type Limiter struct {
 	redis  *RedisLimiter
 	local  *LocalLimiter

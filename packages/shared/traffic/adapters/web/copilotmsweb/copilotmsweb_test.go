@@ -522,7 +522,7 @@ func TestDetectRequestMeta_InvalidJSONBody(t *testing.T) {
 // Normalize (Tier-1 spec dispatch)
 
 // TestNormalize_RequestChatShape pins that an openai-chat-shaped
-// request body claims Tier 1 via the openai-chat spec and stamps
+// request body claims Tier 1 via the shared OpenAI Chat codec and stamps
 // DetectedSpec = "copilot-ms-web".
 func TestNormalize_RequestChatShape(t *testing.T) {
 	body := []byte(`{

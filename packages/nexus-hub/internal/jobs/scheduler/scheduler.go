@@ -30,6 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/robfig/cron/v3"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/store"
@@ -118,6 +120,13 @@ type Scheduler struct {
 	logger    *slog.Logger
 	js        jobStoreIface
 	replicaID string
+
+	// leaderGauge is set to 1 when this instance is the active scheduler leader
+	// (cfg.Scheduler.Enabled=true). In a multi-replica deployment each instance
+	// exposes this gauge; an alert fires when the gauge sums to != 1 (zero =
+	// no leader, >1 = duplicate leaders each running all jobs independently).
+	// Nil when WithMetrics is not called (e.g. in unit tests).
+	leaderGauge prometheus.Gauge
 }
 
 type entry struct {
@@ -149,6 +158,24 @@ func (s *Scheduler) WithJobStore(js *jobstore.Store) *Scheduler {
 // the admin UI can show which instance executed a given run.
 func (s *Scheduler) WithReplicaID(id string) *Scheduler {
 	s.replicaID = id
+	return s
+}
+
+// WithMetrics attaches a Prometheus registerer so Start() can expose the
+// nexus_hub_scheduler_leader gauge. Pass prometheus.DefaultRegisterer in
+// production wiring; the gauge is omitted when reg is nil (unit tests).
+func (s *Scheduler) WithMetrics(reg prometheus.Registerer) *Scheduler {
+	if reg == nil {
+		return s
+	}
+	f := promauto.With(reg)
+	s.leaderGauge = f.NewGauge(prometheus.GaugeOpts{
+		Namespace: "nexus_hub",
+		Name:      "scheduler_leader",
+		Help: "Set to 1 when this Hub instance is the active scheduler leader " +
+			"(cfg.Scheduler.Enabled=true). Sum across all replicas must equal 1; " +
+			"0 = no leader, >1 = duplicate leaders running jobs independently.",
+	})
 	return s
 }
 
@@ -306,7 +333,18 @@ func (s *Scheduler) Start() {
 		go s.runOne(e, false)
 	}
 
-	s.logger.Info("scheduler started", "jobs", len(s.jobs))
+	// Announce scheduler leadership so multi-replica deployments are observable.
+	// A Prometheus alert should fire when sum(nexus_hub_scheduler_leader) != 1:
+	//   0 = no instance is scheduling jobs (all replicas disabled)
+	//   >1 = two or more instances both running every job independently
+	//         (idempotent jobs survive, but duplicate runs inflate metrics).
+	s.logger.Info("scheduler leader elected",
+		"replicaId", s.replicaID,
+		"jobs", len(s.jobs),
+	)
+	if s.leaderGauge != nil {
+		s.leaderGauge.Set(1)
+	}
 }
 
 // scheduleEntry registers `e` with the cron engine. Caller holds s.mu.

@@ -72,21 +72,15 @@ bff:
 registry:
   nexusHubUrl: "http://127.0.0.1:3060"
 
-auth:
-  # hmacSecret, internalServiceToken are env-only per the "Secrets are
-  # env-only" binding in CLAUDE.md. See .env / .env.example at repo root.
-  # hmacSecret  → ADMIN_KEY_HMAC_SECRET
-  # internalServiceToken → INTERNAL_SERVICE_TOKEN
-  bootstrapKey: "nexus-dev-bootstrap-key"
-  allowDevAuth: true
+# auth.hmacSecret + auth.internalServiceToken are env-only per the "Secrets
+# are env-only" binding in CLAUDE.md. See .env / .env.example at repo root.
+#   hmacSecret           → ADMIN_KEY_HMAC_SECRET
+#   internalServiceToken → INTERNAL_SERVICE_TOKEN
 
 crypto:
-  # encryptionKey / encryptionPassphrase / encryptionSalt / credentialKeyMap
-  # are env-only:
-  #   encryptionKey         → CREDENTIAL_ENCRYPTION_KEY
-  #   encryptionPassphrase  → CREDENTIAL_ENCRYPTION_PASSPHRASE
-  #   encryptionSalt        → CREDENTIAL_ENCRYPTION_SALT
-  #   credentialKeyMap      → CREDENTIAL_KEY_MAP
+  # encryptionKey / credentialKeyMap are env-only:
+  #   encryptionKey     → CREDENTIAL_ENCRYPTION_KEY
+  #   credentialKeyMap  → CREDENTIAL_KEY_MAP
   production: false
 
 agent:
@@ -139,9 +133,6 @@ otel:
   # on shadow push. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
   endpoint: ""
   serviceName: "nexus-control-plane"
-
-scheduler:
-  enabled: true
 
 mq:
   driver: "nats"

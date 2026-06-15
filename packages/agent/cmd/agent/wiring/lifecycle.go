@@ -2,6 +2,7 @@ package wiring
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/killswitch"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/lifecycle/protectionpause"
@@ -31,17 +32,41 @@ type LifecycleEmitterConfig struct {
 // InitLifecycleEmitter creates the lifecycle emitter. Ships user/system
 // lifecycle events (startup, shutdown, pause, resume, sso_login) to Hub via
 // the diag-event pipeline. Nil-safe: when tc is nil (HubURL absent / Start
-// failed) the emitter no-ops gracefully.
+// failed) the emitter skips the Hub push and only records locally.
 func InitLifecycleEmitter(
 	tc *thingclient.Client,
 	auditQueue *auditqueue.Queue,
 	cfg LifecycleEmitterConfig,
 ) *lifecycle.Emitter {
-	return lifecycle.New(lifecycle.Config{
-		Pusher:       tc,
+	lcfg := lifecycle.Config{
 		Recorder:     auditQueue,
 		ThingID:      cfg.ThingID,
 		AgentVersion: cfg.AgentVersion,
 		Logger:       cfg.Logger,
-	})
+	}
+	// Assign the Pusher only for a non-nil client: a nil *thingclient.Client
+	// stored in the interface field would read as non-nil inside the emitter
+	// and crash the first emit (typed-nil interface).
+	if tc != nil {
+		lcfg.Pusher = tc
+	}
+	return lifecycle.New(lcfg)
+}
+
+// EmitShutdownGracefully emits an agent.shutdown lifecycle event and
+// then sleeps briefly so the WS outbox has time to flush the message
+// to Hub before the caller cancels the main context. Without the
+// flush window, the WS write pump's select sees ctx.Done at the same
+// instant outCh has a pending diag_event envelope, and exits before
+// the write — losing the shutdown row from Hub's view.
+//
+// Call this at EVERY shutdown-triggering cancel site (signal handler,
+// user-quit flag watcher, status-IPC SHUTDOWN) BEFORE the cancel().
+// 200 ms is empirically enough on a healthy local-Hub round-trip.
+func EmitShutdownGracefully(e *lifecycle.Emitter, reason string) {
+	if e == nil {
+		return
+	}
+	e.Shutdown(reason)
+	time.Sleep(200 * time.Millisecond)
 }

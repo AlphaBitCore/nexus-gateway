@@ -45,4 +45,93 @@ describe('NormalizedPayloadView', () => {
     const { container } = wrap({ kind: 'ai-chat', normalizeVersion: 'v2', redacted: true, messages: [] });
     expect((container.textContent || '').length).toBeGreaterThan(0);
   });
+
+  it('renders the operator-drop story when the operator chose drop-content', () => {
+    wrap({ kind: 'ai-chat', normalizeVersion: 'v2', redacted: true, redactedReason: 'operator-drop', ruleIds: ['email'] });
+    expect(screen.getByText('Content dropped per storage policy.')).toBeInTheDocument();
+    expect(screen.getByText(/Operator set storageAction=drop-content/)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be safely applied/)).not.toBeInTheDocument();
+  });
+
+  it('stays neutral for rows without a recorded reason', () => {
+    wrap({ kind: 'ai-chat', normalizeVersion: 'v2', redacted: true, ruleIds: ['email'] });
+    expect(screen.getByText('Content dropped per storage policy.')).toBeInTheDocument();
+    expect(screen.getByText(/Content not stored per the storage policy/)).toBeInTheDocument();
+    // Neither operator intent nor a degradation may be asserted.
+    expect(screen.queryByText(/Operator set storageAction=drop-content/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/could not be safely applied/)).not.toBeInTheDocument();
+  });
+
+  it('renders the degradation story with a localized cause and failed addresses', () => {
+    wrap({
+      kind: 'ai-chat', normalizeVersion: 'v2', redacted: true,
+      redactedReason: 'redact-degraded',
+      redactedDetail: { cause: 'spans-unresolved', failedAddresses: ['messages.2.content.0'] },
+      ruleIds: ['email'],
+    });
+    expect(screen.getByText(/could not be safely applied to the stored copy/)).toBeInTheDocument();
+    // The cause renders as a readable phrase carrying the machine token,
+    // and the hint does not claim the redaction was applied to the live
+    // request.
+    expect(screen.getByText(/Cause: the redaction positions could not be resolved on the stored copy \(spans-unresolved\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/applied to the live request/)).not.toBeInTheDocument();
+    expect(screen.getByText('messages.2.content.0')).toBeInTheDocument();
+    // The operator is not blamed for a degradation.
+    expect(screen.queryByText(/Operator set storageAction=drop-content/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the raw cause token when no localization exists', () => {
+    wrap({
+      kind: 'ai-chat', normalizeVersion: 'v2', redacted: true,
+      redactedReason: 'redact-degraded',
+      redactedDetail: { cause: 'some-future-cause' },
+      ruleIds: ['email'],
+    });
+    expect(screen.getByText(/Cause: some-future-cause/)).toBeInTheDocument();
+  });
+
+  it('renders http-sse frames with event chips and per-frame data', () => {
+    wrap({
+      kind: 'http-sse', normalizeVersion: '2', detectedSpec: 'generic-http', confidence: 1.0,
+      http: { bodyView: { sseFrames: [
+        { event: 'message_start', data: { type: 'message_start', message: { id: 'msg_01' } } },
+        { dataText: '[DONE]' },
+      ] } },
+    });
+    expect(screen.getByText('message_start')).toBeInTheDocument();
+    expect(screen.getByText(/msg_01/)).toBeInTheDocument();
+    // No-event frame falls back to the SSE protocol default event chip.
+    expect(screen.getByText('message')).toBeInTheDocument();
+    expect(screen.getByText('[DONE]')).toBeInTheDocument();
+  });
+
+  it('shows the truncation note when sseTruncated is set', () => {
+    const { container } = wrap({
+      kind: 'http-sse', normalizeVersion: '2', detectedSpec: 'generic-http', confidence: 1.0,
+      http: { bodyView: { sseFrames: [{ event: 'delta', dataText: 'x' }], sseTruncated: true } },
+    });
+    expect(container.textContent).toMatch(/Raw/);
+  });
+
+  it('renders the neutral Structural badge (not green Tier 1, no confidence numeral) for fallback rows', () => {
+    wrap({
+      kind: 'http-json', normalizeVersion: '2', detectedSpec: 'generic-http', confidence: 1.0,
+      http: { bodyView: { json: { hello: 'world' } } },
+    });
+    expect(screen.getByText('Structural')).toBeInTheDocument();
+    expect(screen.queryByText('Tier 1')).not.toBeInTheDocument();
+    // The projection confidence numeral is suppressed: "1.00" next to a
+    // real decode's 0.95 would read as more trusted than the decode.
+    expect(screen.queryByText(/1\.00/)).not.toBeInTheDocument();
+  });
+
+  it('renders the reasoning tokens usage entry when present', () => {
+    wrap({
+      kind: 'ai-chat', normalizeVersion: '2',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }],
+      usage: { promptTokens: 10, completionTokens: 20, reasoningTokens: 7 },
+    });
+    expect(screen.getByText(/Reasoning/)).toBeInTheDocument();
+    expect(screen.getByText('7')).toBeInTheDocument();
+  });
 });

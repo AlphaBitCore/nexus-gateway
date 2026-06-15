@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadDeviceToken_HappyPath(t *testing.T) {
@@ -53,6 +54,56 @@ func TestClearEnrollment_RemovesBothFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Fatalf("%s should be removed (err=%v)", name, err)
 		}
+	}
+}
+
+func TestLoadDeviceTokenExpiry_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	want := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(filepath.Join(dir, DeviceTokenExpiresFile), []byte(want.Format(time.RFC3339)+"\n"), 0600); err != nil {
+		t.Fatalf("seed expiry: %v", err)
+	}
+	got, err := LoadDeviceTokenExpiry(dir)
+	if err != nil {
+		t.Fatalf("LoadDeviceTokenExpiry: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestLoadDeviceTokenExpiry_Missing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := LoadDeviceTokenExpiry(dir)
+	if err == nil {
+		t.Fatal("expected error for missing expiry file")
+	}
+}
+
+func TestLoadDeviceTokenExpiry_Unparseable(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, DeviceTokenExpiresFile), []byte("not-a-timestamp"), 0600)
+	_, err := LoadDeviceTokenExpiry(dir)
+	if err == nil {
+		t.Fatal("expected parse error for malformed expiry")
+	}
+	if !strings.Contains(err.Error(), "parse") {
+		t.Fatalf("expected parse error, got: %v", err)
+	}
+}
+
+func TestClearEnrollment_RemovesExpiryFile(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"device-token", DeviceTokenExpiresFile, "thing-id"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0600); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	if err := ClearEnrollment(dir); err != nil {
+		t.Fatalf("ClearEnrollment: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, DeviceTokenExpiresFile)); !os.IsNotExist(err) {
+		t.Fatalf("%s should be removed (err=%v)", DeviceTokenExpiresFile, err)
 	}
 }
 

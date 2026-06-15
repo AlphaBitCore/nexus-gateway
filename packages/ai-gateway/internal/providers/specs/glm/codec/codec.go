@@ -57,7 +57,7 @@ func (GLMCodec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte,
 // DecodeResponse is identity for all endpoints. GLM embedding and chat
 // responses match the canonical OpenAI shape. Usage is extracted via the
 // shared Tier-1 normalizer for consistent token accounting across all services.
-func (GLMCodec) DecodeResponse(_ typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
+func (GLMCodec) DecodeResponse(_ typology.WireShape, nativeBody []byte, _ string, _ provcore.DecodeContext) (provcore.DecodeResult, error) {
 	return provcore.DecodeResult{
 		CanonicalBody: nativeBody,
 		Usage:         provcore.ExtractUsage(nativeBody, provcore.FormatGLM),

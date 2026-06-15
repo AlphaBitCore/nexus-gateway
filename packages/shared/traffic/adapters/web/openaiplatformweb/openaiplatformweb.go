@@ -12,7 +12,7 @@
 // the same wire format as api.openai.com, so the adapter delegates to
 // openai-compat after recognising the body shape.
 //
-// Rule (per session policy): even though the wire is OpenAI-compat,
+// Convention: even though the wire is OpenAI-compat,
 // platform.openai.com gets its own adapter ID so audit can attribute
 // traffic to the developer-console surface separately.
 package openaiplatformweb

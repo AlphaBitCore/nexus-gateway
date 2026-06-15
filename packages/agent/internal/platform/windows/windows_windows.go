@@ -257,6 +257,7 @@ func (p *WindowsPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
 		transparent      bool   // true → WinDivert mode (no CONNECT verb)
 		preSniffedPeeked []byte // ClientHello bytes consumed during setup (WinDivert mode only)
 		preSniffedErr    error
+		wfpPID           int // kernel-supplied owning PID (WFP path); 0 on the fallback path
 	)
 	if p.wfp != nil {
 		transparent = true
@@ -268,7 +269,7 @@ func (p *WindowsPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
 			slog.Debug("non-TCP RemoteAddr; dropping")
 			return
 		}
-		origAddrPort, _, ok := p.wfp.GetOriginalDestination(ctx, uint16(srcAddr.Port), false)
+		origAddrPort, kernelPID, ok := p.wfp.GetOriginalDestination(ctx, uint16(srcAddr.Port), false)
 		if !ok {
 			// Unknown flow — probably a manual probe (curl
 			// to 127.0.0.1:19080). Reject so health-checks
@@ -278,6 +279,11 @@ func (p *WindowsPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
 		}
 		dstHost = origAddrPort.Addr().String()
 		dstPort = int(origAddrPort.Port())
+		// The kernel driver already told us the owning PID for this
+		// redirected flow — keep it so we don't recompute it the
+		// expensive way (a full system TCP-table snapshot per
+		// connection) below.
+		wfpPID = int(kernelPID)
 		// Peek the TLS ClientHello bytes once: gives us the SNI
 		// (host upgrade from IP to hostname) AND the buffered
 		// bytes the inspect / passthrough branches need to
@@ -302,9 +308,15 @@ func (p *WindowsPlatform) handleConn(ctx context.Context, clientConn net.Conn) {
 		}
 	}
 
-	// Resolve PID of the client process via GetExtendedTcpTable
+	// Resolve the client PID. On the WFP path the kernel driver already
+	// supplied it (wfpPID) — use it directly. Only the legacy
+	// CONNECT-proxy fallback (no kernel flow entry) pays the
+	// GetExtendedTcpTable full-table scan.
 	srcAddr := clientConn.RemoteAddr().(*net.TCPAddr)
-	pid := findOwnerPID(srcAddr.IP, srcAddr.Port)
+	pid := wfpPID
+	if pid <= 0 {
+		pid = findOwnerPID(srcAddr.IP, srcAddr.Port)
+	}
 	var procMeta api.ProcessMeta
 	if pid > 0 {
 		procMeta, _ = p.ProcessInfo(pid)

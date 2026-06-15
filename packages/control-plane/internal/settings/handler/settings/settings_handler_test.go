@@ -891,6 +891,122 @@ func TestUpdateAgentSettings_RejectsTooManyForceQUICEntries(t *testing.T) {
 	}
 }
 
+// TestUpdateAgentSettings_RejectsForceQUICSystemBundle closes SEC-M8-01 at the
+// CP write path: naming a system networking daemon directly must be rejected
+// before it can reach the agent_settings shadow, so a low-priv admin cannot
+// close that daemon's UDP fleet-wide.
+func TestUpdateAgentSettings_RejectsForceQUICSystemBundle(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
+	body := `{"forceQUICFallbackBundles":["com.apple.apsd"]}`
+	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults", body)
+	rec := httptest.NewRecorder()
+	_ = h.UpdateAgentSettings(adminCtx(req, rec, "k1", "Admin"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d; want 400 (system daemon must be rejected): %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "protected system service") || !strings.Contains(rec.Body.String(), "com.apple.apsd") {
+		t.Errorf("body should name the protected service: %s", rec.Body.String())
+	}
+}
+
+// TestUpdateAgentSettings_RejectsForceQUICOverBroadPrefix is the headline
+// attack: a bare "com.apple" entry would prefix-match every com.apple.* daemon
+// in the NE kill check, taking down DNS/DHCP/Push/Continuity. It must be
+// rejected even though no exact system bundle is named.
+func TestUpdateAgentSettings_RejectsForceQUICOverBroadPrefix(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
+	body := `{"forceQUICFallbackBundles":["com.apple"]}`
+	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults", body)
+	rec := httptest.NewRecorder()
+	_ = h.UpdateAgentSettings(adminCtx(req, rec, "k1", "Admin"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d; want 400 (over-broad prefix must be rejected): %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "protected system service") {
+		t.Errorf("body should flag the protected-service violation: %s", rec.Body.String())
+	}
+}
+
+func TestUpdateAgentSettings_RejectsBypassEntryTooLong(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
+	body := `{"bypassBundles":["` + strings.Repeat("a", 201) + `"]}`
+	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults", body)
+	rec := httptest.NewRecorder()
+	_ = h.UpdateAgentSettings(adminCtx(req, rec, "k1", "Admin"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d; want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "200 chars") {
+		t.Errorf("body should mention 200 chars: %s", rec.Body.String())
+	}
+}
+
+func TestUpdateAgentSettings_RejectsBypassEntryWithWhitespace(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
+	body := `{"bypassBundles":["bundle with space"]}`
+	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults", body)
+	rec := httptest.NewRecorder()
+	_ = h.UpdateAgentSettings(adminCtx(req, rec, "k1", "Admin"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d; want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "printable ASCII") {
+		t.Errorf("body should mention printable ASCII: %s", rec.Body.String())
+	}
+}
+
+func TestUpdateAgentSettings_RejectsTooManyBypassEntries(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
+	entries := make([]string, 65)
+	for i := range entries {
+		entries[i] = `"b` + strings.Repeat("x", 3) + string(rune('a'+i%26)) + string(rune('0'+i%10)) + `"`
+	}
+	body := `{"bypassBundles":[` + strings.Join(entries, ",") + `]}`
+	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults", body)
+	rec := httptest.NewRecorder()
+	_ = h.UpdateAgentSettings(adminCtx(req, rec, "k1", "Admin"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d; want 400 (over 64-entry cap)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "64 entries") {
+		t.Errorf("body should mention 64 entries: %s", rec.Body.String())
+	}
+}
+
+// TestUpdateAgentSettings_BypassAllowsSystemBundle pins the deliberate
+// difference from forceQUICFallbackBundles: a system daemon entry is a
+// HARMLESS no-op for the bypass list (exempting it only removes it from
+// inspection — it cannot close any UDP), so the handler must ACCEPT it
+// rather than reject it the way the QUIC-kill path does.
+func TestUpdateAgentSettings_BypassAllowsSystemBundle(t *testing.T) {
+	mock, h, _ := newHandlerWithMock(t)
+	mock.ExpectQuery(`SELECT value FROM system_metadata`).
+		WithArgs("agent.settings").WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO system_metadata`).
+		WithArgs("agent.settings", pgxmock.AnyArg(), "k1").
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mock.ExpectQuery(`SELECT value FROM system_metadata`).
+		WithArgs("agent.config.version").WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO system_metadata`).
+		WithArgs("agent.config.version", []byte(`1`), "system").
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+
+	body := `{"bypassBundles":["com.apple.apsd","com.anthropic.claude-code"]}`
+	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults", body)
+	rec := httptest.NewRecorder()
+	if err := h.UpdateAgentSettings(adminCtx(req, rec, "k1", "Admin")); err != nil {
+		t.Fatalf("UpdateAgentSettings: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d; want 200 (system bundle is a valid bypass target): %s", rec.Code, rec.Body.String())
+	}
+	got := decodeJSON(t, rec)
+	arr, _ := got["bypassBundles"].([]any)
+	if len(arr) != 2 {
+		t.Errorf("bypassBundles = %v; want both entries persisted", got["bypassBundles"])
+	}
+}
+
 // TestUpdateAgentSettings_HappyPath_StripsDeadFieldsAndIncrementsConfigVersion
 // drives the full mutation pipeline. Pins:
 //   - load existing blob

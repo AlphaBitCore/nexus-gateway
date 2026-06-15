@@ -568,6 +568,55 @@ func TestExtractStreamChunk_NoMetadataAllocOnEmpty(t *testing.T) {
 	}
 }
 
+// TestExtractRequest_MessageWithoutContent pins that a message lacking a
+// `content` field (legal in some SDK retry shapes) is skipped without
+// derailing extraction of the surrounding messages, and that the
+// service_tier / anthropic_version request fields land in Metadata so
+// audit records the priority tier and API revision of each call.
+func TestExtractRequest_MessageWithoutContent(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-sonnet-4-6",
+		"service_tier": "priority",
+		"anthropic_version": "bedrock-2023-05-31",
+		"messages": [
+			{"role":"user"},
+			{"role":"user","content":"second message"}
+		]
+	}`)
+	a := &Adapter{}
+	nc, err := a.ExtractRequest(context.Background(), body, "/v1/messages")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(nc.Segments) != 1 || nc.Segments[0] != "second message" {
+		t.Errorf("Segments=%v want only the content-bearing message", nc.Segments)
+	}
+	if nc.Metadata["service_tier"] != "priority" {
+		t.Errorf("service_tier=%q want priority", nc.Metadata["service_tier"])
+	}
+	if nc.Metadata["anthropic_version"] != "bedrock-2023-05-31" {
+		t.Errorf("anthropic_version=%q", nc.Metadata["anthropic_version"])
+	}
+}
+
+// TestExtractStreamChunk_MessageDeltaStopSequence pins that when the
+// model halts on a configured stop word, the terminal message_delta's
+// delta.stop_sequence string reaches Metadata alongside stop_reason.
+func TestExtractStreamChunk_MessageDeltaStopSequence(t *testing.T) {
+	chunk := []byte(`{"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"END"},"usage":{"output_tokens":3}}`)
+	a := &Adapter{}
+	nc, err := a.ExtractStreamChunk(context.Background(), chunk, "/v1/messages")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if nc.Metadata["stop_reason"] != "stop_sequence" {
+		t.Errorf("stop_reason=%q", nc.Metadata["stop_reason"])
+	}
+	if nc.Metadata["stop_sequence"] != "END" {
+		t.Errorf("stop_sequence=%q want END", nc.Metadata["stop_sequence"])
+	}
+}
+
 // TestExtractStreamChunk_ContentBlockStart_TextSkipped pins that a
 // content_block_start whose block is text (not tool_use) does not leak
 // into ToolCallSegments — only tool_use blocks announce tool calls.

@@ -21,6 +21,7 @@ import (
 // RuntimeAPIDeps bundles all dependencies for the runtime API server.
 type RuntimeAPIDeps struct {
 	Addr           string
+	APIToken       string // COMPLIANCE_PROXY_API_TOKEN; boot-required, fail-closed
 	Logger         *slog.Logger
 	KillSwitch     *killswitch.KillSwitch
 	ConnManager    *conn.Manager
@@ -36,7 +37,7 @@ type RuntimeAPIDeps struct {
 // InitRuntimeAPIServer constructs and returns the runtime API server + token
 // auth. The server is not started here; the caller launches it in a goroutine.
 func InitRuntimeAPIServer(d RuntimeAPIDeps) (*runtimeserver.Server, *auth.TokenAuth) {
-	tokenAuth := auth.NewTokenAuth(d.Logger)
+	tokenAuth := auth.NewTokenAuth(d.APIToken)
 
 	redisChecker := func() bool {
 		if d.RedisClient == nil {

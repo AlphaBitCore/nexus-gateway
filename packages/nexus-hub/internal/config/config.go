@@ -3,6 +3,8 @@
 package config
 
 import (
+	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/kms"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/redisfactory"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillfactory"
 )
@@ -41,14 +44,33 @@ type HubConfig struct {
 	// services in the deployment must point at the same backend so CP's
 	// read path resolves refs produced anywhere.
 	Spill spillfactory.FactoryConfig `yaml:"spill"`
+	// SecretCustody is the server-side envelope-custody config. yaml/argv
+	// only, NO secret. provider "noop" (default) reads the
+	// crown-jewel env vars raw; provider "command" unwraps a base64 wrapped blob
+	// once at boot via the configured Decrypt argv. Hub's crown jewel is the
+	// shared CREDENTIAL_ENCRYPTION_KEY (3-service [MUST MATCH], also held by CP +
+	// ai-gateway), which Hub uses to encrypt alert-channel secrets at rest.
+	SecretCustody kms.CustodyConfig `yaml:"secretCustody"`
 }
 
 // ServerConfig controls the HTTP/WebSocket server.
 type ServerConfig struct {
-	Port            int           `yaml:"port"`
+	Port int `yaml:"port"`
+	// Host is the bind interface for the HTTP server. Empty (default) binds
+	// all interfaces (":port"), which is what container / Kubernetes / direct
+	// deployments need. Set to "127.0.0.1" to bind loopback-only — used by
+	// the single-host appliance, where nginx (same host) fronts the service
+	// and no external client should reach the port directly.
+	Host            string        `yaml:"host"`
 	ReadTimeout     time.Duration `yaml:"readTimeout"`
 	WriteTimeout    time.Duration `yaml:"writeTimeout"`
 	ShutdownTimeout time.Duration `yaml:"shutdownTimeout"`
+}
+
+// BindAddr returns the host:port the HTTP server should listen on. Empty Host
+// yields ":port" (all interfaces), preserving the historical default.
+func (s ServerConfig) BindAddr() string {
+	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -69,23 +91,11 @@ type NATSConfig struct {
 	URL string `yaml:"url"`
 }
 
-// ConsumerConfig controls Hub MQ consumers (db-writer, siem-forwarder, metrics).
+// ConsumerConfig controls Hub MQ consumers (db-writer, admin-audit, exemption).
 type ConsumerConfig struct {
-	Enabled       bool               `yaml:"enabled"`
-	BatchSize     int                `yaml:"batchSize"`
-	FlushInterval time.Duration      `yaml:"flushInterval"`
-	SIEM          SIEMConsumerConfig `yaml:"siem"`
-}
-
-// SIEMConsumerConfig controls the Hub's SIEM forwarder consumer.
-type SIEMConsumerConfig struct {
-	Enabled       bool              `yaml:"enabled"`
-	URL           string            `yaml:"url"`
-	Headers       map[string]string `yaml:"headers"`
-	Format        string            `yaml:"format"`
-	BatchSize     int               `yaml:"batchSize"`
-	FlushInterval time.Duration     `yaml:"flushInterval"`
-	EventTypes    []string          `yaml:"eventTypes"`
+	Enabled       bool          `yaml:"enabled"`
+	BatchSize     int           `yaml:"batchSize"`
+	FlushInterval time.Duration `yaml:"flushInterval"`
 }
 
 // SchedulerConfig controls whether this Hub instance runs scheduled jobs.
@@ -232,6 +242,28 @@ type JobIntervalConfig struct {
 // overriding the env value.
 type AuthConfig struct {
 	InternalServiceToken string `yaml:"-"` // env INTERNAL_SERVICE_TOKEN — shared with all other services
+	// HubConfigToken gates the two config-AUTHORITY surfaces (/api/hub config-write
+	// + /api/v1/admin/alerts admin) separately from the fleet-wide service token.
+	// env HUB_CONFIG_TOKEN, [MUST MATCH control-plane <-> nexus-hub]
+	// ONLY — CP is the sole caller of those two groups. INTERNAL_SERVICE_TOKEN stays
+	// scoped to /api/internal/things + the WS registration path, so a leak of one of
+	// the data-plane services' service token can no longer inject fleet config.
+	HubConfigToken string `yaml:"-"`
+	// SignalSecret authenticates inter-Hub nexus.hub.signal frames.
+	// env HUB_SIGNAL_HMAC_SECRET, [MUST MATCH] across peer Hubs in a multi-Hub
+	// HA deployment. When unset, a per-process random value is generated at boot:
+	// a single-Hub deployment never verifies its own (skipped) signals, so a
+	// random secret still rejects every forged cross-Hub frame.
+	SignalSecret []byte `yaml:"-"`
+	// CredentialMasterKey is the shared AES-256 master key (64 hex chars),
+	// env CREDENTIAL_ENCRYPTION_KEY, [MUST MATCH control-plane <-> ai-gateway <->
+	// nexus-hub]. Hub uses it to encrypt alert-channel config secrets at rest
+	// (SMTP password, Slack bot token, PagerDuty routing key, sensitive webhook
+	// headers). Resolved through the SecretCustody loader at boot: under
+	// provider "command" the env var holds a WRAPPED blob and
+	// this field holds the UNWRAPPED plaintext (the [MUST MATCH] contract is on
+	// the plaintext, not the blob — each service may wrap under its own grant).
+	CredentialMasterKey string `yaml:"-"`
 }
 
 // AuthServerConfig holds settings describing the shared OAuth/OIDC auth
@@ -289,6 +321,12 @@ type HubIdentity struct {
 	// arriving from non-loopback hostnames. Browsers are still rejected
 	// unless their origin is explicitly listed.
 	AllowedOrigins []string `yaml:"allowedOrigins"`
+	// DevMode relaxes the WebSocket origin allowlist to also accept localhost
+	// origins (localhost / 127.0.0.1, any port). It MUST be false in
+	// production: a localhost origin combined with a leaked bearer token would
+	// otherwise let a page served from the operator's own machine open a Hub
+	// WS. Defaults to false; set via env NEXUS_HUB_DEV_MODE=true for local dev.
+	DevMode bool `yaml:"devMode"`
 }
 
 // Load reads configuration from a YAML file, then applies environment
@@ -307,11 +345,38 @@ func Load(path string) (*HubConfig, error) {
 	}
 
 	applyEnvOverrides(cfg)
+	if err := resolveCustodySecrets(cfg); err != nil {
+		return nil, fmt.Errorf("resolve custody secrets: %w", err)
+	}
 
 	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return cfg, nil
+}
+
+// resolveCustodySecrets unwraps Hub's crown-jewel root secret through the
+// SecretCustody provider. With the default "noop" provider
+// this returns the raw CREDENTIAL_ENCRYPTION_KEY env value (byte-identical to
+// reading os.Getenv directly, preserving today's behavior); with provider
+// "command" the env var holds a base64 wrapped blob that is unwrapped once here
+// at boot, so Hub's crown jewel is no longer plaintext-at-rest. An empty value
+// stays empty (InitAlerts enforces the required fail-closed boot); a non-empty
+// value that fails to unwrap aborts the boot (fail-closed) rather than feeding a
+// wrapped blob into the alert cipher.
+func resolveCustodySecrets(cfg *HubConfig) error {
+	custody, err := kms.NewCustody(cfg.SecretCustody)
+	if err != nil {
+		return err
+	}
+	v, err := custody.Unwrap(context.Background(), "CREDENTIAL_ENCRYPTION_KEY")
+	if err != nil {
+		return err
+	}
+	if v != "" {
+		cfg.Auth.CredentialMasterKey = v
+	}
+	return nil
 }
 
 func defaults() *HubConfig {
@@ -409,6 +474,9 @@ func applyEnvOverrides(cfg *HubConfig) {
 			cfg.Server.Port = p
 		}
 	}
+	if v := os.Getenv("NEXUS_HUB_HOST"); v != "" {
+		cfg.Server.Host = v
+	}
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		cfg.Database.URL = v
 	}
@@ -426,6 +494,22 @@ func applyEnvOverrides(cfg *HubConfig) {
 	}
 	if v := os.Getenv("INTERNAL_SERVICE_TOKEN"); v != "" {
 		cfg.Auth.InternalServiceToken = v
+	}
+	if v := os.Getenv("HUB_CONFIG_TOKEN"); v != "" {
+		cfg.Auth.HubConfigToken = v
+	}
+	// Hub-to-Hub signal signing secret. Use the env value when set
+	// (multi-Hub [MUST MATCH]); otherwise generate a per-process random so a
+	// single-Hub deployment still rejects every forged cross-Hub signal.
+	if v := os.Getenv("HUB_SIGNAL_HMAC_SECRET"); v != "" {
+		cfg.Auth.SignalSecret = []byte(v)
+	} else {
+		cfg.Auth.SignalSecret = make([]byte, 32)
+		if _, err := rand.Read(cfg.Auth.SignalSecret); err != nil {
+			// crypto/rand reads the OS CSPRNG; a failure here is an
+			// unrecoverable boot-time condition.
+			panic(fmt.Sprintf("generate hub signal secret: %v", err))
+		}
 	}
 	if v := os.Getenv("AUTH_SERVER_JWKS_URL"); v != "" {
 		cfg.AuthServer.JWKSURL = v
@@ -450,6 +534,11 @@ func applyEnvOverrides(cfg *HubConfig) {
 	}
 	if v := os.Getenv("NEXUS_HUB_ALLOWED_ORIGINS"); v != "" {
 		cfg.Hub.AllowedOrigins = splitAndTrim(v)
+	}
+	if v := os.Getenv("NEXUS_HUB_DEV_MODE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Hub.DevMode = b
+		}
 	}
 	if v := os.Getenv("AGENT_CA_CERT_FILE"); v != "" {
 		cfg.AgentCA.CertFile = v
@@ -541,8 +630,26 @@ func validate(cfg *HubConfig) error {
 	if cfg.Auth.InternalServiceToken == "" {
 		return fmt.Errorf("auth.internalServiceToken is required")
 	}
+	// The config-write authority (/api/hub) and admin-alerts
+	// authority are gated by a DEDICATED token, never the fleet-wide service
+	// token. Required + non-empty: ServiceAuth("") would accept an empty bearer
+	// (fail-open), so a missing HUB_CONFIG_TOKEN must refuse boot, not silently
+	// open the config-write surface.
+	if cfg.Auth.HubConfigToken == "" {
+		return fmt.Errorf("auth.hubConfigToken is required (env HUB_CONFIG_TOKEN; [MUST MATCH] Control Plane)")
+	}
 	if cfg.Hub.ID == "" {
 		return fmt.Errorf("hub.id is required")
+	}
+	// The credential master key (resolved through the
+	// SecretCustody loader above) encrypts alert-channel secrets at rest. Hub
+	// always wires the alert subsystem (InitAlerts is unconditional), so it is
+	// always required — gate it here at config load for fail-fast symmetry with
+	// the Control Plane + AI Gateway (which gate it in their validate()), rather
+	// than only at InitAlerts. InitAlerts keeps its own nil-cipher fail-closed
+	// (FU-1) as defense in depth.
+	if cfg.Auth.CredentialMasterKey == "" {
+		return fmt.Errorf("auth.credentialMasterKey is required (env CREDENTIAL_ENCRYPTION_KEY; [MUST MATCH] Control Plane + AI Gateway; encrypts alert-channel secrets at rest — generate via `openssl rand -hex 32`)")
 	}
 	// Redis env load happens inside InitRedis (after Load returns), so check
 	// yaml AND env here. Mirrors the pattern InitRedis uses internally.

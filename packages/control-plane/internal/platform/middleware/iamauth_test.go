@@ -110,12 +110,14 @@ func TestRequireIAMPermission_NoPrincipalReturns401(t *testing.T) {
 	}
 }
 
-// TestRequireIAMPermission_BootstrapAndDevBypass covers the two
-// well-known principal IDs that bypass IAM entirely: "bootstrap" (used
-// during first-boot seed before any policies exist) and "dev" (local
-// dev convenience). Both must reach the handler without consulting
-// the engine — verified by wiring an engine that would otherwise deny.
-func TestRequireIAMPermission_BootstrapAndDevBypass(t *testing.T) {
+// TestRequireIAMPermission_BootstrapAndDevNoBypass is the load-bearing
+// regression test for audit F-0068: the magic-string principal IDs
+// "bootstrap" and "dev" must NOT bypass IAM. With an empty (deny)
+// engine and no grants, a request from either principal must be denied
+// (403) — never short-circuited to the handler. A future seed/fixture
+// minting such a subject must gain no privilege beyond what its IAM
+// policies grant.
+func TestRequireIAMPermission_BootstrapAndDevNoBypass(t *testing.T) {
 	t.Parallel()
 	engine := iam.NewEngine(&fakeLoader{}, slog.Default()) // empty → deny
 	action := sharediam.ResourceProvider.Action(sharediam.VerbRead)
@@ -147,11 +149,57 @@ func TestRequireIAMPermission_BootstrapAndDevBypass(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/x", nil)
 			e.ServeHTTP(rec, req)
 
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status=%d want 403 (%q must not bypass IAM)", rec.Code, kid)
+			}
+			if handlerReached {
+				t.Errorf("handler reached on %q — magic-string IAM bypass still present", kid)
+			}
+		})
+	}
+}
+
+// TestRequireIAMPermission_BootstrapDevAllowedOnlyViaPolicy proves the
+// positive side of F-0068: a "bootstrap"/"dev" principal reaches the
+// handler ONLY when an actual IAM policy grants the action — i.e. it is
+// treated like any other principal, with no hardcoded short-circuit.
+func TestRequireIAMPermission_BootstrapDevAllowedOnlyViaPolicy(t *testing.T) {
+	t.Parallel()
+	engine := iam.NewEngine(&fakeLoader{policies: allowAllPolicies()}, slog.Default())
+	action := sharediam.ResourceProvider.Action(sharediam.VerbRead)
+
+	for _, kid := range []string{"bootstrap", "dev"} {
+
+		t.Run(kid, func(t *testing.T) {
+			t.Parallel()
+			e := echo.New()
+			e.HideBanner = true
+			handlerReached := false
+			g := e.Group("",
+				func(next echo.HandlerFunc) echo.HandlerFunc {
+					return func(c echo.Context) error {
+						middleware.WithAdminAuth(c, &auth.AdminAuth{
+							KeyID:             kid,
+							AuthPrincipalType: "admin_user",
+						})
+						return next(c)
+					}
+				},
+				middleware.RequireIAMPermission(engine, action, nil))
+			g.GET("/x", func(c echo.Context) error {
+				handlerReached = true
+				return c.NoContent(http.StatusOK)
+			})
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/x", nil)
+			e.ServeHTTP(rec, req)
+
 			if rec.Code != http.StatusOK {
-				t.Fatalf("status=%d want 200 (%s bypass)", rec.Code, kid)
+				t.Fatalf("status=%d want 200 (%q with allow-all policy)", rec.Code, kid)
 			}
 			if !handlerReached {
-				t.Errorf("handler not reached on %s bypass", kid)
+				t.Errorf("handler not reached on %q despite allow-all policy", kid)
 			}
 		})
 	}
@@ -432,9 +480,10 @@ func TestRequireIAMPermissionForDevice_NoPrincipalReturns401(t *testing.T) {
 	}
 }
 
-// TestRequireIAMPermissionForDevice_BootstrapAndDevBypass covers the
-// "bootstrap" / "dev" KeyID short-circuits.
-func TestRequireIAMPermissionForDevice_BootstrapAndDevBypass(t *testing.T) {
+// TestRequireIAMPermissionForDevice_BootstrapAndDevNoBypass is the
+// device-variant counterpart of the F-0068 regression: "bootstrap" /
+// "dev" must NOT short-circuit IAM. Empty engine → 403, never 200.
+func TestRequireIAMPermissionForDevice_BootstrapAndDevNoBypass(t *testing.T) {
 	t.Parallel()
 	engine := iam.NewEngine(&fakeLoader{}, slog.Default())
 	action := sharediam.ResourceAgentDevice.Action(sharediam.VerbRead)
@@ -444,6 +493,7 @@ func TestRequireIAMPermissionForDevice_BootstrapAndDevBypass(t *testing.T) {
 			t.Parallel()
 			e := echo.New()
 			e.HideBanner = true
+			handlerReached := false
 			g := e.Group("",
 				func(next echo.HandlerFunc) echo.HandlerFunc {
 					return func(c echo.Context) error {
@@ -452,13 +502,19 @@ func TestRequireIAMPermissionForDevice_BootstrapAndDevBypass(t *testing.T) {
 					}
 				},
 				middleware.RequireIAMPermissionForDevice(engine, action, "id", nil))
-			g.GET("/dev/:id", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+			g.GET("/dev/:id", func(c echo.Context) error {
+				handlerReached = true
+				return c.NoContent(http.StatusOK)
+			})
 
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/dev/d1", nil)
 			e.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Errorf("status=%d want 200 (%s bypass)", rec.Code, kid)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("status=%d want 403 (%q must not bypass IAM)", rec.Code, kid)
+			}
+			if handlerReached {
+				t.Errorf("handler reached on %q — device-variant magic-string bypass still present", kid)
 			}
 		})
 	}

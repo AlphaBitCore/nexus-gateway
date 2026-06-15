@@ -1,0 +1,29 @@
+{
+  "kind": "http-json",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "json": {
+        "customerBalance": null,
+        "individualMembershipType": "pro_plus",
+        "isOnBillableAuto": true,
+        "isOnStudentPlan": false,
+        "isTeamMember": false,
+        "isYearlyPlan": false,
+        "lastPaymentFailed": false,
+        "membershipType": "pro_plus",
+        "paymentId": "cus_AbCdEf012345Gh",
+        "pendingCancellationDate": null,
+        "subscriptionStatus": "active",
+        "teamMembershipType": null,
+        "trialEligible": false,
+        "trialLengthDays": 7,
+        "trialWasCancelled": false,
+        "verifiedStudent": false
+      }
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

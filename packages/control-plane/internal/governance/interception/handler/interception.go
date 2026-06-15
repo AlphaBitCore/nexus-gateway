@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
@@ -42,6 +43,24 @@ var (
 	validFailureActions     = map[string]struct{}{"FAIL_OPEN": {}, "FAIL_CLOSED": {}}
 	validNetworkZones       = map[string]struct{}{"PUBLIC": {}, "INTERNAL": {}}
 )
+
+// validateMatchRegex returns "" unless matchType is REGEX and pattern fails to
+// compile (Go RE2). An empty pattern or a non-REGEX match type is skipped. The
+// data plane (compliance-proxy / agent) compiles host/path patterns lazily at
+// matcher-build time and silently drops a rule whose regex won't compile, so an
+// admin who typed a bad regex into a "PII intercept" rule would get a 201 and a
+// rule that never matches. Compile-checking here turns that into an authoring-
+// time 400. RE2 has no catastrophic-backtracking class, so this is a
+// validity check, not a ReDoS guard.
+func validateMatchRegex(label, matchType, pattern string) string {
+	if matchType != "REGEX" || pattern == "" {
+		return ""
+	}
+	if _, err := regexp.Compile(pattern); err != nil {
+		return label + " is not a valid regular expression: " + err.Error()
+	}
+	return ""
+}
 
 // validateEnum returns "" when ok or a human-readable 400 message when the
 // value is present but not in the whitelist. Empty strings are treated as
@@ -168,6 +187,9 @@ func (h *Handler) CreateInterceptionDomain(c echo.Context) error {
 	if msg := validateDomainEnums(body); msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
+	if msg := validateMatchRegex("hostPattern", body.HostMatchType, body.HostPattern); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+	}
 	pathInputs, msg := buildPathInputs(body.Paths)
 	if msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
@@ -252,6 +274,20 @@ func (h *Handler) UpdateInterceptionDomain(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
 	if msg := validateEnum("networkZone", deref(body.NetworkZone), validNetworkZones); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+	}
+	// Compile-check the host regex against the EFFECTIVE match type + pattern
+	// (a PATCH may change one without the other), so a partial update can never
+	// leave a REGEX host rule with an uncompilable pattern.
+	effHostType := existing.HostMatchType
+	if body.HostMatchType != nil {
+		effHostType = *body.HostMatchType
+	}
+	effHostPattern := existing.HostPattern
+	if body.HostPattern != nil {
+		effHostPattern = *body.HostPattern
+	}
+	if msg := validateMatchRegex("hostPattern", effHostType, effHostPattern); msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
 
@@ -394,6 +430,21 @@ func (h *Handler) UpdateInterceptionPath(c echo.Context) error {
 	if msg := validateEnum("action", deref(body.Action), validPathActions); msg != "" {
 		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
+	// Compile-check path regexes against the EFFECTIVE match type — patterns
+	// supplied in this PATCH if present, else the stored ones.
+	effPathType := existing.MatchType
+	if body.MatchType != nil {
+		effPathType = *body.MatchType
+	}
+	effPatterns := existing.PathPattern
+	if body.PathPattern != nil {
+		effPatterns = body.PathPattern
+	}
+	for j, pat := range effPatterns {
+		if msg := validateMatchRegex("pathPattern["+itoaPos(j)+"]", effPathType, pat); msg != "" {
+			return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+		}
+	}
 
 	updated, err := h.store.UpdateInterceptionPath(c.Request().Context(), pathID, interceptionstore.UpdateInterceptionPathInput{
 		PathPattern: body.PathPattern,
@@ -491,6 +542,11 @@ func buildPathInputs(paths []interceptionPath) ([]interceptionstore.CreateInterc
 		}
 		if msg := validateEnum("paths["+itoaPos(i)+"].action", p.Action, validPathActions); msg != "" {
 			return nil, msg
+		}
+		for j, pat := range p.PathPattern {
+			if msg := validateMatchRegex("paths["+itoaPos(i)+"].pathPattern["+itoaPos(j)+"]", p.MatchType, pat); msg != "" {
+				return nil, msg
+			}
 		}
 		out = append(out, interceptionstore.CreateInterceptionPathInput{
 			PathPattern: p.PathPattern,

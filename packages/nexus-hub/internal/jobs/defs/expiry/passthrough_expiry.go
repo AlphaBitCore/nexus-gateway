@@ -66,14 +66,14 @@ func (j *PassthroughExpiryJob) Run(ctx context.Context) error {
 	var (
 		gCount, aCount, pCount int64
 	)
-	if err := j.pool.QueryRow(ctx,
+	if rows, err := j.pool.Exec(ctx,
 		`UPDATE gateway_passthrough_config_global
 		    SET enabled = false, updated_at = NOW()
-		  WHERE enabled = true AND expires_at <= NOW()
-	   RETURNING (SELECT count(*) FROM gateway_passthrough_config_global WHERE enabled = false)`,
-	).Scan(&gCount); err != nil {
-		// 0 rows affected returns pgx.ErrNoRows from RETURNING; treat as no-op.
-		gCount = 0
+		  WHERE enabled = true AND expires_at <= NOW()`,
+	); err == nil {
+		gCount = rows.RowsAffected()
+	} else {
+		return fmt.Errorf("revert global tier: %w", err)
 	}
 
 	if rows, err := j.pool.Exec(ctx,

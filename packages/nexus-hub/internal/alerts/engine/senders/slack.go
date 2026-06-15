@@ -23,6 +23,12 @@ func NewSlack(c *http.Client) *Slack {
 			Caller:         "hub-alert-slack",
 			Timeout:        10 * time.Second,
 			PropagateReqID: true,
+			// F-0370: the Slack incoming-webhook URL is admin-supplied and
+			// external by nature. Block every non-public address at dial time
+			// (loopback / RFC-1918 / link-local / metadata); the guard runs on
+			// the resolved IP so it also defeats DNS-rebinding. The fixed
+			// chat.postMessage path is on slack.com and unaffected.
+			DialControl: nexushttp.AdminEgressDialControl(nexushttp.AdminEgressExternalOnly),
 		})
 	}
 	return &Slack{c: c}

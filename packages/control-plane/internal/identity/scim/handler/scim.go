@@ -59,6 +59,7 @@ type scimTokenStore interface {
 	CreateScimIamGroup(ctx context.Context, name string, description *string, idpID, createdBy string) (*iamstore.GroupRow, error)
 	CreateIdpGroupMapping(ctx context.Context, p scimstore.CreateIdpGroupMappingParams) (*scimstore.IdpGroupMapping, error)
 	GetIamGroupSource(ctx context.Context, id string) (source string, idpID *string, err error)
+	UserOwnedByIdP(ctx context.Context, userID, idpID string) (bool, error)
 }
 
 // Handler handles SCIM 2.0 provisioning endpoints mounted at /scim/v2/.
@@ -194,6 +195,12 @@ func (h *Handler) ListUsers(c echo.Context) error {
 		email := strings.Trim(strings.TrimPrefix(f, "userName eq "), `"`)
 		params.Q = email
 	}
+	// Scope enumeration to the calling token's IdP so a per-IdP SCIM
+	// token cannot list (and harvest the ids/emails of) users owned by another
+	// IdP or local admins. A global/admin token (no IdP) is unrestricted.
+	if tok, ok := c.Get("scimToken").(*scimstore.ScimToken); ok && tok != nil {
+		params.OwnedByIdP = tok.IdentityProviderID
+	}
 
 	users, total, err := h.users.ListNexusUsers(ctx, params)
 	if err != nil {
@@ -215,12 +222,12 @@ func (h *Handler) ListUsers(c echo.Context) error {
 
 func (h *Handler) GetUser(c echo.Context) error {
 	ctx := c.Request().Context()
-	u, err := h.users.GetNexusUserSafe(ctx, c.Param("id"))
-	if err != nil {
-		return h.scimError(c, http.StatusInternalServerError, "internal error", "serverError")
-	}
+	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
+	// A SCIM token may only read users its own IdP provisioned. The
+	// guard writes the error response itself; a nil user means it denied.
+	u, errResp := h.assertScimUser(c, ctx, c.Param("id"), tok)
 	if u == nil {
-		return h.scimError(c, http.StatusNotFound, "user not found", "noTarget")
+		return errResp
 	}
 	return c.JSON(http.StatusOK, h.userToSCIM(u))
 }
@@ -296,6 +303,12 @@ func (h *Handler) ReplaceUser(c echo.Context) error {
 		return h.scimError(c, http.StatusBadRequest, "invalid request body", "invalidValue")
 	}
 
+	// Only the owning IdP's token may mutate this user.
+	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
+	if u, errResp := h.assertScimUser(c, ctx, id, tok); u == nil {
+		return errResp
+	}
+
 	active := body.Active == nil || *body.Active
 	status := "active"
 	if !active {
@@ -326,6 +339,13 @@ func (h *Handler) PatchUser(c echo.Context) error {
 		return h.scimError(c, http.StatusBadRequest, "invalid patch body", "invalidValue")
 	}
 
+	// Only the owning IdP's token may patch this user (blocks the
+	// cross-IdP email-rewrite account-takeover and active=false DoS).
+	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
+	if u, errResp := h.assertScimUser(c, ctx, id, tok); u == nil {
+		return errResp
+	}
+
 	params := userstore.UpdateNexusUserParams{}
 	for _, op := range body.Operations {
 		switch strings.ToLower(op.Op) {
@@ -349,6 +369,11 @@ func (h *Handler) PatchUser(c echo.Context) error {
 func (h *Handler) DeleteUser(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
+	// Only the owning IdP's token may deprovision this user.
+	tok, _ := c.Get("scimToken").(*scimstore.ScimToken)
+	if u, errResp := h.assertScimUser(c, ctx, id, tok); u == nil {
+		return errResp
+	}
 	// Deprovision = suspend, not hard delete.
 	status := "suspended"
 	_, err := h.users.UpdateNexusUser(ctx, id, userstore.UpdateNexusUserParams{Status: &status})
@@ -467,6 +492,42 @@ func (h *Handler) CreateGroup(c echo.Context) error {
 // clobbering a manually-configured admin group. Returns the source
 // row for the caller to use; non-nil error response is returned when
 // the check fails (handler should propagate as-is).
+// assertScimUser enforces SCIM per-user ownership, the User-path
+// equivalent of assertScimGroup. The target user must (1) exist, (2) be
+// SCIM-provisioned (Source == "scim"; local / oidc / saml accounts are
+// admin-managed and out of SCIM's reach), and (3) when the token is IdP-scoped,
+// be owned by the token's IdP via a UserFederatedIdentity link. Without this a
+// SCIM token minted for IdP-A could read, re-email (account takeover), suspend,
+// or deprovision any user — including local super-admins and users from IdP-B.
+// On success it returns the loaded user; otherwise the echo error to return.
+func (h *Handler) assertScimUser(c echo.Context, ctx context.Context, id string, tok *scimstore.ScimToken) (*userstore.NexusUserSafe, error) {
+	u, err := h.users.GetNexusUserSafe(ctx, id)
+	if err != nil {
+		return nil, h.scimError(c, http.StatusInternalServerError, "lookup user: "+err.Error(), "serverError")
+	}
+	if u == nil {
+		return nil, h.scimError(c, http.StatusNotFound, "user not found", "noTarget")
+	}
+	if u.Source != "scim" {
+		return nil, h.scimError(c, http.StatusForbidden,
+			"target NexusUser is admin-managed; SCIM cannot mutate it", "mutability")
+	}
+	// Token must own the user: the IdP that provisioned it is the only IdP
+	// allowed to keep managing it. A token with no IdP scope (a global/admin
+	// token) skips this check, mirroring assertScimGroup.
+	if tok != nil && tok.IdentityProviderID != nil && *tok.IdentityProviderID != "" {
+		owned, oerr := h.scim.UserOwnedByIdP(ctx, id, *tok.IdentityProviderID)
+		if oerr != nil {
+			return nil, h.scimError(c, http.StatusInternalServerError, "verify ownership: "+oerr.Error(), "serverError")
+		}
+		if !owned {
+			return nil, h.scimError(c, http.StatusForbidden,
+				"SCIM token's IdP does not own this user", "noPermission")
+		}
+	}
+	return u, nil
+}
+
 func (h *Handler) assertScimGroup(c echo.Context, ctx context.Context, id string, tok *scimstore.ScimToken) (source string, idpID *string, errResp error) {
 	src, ipid, err := h.scim.GetIamGroupSource(ctx, id)
 	if err != nil {

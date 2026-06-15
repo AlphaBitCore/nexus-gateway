@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 
@@ -344,5 +345,51 @@ func TestSmart_RouterReturnsProviderModelID_AmbiguousFallsBack(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].ModelID != "m-openai-mini" {
 		t.Fatalf("expected fallback default due to ambiguous providerModelId, got %+v", out)
+	}
+}
+
+// TestSmartConfig_TimeoutMsDefault (F-0237) — the built-in router-LLM timeout
+// default is 3000ms (3s). Smart routing sits on the request hot path, so the
+// default must be low; 10s would stall every smart-routed request behind a slow
+// router provider.
+func TestSmartConfig_TimeoutMsDefault(t *testing.T) {
+	cfg := &SmartConfig{} // TimeoutMs unset
+	if got := cfg.timeoutMs(); got != 3000 {
+		t.Fatalf("default timeoutMs = %d, want 3000", got)
+	}
+}
+
+// TestSmartConfig_TimeoutMsOverride (F-0237) — an operator-provided TimeoutMs
+// overrides the built-in default.
+func TestSmartConfig_TimeoutMsOverride(t *testing.T) {
+	cfg := &SmartConfig{TimeoutMs: 7500}
+	if got := cfg.timeoutMs(); got != 7500 {
+		t.Fatalf("override timeoutMs = %d, want 7500", got)
+	}
+}
+
+// TestSmart_DefaultTimeoutPropagatesToDecider (F-0237) — the 3s default flows
+// through Evaluate into the router-LLM call budget when the node omits TimeoutMs.
+func TestSmart_DefaultTimeoutPropagatesToDecider(t *testing.T) {
+	decider := &fakeDecider{
+		decision: llm.Decision{ModelID: "gpt-4o-mini", Reason: "best fit"},
+	}
+	candidates := []core.SmartModelRow{
+		{ModelID: "m-openai-mini", ModelName: "GPT-4o Mini", ProviderID: "p-openai", ProviderName: "openai", ProviderModelID: "gpt-4o-mini", ModelCode: "gpt-4o-mini"},
+	}
+	fx := newSmartFixture(t, decider, candidates)
+	node := core.StrategyNode{
+		RouterProviderID: "p-router",
+		RouterModelID:    "m-router",
+		// TimeoutMs intentionally omitted → built-in default applies.
+	}
+	trace := []core.TraceEntry{}
+	strat := &SmartStrategy{deps: fx.deps()}
+
+	if _, err := strat.Evaluate(context.Background(), node, aiChatRctx(), &trace, 0, nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if got := decider.lastReq.Timeout; got != 3000*time.Millisecond {
+		t.Fatalf("router-LLM Timeout = %v, want 3s", got)
 	}
 }

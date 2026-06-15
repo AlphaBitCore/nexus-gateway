@@ -7,25 +7,30 @@
 package estimator
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/metrics"
-	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // BillableUnits captures the per-endpoint resource consumption the cost
-// formula consumes. All fields are zero unless the relevant typology
-// produced them.
+// formula consumes.
+//
+// Only the two token fields every live cost path stamps are kept. The
+// registered formulas — chatCostFormula and embeddingsCostFormula — price
+// exclusively from PromptTokens + CompletionTokens, and all five proxy cost
+// call sites populate exactly these two (proxy_cache_hits.go,
+// proxy_responses.go, proxy_upstream.go). Reasoning tokens are already
+// folded into CompletionTokens by the upstream usage normalizer (all three
+// frontier providers bill reasoning at the output rate — see
+// metrics.CalculateCost), so a separate ReasoningTokens unit would be
+// double-priced or dead. Cache-read, image, audio, video, and batch-row
+// units were speculative fields no formula or call site ever set;
+// they are removed rather than carried as dead surface.
 type BillableUnits struct {
 	PromptTokens     int
 	CompletionTokens int
-	ReasoningTokens  int
-	CachedTokens     int
-	Images           int     // image-gen output count
-	AudioSeconds     float64 // TTS / STT
-	VideoSeconds     float64 // video-gen
-	Requests         int     // batch row count
 }
 
 // CostFormula returns the estimated USD cost for a request given its
@@ -44,17 +49,31 @@ var (
 	}
 )
 
+// unregisteredWarned dedupes the missing-formula warning to one log line
+// per endpoint string for the process lifetime, so a high-QPS stream of
+// stt / tts / image requests against a gap in the registry does not flood
+// the log while still surfacing the gap exactly once.
+var unregisteredWarned sync.Map // endpoint string -> struct{}
+
 // Lookup returns the CostFormula registered for the given endpoint kind
 // string. When no formula is found, the chat formula is returned as a
-// safe default so callers are never blocked on missing entries. Endpoint
-// strings match audit.Record.EndpointType — canonical typology kind
-// values ("chat", "embeddings", "stt", "tts", "image_generation",
-// "batch").
+// safe default so callers are never blocked on missing entries — but the
+// fallback is no longer silent: the first lookup of an unregistered
+// endpoint is logged at WARN so an operator can see that e.g. stt / tts /
+// image_generation traffic is being token-mispriced through the chat
+// formula until a dedicated formula is registered. Endpoint strings match
+// audit.Record.EndpointType — canonical typology kind values ("chat",
+// "embeddings", "stt", "tts", "image_generation", "batch").
 func Lookup(endpoint string) CostFormula {
 	formulaMu.RLock()
-	defer formulaMu.RUnlock()
-	if f, ok := formulaMap[endpoint]; ok {
+	f, ok := formulaMap[endpoint]
+	formulaMu.RUnlock()
+	if ok {
 		return f
+	}
+	if _, loaded := unregisteredWarned.LoadOrStore(endpoint, struct{}{}); !loaded {
+		slog.Warn("estimator: no cost formula registered for endpoint; falling back to chat formula (tokens may be mispriced)",
+			"endpoint", endpoint)
 	}
 	return chatCostFormula
 }
@@ -82,33 +101,7 @@ func chatCostFormula(u BillableUnits, prices metrics.ModelPrices) metrics.Cost {
 
 // embeddingsCostFormula prices embedding requests. Embeddings have no
 // completion tokens; cost = (promptTokens / 1M) × inputPricePerMillion.
-// CompletionTokens and all other BillableUnits fields are ignored.
+// CompletionTokens is ignored.
 func embeddingsCostFormula(u BillableUnits, prices metrics.ModelPrices) metrics.Cost {
 	return costForTokens(u.PromptTokens, 0, prices)
-}
-
-// costForUnits synthesises a provcore.Usage from the BillableUnits and
-// delegates to metrics.CalculateCost. Exposes the full cache-aware
-// arithmetic for callers that populate CachedTokens.
-func costForUnits(u BillableUnits, prices metrics.ModelPrices) metrics.Cost {
-	cacheRead := u.CachedTokens
-	prompt := u.PromptTokens
-	completion := u.CompletionTokens
-	reasoning := u.ReasoningTokens
-	usage := provcore.Usage{
-		PromptTokens:     &prompt,
-		CompletionTokens: &completion,
-		CacheReadTokens:  &cacheRead,
-		ReasoningTokens:  &reasoning,
-	}
-	return metrics.CalculateCost(usage, prices)
-}
-
-// CostForUnitsExported is the exported test-accessible entry point for
-// costForUnits. Used by unit tests to verify cache-aware cost accounting
-// in the BillableUnits path without requiring an end-to-end request.
-// Not intended for production call sites outside the estimator package —
-// use Lookup(endpoint)(units, prices) for dispatched cost calculation.
-func CostForUnitsExported(u BillableUnits, prices metrics.ModelPrices) metrics.Cost {
-	return costForUnits(u, prices)
 }

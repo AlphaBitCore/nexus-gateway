@@ -104,6 +104,13 @@ func registerCPLogLevel(l *cfgloader.Loader, d configDispatchDeps) {
 		Key:   "log_level",
 		Parse: cfgloader.ParseJSON[cpLogLevelState](),
 		Apply: func(ctx context.Context, v cpLogLevelState, ver int64) ([]byte, error) {
+			// An empty level (blank/null/{} tick, or an explicit empty
+			// string) is a no-op — matching ai-gateway. SetLevel("") parses
+			// to LevelInfo and would silently reset the live level, clobbering
+			// a boot-time debug.
+			if v.Level == "" {
+				return nil, nil
+			}
 			applied := logging.SetLevel(v.Level)
 			d.Logger.Info("log level updated via shadow",
 				"requested", v.Level,

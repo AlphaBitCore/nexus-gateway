@@ -266,6 +266,60 @@ func TestSingleflight_DifferentInputsDontCoalesce(t *testing.T) {
 	}
 }
 
+// TestSingleflight_JoinersDoNotTouchBreaker is the F-0231(d) regression guard.
+// A failing leader with N identical-input joiners must leave the breaker with
+// exactly ONE recorded failure: the leader's. The prior bug had each joiner
+// call RecordSuccess() before the leader resolved, which reset failureCount to
+// 0 on every joiner — diluting the failure window and delaying (or preventing)
+// the breaker from tripping under an identical-input burst.
+func TestSingleflight_JoinersDoNotTouchBreaker(t *testing.T) {
+	var callCount atomic.Int64
+	// Server returns 500 after a 60ms delay so joiners attach while the leader
+	// is still in flight, then the leader's call fails.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+		time.Sleep(60 * time.Millisecond)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
+	}))
+	defer srv.Close()
+
+	client := embeddings.NewClient(
+		&http.Client{Timeout: 5 * time.Second},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"nexus_test_breaker",
+	)
+	reg := newNopRegistry()
+	sf := NewEmbeddingSingleflight(client, reg, 5*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	const concurrency = 20
+	req := embeddings.Request{Model: "m", Input: "shared-input", Dimensions: 4}
+
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for range concurrency {
+		go func() {
+			defer wg.Done()
+			_, _ = sf.Embed(context.Background(), "openai-brk", srv.URL, "m", "", req)
+		}()
+	}
+	wg.Wait()
+
+	// Exactly one upstream call (coalesced) → exactly one real outcome.
+	if n := callCount.Load(); n != 1 {
+		t.Fatalf("upstream call count = %d, want 1", n)
+	}
+
+	cb := reg.Get("openai-brk", "m")
+	cb.mu.Lock()
+	fc := cb.failureCount
+	cb.mu.Unlock()
+	// The leader failed once; no joiner success-reset should have wiped it.
+	if fc != 1 {
+		t.Errorf("breaker failureCount = %d, want 1 (joiners must not record success/failure)", fc)
+	}
+}
+
 // TestEmbeddingKey_ModelIncluded verifies that embeddingKey includes the
 // model so cross-model inputs produce different keys.
 func TestEmbeddingKey_ModelIncluded(t *testing.T) {

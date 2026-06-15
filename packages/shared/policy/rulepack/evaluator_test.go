@@ -2,6 +2,7 @@
 package rulepack
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
@@ -88,5 +89,58 @@ func TestEvaluate_CapturesMatchedText(t *testing.T) {
 	matches := Evaluate(pack, rules, blocks)
 	if len(matches) != 1 || matches[0].MatchedText != "abc123" {
 		t.Errorf("MatchedText: %+v", matches)
+	}
+}
+
+// --- F-0276: dry-run must surface compile errors, not swallow them ----------
+
+func TestEvaluateWithErrors_InvalidPatternSurfaced(t *testing.T) {
+	pack := Pack{Name: "n/p", Version: "v1"}
+	rules := []Rule{
+		{RuleID: "good", Category: "c", Severity: "hard", Pattern: `\bsecret\b`},
+		{RuleID: "bad", Category: "c", Severity: "hard", Pattern: `(`}, // unterminated group
+	}
+	blocks := []core.ContentBlock{{Text: "this is secret"}}
+
+	matches, compileErrs := EvaluateWithErrors(pack, rules, blocks)
+
+	// The good rule still matches.
+	if len(matches) != 1 || matches[0].RuleLocalID != "good" {
+		t.Fatalf("good rule should match; got %+v", matches)
+	}
+	// The bad rule is reported, not silently dropped.
+	if len(compileErrs) != 1 {
+		t.Fatalf("expected 1 compile error; got %d: %+v", len(compileErrs), compileErrs)
+	}
+	if compileErrs[0].RuleID != "bad" || compileErrs[0].Index != 1 {
+		t.Errorf("compile error identity wrong; got %+v", compileErrs[0])
+	}
+	if !strings.Contains(compileErrs[0].Reason, "invalid pattern") {
+		t.Errorf("reason should mention invalid pattern; got %q", compileErrs[0].Reason)
+	}
+}
+
+func TestEvaluateWithErrors_AllValidReturnsNilErrors(t *testing.T) {
+	pack := Pack{Name: "n/p", Version: "v1"}
+	rules := []Rule{{RuleID: "r", Category: "c", Severity: "hard", Pattern: `abc`}}
+	blocks := []core.ContentBlock{{Text: "abc here"}}
+
+	matches, compileErrs := EvaluateWithErrors(pack, rules, blocks)
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match, got %d", len(matches))
+	}
+	if compileErrs != nil {
+		t.Errorf("compileErrs should be nil when every rule compiles; got %+v", compileErrs)
+	}
+}
+
+func TestEvaluate_StillSwallowsForHotPath(t *testing.T) {
+	// The thin Evaluate wrapper keeps the runtime hot-path behaviour: a bad
+	// pattern is skipped and only matches are returned (no error surface).
+	pack := Pack{Name: "n/p", Version: "v1"}
+	rules := []Rule{{RuleID: "bad", Category: "c", Severity: "hard", Pattern: `(`}}
+	blocks := []core.ContentBlock{{Text: "anything"}}
+	if got := Evaluate(pack, rules, blocks); len(got) != 0 {
+		t.Errorf("hot-path Evaluate should skip bad rule and return no matches; got %+v", got)
 	}
 }

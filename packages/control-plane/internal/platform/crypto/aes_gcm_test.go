@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 )
 
 // discardLogger returns a slog.Logger that drops all output, suitable for
@@ -33,6 +35,39 @@ func TestNewVault_InvalidKeyLength(t *testing.T) {
 	}
 }
 
+// TestEncryptDecrypt_AADBinding_DefeatsCrossCredentialSwap is the SEC-C1-02
+// regression: a ciphertext sealed under credential A's row-identity AAD must NOT
+// decrypt under credential B's AAD. This is exactly the confused-deputy a DB-write
+// attacker tries — copying A's encrypted columns into B's row to make B's identity
+// drive A's (higher-privilege) upstream key. With AAD binding the swap fails GCM
+// authentication instead of silently yielding A's plaintext.
+func TestEncryptDecrypt_AADBinding_DefeatsCrossCredentialSwap(t *testing.T) {
+	v, err := NewVault(testKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aadA := keyderive.ProviderCredentialAAD("cred-A", "prov-A")
+	aadB := keyderive.ProviderCredentialAAD("cred-B", "prov-B")
+
+	enc, err := v.Encrypt("sk-high-privilege-key", aadA)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	// Correct AAD opens it.
+	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, aadA)
+	if err != nil || got != "sk-high-privilege-key" {
+		t.Fatalf("same-AAD decrypt must succeed: got %q err=%v", got, err)
+	}
+	// The swap: same ciphertext, a DIFFERENT credential's AAD → must be rejected.
+	if _, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, aadB); err == nil {
+		t.Fatal("SEC-C1-02 broken: ciphertext sealed for cred-A decrypted under cred-B's AAD (cross-credential swap not blocked)")
+	}
+	// A nil-AAD open (the pre-fix behavior) must also fail now.
+	if _, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, nil); err == nil {
+		t.Fatal("SEC-C1-02 broken: AAD-bound ciphertext opened with nil AAD")
+	}
+}
+
 func TestEncryptDecrypt_RoundTrip(t *testing.T) {
 	v, err := NewVault(testKey(t))
 	if err != nil {
@@ -40,7 +75,7 @@ func TestEncryptDecrypt_RoundTrip(t *testing.T) {
 	}
 
 	plaintext := "sk-test-api-key-1234567890"
-	enc, err := v.Encrypt(plaintext)
+	enc, err := v.Encrypt(plaintext, nil)
 	if err != nil {
 		t.Fatal("encrypt:", err)
 	}
@@ -70,7 +105,7 @@ func TestEncryptDecrypt_RoundTrip(t *testing.T) {
 	}
 
 	// Decrypt
-	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag)
+	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err != nil {
 		t.Fatal("decrypt:", err)
 	}
@@ -83,9 +118,9 @@ func TestDecrypt_WrongKey(t *testing.T) {
 	v1, _ := NewVault(testKey(t))
 	v2, _ := NewVault(testKey(t))
 
-	enc, _ := v1.Encrypt("secret")
+	enc, _ := v1.Encrypt("secret", nil)
 
-	_, err := v2.Decrypt(enc.Ciphertext, enc.IV, enc.Tag)
+	_, err := v2.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err == nil {
 		t.Fatal("expected decrypt error with wrong key")
 	}
@@ -93,14 +128,14 @@ func TestDecrypt_WrongKey(t *testing.T) {
 
 func TestDecrypt_TamperedCiphertext(t *testing.T) {
 	v, _ := NewVault(testKey(t))
-	enc, _ := v.Encrypt("secret")
+	enc, _ := v.Encrypt("secret", nil)
 
 	// Flip a byte in the ciphertext
 	ct, _ := hex.DecodeString(enc.Ciphertext)
 	ct[0] ^= 0xff
 	tampered := hex.EncodeToString(ct)
 
-	_, err := v.Decrypt(tampered, enc.IV, enc.Tag)
+	_, err := v.Decrypt(tampered, enc.IV, enc.Tag, nil)
 	if err == nil {
 		t.Fatal("expected decrypt error with tampered ciphertext")
 	}
@@ -108,14 +143,14 @@ func TestDecrypt_TamperedCiphertext(t *testing.T) {
 
 func TestDecrypt_TamperedTag(t *testing.T) {
 	v, _ := NewVault(testKey(t))
-	enc, _ := v.Encrypt("secret")
+	enc, _ := v.Encrypt("secret", nil)
 
 	// Flip a byte in the tag
 	tag, _ := hex.DecodeString(enc.Tag)
 	tag[0] ^= 0xff
 	tampered := hex.EncodeToString(tag)
 
-	_, err := v.Decrypt(enc.Ciphertext, enc.IV, tampered)
+	_, err := v.Decrypt(enc.Ciphertext, enc.IV, tampered, nil)
 	if err == nil {
 		t.Fatal("expected decrypt error with tampered tag")
 	}
@@ -124,8 +159,8 @@ func TestDecrypt_TamperedTag(t *testing.T) {
 func TestEncrypt_UniqueIV(t *testing.T) {
 	v, _ := NewVault(testKey(t))
 
-	enc1, _ := v.Encrypt("same plaintext")
-	enc2, _ := v.Encrypt("same plaintext")
+	enc1, _ := v.Encrypt("same plaintext", nil)
+	enc2, _ := v.Encrypt("same plaintext", nil)
 
 	if enc1.IV == enc2.IV {
 		t.Fatal("IVs should be unique across encryptions")
@@ -138,12 +173,12 @@ func TestEncrypt_UniqueIV(t *testing.T) {
 func TestEncrypt_EmptyString(t *testing.T) {
 	v, _ := NewVault(testKey(t))
 
-	enc, err := v.Encrypt("")
+	enc, err := v.Encrypt("", nil)
 	if err != nil {
 		t.Fatal("encrypt empty string:", err)
 	}
 
-	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag)
+	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err != nil {
 		t.Fatal("decrypt empty string:", err)
 	}
@@ -162,12 +197,12 @@ func TestEncrypt_LongPlaintext(t *testing.T) {
 	}
 	plaintext := string(long)
 
-	enc, err := v.Encrypt(plaintext)
+	enc, err := v.Encrypt(plaintext, nil)
 	if err != nil {
 		t.Fatal("encrypt long:", err)
 	}
 
-	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag)
+	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err != nil {
 		t.Fatal("decrypt long:", err)
 	}
@@ -196,6 +231,86 @@ func TestNewMultiVault_Basic(t *testing.T) {
 	}
 	if mv.CurrentKeyID() != "v2" {
 		t.Fatalf("current key: got %q, want %q", mv.CurrentKeyID(), "v2")
+	}
+}
+
+// TestNewMultiVault_ExplicitCurrentMarker is the F-0090 regression: an
+// entry prefixed with "*" is the current (encryption) key regardless of
+// its position. Here v1 is marked current even though v3 is last, so a
+// new encryption must use v1 — proving current selection is no longer
+// order-dependent.
+func TestNewMultiVault_ExplicitCurrentMarker(t *testing.T) {
+	k1, k2, k3 := testHexKey(t), testHexKey(t), testHexKey(t)
+	mv, err := NewMultiVault("*v1:"+k1+",v2:"+k2+",v3:"+k3, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mv.CurrentKeyID() != "v1" {
+		t.Fatalf("current key: got %q, want v1 (explicit '*' marker must win over last-entry)", mv.CurrentKeyID())
+	}
+	_, keyID, err := mv.Encrypt("secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keyID != "v1" {
+		t.Fatalf("encrypt used key %q, want v1 (marked current)", keyID)
+	}
+}
+
+// TestNewMultiVault_MarkerWinsOverPosition pins that prepending a new key
+// without re-marking does NOT change the current key when an explicit
+// marker is present — the operator hazard F-0090 describes.
+func TestNewMultiVault_MarkerWinsOverPosition(t *testing.T) {
+	k1, k2 := testHexKey(t), testHexKey(t)
+	// New key knew prepended; the old key v_old is still marked current.
+	mv, err := NewMultiVault("knew:"+k1+",*vold:"+k2, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mv.CurrentKeyID() != "vold" {
+		t.Fatalf("current=%q want vold — prepending knew must not steal current from the marked key", mv.CurrentKeyID())
+	}
+}
+
+// TestNewMultiVault_NoMarkerLastWins documents the fallback: with no "*"
+// marker the last entry remains current (historical default).
+func TestNewMultiVault_NoMarkerLastWins(t *testing.T) {
+	k1, k2 := testHexKey(t), testHexKey(t)
+	mv, err := NewMultiVault("v1:"+k1+",v2:"+k2, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mv.CurrentKeyID() != "v2" {
+		t.Fatalf("current=%q want v2 (last-wins fallback)", mv.CurrentKeyID())
+	}
+}
+
+// TestNewMultiVault_MultipleMarkersError rejects an ambiguous config with
+// more than one "*"-marked entry.
+func TestNewMultiVault_MultipleMarkersError(t *testing.T) {
+	k1, k2 := testHexKey(t), testHexKey(t)
+	_, err := NewMultiVault("*v1:"+k1+",*v2:"+k2, slog.Default())
+	if err == nil {
+		t.Fatal("expected error for two '*'-marked current keys")
+	}
+}
+
+// TestNewMultiVault_DuplicateIDError rejects a map with the same id twice
+// (would silently overwrite a key otherwise).
+func TestNewMultiVault_DuplicateIDError(t *testing.T) {
+	k1, k2 := testHexKey(t), testHexKey(t)
+	_, err := NewMultiVault("v1:"+k1+",v1:"+k2, slog.Default())
+	if err == nil {
+		t.Fatal("expected error for duplicate key id")
+	}
+}
+
+// TestNewMultiVault_EmptyMarkedIDError rejects a bare "*" with no id.
+func TestNewMultiVault_EmptyMarkedIDError(t *testing.T) {
+	k1 := testHexKey(t)
+	_, err := NewMultiVault("*:"+k1, slog.Default())
+	if err == nil {
+		t.Fatal("expected error for empty key id after '*'")
 	}
 }
 
@@ -238,7 +353,7 @@ func TestMultiVault_EncryptDecrypt_RoundTrip(t *testing.T) {
 	}
 
 	plaintext := "sk-secret-key-12345"
-	enc, keyID, err := mv.Encrypt(plaintext)
+	enc, keyID, err := mv.Encrypt(plaintext, nil)
 	if err != nil {
 		t.Fatal("encrypt:", err)
 	}
@@ -246,7 +361,7 @@ func TestMultiVault_EncryptDecrypt_RoundTrip(t *testing.T) {
 		t.Fatalf("encrypt key ID: got %q, want %q", keyID, "v2")
 	}
 
-	got, err := mv.Decrypt(keyID, enc.Ciphertext, enc.IV, enc.Tag)
+	got, err := mv.Decrypt(keyID, enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err != nil {
 		t.Fatal("decrypt:", err)
 	}
@@ -264,7 +379,7 @@ func TestMultiVault_DecryptWithOldKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enc, keyID, err := mv1.Encrypt("old-secret")
+	enc, keyID, err := mv1.Encrypt("old-secret", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +394,7 @@ func TestMultiVault_DecryptWithOldKey(t *testing.T) {
 	}
 
 	// Should decrypt with v1 key
-	got, err := mv2.Decrypt("v1", enc.Ciphertext, enc.IV, enc.Tag)
+	got, err := mv2.Decrypt("v1", enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err != nil {
 		t.Fatal("decrypt with old key:", err)
 	}
@@ -294,31 +409,9 @@ func TestMultiVault_DecryptUnknownKeyID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = mv.Decrypt("v99", "aa", "bb", "cc")
+	_, err = mv.Decrypt("v99", "aa", "bb", "cc", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown key ID")
-	}
-}
-
-func TestDeriveKey(t *testing.T) {
-	key1, err := deriveKey("my-passphrase", "salt1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(key1) != 32 {
-		t.Fatalf("derived key length: got %d, want 32", len(key1))
-	}
-
-	// Same passphrase + salt = same key
-	key2, _ := deriveKey("my-passphrase", "salt1")
-	if hex.EncodeToString(key1) != hex.EncodeToString(key2) {
-		t.Fatal("same inputs should produce same key")
-	}
-
-	// Different salt = different key
-	key3, _ := deriveKey("my-passphrase", "salt2")
-	if hex.EncodeToString(key1) == hex.EncodeToString(key3) {
-		t.Fatal("different salts should produce different keys")
 	}
 }
 
@@ -328,9 +421,8 @@ func TestDeriveKey(t *testing.T) {
 //   - Explicit 64-hex EncryptionKey wins and decodes to a 32-byte master key.
 //   - Non-64-char key string → error before hex decode.
 //   - Invalid hex 64-char key → error from hex decode.
-//   - Empty key + passphrase → HKDF-derived key (default salt or provided salt).
-//   - Empty key + empty passphrase + Production=true → hard error.
-//   - Empty key + empty passphrase + Production=false → (nil, nil), allowing
+//   - Empty key + Production=true → hard error.
+//   - Empty key + Production=false → (nil, nil), allowing
 //     the caller to run without credential vault in dev.
 
 func TestInitVault_ExplicitHexKey_Success(t *testing.T) {
@@ -345,11 +437,11 @@ func TestInitVault_ExplicitHexKey_Success(t *testing.T) {
 	}
 
 	// Round-trip to confirm the decoded master key actually drives AES-GCM.
-	enc, err := v.Encrypt("payload")
+	enc, err := v.Encrypt("payload", nil)
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
-	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag)
+	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err != nil {
 		t.Fatalf("Decrypt failed: %v", err)
 	}
@@ -357,10 +449,28 @@ func TestInitVault_ExplicitHexKey_Success(t *testing.T) {
 		t.Fatalf("round-trip: got %q, want %q", got, "payload")
 	}
 
-	// The Vault must hold the exact bytes we passed in.
-	want, _ := hex.DecodeString(keyHex)
-	if hex.EncodeToString(v.masterKey) != hex.EncodeToString(want) {
-		t.Fatal("masterKey bytes do not match decoded hex input")
+	// SEC-W2-03: the Vault holds the HKDF-derived provider-credential sub-key,
+	// NOT the raw master — derived identically to the ai-gw open side.
+	masterBytes, _ := hex.DecodeString(keyHex)
+	wantSub, _ := keyderive.DeriveKey32(masterBytes, keyderive.ClassProviderCredential)
+	if hex.EncodeToString(v.key) != hex.EncodeToString(wantSub[:]) {
+		t.Fatal("Vault must hold the HKDF-derived provider sub-key, not the raw master")
+	}
+}
+
+// TestInitVault_RejectsWeakKey locks SEC-M2-02: a valid-hex, correct-length but
+// degenerate master key (all-zeros / a committed example) must fail closed at
+// boot rather than encrypting every credential under a guessable value.
+func TestInitVault_RejectsWeakKey(t *testing.T) {
+	weak := map[string]string{
+		"all-zero":      strings.Repeat("0", 64),
+		"committed-dev": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"single-repeat": strings.Repeat("ab", 32),
+	}
+	for name, keyHex := range weak {
+		if _, err := InitVault(VaultConfig{EncryptionKey: keyHex}, discardLogger()); err == nil {
+			t.Errorf("%s: expected weak-key rejection, got nil", name)
+		}
 	}
 }
 
@@ -386,65 +496,7 @@ func TestInitVault_HexKey_InvalidHex(t *testing.T) {
 	}
 }
 
-func TestInitVault_Passphrase_DefaultSalt(t *testing.T) {
-	v, err := InitVault(VaultConfig{EncryptionPassphrase: "correct-horse-battery-staple"}, discardLogger())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if v == nil {
-		t.Fatal("expected non-nil Vault for valid passphrase")
-		return
-	}
-
-	// The default salt is "nexus-gateway-default-salt"; verify by deriving
-	// the same key directly and comparing master-key bytes.
-	want, derr := deriveKey("correct-horse-battery-staple", "nexus-gateway-default-salt")
-	if derr != nil {
-		t.Fatal(derr)
-	}
-	if hex.EncodeToString(v.masterKey) != hex.EncodeToString(want) {
-		t.Fatal("masterKey must equal HKDF(passphrase, defaultSalt)")
-	}
-
-	// Encrypt/Decrypt round-trip — proves the key is actually usable.
-	enc, err := v.Encrypt("hello")
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
-	got, err := v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag)
-	if err != nil {
-		t.Fatalf("Decrypt: %v", err)
-	}
-	if got != "hello" {
-		t.Fatalf("round-trip: got %q", got)
-	}
-}
-
-func TestInitVault_Passphrase_CustomSalt(t *testing.T) {
-	v, err := InitVault(VaultConfig{
-		EncryptionPassphrase: "secret-pass",
-		EncryptionSalt:       "my-custom-salt",
-	}, discardLogger())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if v == nil {
-		t.Fatal("expected non-nil Vault")
-		return
-	}
-
-	// Must equal HKDF(passphrase, customSalt), not the default-salt derivation.
-	want, _ := deriveKey("secret-pass", "my-custom-salt")
-	if hex.EncodeToString(v.masterKey) != hex.EncodeToString(want) {
-		t.Fatal("masterKey should be HKDF(passphrase, customSalt)")
-	}
-	withDefault, _ := deriveKey("secret-pass", "nexus-gateway-default-salt")
-	if hex.EncodeToString(v.masterKey) == hex.EncodeToString(withDefault) {
-		t.Fatal("custom salt must yield a different key than the default salt")
-	}
-}
-
-func TestInitVault_NoKeyNoPassphrase_NonProduction_ReturnsNil(t *testing.T) {
+func TestInitVault_NoKey_NonProduction_ReturnsNil(t *testing.T) {
 	v, err := InitVault(VaultConfig{Production: false}, discardLogger())
 	if err != nil {
 		t.Fatalf("non-production with no key should not error, got: %v", err)
@@ -454,10 +506,10 @@ func TestInitVault_NoKeyNoPassphrase_NonProduction_ReturnsNil(t *testing.T) {
 	}
 }
 
-func TestInitVault_NoKeyNoPassphrase_Production_Errors(t *testing.T) {
+func TestInitVault_NoKey_Production_Errors(t *testing.T) {
 	_, err := InitVault(VaultConfig{Production: true}, discardLogger())
 	if err == nil {
-		t.Fatal("production with no key and no passphrase must error")
+		t.Fatal("production with no key must error")
 	}
 	if !strings.Contains(err.Error(), "required in production") {
 		t.Fatalf("error should mention production requirement, got: %v", err)
@@ -486,7 +538,7 @@ func TestEncrypt_GCMFactoryFailure(t *testing.T) {
 	newGCM = func(_ cipher.Block) (cipher.AEAD, error) { return nil, sentinel }
 
 	v, _ := NewVault(testKey(t))
-	_, err := v.Encrypt("payload")
+	_, err := v.Encrypt("payload", nil)
 	if err == nil {
 		t.Fatal("expected error when GCM factory fails")
 	}
@@ -501,7 +553,7 @@ func TestEncrypt_GCMFactoryFailure(t *testing.T) {
 func TestDecrypt_GCMFactoryFailure(t *testing.T) {
 	v, _ := NewVault(testKey(t))
 	// Generate a real ciphertext first so the hex-decode branches all pass.
-	enc, err := v.Encrypt("payload")
+	enc, err := v.Encrypt("payload", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +564,7 @@ func TestDecrypt_GCMFactoryFailure(t *testing.T) {
 	sentinel := errors.New("synthetic gcm failure")
 	newGCM = func(_ cipher.Block) (cipher.AEAD, error) { return nil, sentinel }
 
-	_, err = v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag)
+	_, err = v.Decrypt(enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err == nil {
 		t.Fatal("expected error when GCM factory fails")
 	}
@@ -532,7 +584,7 @@ func TestEncrypt_IVGenerationFailure(t *testing.T) {
 	randReader = failingReader{err: sentinel}
 
 	v, _ := NewVault(testKey(t))
-	_, err := v.Encrypt("payload")
+	_, err := v.Encrypt("payload", nil)
 	if err == nil {
 		t.Fatal("expected error when entropy source fails")
 	}
@@ -548,8 +600,8 @@ func TestEncrypt_IVGenerationFailure(t *testing.T) {
 
 func TestEncrypt_InvalidMasterKeyLength_FailsCipher(t *testing.T) {
 	// 17-byte key — AES requires 16/24/32, so NewCipher returns an error.
-	v := &Vault{masterKey: make([]byte, 17)}
-	_, err := v.Encrypt("payload")
+	v := &Vault{key: make([]byte, 17)}
+	_, err := v.Encrypt("payload", nil)
 	if err == nil {
 		t.Fatal("expected error when masterKey has invalid AES length")
 	}
@@ -559,11 +611,11 @@ func TestEncrypt_InvalidMasterKeyLength_FailsCipher(t *testing.T) {
 }
 
 func TestDecrypt_InvalidMasterKeyLength_FailsCipher(t *testing.T) {
-	v := &Vault{masterKey: make([]byte, 17)}
+	v := &Vault{key: make([]byte, 17)}
 	// Inputs hex-valid AND length-valid (IV=12B, tag=16B) so we reach
 	// the cipher init path; the 17-byte master key is what aes.NewCipher
 	// rejects.
-	_, err := v.Decrypt("aabb", strings.Repeat("01", 12), strings.Repeat("02", 16))
+	_, err := v.Decrypt("aabb", strings.Repeat("01", 12), strings.Repeat("02", 16), nil)
 	if err == nil {
 		t.Fatal("expected error when masterKey has invalid AES length")
 	}
@@ -574,7 +626,7 @@ func TestDecrypt_InvalidMasterKeyLength_FailsCipher(t *testing.T) {
 
 func TestDecrypt_InvalidCiphertextHex(t *testing.T) {
 	v, _ := NewVault(testKey(t))
-	_, err := v.Decrypt("zz", "0102030405060708090a0b0c", strings.Repeat("ab", 16))
+	_, err := v.Decrypt("zz", "0102030405060708090a0b0c", strings.Repeat("ab", 16), nil)
 	if err == nil {
 		t.Fatal("expected error for non-hex ciphertext")
 	}
@@ -585,7 +637,7 @@ func TestDecrypt_InvalidCiphertextHex(t *testing.T) {
 
 func TestDecrypt_InvalidIVHex(t *testing.T) {
 	v, _ := NewVault(testKey(t))
-	_, err := v.Decrypt("aabb", "zz", strings.Repeat("ab", 16))
+	_, err := v.Decrypt("aabb", "zz", strings.Repeat("ab", 16), nil)
 	if err == nil {
 		t.Fatal("expected error for non-hex IV")
 	}
@@ -596,7 +648,7 @@ func TestDecrypt_InvalidIVHex(t *testing.T) {
 
 func TestDecrypt_InvalidTagHex(t *testing.T) {
 	v, _ := NewVault(testKey(t))
-	_, err := v.Decrypt("aabb", "0102030405060708090a0b0c", "zz")
+	_, err := v.Decrypt("aabb", "0102030405060708090a0b0c", "zz", nil)
 	if err == nil {
 		t.Fatal("expected error for non-hex tag")
 	}
@@ -624,7 +676,7 @@ func TestDecrypt_WrongIVLength(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := v.Decrypt("aabbccdd", tc.iv, strings.Repeat("ef", 16))
+			_, err := v.Decrypt("aabbccdd", tc.iv, strings.Repeat("ef", 16), nil)
 			if err == nil {
 				t.Fatalf("expected error for IV of length %d, got nil", len(tc.iv)/2)
 			}
@@ -652,7 +704,7 @@ func TestDecrypt_WrongTagLength(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := v.Decrypt("aabbccdd", strings.Repeat("12", 12), tc.tag)
+			_, err := v.Decrypt("aabbccdd", strings.Repeat("12", 12), tc.tag, nil)
 			if err == nil {
 				t.Fatalf("expected error for tag of length %d, got nil", len(tc.tag)/2)
 			}
@@ -699,11 +751,11 @@ func TestNewMultiVault_TrimsWhitespace(t *testing.T) {
 	}
 
 	// And the key actually works for round-trip.
-	enc, _, err := mv.Encrypt("payload")
+	enc, _, err := mv.Encrypt("payload", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := mv.Decrypt("v1", enc.Ciphertext, enc.IV, enc.Tag)
+	got, err := mv.Decrypt("v1", enc.Ciphertext, enc.IV, enc.Tag, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

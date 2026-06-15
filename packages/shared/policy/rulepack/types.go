@@ -13,7 +13,6 @@ type Pack struct {
 	Version     string    `json:"version" yaml:"version"`
 	Maintainer  string    `json:"maintainer" yaml:"maintainer"`
 	Description string    `json:"description,omitempty" yaml:"description,omitempty"`
-	Signature   string    `json:"signature,omitempty" yaml:"signature,omitempty"`
 	CreatedAt   time.Time `json:"createdAt,omitempty" yaml:"-"`
 	Rules       []Rule    `json:"rules" yaml:"rules"`
 }

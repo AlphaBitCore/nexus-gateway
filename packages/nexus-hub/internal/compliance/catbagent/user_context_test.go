@@ -45,7 +45,8 @@ func TestUserContext_Load_EmptyThingIDReturnsEmpty(t *testing.T) {
 
 // TestUserContext_Load_ActiveAssignment covers the happy path:
 // active DeviceAssignment row → user info + org tree resolve →
-// version is max(user.updatedAt, org.updatedAt).UnixNano().
+// version is timestampVersion(max(user.updatedAt, org.updatedAt)),
+// i.e. unix-seconds matching every sibling Cat B loader.
 func TestUserContext_Load_ActiveAssignment(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -74,8 +75,11 @@ func TestUserContext_Load_ActiveAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if ver != orgUpdated.UnixNano() {
-		t.Errorf("version = %d, want %d (max of user + org)", ver, orgUpdated.UnixNano())
+	if ver != timestampVersion(orgUpdated) {
+		t.Errorf("version = %d, want %d (max of user + org, unix-seconds)", ver, timestampVersion(orgUpdated))
+	}
+	if ver <= 0 {
+		t.Errorf("real timestamps must yield a positive version; got %d", ver)
 	}
 
 	raw, _ := json.Marshal(state)
@@ -177,6 +181,45 @@ func TestUserContext_Load_NoUserUsesDefaultOrg(t *testing.T) {
 	}
 	if len(got.Organizations) != 1 || got.Organizations[0].ID != "default" {
 		t.Errorf("default org chain: %+v", got.Organizations)
+	}
+}
+
+// TestUserContext_Load_ZeroTimestampsReturnsZeroVersion is the
+// F-0118 regression guard: when both assignment queries miss and the
+// resolved org rows carry zero-valued updatedAt timestamps, updatedAt
+// stays time.Time{}. The loader MUST report version 0 (via
+// timestampVersion's zero-guard), never the large NEGATIVE epoch-
+// predecessor that a raw UnixNano() on a zero time produces. A
+// negative version would make the configloader treat real later
+// pushes as stale.
+func TestUserContext_Load_ZeroTimestampsReturnsZeroVersion(t *testing.T) {
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+
+	// No active assignment, no past assignment → no user, falls back to
+	// orgID="default". The default org row carries a ZERO updatedAt.
+	mock.ExpectQuery(`FROM "DeviceAssignment".*"releasedAt" IS NULL`).
+		WithArgs("device-zero").
+		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectQuery(`FROM "DeviceAssignment".*COALESCE.*releasedAt`).
+		WithArgs("device-zero").
+		WillReturnError(pgx.ErrNoRows)
+	mock.ExpectQuery(`SELECT path FROM "Organization"`).
+		WithArgs("default").
+		WillReturnRows(pgxmock.NewRows([]string{"path"}).AddRow("/default/"))
+	mock.ExpectQuery(`FROM "Organization".*ANY`).
+		WithArgs([]string{"default"}).
+		WillReturnRows(pgxmock.NewRows(orgNodeCols).AddRow(
+			"default", "Default", "DEFAULT", "", "/default/", "", "UTC", time.Time{},
+		))
+
+	l := NewAgentUserContextLoader(mock, nil)
+	_, ver, err := l.Load(context.Background(), "device-zero")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if ver != 0 {
+		t.Fatalf("zero timestamps must yield version=0; got %d (negative = the F-0118 bug)", ver)
 	}
 }
 

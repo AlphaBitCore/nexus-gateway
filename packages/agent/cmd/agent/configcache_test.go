@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -249,5 +250,56 @@ func TestRestoreCachedConfig_StaleEntryStillAppliedWithWarning(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "stale") {
 		t.Errorf("expected a stale-config warning; log was %q", buf.String())
+	}
+}
+
+func TestOpenAndRestoreConfigCache_PublishesCacheAndReplays(t *testing.T) {
+	// Pre-populate a cache on the DB, then run the boot-time open+restore:
+	// the atomic pointer must be published (so the loader's persist wrappers
+	// start mirroring) and the cached entry replayed through its applier.
+	seed, db := newOfflineCacheForTest(t)
+	if err := seed.Save("hooks", json.RawMessage(`{"a":1}`), 3); err != nil {
+		t.Fatal(err)
+	}
+
+	var ptr atomic.Pointer[shadow.Cache]
+	applied := false
+	openAndRestoreConfigCache(context.Background(), db, &ptr, map[string]rawApply{
+		"hooks": func(_ context.Context, raw []byte, ver int64) ([]byte, error) {
+			if string(raw) != `{"a":1}` || ver != 3 {
+				t.Errorf("applier got raw=%q ver=%d, want the cached entry", raw, ver)
+			}
+			applied = true
+			return nil, nil
+		},
+	}, discardCacheLogger())
+
+	if ptr.Load() == nil {
+		t.Error("config cache must be published for the persist wrappers")
+	}
+	if !applied {
+		t.Error("cached entry must be replayed at boot")
+	}
+}
+
+func TestOpenAndRestoreConfigCache_OpenFailureDisablesRestore(t *testing.T) {
+	// A closed DB means the cache cannot open: restore is disabled (pointer
+	// stays nil) but boot continues — offline restore is best-effort.
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	var ptr atomic.Pointer[shadow.Cache]
+	openAndRestoreConfigCache(context.Background(), db, &ptr, map[string]rawApply{
+		"hooks": func(context.Context, []byte, int64) ([]byte, error) {
+			t.Error("no applier may run when the cache failed to open")
+			return nil, nil
+		},
+	}, discardCacheLogger())
+
+	if ptr.Load() != nil {
+		t.Error("failed open must leave the cache pointer nil")
 	}
 }

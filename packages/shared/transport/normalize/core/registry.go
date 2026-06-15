@@ -1,17 +1,11 @@
 package core
 
 import (
-	"bytes"
-	"compress/gzip"
-	"compress/zlib"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
-
-	"github.com/klauspost/compress/zstd"
 )
 
 // Registry is a goroutine-safe, freezable registry of Normalizer
@@ -40,6 +34,14 @@ type Registry struct {
 	// and falls straight from Tier 1 to Tier 3.
 	tier2  Normalizer
 	frozen bool
+
+	// sniffers is the Tier-1.5 walk: Normalizers that also implement
+	// Sniffer, offered (in registration order) traffic whose keyed
+	// Tier-1 candidates all missed or declined. Most-specific wire
+	// shapes register first so a distinctive framing (e.g. an Anthropic
+	// `event: message_start` stream) is probed before looser JSON-field
+	// discriminators.
+	sniffers []Normalizer
 
 	// confidenceThreshold sets the minimum payload.Confidence value a
 	// normalizer must report for the Coordinator to claim its output as
@@ -93,6 +95,33 @@ func (r *Registry) RegisterTier2(n Normalizer) {
 		panic("normalize: RegisterTier2 on frozen registry")
 	}
 	r.tier2 = n
+}
+
+// RegisterSniffer enrolls n in the Tier-1.5 sniff walk: after every
+// keyed Tier-1 candidate has missed or declined a body, the registry
+// asks each registered sniffer whether the leading bytes look like its
+// wire format, and on a match runs the Tier-1 claim contract with hard
+// errors demoted to soft fall-through (sniff evidence is weaker than a
+// routing key). Registration order is probe order — register the
+// most distinctive wire shape first. n must also implement Sniffer;
+// panics otherwise, and on a frozen registry. Re-registering the same
+// normalizer is a no-op so builders can wire aliases without
+// double-walking.
+func (r *Registry) RegisterSniffer(n Normalizer) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frozen {
+		panic("normalize: RegisterSniffer on frozen registry")
+	}
+	if _, ok := n.(Sniffer); !ok {
+		panic(fmt.Sprintf("normalize: RegisterSniffer(%q): normalizer does not implement Sniffer", n.ID()))
+	}
+	for _, existing := range r.sniffers {
+		if existing == n {
+			return
+		}
+	}
+	r.sniffers = append(r.sniffers, n)
 }
 
 // Register adds a normalizer under the given routing key. Panics if
@@ -188,6 +217,17 @@ func (r *Registry) Resolve(meta Meta) Normalizer {
 //	         (normalizers that do not set Confidence terminate the walk
 //	         on success).
 //
+//	Tier 1.5 — sniff walk. Normalizers enrolled via RegisterSniffer are
+//	         offered the body (in registration order) when every keyed
+//	         candidate missed or declined: each sniffer's LooksLike
+//	         probes the leading bytes, and a match runs the Tier-1
+//	         claim contract with one difference — a hard parse error is
+//	         demoted to soft fall-through (sniff evidence is weaker
+//	         than a routing key; see tryClaim). This is how
+//	         capture-side traffic whose AdapterType carries a host or
+//	         tool name (so no key resolves) still lands on the
+//	         full-fidelity codec instead of the pattern probe.
+//
 //	Tier 2 — pattern-based extraction. Multi-spec probe + SSE walker +
 //	         JSON-patch accumulator. Recognises common chat shapes by
 //	         byte-level pattern regardless of the producer's adapter_type
@@ -221,6 +261,7 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 			tier1 = append(tier1, n)
 		}
 	}
+	sniffers := r.sniffers
 	tier2 := r.tier2
 	tier3 := r.entries["*:*:*"]
 	threshold := r.confidenceThreshold
@@ -249,14 +290,44 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 	var bestPartial NormalizedPayload
 	var bestConf float64
 
-	// Tier 1: keyed lookups
-	for _, n := range tier1 {
+	// tryClaim runs one normalizer under the shared Tier-1 / Tier-1.5
+	// claim contract: claim at >= threshold, soft fall-through below it
+	// (tracking bestPartial), keep walking on ErrUnsupported. Hard
+	// (non-ErrUnsupported) errors split by evidence strength:
+	//
+	//   - Keyed Tier-1 (demoteHardError=false): stop the whole walk. The
+	//     routing key is strong evidence the body IS this normalizer's
+	//     wire, so a parse failure means the bytes themselves are broken
+	//     — further tiers can't do better with the same malformed bytes.
+	//   - Tier-1.5 sniff (demoteHardError=true): demote to soft
+	//     fall-through. A LooksLike byte probe is weak evidence — a
+	//     foreign protocol that happens to carry the probed marker, or a
+	//     truncated body, would otherwise abort the walk and lose the
+	//     Tier-2 / Tier-3 structural projection the row could still get.
+	//     The errored payload is kept as bestPartial only when it
+	//     carries explicit confidence (no zero→1.0 promotion: an errored
+	//     zero payload must not outrank real partials).
+	//
+	// done=true means the walk ends with (payload, err) as the final
+	// answer.
+	tryClaim := func(n Normalizer, claimMsg string, demoteHardError bool) (NormalizedPayload, error, bool) {
 		payload, err := n.Normalize(ctx, raw, meta)
 		payload = stamp(payload)
 		if err == nil {
 			c := effConf(payload)
-			if c >= threshold {
-				slog.Info("normalize: tier1 CLAIM",
+			// Host selection evidence bypasses the confidence threshold:
+			// the threshold exists to catch a routing key that lied about
+			// the wire, but an adapter resolved by interception-domain
+			// host match IS the source of truth for "this is adapter X
+			// traffic" — its decode coverage may legitimately sit below
+			// the threshold (single-prompt consumer-web specs extract the
+			// prompt and nothing else, ~0.6 by design) and the honest
+			// coverage value must reach the row instead of an inflated
+			// floor. The payload's SelectionEvidence field carries the
+			// same fact to the UI, which renders a host-matched label in
+			// place of the numeral.
+			if c >= threshold || payload.SelectionEvidence == SelectionEvidenceHost {
+				slog.Info(claimMsg,
 					"adapter", meta.AdapterType,
 					"direction", meta.Direction,
 					"path", meta.EndpointPath,
@@ -266,14 +337,14 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 					"confidence", c,
 					"threshold", threshold,
 				)
-				return payload, nil
+				return payload, nil, true
 			}
 			// Per-Normalize tier-walk diagnostics are Debug to keep Info
 			// volume bounded — at 1k QPS with N tiers walked per call the
 			// Info channel would otherwise carry tens of thousands of
-			// "below threshold" lines per second. The CLAIM line below
+			// "below threshold" lines per second. The CLAIM line above
 			// (when a tier wins) stays Info because it's the one signal
-			// admins act on. PR #24 / O2.
+			// admins act on.
 			slog.Debug("normalize: tier1 below threshold, soft fall-through",
 				"adapter", meta.AdapterType,
 				"direction", meta.Direction,
@@ -285,8 +356,8 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 				bestPartial = payload
 				bestConf = c
 			}
-			// soft fall-through: keep walking Tier 1, then try Tier 2.
-			continue
+			// soft fall-through: keep walking this tier, then the next.
+			return NormalizedPayload{}, nil, false
 		}
 		if errors.Is(err, ErrUnsupported) {
 			// hard miss: not this normalizer's shape. Keep walking.
@@ -294,17 +365,51 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 				"adapter", meta.AdapterType,
 				"direction", meta.Direction,
 			)
-			continue
+			return NormalizedPayload{}, nil, false
 		}
-		// Hard parse error (malformed bytes) — surface as partial and
-		// stop. Further tiers can't do better with the same malformed
-		// bytes; would only add noise.
+		if demoteHardError {
+			slog.Warn("normalize: tier1.5 sniff hard error, demoting to fall-through",
+				"adapter", meta.AdapterType,
+				"direction", meta.Direction,
+				"normalizer", n.ID(),
+				"error", err,
+			)
+			if payload.Confidence > bestConf {
+				bestPartial = payload
+				bestConf = payload.Confidence
+			}
+			return NormalizedPayload{}, nil, false
+		}
 		slog.Warn("normalize: tier1 hard error, stopping walk",
 			"adapter", meta.AdapterType,
 			"direction", meta.Direction,
 			"error", err,
 		)
-		return payload, err
+		return payload, err, true
+	}
+
+	// Tier 1: keyed lookups
+	for _, n := range tier1 {
+		if payload, err, done := tryClaim(n, "normalize: tier1 CLAIM", false); done {
+			return payload, err
+		}
+	}
+
+	// Tier 1.5: sniff walk. Codecs that recognise their own wire shape
+	// claim traffic whose keys resolved nothing usable. Skips
+	// normalizers the keyed walk already ran — a sniff cannot improve
+	// on the same Normalize call that just declined.
+	for _, n := range sniffers {
+		if tried[n] {
+			continue
+		}
+		if !n.(Sniffer).LooksLike(raw, meta) {
+			continue
+		}
+		tried[n] = true
+		if payload, err, done := tryClaim(n, "normalize: tier1.5 CLAIM (sniff)", true); done {
+			return payload, err
+		}
 	}
 
 	// Tier 2: pattern-based extract
@@ -348,8 +453,8 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 		if err == nil {
 			// generic-http always claims; this is the terminal answer
 			// unless an earlier tier had higher confidence (shouldn't
-			// happen — generic-http leaves Confidence unset = 1.0 — but
-			// guard anyway).
+			// happen — generic-http stamps Confidence=1.0 explicitly —
+			// but guard anyway).
 			if effConf(payload) >= bestConf {
 				slog.Info("normalize: tier3 CLAIM (generic-http catch-all)",
 					"adapter", meta.AdapterType,
@@ -388,68 +493,6 @@ func (r *Registry) Normalize(ctx context.Context, raw []byte, meta Meta) (Normal
 			NormalizeVersion: SchemaVersion,
 		}, fmt.Errorf("no normalizer for adapter_type=%q content_type=%q path=%q: %w",
 			meta.AdapterType, meta.ContentType, meta.EndpointPath, ErrUnsupported)
-}
-
-// maxDecompressed bounds the audit-time decompressor so a hostile body
-// can't blow memory. 64 MiB is well above any realistic AI response.
-const maxDecompressed = 64 << 20
-
-// MaybeGunzip detects gzip / zlib / zstd magic bytes and decompresses.
-// Exported so codecs tests can verify decompression behaviour.
-// Returns (raw, false) for anything unrecognised.
-func MaybeGunzip(raw []byte) ([]byte, bool) { return maybeGunzip(raw) }
-
-// maybeGunzip detects gzip / zlib / zstd magic bytes and decompresses.
-// Returns (raw, false) for anything unrecognised so the caller falls
-// back to the original bytes. Producers (cp/agent) sometimes capture a
-// compressed wire body before the transport layer decompresses it; the
-// normalizer would otherwise see compressed bytes and fail to parse.
-// Brotli (`Content-Encoding: br`) is intentionally NOT handled here —
-// it has no reliable magic-byte signature and would require a new
-// third-party dependency in `shared`; ask before adding.
-func maybeGunzip(raw []byte) ([]byte, bool) {
-	if len(raw) < 2 {
-		return raw, false
-	}
-	switch {
-	case raw[0] == 0x1f && raw[1] == 0x8b:
-		// gzip
-		gz, err := gzip.NewReader(bytes.NewReader(raw))
-		if err != nil {
-			return raw, false
-		}
-		defer func() { _ = gz.Close() }()
-		out, err := io.ReadAll(io.LimitReader(gz, maxDecompressed))
-		if err != nil {
-			return raw, false
-		}
-		return out, true
-	case raw[0] == 0x78 && (raw[1] == 0x01 || raw[1] == 0x5e || raw[1] == 0x9c || raw[1] == 0xda):
-		// zlib (deflate with header) — common Content-Encoding: deflate
-		zr, err := zlib.NewReader(bytes.NewReader(raw))
-		if err != nil {
-			return raw, false
-		}
-		defer func() { _ = zr.Close() }()
-		out, err := io.ReadAll(io.LimitReader(zr, maxDecompressed))
-		if err != nil {
-			return raw, false
-		}
-		return out, true
-	case len(raw) >= 4 && raw[0] == 0x28 && raw[1] == 0xb5 && raw[2] == 0x2f && raw[3] == 0xfd:
-		// zstd
-		zr, err := zstd.NewReader(bytes.NewReader(raw), zstd.WithDecoderMaxMemory(maxDecompressed))
-		if err != nil {
-			return raw, false
-		}
-		defer zr.Close()
-		out, err := io.ReadAll(io.LimitReader(zr, maxDecompressed))
-		if err != nil {
-			return raw, false
-		}
-		return out, true
-	}
-	return raw, false
 }
 
 // All returns a snapshot of registered keys (for diagnostics).

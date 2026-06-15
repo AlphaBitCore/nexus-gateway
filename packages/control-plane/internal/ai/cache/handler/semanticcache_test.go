@@ -90,6 +90,7 @@ type fakeSemanticHub struct {
 	lastThingType string
 	lastConfigKey string
 	lastState     any
+	err           error // when set, NotifyConfigChange fails (drives the 502 path)
 }
 
 func (f *fakeSemanticHub) NotifyConfigChange(_ context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error) {
@@ -99,6 +100,9 @@ func (f *fakeSemanticHub) NotifyConfigChange(_ context.Context, req hub.ConfigCh
 	f.lastThingType = req.ThingType
 	f.lastConfigKey = req.ConfigKey
 	f.lastState = req.State
+	if f.err != nil {
+		return nil, f.err
+	}
 	return &hub.ConfigChangeResponse{OK: true, Version: int64(f.hits)}, nil
 }
 
@@ -246,6 +250,45 @@ func TestSemanticPut_HappyPath_WithModel(t *testing.T) {
 	if msgs[0].Action != "update" || msgs[0].EntityType != "semantic-cache" || msgs[0].EntityID != "singleton" {
 		t.Errorf("audit: action=%q entityType=%q entityId=%q",
 			msgs[0].Action, msgs[0].EntityType, msgs[0].EntityID)
+	}
+}
+
+// A dropped Hub push escalates to 502 (propagation_error) instead of silently
+// returning 200, so the admin sees the failure immediately while the DB write
+// still commits (Save was called). The configreconcile watch for this key
+// (F-0102/F-0345) additionally heals it within one cycle.
+func TestSemanticPut_HubError_Returns502(t *testing.T) {
+	e := echo.New()
+	store := &stubSemanticStore{}
+	hub := &fakeSemanticHub{err: errors.New("hub down")}
+	spy := &semanticAuditSpy{}
+	h := newSemanticHandler(t, store, hub, newSemanticTestAudit(spy))
+	e.PUT("/cfg", h.PutConfig)
+
+	body := map[string]any{
+		"embeddingProviderId": "prov-uuid",
+		"embeddingModelId":    "model-uuid",
+		"embeddingDimension":  1536,
+		"enabled":             true,
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, "/cfg", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want 502, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "propagation_error") {
+		t.Errorf("missing propagation_error envelope; body=%s", rec.Body.String())
+	}
+	if store.saved == nil {
+		t.Error("DB write should still have committed before the push failure")
+	}
+	// No success audit row on a propagation failure (matches cache.go).
+	if msgs := spy.captured(); len(msgs) != 0 {
+		t.Errorf("want 0 audit msgs on 502, got %d", len(msgs))
 	}
 }
 

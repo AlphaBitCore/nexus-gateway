@@ -1,0 +1,5 @@
+{
+  "adapterType": "anthropic",
+  "direction": "request",
+  "endpointPath": "/v1/messages"
+}

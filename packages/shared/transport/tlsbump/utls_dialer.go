@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net"
+	"net/url"
 
 	utls "github.com/refraction-networking/utls"
 )
@@ -22,14 +23,18 @@ const earlyDataExtensionTypeID uint16 = 42
 // handshake that mirrors the client's original fingerprint. When rawHello is
 // non-empty it is parsed with the uTLS Fingerprinter and replayed to the
 // upstream after sanitising session-specific state (session tickets, PSK, and
-// early-data extensions). The ALPN list is replaced with ["http/1.1"] so the
-// upstream negotiates HTTP/1.1 (Go's transport cannot upgrade a *utls.UConn
-// to HTTP/2). On any parse or handshake failure the function falls back to
-// HelloChrome_Auto.
-func dialWithFingerprint(ctx context.Context, network, addr string, rawHello []byte, dialer *net.Dialer) (net.Conn, error) {
+// early-data extensions). ALPN is offered as ["h2","http/1.1"] so the upstream
+// can negotiate HTTP/2 — caller inspects uconn.ConnectionState().NegotiatedProtocol
+// and routes h2 connections through golang.org/x/net/http2 (Go's stdlib
+// Transport cannot auto-upgrade a custom-dialed *utls.UConn, so the h2 framing
+// is wired explicitly upstream of this dial). Offering h2 also keeps the
+// replayed fingerprint faithful to clients that advertised h2 (e.g. Cursor's
+// Electron connect-RPC), which a forced http/1.1 ALPN would have altered. On
+// any parse or handshake failure the function falls back to HelloChrome_Auto.
+func dialWithFingerprint(ctx context.Context, network, addr string, rawHello []byte, dialer *net.Dialer, proxyURL *url.URL) (net.Conn, error) {
 	host, _, _ := net.SplitHostPort(addr)
 
-	conn, err := dialer.DialContext(ctx, network, addr)
+	conn, err := dialUpstreamTCP(ctx, network, addr, dialer, proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -40,7 +45,7 @@ func dialWithFingerprint(ctx context.Context, network, addr string, rawHello []b
 	if len(rawHello) > 0 {
 		fp := &utls.Fingerprinter{AllowBluntMimicry: true}
 		if s, fErr := fp.FingerprintClientHello(rawHello); fErr == nil {
-			overrideALPN(s, []string{"http/1.1"})
+			overrideALPN(s, []string{"h2", "http/1.1"})
 			sanitizeForReplay(s)
 			spec = s
 			helloID = utls.HelloCustom
@@ -52,7 +57,7 @@ func dialWithFingerprint(ctx context.Context, network, addr string, rawHello []b
 		if err := uconn.ApplyPreset(spec); err != nil {
 			// ApplyPreset failed — fall back to Chrome fingerprint.
 			_ = uconn.Close()
-			conn2, dialErr := dialer.DialContext(ctx, network, addr)
+			conn2, dialErr := dialUpstreamTCP(ctx, network, addr, dialer, proxyURL)
 			if dialErr != nil {
 				return nil, fmt.Errorf("dial fallback %s: %w", addr, dialErr)
 			}
@@ -89,7 +94,7 @@ func ProbeUpstreamCert(ctx context.Context, dstHost string, dstPort int, peekedH
 		dialer = &net.Dialer{}
 	}
 	addr := net.JoinHostPort(dstHost, fmt.Sprintf("%d", dstPort))
-	conn, err := dialWithFingerprint(ctx, "tcp", addr, peekedHello, dialer)
+	conn, err := dialWithFingerprint(ctx, "tcp", addr, peekedHello, dialer, nil)
 	if err != nil {
 		return nil, err
 	}

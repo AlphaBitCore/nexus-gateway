@@ -31,7 +31,7 @@ import (
 // are updated too.
 var aiGuardColumns = []string{
 	"id", "backend_mode", "provider_id", "model_id", "external_url",
-	"external_credential_id", "custom_headers", "prompt_template",
+	"custom_headers", "prompt_template",
 	"timeout_ms", "cache_ttl_seconds", "backend_fingerprint",
 	"input_strategy", "model_context_limit",
 }
@@ -59,7 +59,7 @@ func TestLoad_HappyPath_SeededRow(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows(aiGuardColumns).AddRow(
 			"singleton", "external_url",
 			strPtr("prov-1"), strPtr("model-1"),
-			strPtr("https://judge.example.com/v1"), strPtr("cred-1"),
+			strPtr("https://judge.example.com/v1"),
 			headers, "tmpl", 3000, 120, "fp-abc",
 			"system_plus_last_user", 0,
 		))
@@ -131,17 +131,16 @@ func TestLoad_QueryError_Wraps(t *testing.T) {
 func TestSave_PersistsAllFields_AndCallsExec(t *testing.T) {
 	mock, store := newMockStore(t)
 	cfg := &configstore.AIGuardConfig{
-		ID:                   "singleton",
-		BackendMode:          "external_url",
-		ProviderID:           strPtr("prov-1"),
-		ModelID:              strPtr("model-1"),
-		ExternalURL:          strPtr("https://judge.example.com/v1"),
-		ExternalCredentialID: strPtr("cred-1"),
-		CustomHeaders:        map[string]any{"X-Tenant": "nexus"},
-		PromptTemplate:       "custom template",
-		TimeoutMs:            3000,
-		CacheTTLSeconds:      120,
-		BackendFingerprint:   "fp-abc",
+		ID:                 "singleton",
+		BackendMode:        "external_url",
+		ProviderID:         strPtr("prov-1"),
+		ModelID:            strPtr("model-1"),
+		ExternalURL:        strPtr("https://judge.example.com/v1"),
+		CustomHeaders:      map[string]any{"X-Tenant": "nexus"},
+		PromptTemplate:     "custom template",
+		TimeoutMs:          3000,
+		CacheTTLSeconds:    120,
+		BackendFingerprint: "fp-abc",
 	}
 	// pgxmock matches arguments by deep-equality; for the JSONB
 	// headers column we accept any bytes the production marshaler
@@ -149,7 +148,7 @@ func TestSave_PersistsAllFields_AndCallsExec(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO ai_guard_config`).
 		WithArgs(
 			cfg.ID, cfg.BackendMode, cfg.ProviderID, cfg.ModelID,
-			cfg.ExternalURL, cfg.ExternalCredentialID,
+			cfg.ExternalURL,
 			pgxmock.AnyArg(), // custom_headers JSONB bytes
 			cfg.PromptTemplate, cfg.TimeoutMs, cfg.CacheTTLSeconds, cfg.BackendFingerprint,
 			cfg.InputStrategy, cfg.ModelContextLimit,
@@ -181,7 +180,7 @@ func TestSave_NilHeaders_PassesNilBytes(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO ai_guard_config`).
 		WithArgs(
 			cfg.ID, cfg.BackendMode,
-			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(nil), // nil-headers must round-trip as a nil byte slice, not `null`
 			cfg.PromptTemplate, cfg.TimeoutMs, cfg.CacheTTLSeconds, cfg.BackendFingerprint,
 			cfg.InputStrategy, cfg.ModelContextLimit,
@@ -202,7 +201,7 @@ func TestSave_ExecError_Wraps(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO ai_guard_config`).
 		WithArgs(
 			"singleton", "configured_provider",
-			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+			(*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(nil),
 			"", 0, 0, "",
 			"", 0, // input_strategy, model_context_limit

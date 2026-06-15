@@ -294,12 +294,13 @@ func TestApplyAll_SkipsKeysNotInDesired(t *testing.T) {
 	}
 }
 
-// TestApplyAll_HandlerErrorReportedKeyStillEchoed verifies that a
-// handler returning an error does not abort the dispatch round and does
-// not block reported echo for that key. We accept the trade-off: even on
-// handler failure, the reported state mirrors what Hub TRIED to apply;
-// the operator sees the error in logs and can rerun via Force Resync.
-func TestApplyAll_HandlerErrorReportedKeyStillEchoed(t *testing.T) {
+// TestApplyAll_HandlerErrorReportedKeyNotEchoed verifies F-0115: a handler
+// returning an error does not abort the dispatch round, but its key is NOT
+// echoed into reported. Echoing on failure would make the Configuration tab
+// show the key as in-sync ("applied") when the apply actually failed; the
+// truthful state is out-of-sync, and the failure is recorded in the per-key
+// outcome ledger as an ApplyError.
+func TestApplyAll_HandlerErrorReportedKeyNotEchoed(t *testing.T) {
 	r := &fakeReader{}
 	r.setThing(&store.Thing{
 		ID:         "hub-test",
@@ -316,7 +317,52 @@ func TestApplyAll_HandlerErrorReportedKeyStillEchoed(t *testing.T) {
 	if obs.count() != 1 {
 		t.Errorf("handler must run once even when it returns error; got %d", obs.count())
 	}
+	if _, ok := r.lastReported["observability"]; ok {
+		t.Errorf("reported must NOT echo the desired key on handler error; got %v", r.lastReported)
+	}
+	oc, ok := r.lastOutcomes["observability"]
+	if !ok || oc.ApplyError == nil {
+		t.Errorf("outcome ledger must record the apply error; got %+v (present=%v)", oc, ok)
+	}
+}
+
+// TestApplyAll_UnmanagedDesiredKeyMirrored verifies F-0258: a desired key
+// with no registered handler is mirrored verbatim into reported so the
+// Configuration tab shows it as in-sync. No handler means the apply is a
+// no-op = already applied, so the truthful reported value equals desired.
+func TestApplyAll_UnmanagedDesiredKeyMirrored(t *testing.T) {
+	r := &fakeReader{}
+	r.setThing(&store.Thing{
+		ID:         "hub-test",
+		DesiredVer: 4,
+		Desired: map[string]any{
+			"observability": map[string]any{"enabled": true},
+			"unmanaged_key": map[string]any{"foo": "bar"},
+		},
+	})
+	mgr := newTestManager("hub-test", r)
+	obs := &recordingHandler{}
+	mgr.Register("observability", obs) // only "observability" has a handler
+
+	if err := mgr.applyAll(context.Background()); err != nil {
+		t.Fatalf("applyAll: %v", err)
+	}
+
+	// Managed key echoed after successful apply.
 	if _, ok := r.lastReported["observability"]; !ok {
-		t.Errorf("reported state should still echo the desired key on handler error; got %v", r.lastReported)
+		t.Errorf("managed key must be echoed into reported; got %v", r.lastReported)
+	}
+	// Unmanaged key mirrored verbatim.
+	got, ok := r.lastReported["unmanaged_key"]
+	if !ok {
+		t.Fatalf("unmanaged key must be mirrored into reported; got %v", r.lastReported)
+	}
+	gm, _ := got.(map[string]any)
+	if gm["foo"] != "bar" {
+		t.Errorf("unmanaged key mirrored with wrong value: %v", got)
+	}
+	// No handler ran for the unmanaged key (no panic, no outcome error).
+	if _, ok := r.lastOutcomes["unmanaged_key"]; ok {
+		t.Errorf("unmanaged key must not appear in the outcome ledger; got %v", r.lastOutcomes["unmanaged_key"])
 	}
 }

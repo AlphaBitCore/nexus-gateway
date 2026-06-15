@@ -200,7 +200,7 @@ func TestAnalyticsCacheROI_DirectFallback(t *testing.T) {
 	expectCascade5mEmptyN(mock, 17)
 
 	// direct adapter breakdown
-	mock.ExpectQuery(`FROM traffic_event te\s+INNER JOIN "Provider"`).
+	mock.ExpectQuery(`FROM traffic_event te\s+LEFT JOIN "Provider"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"at", "cost", "gws", "hits", "wc", "rs", "ns", "pt", "ct", "cc", "cr", "rch",
@@ -265,7 +265,7 @@ func TestAnalyticsCacheROI_DirectAdapterError(t *testing.T) {
 			float64(0), float64(0), int64(0), float64(0), float64(0), float64(0),
 			int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
 	expectCascade5mEmptyN(mock, 17)
-	mock.ExpectQuery(`FROM traffic_event te\s+INNER JOIN "Provider"`).
+	mock.ExpectQuery(`FROM traffic_event te\s+LEFT JOIN "Provider"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("boom"))
 	c, rec := echoCtx("GET", "/api/admin/analytics/cache-roi")
@@ -288,7 +288,7 @@ func TestAnalyticsCacheROI_DirectDailyError(t *testing.T) {
 			float64(0), float64(0), int64(0), float64(0), float64(0), float64(0),
 			int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
 	expectCascade5mEmptyN(mock, 17)
-	mock.ExpectQuery(`FROM traffic_event te\s+INNER JOIN "Provider"`).
+	mock.ExpectQuery(`FROM traffic_event te\s+LEFT JOIN "Provider"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"at", "cost", "gws", "hits", "wc", "rs", "ns", "pt", "ct", "cc", "cr", "rch",
@@ -320,7 +320,7 @@ func TestAnalyticsCacheROI_DirectAdapterScanError(t *testing.T) {
 			int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
 	expectCascade5mEmptyN(mock, 17)
 	// Row with wrong scan target type — loop continues.
-	mock.ExpectQuery(`FROM traffic_event te\s+INNER JOIN "Provider"`).
+	mock.ExpectQuery(`FROM traffic_event te\s+LEFT JOIN "Provider"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"only_one"}).AddRow("oops"))
 
@@ -334,6 +334,157 @@ func TestAnalyticsCacheROI_DirectAdapterScanError(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	assertStatus(t, rec, http.StatusOK)
+}
+
+// TestAnalyticsCacheROI_TotalsAreFleetWideMultiProvider is the F-0196 intent
+// assertion: the top-level totals are a single FLEET-WIDE combined figure (one
+// summed row, no provider dimension) while the byAdapter breakdown carries the
+// per-provider split. A multi-provider tenant (OpenAI + Gemini) therefore sees
+// one combined total AND two adapter rows — the two answer different questions
+// and the totals are deliberately NOT per-provider.
+func TestAnalyticsCacheROI_TotalsAreFleetWideMultiProvider(t *testing.T) {
+	t.Parallel()
+	mock, h := newMockHandler(t)
+
+	// totals cascade empty → direct totals path.
+	expectCascade5mEmptyN(mock, 16)
+	// Direct totals: one combined row summed across ALL providers by SQL
+	// (estimated cost 30 = openai 18 + gemini 12). No provider dimension.
+	mock.ExpectQuery(`FROM traffic_event\s+WHERE`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"cost", "gws", "hits", "wc", "rs", "ns",
+			"pt", "ct", "cc", "cr", "ns2", "nb", "mi", "rch",
+		}).AddRow(
+			float64(30), float64(5), int64(4), float64(2), float64(3), float64(1),
+			int64(300), int64(150), int64(40), int64(20), int64(0), int64(0), int64(0), int64(4)))
+
+	// adapter cascade empty → direct per-provider breakdown (two adapters).
+	expectCascade5mEmptyN(mock, 17)
+	mock.ExpectQuery(`FROM traffic_event te\s+LEFT JOIN "Provider"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"at", "cost", "gws", "hits", "wc", "rs", "ns", "pt", "ct", "cc", "cr", "rch",
+		}).
+			AddRow("openai", float64(18), float64(3), int64(2), float64(1), float64(2), float64(1),
+				int64(180), int64(90), int64(25), int64(12), int64(2)).
+			AddRow("gemini", float64(12), float64(2), int64(2), float64(1), float64(1), float64(0),
+				int64(120), int64(60), int64(15), int64(8), int64(2)))
+
+	// daily cascade empty → direct daily (empty result is fine).
+	expectCascade5mEmptyN(mock, 16)
+	mock.ExpectQuery(`FROM traffic_event\s+WHERE timestamp >= \$1 AND timestamp < \$2.*GROUP BY 1`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"day", "gws", "wc", "rs", "ns", "cc", "cr"}))
+
+	c, rec := echoCtx("GET", "/api/admin/analytics/cache-roi")
+	if err := h.AnalyticsCacheROI(c); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	assertStatus(t, rec, http.StatusOK)
+	body := jsonBody(t, rec)
+
+	// Fleet-wide total: the single combined figure, not split by provider.
+	if body["totalEstimatedCostUsd"] != float64(30) {
+		t.Errorf("totalEstimatedCostUsd=%v want 30 (fleet-wide combined across providers)", body["totalEstimatedCostUsd"])
+	}
+	// Per-provider attribution lives in byAdapter, and the two adapter rows must
+	// sum back to the fleet-wide total — proving totals == Σ(per-provider).
+	byA, _ := body["byAdapter"].([]any)
+	if len(byA) != 2 {
+		t.Fatalf("byAdapter=%v want 2 adapter rows (openai + gemini)", byA)
+	}
+	var adapterCostSum float64
+	for _, r := range byA {
+		m, _ := r.(map[string]any)
+		v, _ := m["estimatedCostUsd"].(float64)
+		adapterCostSum += v
+	}
+	if adapterCostSum != body["totalEstimatedCostUsd"] {
+		t.Errorf("Σ(byAdapter cost)=%v != fleet-wide total %v — aggregation inconsistent", adapterCostSum, body["totalEstimatedCostUsd"])
+	}
+}
+
+// TestAnalyticsCacheROI_DirectFallback_NullProviderReconciliation is the
+// F-0196 regression test: when traffic_event rows have NULL provider_id
+// (compliance-proxy / agent / errored-before-routing traffic), the LEFT JOIN
+// must route them to the "unknown" bucket instead of dropping them.
+// Invariant: Σ(byAdapter cost) == fleet-wide totalEstimatedCostUsd.
+func TestAnalyticsCacheROI_DirectFallback_NullProviderReconciliation(t *testing.T) {
+	t.Parallel()
+	mock, h := newMockHandler(t)
+
+	// totals cascade empty → direct path.
+	expectCascade5mEmptyN(mock, 16)
+	// Fleet-wide total = 25 (10 openai + 15 null-provider).
+	mock.ExpectQuery(`FROM traffic_event\s+WHERE`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"cost", "gws", "hits", "wc", "rs", "ns",
+			"pt", "ct", "cc", "cr", "ns2", "nb", "mi", "rch",
+		}).AddRow(
+			float64(25), float64(3), int64(1), float64(0), float64(0), float64(0),
+			int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
+
+	// adapter cascade empty → direct adapter breakdown via LEFT JOIN.
+	expectCascade5mEmptyN(mock, 17)
+	// Two rows: one real adapter row + one "unknown" row for NULL provider_id.
+	mock.ExpectQuery(`FROM traffic_event te\s+LEFT JOIN "Provider"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"at", "cost", "gws", "hits", "wc", "rs", "ns", "pt", "ct", "cc", "cr", "rch",
+		}).
+			AddRow("openai", float64(10), float64(2), int64(1), float64(0), float64(0), float64(0),
+				int64(0), int64(0), int64(0), int64(0), int64(0)).
+			AddRow("unknown", float64(15), float64(1), int64(0), float64(0), float64(0), float64(0),
+				int64(0), int64(0), int64(0), int64(0), int64(0)))
+
+	// daily cascade empty + direct daily (empty result is fine).
+	expectCascade5mEmptyN(mock, 16)
+	mock.ExpectQuery(`FROM traffic_event\s+WHERE timestamp >= \$1 AND timestamp < \$2.*GROUP BY 1`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"day", "gws", "wc", "rs", "ns", "cc", "cr"}))
+
+	c, rec := echoCtx("GET", "/api/admin/analytics/cache-roi")
+	if err := h.AnalyticsCacheROI(c); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	assertStatus(t, rec, http.StatusOK)
+	body := jsonBody(t, rec)
+
+	fleetTotal, _ := body["totalEstimatedCostUsd"].(float64)
+	if fleetTotal != 25 {
+		t.Errorf("totalEstimatedCostUsd=%v want 25", fleetTotal)
+	}
+
+	byA, _ := body["byAdapter"].([]any)
+	// Must have two rows: "openai" and "unknown".
+	if len(byA) != 2 {
+		t.Fatalf("byAdapter len=%d want 2 (openai + unknown)", len(byA))
+	}
+
+	// Reconciliation: Σ(byAdapter cost) must equal the fleet-wide total.
+	var adapterCostSum float64
+	for _, r := range byA {
+		m, _ := r.(map[string]any)
+		v, _ := m["estimatedCostUsd"].(float64)
+		adapterCostSum += v
+	}
+	if adapterCostSum != fleetTotal {
+		t.Errorf("F-0196 reconciliation FAIL: Σ(byAdapter cost)=%v != fleetTotal=%v — null-provider rows dropped by INNER JOIN", adapterCostSum, fleetTotal)
+	}
+
+	// Confirm the "unknown" bucket exists and holds the NULL-provider traffic.
+	var unknownCost float64
+	for _, r := range byA {
+		m, _ := r.(map[string]any)
+		if m["adapter"] == "unknown" {
+			unknownCost, _ = m["estimatedCostUsd"].(float64)
+		}
+	}
+	if unknownCost != 15 {
+		t.Errorf("unknown bucket cost=%v want 15", unknownCost)
+	}
 }
 
 // TestAnalyticsCacheROI_WithExplicitRange exercises the start/end window
@@ -351,7 +502,7 @@ func TestAnalyticsCacheROI_WithExplicitRange(t *testing.T) {
 			float64(0), float64(0), int64(0), float64(0), float64(0), float64(0),
 			int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0), int64(0)))
 	expectCascade5mEmptyN(mock, 17)
-	mock.ExpectQuery(`FROM traffic_event te\s+INNER JOIN "Provider"`).
+	mock.ExpectQuery(`FROM traffic_event te\s+LEFT JOIN "Provider"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"at", "cost", "gws", "hits", "wc", "rs", "ns", "pt", "ct", "cc", "cr", "rch",

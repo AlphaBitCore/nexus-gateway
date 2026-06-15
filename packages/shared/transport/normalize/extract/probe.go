@@ -22,7 +22,7 @@ import (
 // = higher specificity).
 //
 // "Extract as much as possible": when a spec matches, the detection
-// fills Model / System / Tools too, regardless of confidence level.
+// fills Model / Tools too, regardless of confidence level.
 // The caller decides whether to use the detection based on Confidence
 // alone.
 func DetectChatShape(body []byte) ChatDetection {
@@ -56,16 +56,33 @@ func ScoreChatSpec(body []byte, spec ChatSpec) ChatDetection {
 }
 
 // ScoreResponseSpec is the response-side equivalent of ScoreChatSpec.
-// Auto-routes SSE vs single-json per the spec's StreamFraming.
+// The only response framing Tier 2 recognises is the consumer-web
+// JSON-Patch SSE stream (standard-API response wires are folded by the
+// Tier-1 codecs), so non-SSE bodies score zero. The signature gate is
+// strict: at least one signature key must appear in some frame
+// (anti-theft for key-missed traffic — see scoreResponseSpec). Adapter
+// callers that carry host evidence go through
+// ScoreResponseSpecAdapterKeyed instead.
 func ScoreResponseSpec(body []byte, spec ChatResponseSpec) ChatDetection {
-	isSSE := LooksLikeSSE(body)
-	if spec.StreamFraming == "single-json" && isSSE {
-		return ChatDetection{IsResponse: true, IsStream: true}
-	}
-	if spec.StreamFraming == "sse-event-data" && !isSSE {
+	if !LooksLikeSSE(body) {
 		return ChatDetection{IsResponse: true}
 	}
-	return scoreResponseSpec(body, spec, isSSE)
+	return scoreResponseSpec(body, spec, false)
+}
+
+// ScoreResponseSpecAdapterKeyed scores a response body for a caller
+// that has ALREADY resolved the producing adapter by host / URL /
+// content-type (NormalizeForAdapter). Host evidence satisfies the
+// identification gate, so a stream variant that carries none of the
+// signature keys in any frame (e.g. a chatgpt-web delta-encoding
+// stream without the resume-token or marker telemetry frames) still
+// scores on patch coverage. Key-missed Tier-2 traffic keeps the strict
+// gate via ScoreResponseSpec.
+func ScoreResponseSpecAdapterKeyed(body []byte, spec ChatResponseSpec) ChatDetection {
+	if !LooksLikeSSE(body) {
+		return ChatDetection{IsResponse: true}
+	}
+	return scoreResponseSpec(body, spec, true)
 }
 
 func scoreChatSpec(parsed gjson.Result, spec ChatSpec) ChatDetection {
@@ -138,15 +155,10 @@ func scoreChatSpec(parsed gjson.Result, spec ChatSpec) ChatDetection {
 		d.Confidence += bonus
 	}
 
-	// Free wins: model / system / tools
+	// Free wins: model / tools
 	if spec.ModelPath != "" {
 		if v := parsed.Get(spec.ModelPath); v.Type == gjson.String {
 			d.Model = v.String()
-		}
-	}
-	if spec.SystemPath != "" {
-		if v := parsed.Get(spec.SystemPath); v.Type == gjson.String {
-			d.System = v.String()
 		}
 	}
 	if spec.ToolsPath != "" {
@@ -233,23 +245,14 @@ func extractMessageContent(msg gjson.Result, path string, shape ContentShape) st
 }
 
 // DetectResponseShape iterates KnownResponseSpecs and returns the
-// best-scoring response detection. Auto-routes SSE vs single-json
-// based on byte sniff; for SSE responses the spec's AccumulatorRule
-// dictates how to fold the stream into a single document before
-// applying AssistantTextPath.
+// best-scoring response detection. Only the consumer-web JSON-Patch
+// SSE framing is recognised; non-SSE response bodies fall straight
+// through to the Tier-1 codecs (which the Registry has already tried)
+// or Tier 3 verbatim.
 func DetectResponseShape(body []byte) ChatDetection {
-	isSSE := LooksLikeSSE(body)
-
 	var best ChatDetection
 	for _, spec := range KnownResponseSpecs {
-		// Skip specs whose framing doesn't match the body shape.
-		if spec.StreamFraming == "single-json" && isSSE {
-			continue
-		}
-		if spec.StreamFraming == "sse-event-data" && !isSSE {
-			continue
-		}
-		d := scoreResponseSpec(body, spec, isSSE)
+		d := ScoreResponseSpec(body, spec)
 		if d.Confidence > best.Confidence {
 			best = d
 		}
@@ -257,164 +260,90 @@ func DetectResponseShape(body []byte) ChatDetection {
 	return best
 }
 
-func scoreResponseSpec(body []byte, spec ChatResponseSpec, isSSE bool) ChatDetection {
+// scoreResponseSpec folds a JSON-Patch SSE stream (the chatgpt-web
+// consumer framing) and scores it with coverage semantics:
+//
+//   - A frame is a PATCH CANDIDATE when its event name is empty or
+//     "delta" and its data JSON carries the patch-op `v` field. Named
+//     protocol chrome ("delta_encoding", resume tokens, message
+//     markers, [DONE]) never enters the denominator.
+//   - Confidence = appliedFrames / candidateFrames — the fraction of
+//     the stream's own patch ops the accumulator replayed. A truncated
+//     or partially corrupt stream scores proportionally lower.
+//   - Identification gate: at least one SignatureField key must appear
+//     in some RAW frame's data JSON — probed at the top level AND
+//     nested one hop under the patch value (`v.<field>`): the
+//     delta-encoding stream variant carries conversation_id only
+//     inside the `v` envelope of its seed frames, never top-level.
+//     Without a signature hit the stream is some other producer's
+//     patch protocol and scores zero — coverage alone must not claim
+//     foreign streams. adapterKeyed callers carry host evidence that
+//     satisfies the gate by itself, so even a signature-free stream
+//     variant scores on coverage.
+//
+// The assistant text is extracted from the accumulated document at
+// AssistantTextPath; extraction is best-effort and independent of the
+// confidence score.
+func scoreResponseSpec(body []byte, spec ChatResponseSpec, adapterKeyed bool) ChatDetection {
 	d := ChatDetection{
 		SpecID:     spec.ID,
 		IsResponse: true,
-		IsStream:   isSSE,
+		IsStream:   true,
 	}
 
-	// Assemble document — for SSE we run the accumulator first, for
-	// single-json we parse the body directly.
-	var doc gjson.Result
-	var accumulatedText string
-	if isSSE {
-		switch spec.AccumulatorRule {
-		case "json-patch":
-			acc := NewJSONPatchAccumulator()
-			patchFrames := 0
-			_ = WalkSSE(body, func(event, data string) error {
-				// Only "delta" event frames carry patch ops; skip
-				// keepalives / [DONE] / metadata.
-				if event != "" && event != "delta" {
-					return nil
-				}
-				if data == "" || data == "[DONE]" {
-					return nil
-				}
-				if err := acc.ApplyJSON([]byte(data)); err == nil {
-					patchFrames++
-				}
-				return nil
-			})
-			final, _ := json.Marshal(acc.State())
-			doc = gjson.ParseBytes(final)
-			// Frame-count bonus mirroring the concat-text branch —
-			// a stream we actually accumulated patches from is
-			// almost certainly chatgpt-web shape.
-			if patchFrames > 0 {
-				d.Confidence += 0.3
-				if patchFrames >= 3 {
-					d.Confidence += 0.2
-				}
+	acc := NewJSONPatchAccumulator()
+	appliedFrames := 0
+	candidateFrames := 0
+	sigHits := map[string]bool{}
+	_ = WalkSSE(body, func(event, data string) error {
+		if data == "" || data == "[DONE]" || !gjson.Valid(data) {
+			return nil
+		}
+		parsed := gjson.Parse(data)
+		// Signature fields probe RAW frames — a key found in any
+		// frame's data JSON counts once, top-level or nested under the
+		// patch value envelope (`v.<field>`).
+		for _, f := range spec.SignatureFields {
+			if parsed.Get(f).Exists() || parsed.Get("v."+f).Exists() {
+				sigHits[f] = true
 			}
-		case "concat-text":
-			// Walk frames; for each data line, parse as JSON and try
-			// to extract a text delta at the SPEC-SPECIFIC delta path.
-			// Frames that don't carry this spec's expected shape don't
-			// count toward the spec's frame counter — that's how we
-			// avoid mistaking an Anthropic SSE for an OpenAI SSE.
-			var textBuf strings.Builder
-			deltaPath := spec.StreamDeltaPath
-			if deltaPath == "" {
-				// Defensive fallback if a spec author forgot to set it:
-				// try the OpenAI canonical path. This keeps probe from
-				// crashing but shouldn't fire in practice.
-				deltaPath = "choices.0.delta.content"
-			}
-			matchedFrames := 0
-			totalFrames := 0
-			_ = WalkSSE(body, func(event, data string) error {
-				if data == "" || data == "[DONE]" {
-					return nil
-				}
-				if !gjson.Valid(data) {
-					return nil
-				}
-				totalFrames++
-				parsed := gjson.Parse(data)
-				if v := parsed.Get(deltaPath); v.Type == gjson.String && v.String() != "" {
-					textBuf.WriteString(v.String())
-					matchedFrames++
-				}
-				// Capture model / finish_reason / usage on any frame
-				// (these may live on header / tail frames of the spec).
-				if v := parsed.Get(spec.ModelPath); v.Type == gjson.String && d.Model == "" {
+		}
+		// Model probe — consumer-web streams carry the model identifier
+		// as frame metadata (never in the assembled patch document), so
+		// it is read off RAW frames at the spec's declared paths. First
+		// hit wins; the stream repeats the same value on every frame.
+		if d.Model == "" {
+			for _, p := range spec.ModelFramePaths {
+				if v := parsed.Get(p); v.Type == gjson.String && v.String() != "" {
 					d.Model = v.String()
-				}
-				if v := parsed.Get(spec.FinishReasonPath); v.Type == gjson.String && d.FinishReason == "" {
-					d.FinishReason = v.String()
-				}
-				if v := parsed.Get(spec.UsagePath); v.IsObject() && d.UsageRaw == nil {
-					d.UsageRaw = json.RawMessage(v.Raw)
-				}
-				return nil
-			})
-			accumulatedText = textBuf.String()
-			// Synthesize a doc with _accumulated key so signature
-			// probes below still work uniformly.
-			syn := map[string]any{
-				"_accumulated":    accumulatedText,
-				"_frame_count":    totalFrames,
-				"_assistant_text": accumulatedText,
-			}
-			synBytes, _ := json.Marshal(syn)
-			doc = gjson.ParseBytes(synBytes)
-			// Confidence scaling: only frames matching the spec's
-			// delta path count. A stream that produces 0 matched
-			// frames (the spec doesn't recognize the body at all)
-			// gets no bonus — and AssistantTextPath below will see
-			// an empty _accumulated, dropping confidence overall.
-			if matchedFrames > 0 {
-				d.Confidence += 0.3
-				if matchedFrames >= 3 {
-					d.Confidence += 0.2
+					break
 				}
 			}
-		default:
-			return d
 		}
-	} else {
-		// single-json
-		if !gjson.ValidBytes(body) {
-			return d
+		if event != "" && event != "delta" {
+			return nil
 		}
-		doc = gjson.ParseBytes(body)
-	}
+		if !parsed.Get("v").Exists() {
+			return nil
+		}
+		candidateFrames++
+		if err := acc.ApplyJSON([]byte(data)); err == nil {
+			appliedFrames++
+		}
+		return nil
+	})
 
-	// Assistant text probe (the strongest single signal for response specs)
+	if candidateFrames == 0 || (!adapterKeyed && len(sigHits) == 0) {
+		return d
+	}
+	d.Confidence = float64(appliedFrames) / float64(candidateFrames)
+
+	final, _ := json.Marshal(acc.State())
+	doc := gjson.ParseBytes(final)
 	if spec.AssistantTextPath != "" {
-		v := doc.Get(spec.AssistantTextPath)
-		if v.Type == gjson.String && v.String() != "" {
+		if v := doc.Get(spec.AssistantTextPath); v.Type == gjson.String && v.String() != "" {
 			d.AssistantText = v.String()
-			d.Confidence += 0.5
 		}
-	}
-	if d.AssistantText == "" && accumulatedText != "" {
-		d.AssistantText = accumulatedText
-		d.Confidence += 0.3
-	}
-
-	// Signature fields (presence, additive)
-	sigHits := 0
-	for _, f := range spec.SignatureFields {
-		if v := doc.Get(f); v.Exists() {
-			sigHits++
-		}
-	}
-	if sigHits > 0 {
-		bonus := 0.1 * float64(sigHits)
-		if bonus > 0.3 {
-			bonus = 0.3
-		}
-		d.Confidence += bonus
-	}
-
-	// Free wins for non-stream specs (single doc has everything).
-	if !isSSE {
-		if v := doc.Get(spec.ModelPath); v.Type == gjson.String && d.Model == "" {
-			d.Model = v.String()
-		}
-		if v := doc.Get(spec.FinishReasonPath); v.Type == gjson.String && d.FinishReason == "" {
-			d.FinishReason = v.String()
-		}
-		if v := doc.Get(spec.UsagePath); v.IsObject() && d.UsageRaw == nil {
-			d.UsageRaw = json.RawMessage(v.Raw)
-		}
-	}
-
-	if d.Confidence > 1.0 {
-		d.Confidence = 1.0
 	}
 	// Synthesize a single assistant message for the caller.
 	if d.AssistantText != "" {

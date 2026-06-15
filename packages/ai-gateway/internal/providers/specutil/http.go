@@ -23,10 +23,19 @@ import (
 
 // HTTPConfig tunes the upstream client every provider adapter shares.
 type HTTPConfig struct {
-	// Timeout is the per-request budget. The underlying http.Client.Timeout
-	// is set slightly higher (Timeout+5s) so the per-Do context deadline
-	// usually fires first and we surface a clean timeout error path.
+	// Timeout is the per-request budget. For a non-streaming call it caps the
+	// whole exchange; for a streaming call it caps time-to-first-byte (the
+	// model's think time before the first token) — once tokens flow,
+	// StreamIdleTimeout governs instead. It also feeds the Transport's
+	// ResponseHeaderTimeout. Raise it for deployments serving long-reasoning
+	// models that take many minutes before the first byte.
 	Timeout time.Duration
+	// StreamIdleTimeout is the silence budget for a streaming response: the
+	// downstream write deadline is reset to now+StreamIdleTimeout on every
+	// chunk, so an actively-producing stream runs unbounded (any inference
+	// length) while a stalled upstream is cut after this much quiet. Only
+	// applies after the first byte; the initial wait is bounded by Timeout.
+	StreamIdleTimeout time.Duration
 	// DialTimeout caps the TCP connect phase.
 	DialTimeout time.Duration
 	// KeepAlive is the TCP keep-alive interval on dialed connections.
@@ -46,13 +55,21 @@ type HTTPConfig struct {
 // inside [Configure].
 func DefaultHTTPConfig() HTTPConfig {
 	return HTTPConfig{
-		Timeout:             120 * time.Second,
+		// 600s budget: long enough for most reasoning models' time-to-first
+		// token; deployments serving multi-minute think times raise it via
+		// upstream.timeoutSec. Active streaming is governed by StreamIdleTimeout,
+		// so a longer Timeout here does not cap a producing stream.
+		Timeout:             600 * time.Second,
+		StreamIdleTimeout:   120 * time.Second,
 		DialTimeout:         15 * time.Second,
 		KeepAlive:           30 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
-		IdleConnTimeout:     90 * time.Second,
-		MaxIdleConns:        200,
-		MaxIdleConnsPerHost: 50,
+		// Pool sized for high-concurrency bursts (warm conns survive longer →
+		// fewer fresh TLS handshakes); per-host pool sized for the dominant
+		// target (OpenAI).
+		IdleConnTimeout:     300 * time.Second,
+		MaxIdleConns:        2000,
+		MaxIdleConnsPerHost: 500,
 	}
 }
 
@@ -90,9 +107,12 @@ func (liveTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // receives from NewHTTPClient. The pointer is stable for the lifetime
 // of the process so adapters that cache it at construction continue to
 // see live transport updates. Timeout=0 means the per-request budget is
-// enforced via the caller's context deadline (gateway handlers read it
-// from ActiveConfig().Timeout); the http.Client level has no fallback,
-// which prevents stale baked-in timeouts from masking the live value.
+// enforced via the caller's context deadline: the dispatcher wraps each
+// non-streaming upstream call with context.WithTimeout(ActiveConfig().Timeout)
+// (spec_adapter.go), and the Transport's ResponseHeaderTimeout (set from the
+// same budget in buildUpstreamTransport) bounds time-to-headers on both
+// stream and non-stream paths. The http.Client level has no fallback, which
+// prevents stale baked-in timeouts from masking the live value.
 var upstreamSingleton = &http.Client{
 	Transport: liveTransport{},
 	// Intentionally 0 — see comment above.
@@ -101,6 +121,15 @@ var upstreamSingleton = &http.Client{
 // probeSingleton has fixed tunables (probes must stay cheap and snappy
 // regardless of upstream policy) so it does not participate in the
 // hot-swap. Constructed once at init time.
+//
+// F-0369: the probe dials an admin-supplied provider base URL (a fresh,
+// not-yet-saved URL on the test-connection path), making it an SSRF primitive.
+// It is guarded with the AdminEgressAllowPrivate policy: the cloud-metadata /
+// link-local range (169.254.169.254 et al.) is refused at dial time, but
+// RFC-1918 / loopback is permitted so on-prem self-hosted providers
+// (vLLM / Ollama on a private address) stay reachable. The guard runs on the
+// resolved address, so it also defeats a hostname that DNS-rebinds to the
+// metadata endpoint at dial time.
 var probeSingleton = nexushttp.New(nexushttp.Config{
 	Timeout:             5 * time.Second,
 	DialTimeout:         3 * time.Second,
@@ -110,6 +139,7 @@ var probeSingleton = nexushttp.New(nexushttp.Config{
 	IdleConnTimeout:     30 * time.Second,
 	TLSHandshakeTimeout: 3 * time.Second,
 	Caller:              "provider-probe",
+	DialControl:         nexushttp.AdminEgressDialControl(nexushttp.AdminEgressAllowPrivate),
 })
 
 func init() {
@@ -134,7 +164,18 @@ func buildUpstreamTransport(cfg HTTPConfig) http.RoundTripper {
 		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.IdleConnTimeout,
 		TLSHandshakeTimeout: cfg.TLSHandshakeTimeout,
-		Caller:              "provider-upstream",
+		// ResponseHeaderTimeout bounds the time from finishing the request
+		// write to receiving the upstream response headers. This is the only
+		// budget that survives in the singleton's Transport (the wrapping
+		// http.Client.Timeout is discarded below — we extract only
+		// .Transport), so without it a connected-but-silent upstream that
+		// never sends headers would be bounded only by TCP keep-alive, not
+		// the configured budget. Safe for streaming: SSE
+		// headers arrive before the first event, so this caps time-to-headers,
+		// not time-to-first-event. The non-stream body-stall case is bounded
+		// separately by the per-request context deadline the dispatcher sets.
+		ResponseHeaderTimeout: cfg.Timeout,
+		Caller:                "provider-upstream",
 	}).Transport
 	return traffic.NewTracingTransport(base)
 }
@@ -154,6 +195,9 @@ func Configure(cfg HTTPConfig) {
 	def := DefaultHTTPConfig()
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = def.Timeout
+	}
+	if cfg.StreamIdleTimeout <= 0 {
+		cfg.StreamIdleTimeout = def.StreamIdleTimeout
 	}
 	if cfg.DialTimeout <= 0 {
 		cfg.DialTimeout = def.DialTimeout

@@ -27,21 +27,27 @@ caCertFile: ".nexus-agent/gateway-ca.pem"
 platformBridgeAddress: "127.0.0.1:19080"
 
 auditDBPath: ".nexus-agent/audit.db"
-# heartbeatIntervalSec + auditDrainIntervalSec are shadow-overridable via
-# Hub admin UI (config_key: timing_intervals); YAML is the boot default
-# only. thingclient.SetHeartbeatInterval + the drain supervisor restart
-# their tickers live on shadow push. See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
+# heartbeatIntervalSec + auditDrainIntervalSec are local-yaml-only — there
+# is no shadow config key for them, and CP strips them from agent_settings
+# on PUT. Changing them requires editing this file + restarting the agent.
 heartbeatIntervalSec: 60
 auditDrainIntervalSec: 30
 auditBatchSize: 200
 auditRetentionDays: 30
-configRefreshSec: 300
 
 # defaultAction is the agent's local policy fallback when nothing matches.
 # The retired policy_rules shadow key was deleted in PR-0 with no live
 # publisher; admin-pushed inspection now flows through interception_domains
 # alone. See docs/developers/architecture/cross-cutting/foundation/configuration-architecture-migration.md.
 defaultAction: "passthrough"
+
+# upstreamProxy (optional): route the MITM upstream forward through an egress
+# proxy. The agent still intercepts + inspects every flow; only the final hop
+# to the AI provider goes via the proxy. Use where direct provider egress is
+# blocked and a local proxy (corporate egress / circumvention client) is the
+# only working path. Schemes: socks5:// (also socks5h://) or http://.
+# Empty / unset = direct egress (default).
+# upstreamProxy: "socks5://127.0.0.1:10808"
 
 updaterEnabled: false
 updaterCheckSec: 3600

@@ -27,7 +27,6 @@ package estimator
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/tidwall/gjson"
 
@@ -333,6 +332,3 @@ func pickMaxTokens(canonical []byte, modelMax int) int {
 	}
 	return 4096
 }
-
-// _ keeps math imported when only used by other estimator files.
-var _ = math.Sqrt

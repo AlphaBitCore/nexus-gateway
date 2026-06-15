@@ -1,0 +1,36 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "anthropic-messages",
+  "model": "claude-opus-4-7",
+  "stream": true,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "toolUse": {
+            "callId": "toolu_01ZyXwVuTsRqPoNmLkJiHgFe",
+            "name": "TaskUpdate",
+            "input": {
+              "status": "completed",
+              "taskId": "91"
+            }
+          }
+        }
+      ],
+      "finishReason": "tool_use"
+    }
+  ],
+  "usage": {
+    "promptTokens": 970501,
+    "completionTokens": 91,
+    "totalTokens": 970592,
+    "cacheReadTokens": 968742,
+    "cacheCreationTokens": 1758
+  },
+  "finishReason": "tool_use",
+  "confidence": 1,
+  "detectedSpec": "anthropic-messages"
+}

@@ -2,17 +2,18 @@
 # Postinstall script for the Nexus Agent .pkg installer.
 # Invoked AS ROOT by macOS Installer; do NOT run manually.
 #
-# Order matters: state dirs → device CA generation + System Keychain
-# install → LaunchDaemon bootstrap. The daemon's runtime path then
-# loads the persisted CA from disk instead of regenerating per
-# restart (which previously polluted Keychain with duplicate entries
-# every time launchd respawned the agent).
+# Under the SMAppService model the pkg does NOT bootstrap launchd. The daemon
+# plist ships inside the .app (Contents/Library/LaunchDaemons/) and the menu app
+# registers it via SMAppService on first launch; the menu app also registers
+# itself as a login item (SMAppService.mainApp). So this script only:
+#   state dirs → device CA generation + System Keychain install →
+#   migrate off any classic /Library registration → CLI-trust env vars →
+#   DNS flush → open the app once so registration + approval kick off.
 
 set -euo pipefail
 
-DAEMON_PLIST="/Library/LaunchDaemons/com.nexus-gateway.agent.plist"
-LAUNCHAGENT_PLIST="/Library/LaunchAgents/com.nexus-gateway.agent.menubar.plist"
 AGENT_BIN="/Applications/NexusAgent.app/Contents/MacOS/nexus-agent"
+APP_BUNDLE="/Applications/NexusAgent.app"
 STATE_DIR="/Library/Application Support/com.nexus-gateway.agent"
 LOG_DIR="/Library/Logs/com.nexus-gateway.agent"
 
@@ -35,13 +36,9 @@ fi
 # leftover queue is cruft: the new binary may have a different schema,
 # encryption key may have rotated, or the operator just wants a clean
 # baseline so the Diagnostics "AUDIT QUEUE" depth starts at 0. Wiping
-# here is safe because:
-#   - Hub-side traffic_event is the system of record; only events that
-#     never made it off the box are lost
-#   - install-ca below recreates the encrypted DB lazily on first
-#     write, so no schema migration concerns
-#   - The wipe runs BEFORE launchctl kickstart so the daemon comes up
-#     against an empty file rather than racing with a half-deleted one
+# here is safe because Hub-side traffic_event is the system of record
+# (only never-uploaded events are lost) and install-ca below recreates
+# the encrypted DB lazily on first write.
 echo "postinstall: clearing audit queue (sqlite + WAL/SHM)"
 rm -f "$STATE_DIR/audit.db" \
       "$STATE_DIR/audit.db-shm" \
@@ -68,16 +65,10 @@ chown root:wheel "$LOG_DIR/agent.log"
 chmod 644 "$LOG_DIR/agent.log"
 
 # Device CA: one-shot generation + persistence + System Keychain
-# trust-anchor install. The agent's MITM TLS bumping path (when wired
-# up by the NETransparentProxyProvider in a future epic) mints
-# per-host leaf certs from this CA and presents them to local HTTPS
-# clients — those clients only accept the leaves because the issuing
-# CA sits in System Keychain as a trusted root.
-#
-# Idempotent on upgrade: install-ca's LoadOrGenerateCA reuses the
-# existing device-ca.{pem,key} when present; `security
-# add-trusted-cert` is a no-op when the cert is already a trusted
-# anchor (matched by SHA-256 fingerprint).
+# trust-anchor install. The agent's MITM TLS bumping path mints per-host
+# leaf certs from this CA and presents them to local HTTPS clients —
+# those clients only accept the leaves because the issuing CA sits in
+# System Keychain as a trusted root. Idempotent on upgrade.
 if [ -x "$AGENT_BIN" ]; then
     echo "postinstall: generating + installing device CA"
     if ! "$AGENT_BIN" install-ca; then
@@ -89,37 +80,34 @@ else
     echo "postinstall: WARNING — $AGENT_BIN not present; skipping install-ca"
 fi
 
-if [ ! -f "$DAEMON_PLIST" ]; then
-    echo "postinstall: $DAEMON_PLIST not found; skipping launchd bootstrap"
-    exit 0
+# Console user lookup (used by the migration cleanup, the CLI-trust env
+# var block, and the post-install app launch below).
+CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null || true)
+CONSOLE_UID=$(stat -f "%u" /dev/console 2>/dev/null || true)
+echo "postinstall: console user lookup → CONSOLE_USER='$CONSOLE_USER' CONSOLE_UID='$CONSOLE_UID'"
+
+# Migration: remove any classic registration left by a pre-SMAppService build.
+# Earlier builds staged a free-standing LaunchDaemon to /Library/LaunchDaemons
+# and a LaunchAgent to /Library/LaunchAgents, bootstrapped by this script. The
+# SMAppService model ties registration to the app bundle, so those /Library
+# plists must be booted out and removed — otherwise the old daemon keeps
+# running alongside the new SMAppService one. Dev-phase: no parallel legacy
+# path; this deletes the old mechanism outright.
+CLASSIC_DAEMON_PLIST="/Library/LaunchDaemons/com.nexus-gateway.agent.plist"
+CLASSIC_AGENT_PLIST="/Library/LaunchAgents/com.nexus-gateway.agent.menubar.plist"
+if [ -f "$CLASSIC_DAEMON_PLIST" ]; then
+    echo "postinstall: migrating off classic LaunchDaemon — booting out + removing $CLASSIC_DAEMON_PLIST"
+    launchctl bootout "system/com.nexus-gateway.agent" 2>/dev/null || true
+    rm -f "$CLASSIC_DAEMON_PLIST"
+fi
+if [ -f "$CLASSIC_AGENT_PLIST" ]; then
+    echo "postinstall: migrating off classic LaunchAgent — removing $CLASSIC_AGENT_PLIST"
+    if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ]; then
+        launchctl bootout "gui/$CONSOLE_UID/com.nexus-gateway.agent.menubar" 2>/dev/null || true
+    fi
+    rm -f "$CLASSIC_AGENT_PLIST"
 fi
 
-# launchd requires LaunchDaemon plists to be owned by root:wheel with 0644 perms.
-chown root:wheel "$DAEMON_PLIST"
-chmod 644 "$DAEMON_PLIST"
-
-# On a fresh install the daemon is not yet loaded — bootstrap it.
-# On upgrade the daemon is already loaded (and running) with the OLD
-# binary mapped in memory; macOS Installer atomically replaces the
-# .app bundle on disk but launchd does not notice. `kickstart -k`
-# kills the running process so KeepAlive=true respawns it from the
-# freshly-installed binary. Without this, a .pkg upgrade silently
-# fails to take effect until the next reboot.
-if launchctl print "system/com.nexus-gateway.agent" >/dev/null 2>&1; then
-    echo "postinstall: daemon already loaded; forcing kickstart -k to pick up new binary"
-    launchctl kickstart -k "system/com.nexus-gateway.agent"
-else
-    echo "postinstall: bootstrapping LaunchDaemon (fresh install)"
-    launchctl bootstrap system "$DAEMON_PLIST"
-fi
-
-# LaunchAgent: per-user agent that auto-opens NexusAgent.app at every
-# Aqua login. Required so the menu-bar app gets a chance to call
-# NETransparentProxyManager.startVPNTunnel after a reboot — the Go
-# daemon comes up via launchd at boot, but only a per-user GUI process
-# can wire macOS NetworkExtension framework to our provider. Without
-# this the user has to manually open the .app after every reboot
-# before traffic interception starts.
 # NEXUS_DEVICE_CA_PEM env var for callers that don't read the macOS
 # System Keychain (Node.js / Python / Go std/x509 — anything bundling
 # its own CA trust store). Most notably Claude Code CLI (Node-based)
@@ -138,18 +126,6 @@ fi
 DEVICE_CA_PATH="$STATE_DIR/device-ca.pem"
 ENV_SNIPPET_TAG="# nexus-agent device CA (managed — do not edit)"
 ENV_SNIPPET_END="# end nexus-agent"
-
-# C3 fix (post-T33 review): CONSOLE_USER + CONSOLE_UID were defined
-# only in the LaunchAgent block farther down. The user-RC env-var
-# block referenced them via ${CONSOLE_USER:-} and silently no-op'd on
-# every install — so Claude Code CLI never saw NEXUS_DEVICE_CA_PEM
-# and kept failing with "SSL certificate verification failed".
-# Hoist the lookup up here and ECHO the result so the postinstall
-# log shows whether we found a console user (no more guessing why
-# .zshenv didn't get written).
-CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null || true)
-CONSOLE_UID=$(stat -f "%u" /dev/console 2>/dev/null || true)
-echo "postinstall: console user lookup → CONSOLE_USER='$CONSOLE_USER' CONSOLE_UID='$CONSOLE_UID'"
 
 if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
     USER_HOME=$(eval echo "~$CONSOLE_USER")
@@ -218,26 +194,6 @@ export NEXUS_DEVICE_CA_PEM="$DEVICE_CA_PATH"
 $ENV_SNIPPET_END
 EOF
 
-if [ -f "$LAUNCHAGENT_PLIST" ]; then
-    chown root:wheel "$LAUNCHAGENT_PLIST"
-    chmod 644 "$LAUNCHAGENT_PLIST"
-
-    # Bootstrap into the currently-logged-in console user's domain
-    # right now so we don't make them log out / back in just to get
-    # the auto-start wired. CONSOLE_USER + CONSOLE_UID were defined
-    # at the env-var block above (post-T33-fix C3); we re-use them
-    # here instead of re-running stat.
-    if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ] && [ -n "$CONSOLE_USER" ]; then
-        echo "postinstall: bootstrapping LaunchAgent for current console user $CONSOLE_USER (uid=$CONSOLE_UID)"
-        launchctl bootout "gui/$CONSOLE_UID/com.nexus-gateway.agent.menubar" 2>/dev/null || true
-        if ! launchctl bootstrap "gui/$CONSOLE_UID" "$LAUNCHAGENT_PLIST"; then
-            echo "postinstall: WARNING — LaunchAgent bootstrap failed; user must log out + back in (or open NexusAgent.app once manually) to enable auto-start"
-        fi
-    else
-        echo "postinstall: no console user logged in; LaunchAgent will activate on next login"
-    fi
-fi
-
 # Flush macOS DNS cache + restart mDNSResponder. Whenever the NE filter
 # config goes from absent → present (this install), getaddrinfo can
 # stall ~5 s with a stale cache while `dig` direct-to-UDP/53 still
@@ -247,5 +203,25 @@ fi
 echo "postinstall: flushing DNS cache + restarting mDNSResponder"
 dscacheutil -flushcache 2>/dev/null || true
 killall -HUP mDNSResponder 2>/dev/null || true
+
+# Open the app once into the console user's GUI session so SMAppService
+# daemon + login-item registration and NE activation kick off immediately
+# (replacing the old LaunchAgent's job of opening the app post-install).
+# On a managed device the registrations are pre-approved by the
+# com.apple.servicemanagement profile, so this lands silently; on an
+# unmanaged device it surfaces the one-time approval prompts. Best-effort.
+if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ] && [ -d "$APP_BUNDLE" ]; then
+    echo "postinstall: opening $APP_BUNDLE in console user session (uid=$CONSOLE_UID) to trigger SMAppService registration"
+    launchctl asuser "$CONSOLE_UID" /usr/bin/open -g "$APP_BUNDLE" 2>/dev/null || \
+        echo "postinstall: WARNING — could not auto-open the app; the user must open NexusAgent.app once to finish setup"
+else
+    # No console user (e.g. an auto-update applied at the loginwindow). The
+    # SMAppService registration is app-driven, so the daemon — booted out by
+    # preinstall on an upgrade — is not re-registered until a user logs in and
+    # the login item launches the app. This is a known pre-login-enforcement gap
+    # for the headless-update case; documented in the lifecycle design's
+    # device-validation punch list. Most agent deployments have a console user.
+    echo "postinstall: no console user; NexusAgent.app will register on first manual launch / next login"
+fi
 
 exit 0

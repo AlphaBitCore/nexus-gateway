@@ -57,17 +57,24 @@ func (j *CacheQualityMonitorJob) Run(ctx context.Context) error {
 
 	// Count normalised requests and their error rate in the last 30 minutes.
 	// A request is "normalised" if the normaliser touched it (strip or inject).
-	var totalNorm, errorNorm, totalAll, errorAll int64
+	//
+	// Baseline is computed over NON-normalised rows only (the fourth and fifth
+	// columns exclude rows where the normaliser fired). Including normalised rows
+	// in the baseline caused self-contamination: when normalised traffic dominates
+	// the window the baseline rate is pulled toward the normalised rate, suppressing
+	// the 3× trigger that should detect normaliser-induced regressions.
+	var totalNorm, errorNorm, totalBaseline, errorBaseline int64
 	err := j.pool.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (WHERE (normalized_strip_count > 0 OR cache_marker_injected > 0)),
 			COUNT(*) FILTER (WHERE (normalized_strip_count > 0 OR cache_marker_injected > 0)
 			                   AND status_code >= 400),
-			COUNT(*),
-			COUNT(*) FILTER (WHERE status_code >= 400)
+			COUNT(*) FILTER (WHERE (COALESCE(normalized_strip_count, 0) = 0 AND COALESCE(cache_marker_injected, 0) = 0)),
+			COUNT(*) FILTER (WHERE (COALESCE(normalized_strip_count, 0) = 0 AND COALESCE(cache_marker_injected, 0) = 0)
+			                   AND status_code >= 400)
 		FROM traffic_event
 		WHERE timestamp >= $1
-	`, window).Scan(&totalNorm, &errorNorm, &totalAll, &errorAll)
+	`, window).Scan(&totalNorm, &errorNorm, &totalBaseline, &errorBaseline)
 	if err != nil {
 		return fmt.Errorf("cache quality monitor: stats query: %w", err)
 	}
@@ -76,8 +83,8 @@ func (j *CacheQualityMonitorJob) Run(ctx context.Context) error {
 		"window_start", window,
 		"total_norm", totalNorm,
 		"error_norm", errorNorm,
-		"total_all", totalAll,
-		"error_all", errorAll,
+		"total_baseline", totalBaseline,
+		"error_baseline", errorBaseline,
 	)
 
 	if totalNorm < minNormalisedRequests {
@@ -86,8 +93,8 @@ func (j *CacheQualityMonitorJob) Run(ctx context.Context) error {
 
 	normErrorRate := float64(errorNorm) / float64(totalNorm)
 	var baselineErrorRate float64
-	if totalAll > 0 {
-		baselineErrorRate = float64(errorAll) / float64(totalAll)
+	if totalBaseline > 0 {
+		baselineErrorRate = float64(errorBaseline) / float64(totalBaseline)
 	}
 
 	// No regression if baseline itself is zero or normErrorRate is not alarming.

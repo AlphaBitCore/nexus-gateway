@@ -102,7 +102,7 @@ func TestCrossFormatEmbeddingsRoundTrip(t *testing.T) {
 	for _, target := range []provcore.Format{provcore.FormatGemini, provcore.FormatCohere, provcore.FormatOpenAI} {
 		t.Run("req_openai_to_"+string(target), func(t *testing.T) {
 			ct := provcore.CallTarget{Format: target, ProviderModelID: FixtureProviderModel(target)}
-			wire, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, target, []byte(canonReq), ct)
+			wire, _, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, target, []byte(canonReq), ct)
 			if err != nil {
 				t.Fatalf("IngressEmbeddingsToWire(openai→%s): %v", target, err)
 			}
@@ -124,6 +124,63 @@ func TestCrossFormatEmbeddingsRoundTrip(t *testing.T) {
 			}
 			if ingress == provcore.FormatOpenAI && !strings.Contains(string(shaped), "data") {
 				t.Errorf("openai embeddings response should be identity (contain \"data\"): %s", shaped)
+			}
+		})
+	}
+}
+
+// TestIngressEmbeddingsToWire_GeminiEndpointSelection is the unit-level guard
+// for Bug F-0053: the Gemini embeddings codec selects between the single
+// (:embedContent) and batch (:batchEmbedContents) upstream endpoints purely via
+// EncodeResult.URLOverride. IngressEmbeddingsToWire MUST surface that override
+// (it was previously discarded, so a batch body — {"requests":[…]} — was POSTed
+// to the single-embed URL and Gemini returned
+// `Unknown name "requests": Cannot find field`). This asserts the override
+// emitted by the bridge for an OpenAI /v1/embeddings ingress routed to a Gemini
+// target, the only reachable embeddings→Gemini path (no Gemini embeddings
+// ingress route exists, so the request is always cross-format).
+func TestIngressEmbeddingsToWire_GeminiEndpointSelection(t *testing.T) {
+	b := testBridge(t)
+	ct := provcore.CallTarget{Format: provcore.FormatGemini, ProviderModelID: "gemini-embedding-001"}
+
+	cases := []struct {
+		name         string
+		canonReq     string
+		wantOverride string
+		wantBodyHas  string // a marker the target wire body must contain
+	}{
+		{
+			name:         "single_string_input",
+			canonReq:     `{"model":"gemini-embedding-001","input":"hello"}`,
+			wantOverride: ":embedContent",
+			wantBodyHas:  `"content"`,
+		},
+		{
+			name:         "batch_array_input",
+			canonReq:     `{"model":"gemini-embedding-001","input":["a","b","c","d","e","f","g","h"]}`,
+			wantOverride: ":batchEmbedContents",
+			wantBodyHas:  `"requests"`,
+		},
+		{
+			// A single-element array collapses to the single endpoint per the
+			// codec's documented Gemini recommendation.
+			name:         "single_element_array",
+			canonReq:     `{"model":"gemini-embedding-001","input":["solo"]}`,
+			wantOverride: ":embedContent",
+			wantBodyHas:  `"content"`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wire, override, err := b.IngressEmbeddingsToWire(provcore.FormatOpenAI, provcore.FormatGemini, []byte(c.canonReq), ct)
+			if err != nil {
+				t.Fatalf("IngressEmbeddingsToWire: %v", err)
+			}
+			if override != c.wantOverride {
+				t.Fatalf("URLOverride = %q, want %q (body=%s)", override, c.wantOverride, wire)
+			}
+			if !strings.Contains(string(wire), c.wantBodyHas) {
+				t.Fatalf("target wire body missing %q: %s", c.wantBodyHas, wire)
 			}
 		})
 	}

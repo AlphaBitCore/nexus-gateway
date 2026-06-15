@@ -168,6 +168,12 @@ type TrafficEventMessage struct {
 	ResponseNormalizeError  string          `json:"responseNormalizeError,omitempty"`
 	NormalizeVersion        string          `json:"normalizeVersion,omitempty"`
 
+	// Transform spans relocated to their offsets in the post-redact normalized
+	// payload, so the UI can mark each redaction inline. Set only when
+	// storageAction=="redact"; persisted on traffic_event_normalized.
+	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`
+	ResponseRedactionSpans json.RawMessage `json:"responseRedactionSpans,omitempty"`
+
 	// InternalPurpose tags events written by internal subsystems (e.g.
 	// "ai-guard"). Persisted on traffic_event.internal_purpose so the
 	// admin UI can hide them from customer billing views by default.

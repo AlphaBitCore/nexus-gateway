@@ -1,12 +1,17 @@
 package issuer
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"log/slog"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -526,5 +531,99 @@ func TestNewIssuer_NoopProviderIsLegacyBehaviour(t *testing.T) {
 	}
 	if iss == nil {
 		t.Fatal("expected non-nil issuer")
+	}
+}
+
+// writeUnconstrainedTestCA writes a self-signed CA cert + key that is CA:TRUE
+// but does NOT carry the pathlen:0 basic constraint — the shape of a proxy CA
+// generated before pathlen:0 was added to the generation recipes. Used to
+// exercise the load-time warning for such legacy CAs.
+func writeUnconstrainedTestCA(t *testing.T, dir string) (certPath, keyPath string) {
+	t.Helper()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Unconstrained Test CA"},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		// No MaxPathLenZero: the basic constraints carry no path length limit.
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, template, template, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA cert: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(caKey)
+	if err != nil {
+		t.Fatalf("marshal CA key: %v", err)
+	}
+	certPath = filepath.Join(dir, "ca-cert.pem")
+	keyPath = filepath.Join(dir, "ca-key.pem")
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write CA cert: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("write CA key: %v", err)
+	}
+	return certPath, keyPath
+}
+
+// captureDefaultSlog swaps the process default slog logger for one writing to
+// the returned buffer, restoring the original at test cleanup.
+func captureDefaultSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// TestNewIssuer_WarnsOnCAWithoutPathLenZero: loading a CA:TRUE certificate
+// without the pathlen:0 basic constraint must succeed (existing deployments
+// may carry such a CA) but emit the operator warning telling them to
+// regenerate — without pathlen:0 a stolen CA key can mint a subordinate CA.
+func TestNewIssuer_WarnsOnCAWithoutPathLenZero(t *testing.T) {
+	certPath, keyPath := writeUnconstrainedTestCA(t, t.TempDir())
+	buf := captureDefaultSlog(t)
+
+	iss, err := NewIssuer(certPath, keyPath, nil)
+	if err != nil {
+		t.Fatalf("NewIssuer must accept a legacy CA without pathlen:0, got: %v", err)
+	}
+	if iss == nil {
+		t.Fatal("expected non-nil issuer")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "lacks the pathlen:0 basic constraint") {
+		t.Errorf("expected pathlen:0 warning in log output, got: %q", out)
+	}
+	if !strings.Contains(out, certPath) {
+		t.Errorf("warning should name the offending cert path %q, got: %q", certPath, out)
+	}
+}
+
+// TestNewIssuer_NoWarningOnPathLenZeroCA: a CA carrying pathlen:0 (the shape
+// produced by the current generation recipes) must load without the warning,
+// so the warning stays a real signal rather than boot noise.
+func TestNewIssuer_NoWarningOnPathLenZeroCA(t *testing.T) {
+	certPath, keyPath, err := testutil.WriteTestCA(t.TempDir())
+	if err != nil {
+		t.Fatalf("WriteTestCA: %v", err)
+	}
+	buf := captureDefaultSlog(t)
+
+	if _, err := NewIssuer(certPath, keyPath, nil); err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "pathlen:0") {
+		t.Errorf("unexpected pathlen warning for a pathlen:0 CA: %q", out)
 	}
 }

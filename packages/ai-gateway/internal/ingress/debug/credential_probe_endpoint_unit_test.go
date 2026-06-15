@@ -77,10 +77,10 @@ func (s *stubAdapter) Probe(ctx context.Context, t provcore.CallTarget) (*provco
 func (s *stubAdapter) Execute(context.Context, provcore.Request) (*provcore.Response, error) {
 	panic("stubAdapter.Execute must not be called from CredentialProbeHandler")
 }
-func (s *stubAdapter) PrepareBody(provcore.Request) ([]byte, []string, error) {
+func (s *stubAdapter) PrepareBody(provcore.Request) ([]byte, []string, string, error) {
 	panic("stubAdapter.PrepareBody must not be called from CredentialProbeHandler")
 }
-func (s *stubAdapter) ExecuteWithBody(context.Context, provcore.Request, []byte, []string) (*provcore.Response, error) {
+func (s *stubAdapter) ExecuteWithBody(context.Context, provcore.Request, []byte, []string, string) (*provcore.Response, error) {
 	panic("stubAdapter.ExecuteWithBody must not be called from CredentialProbeHandler")
 }
 

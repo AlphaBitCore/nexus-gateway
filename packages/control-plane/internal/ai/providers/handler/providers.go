@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/labstack/echo/v4"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/providerstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/crypto"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -265,6 +268,7 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 	// expensive part and must not hold a DB lock. If the store insert
 	// fails after encryption, the ciphertext is discarded with the rollback.
 	var credParams *credstore.CreateCredentialParams
+	var newProviderID string // app-side provider id when an inline credential needs AAD binding
 	if body.Credential != nil && body.Credential.APIKey != "" {
 		if h.multiVault == nil && h.vault == nil {
 			return c.JSON(http.StatusServiceUnavailable, errJSON(
@@ -276,13 +280,20 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 				"credential.name is required when credential.apiKey is provided",
 				"validation_error", ""))
 		}
+		// Provider + credential are created atomically, so neither id
+		// exists yet. Generate both app-side here so the credential ciphertext can
+		// be AAD-bound to its own (credentialID, providerID) before the insert.
+		newProviderID = uuid.New().String()
+		credID := uuid.New().String()
+		aad := keyderive.ProviderCredentialAAD(credID, newProviderID)
+
 		var enc *crypto.EncryptResult
 		var keyID string
 		var encErr error
 		if h.multiVault != nil {
-			enc, keyID, encErr = h.multiVault.Encrypt(body.Credential.APIKey)
+			enc, keyID, encErr = h.multiVault.Encrypt(body.Credential.APIKey, aad)
 		} else {
-			enc, encErr = h.vault.Encrypt(body.Credential.APIKey)
+			enc, encErr = h.vault.Encrypt(body.Credential.APIKey, aad)
 			keyID = "v1"
 		}
 		if encErr != nil {
@@ -295,6 +306,7 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 			rotationState = "none"
 		}
 		credParams = &credstore.CreateCredentialParams{
+			ID:              credID,
 			Name:            body.Credential.Name,
 			EncryptedKey:    enc.Ciphertext,
 			EncryptionIV:    enc.IV,
@@ -308,6 +320,7 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 	p, insertedModels, insertedCred, err := h.providers.CreateProviderWithChildren(
 		c.Request().Context(),
 		providerstore.CreateParams{
+			ID:          newProviderID, // Matches the AAD when an inline credential is sealed; empty → store generates
 			Name:        body.Name,
 			DisplayName: body.DisplayName,
 			Description: desc,
@@ -337,12 +350,19 @@ func (h *Handler) CreateProvider(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "providers")
+		ctx := c.Request().Context()
+		keys := []string{"providers"}
 		if len(body.Models) > 0 {
-			h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "models")
+			keys = append(keys, "models")
 		}
 		if credParams != nil {
-			h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "credentials")
+			keys = append(keys, "credentials")
+		}
+		for _, key := range keys {
+			if err := h.hub.InvalidateConfigE(ctx, "ai-gateway", key); err != nil {
+				h.logger.Error("create provider: hub invalidate failed", "id", p.ID, "configKey", key, "error", err)
+				return hub.RespondPropagationFailure(c, err)
+			}
 		}
 	}
 	h.incrementConfigVersion(c.Request().Context())
@@ -476,7 +496,10 @@ func (h *Handler) UpdateProvider(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "providers")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "providers"); err != nil {
+			h.logger.Error("provider mutation: hub invalidate failed", "id", c.Param("id"), "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 	h.incrementConfigVersion(c.Request().Context())
 
@@ -505,7 +528,10 @@ func (h *Handler) DeleteProvider(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "providers")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "providers"); err != nil {
+			h.logger.Error("provider mutation: hub invalidate failed", "id", c.Param("id"), "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 	h.incrementConfigVersion(c.Request().Context())
 
@@ -600,7 +626,10 @@ func (h *Handler) AddProviderModel(c echo.Context) error {
 	}
 
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "providers")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "providers"); err != nil {
+			h.logger.Error("provider mutation: hub invalidate failed", "id", c.Param("id"), "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 	h.incrementConfigVersion(c.Request().Context())
 

@@ -9,7 +9,7 @@ import (
 
 // TrafficEventMessage is the canonical wire format for traffic events on MQ.
 // Published by AI Gateway to "nexus.event.ai-traffic".
-// Consumers (hub-db-writer, hub-siem) deserialize from this.
+// Consumers (hub-db-writer, hub-alerting) deserialize from this.
 //
 // MUST stay JSON-tag-aligned with the Hub's consumer.TrafficEventMessage
 // (packages/nexus-hub/internal/observability/consumer/message.go). The two are
@@ -148,9 +148,14 @@ type TrafficEventMessage struct {
 	// APIKeyFingerprint is SHA256(key)[:8] hex (16 chars). For ai-gateway this
 	// is the caller's virtual key; for compliance-proxy and agent it is the
 	// caller's real provider key.
-	// UsageExtractionStatus is the extraction tier tag for token counts:
+	// UsageExtractionStatus is the extraction tier tag for token counts. The
+	// full set (enforced by chk_traffic_event_usage_extraction_status on
+	// traffic_event) is:
 	//   ok | streaming_reported | streaming_estimated | streaming_unavailable |
-	//   parse_failed | no_body | non_llm. Empty = unknown/not applicable.
+	//   streaming_error | estimated | truncated | parse_failed | no_body |
+	//   non_llm. "truncated" means token counts were parsed from a
+	//   body clamped at the response-size cap — do not trust as confirmed.
+	//   Empty = unknown/not applicable.
 	APIKeyClass           string `json:"apiKeyClass,omitempty"`
 	APIKeyFingerprint     string `json:"apiKeyFingerprint,omitempty"`
 	UsageExtractionStatus string `json:"usageExtractionStatus,omitempty"`
@@ -187,6 +192,14 @@ type TrafficEventMessage struct {
 	RequestNormalizeError   string          `json:"requestNormalizeError,omitempty"`
 	ResponseNormalizeError  string          `json:"responseNormalizeError,omitempty"`
 	NormalizeVersion        string          `json:"normalizeVersion,omitempty"`
+
+	// Request/ResponseRedactionSpans carry the transform spans relocated to
+	// their offsets in the (post-redact) normalized payload, so the audit UI
+	// can mark each redaction inline. Only set when storageAction=="redact";
+	// nil otherwise. Marshalled as json.RawMessage for the same schema-stability
+	// reason as the normalized payloads above.
+	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`
+	ResponseRedactionSpans json.RawMessage `json:"responseRedactionSpans,omitempty"`
 
 	// BumpStatus is compliance-proxy specific (TLS bump outcome). Other
 	// producers leave it empty.
@@ -255,15 +268,17 @@ type TrafficEventMessage struct {
 	SourceProcess string `json:"sourceProcess,omitempty"`
 	// Action is the verb-ish role of the event in the emitting service's
 	// vocabulary ("traffic" for ai-gateway, "compliance-traffic" for the
-	// compliance-proxy, "agent-traffic" for agent). Surfaced verbatim onto
-	// traffic_event.action. Useful when filtering rows by emitter intent
-	// rather than the catch-all `source` enum.
+	// compliance-proxy, and one of "passthrough" / "inspect" / "deny" for the
+	// agent — the agent stamps its per-flow policy decision here via
+	// deriveAction, see packages/agent/internal/observability/audit/queue/writer_adapter.go).
+	// Surfaced verbatim onto traffic_event.action. Useful when filtering rows
+	// by emitter intent rather than the catch-all `source` enum.
 	Action string `json:"action,omitempty"`
 }
 
 // AdminAuditMessage is the MQ wire format for admin audit log events.
 // Published by Control Plane to "nexus.event.admin-audit".
-// Consumers (hub-db-writer, hub-siem) deserialize from this.
+// Consumers (hub-db-writer, hub-alerting) deserialize from this.
 //
 // The hash chain (previousHash / integrityHash) is computed Hub-side in
 // packages/nexus-hub/internal/observability/audit/chain.go; sending hashes on the wire

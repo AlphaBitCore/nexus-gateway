@@ -91,6 +91,7 @@ func (h *Handler) CreateUserAPIKey(c echo.Context) error {
 	k, err := h.users.CreateAdminAPIKey(c.Request().Context(), userstore.CreateAdminAPIKeyParams{
 		Name:        body.Name,
 		KeyHash:     keyHash,
+		KeyVersion:  auth.CurrentKeyVersion(),
 		KeyPrefix:   keyPrefix,
 		CreatedBy:   createdBy,
 		ExpiresAt:   expiresAt,
@@ -167,7 +168,7 @@ func (h *Handler) RegenerateUserAPIKey(c echo.Context) error {
 	keyHash := auth.HashAPIKey(rawKey)
 	keyPrefix := rawKey[:12]
 
-	if err := h.users.RegenerateAdminAPIKey(c.Request().Context(), id, keyHash, keyPrefix); err != nil {
+	if err := h.users.RegenerateAdminAPIKey(c.Request().Context(), id, keyHash, auth.CurrentKeyVersion(), keyPrefix); err != nil {
 		h.logger.Error("regenerate user api key", "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to regenerate API key", "server_error", ""))
 	}

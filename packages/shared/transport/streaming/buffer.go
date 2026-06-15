@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
@@ -130,8 +131,11 @@ func (b *BufferPipeline) Process(
 	parser := NewSSEParserWithLogger(teedUpstream, b.logger)
 
 	var (
-		events    []*SSEEvent
-		fullText  string
+		events []*SSEEvent
+		// fullText accumulates the extracted delta-text across every frame.
+		// strings.Builder makes each append amortized O(1); naive `s += delta`
+		// in this per-event loop is O(n²) over the stream length.
+		fullText  strings.Builder
 		totalSize int
 	)
 
@@ -160,7 +164,7 @@ func (b *BufferPipeline) Process(
 		events = append(events, evt)
 
 		deltaText := extractDeltaText(evt)
-		fullText += deltaText
+		fullText.WriteString(deltaText)
 
 		if evt.Done {
 			break
@@ -168,7 +172,7 @@ func (b *BufferPipeline) Process(
 	}
 
 	// Phase 2: Run compliance hooks on the full content.
-	checkpointInput := buildCheckpointInput(baseInput, fullText)
+	checkpointInput := buildCheckpointInput(baseInput, fullText.String())
 
 	// #90 — invoke caller-provided pre-hook callback so the compliance
 	// hook executor sees a Registry-normalized payload rather than the

@@ -5,6 +5,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/freshness"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 // TestClassifyCachePreLookup covers the short-circuit branches of
@@ -24,6 +25,7 @@ func TestClassifyCachePreLookup(t *testing.T) {
 
 	tests := []struct {
 		name                                                            string
+		endpointKind                                                    typology.EndpointKind
 		cacheEnabled, hasNoCacheHeader, targets, passthroughBypassCache bool
 		detector                                                        timeSensitiveDetector
 		msgs                                                            []freshness.ChatMessage
@@ -31,6 +33,33 @@ func TestClassifyCachePreLookup(t *testing.T) {
 		wantStatus                                                      audit.GatewayCacheStatus
 		wantReason                                                      audit.GatewayCacheSkipReason
 	}{
+		// Embeddings endpoint short-circuits BEFORE every other check —
+		// even when the cache is enabled with targets, and even when other
+		// skip conditions (no-cache header, passthrough) would also fire.
+		{
+			name:         "embeddings short-circuits even with cache enabled + targets",
+			endpointKind: typology.EndpointKindEmbeddings,
+			cacheEnabled: true, targets: true,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonEmbeddingsEndpoint,
+		},
+		{
+			name:         "embeddings wins over cache disabled / no targets",
+			endpointKind: typology.EndpointKindEmbeddings,
+			cacheEnabled: false, targets: false,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonEmbeddingsEndpoint,
+		},
+		{
+			name:         "embeddings wins over passthrough + no-cache header",
+			endpointKind: typology.EndpointKindEmbeddings,
+			cacheEnabled: true, hasNoCacheHeader: true, targets: true, passthroughBypassCache: true,
+			wantStatus: audit.GatewayCacheSkipped, wantReason: audit.GatewayCacheSkipReasonEmbeddingsEndpoint,
+		},
+		{
+			name:         "chat endpoint with cache enabled proceeds (not short-circuited)",
+			endpointKind: typology.EndpointKindChat,
+			cacheEnabled: true, targets: true,
+			wantStatus: "", wantReason: "",
+		},
 		// Cache off short-circuits before all other checks (matches
 		// production: a nil cache module never sees a request).
 		{
@@ -116,6 +145,7 @@ func TestClassifyCachePreLookup(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			gotStatus, gotReason := classifyCachePreLookup(
+				tc.endpointKind,
 				tc.cacheEnabled, tc.hasNoCacheHeader, tc.targets, tc.passthroughBypassCache,
 				tc.detector, tc.msgs, tc.skipTimeSensitive,
 			)

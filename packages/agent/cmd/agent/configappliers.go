@@ -75,6 +75,48 @@ func applyOf(a shadow.ShadowApplier) rawApply {
 	}
 }
 
+// applyOfKillSwitch builds a rawApply for the kill-switch shadow key that:
+//   - Drives the kill switch exclusively through pauser.EngageAdmin /
+//     pauser.DisengageAdmin so a user-initiated Resume never accidentally
+//     disengages a Hub-pushed fleet brake.
+//   - Returns the live SnapshotState rather than nil so Hub echoes the
+//     actually-applied state instead of the raw desired payload.
+//
+// Fail-safe: an empty or null payload is a no-op — the admin-brake state
+// is preserved unchanged.  This mirrors killswitch.ApplyShadowState semantics
+// but goes through the pauser so the two-source (admin/user) logic is
+// honoured.
+func applyOfKillSwitch(ks *killswitch.Switch, pauser *protectionpause.Pauser) rawApply {
+	return func(_ context.Context, raw []byte, _ int64) ([]byte, error) {
+		if len(raw) > 0 && string(raw) != "null" {
+			// Decode the wire payload. Use a pointer so we can detect a missing
+			// "engaged" field (present-vs-absent) — an explicit false must
+			// disengage, but an absent field is treated as a no-op.
+			var payload struct {
+				Engaged *bool `json:"engaged"`
+			}
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				return nil, fmt.Errorf("parse killswitch shadow: %w", err)
+			}
+			if payload.Engaged != nil {
+				if *payload.Engaged {
+					pauser.EngageAdmin("hub-shadow")
+				} else {
+					pauser.DisengageAdmin("hub-shadow")
+				}
+			}
+			// If payload.Engaged == nil ({} or no "engaged" field) — no-op,
+			// preserve current admin-brake state.
+		}
+		// Return the live snapshot so Hub sees the actually-applied state.
+		b, err := json.Marshal(ks.SnapshotState())
+		if err != nil {
+			return nil, fmt.Errorf("marshal killswitch snapshot: %w", err)
+		}
+		return b, nil
+	}
+}
+
 func adaptApplyFunc(fn func(ctx context.Context, raw json.RawMessage) error) rawApply {
 	return func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
 		return nil, fn(ctx, raw)
@@ -108,6 +150,7 @@ func buildConfigAppliers(a buildConfigAppliersArgs) configAppliers {
 			ShutdownWarningEnabled   bool              `json:"shutdownWarningEnabled"`
 			TrafficUploadLevel       string            `json:"trafficUploadLevel"`
 			ForceQUICFallbackBundles []string          `json:"forceQUICFallbackBundles"`
+			BypassBundles            []string          `json:"bypassBundles"`
 			// Fleet toggle for traffic attestation. When true and an Ed25519
 			// cert is on disk, the request injector stamps X-Nexus-Attestation
 			// on every outbound HTTPS request.
@@ -126,6 +169,9 @@ func buildConfigAppliers(a buildConfigAppliersArgs) configAppliers {
 		if as.ForceQUICFallbackBundles != nil {
 			remoteOverlay["forceQUICFallbackBundles"] = platformshim.AnySlice(as.ForceQUICFallbackBundles)
 		}
+		if as.BypassBundles != nil {
+			remoteOverlay["bypassBundles"] = platformshim.AnySlice(as.BypassBundles)
+		}
 		if len(remoteOverlay) > 0 {
 			next := config.MergeConfig(a.cfgMgr.Get(), remoteOverlay)
 			a.cfgMgr.Swap(next)
@@ -133,6 +179,11 @@ func buildConfigAppliers(a buildConfigAppliersArgs) configAppliers {
 		if as.ForceQUICFallbackBundles != nil {
 			if err := platformshim.WriteQUICFallbackBundlesFile(as.ForceQUICFallbackBundles, a.logger); err != nil {
 				a.logger.Warn("write quic-bundles.json failed", "error", err, "count", len(as.ForceQUICFallbackBundles))
+			}
+		}
+		if as.BypassBundles != nil {
+			if err := platformshim.WriteBypassBundlesFile(as.BypassBundles, a.logger); err != nil {
+				a.logger.Warn("write bypass-bundles.json failed", "error", err, "count", len(as.BypassBundles))
 			}
 		}
 		if sc := *a.statusCollectorPtr; sc != nil {
@@ -176,7 +227,7 @@ func buildConfigAppliers(a buildConfigAppliersArgs) configAppliers {
 
 	return configAppliers{
 		exemptions:          applyOf(teeCatB("exemptions", a.exemptionStore, a.policiesCache)),
-		killSwitchApply:     applyOf(ks),
+		killSwitchApply:     applyOfKillSwitch(ks, pauser),
 		agentSettings:       agentSettingsApply,
 		diagMode:            diagModeApply,
 		interceptionDomains: applyOf(teeCatB("interception_domains", shadow.AdapterFunc(a.agentPipeline.ApplyDomainsShadowState), a.policiesCache)),

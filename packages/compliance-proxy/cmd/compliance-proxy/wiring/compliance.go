@@ -28,7 +28,7 @@ type ComplianceResult struct {
 	Resolver        *compliance.PolicyResolver
 	HookConfigCache *pipeline.HookConfigCache
 	Emitter         *compliance.AuditEmitter
-	// StreamingMode field deleted in #115 — admin policy is the
+	// StreamingMode field removed — admin policy is the
 	// single source of truth; downstream reads from
 	// *streampolicy.Store directly.
 	LiveConfig   streaming.LiveConfig
@@ -119,7 +119,12 @@ func InitCompliance(cfg *config.Config, cacheManager *cache.Manager, auditWriter
 	result.Resolver = result.HookConfigCache.Resolver(context.Background())
 
 	if auditWriter != nil {
-		result.Emitter = compliance.NewAuditEmitter(auditWriter, logger)
+		// WithPreSpillNormalize: the proxy's audit writer runs a
+		// flush-time normalize pass (applyNormalize), so retaining a
+		// spilled body's in-memory bytes lets it project spill-destined
+		// traffic without a spill-store fetch. The agent does NOT set this
+		// — it normalizes inline before emit.
+		result.Emitter = compliance.NewAuditEmitter(auditWriter, logger).WithPreSpillNormalize()
 		// Wire spillstore for out-of-band body storage. Returns
 		// (nil, nil) when cfg.Spill.Enabled is false; emitter then keeps
 		// inline-only behaviour. The runtime MaxInlineBodyBytes

@@ -227,27 +227,76 @@ func TestRePushConfigKey_MQFallback(t *testing.T) {
 	if topic != "nexus.hub.signal" {
 		t.Errorf("MQ topic = %q; want nexus.hub.signal", topic)
 	}
-	var sig map[string]any
-	if err := json.Unmarshal(data, &sig); err != nil {
-		t.Fatalf("unmarshal hub signal: %v", err)
+	// The frame rides the signed-envelope transport like every other hub
+	// signal; peers decode it via VerifyAndDecodeHubSignal.
+	sig, ok := VerifyAndDecodeHubSignal(data, nil)
+	if !ok {
+		t.Fatalf("decode hub signal envelope failed: %s", data)
 	}
-	if sig["action"] != "config_changed" || sig["sourceHub"] != "hub-east-1" {
+	if sig.Action != "config_changed" || sig.SourceHub != "hub-east-1" {
 		t.Errorf("signal envelope = %+v", sig)
 	}
-	if sig["thingType"] != "compliance-proxy" || sig["configKey"] != "killswitch" {
+	if sig.ThingType != "compliance-proxy" || sig.ConfigKey != "killswitch" {
 		t.Errorf("signal routing fields wrong: %+v", sig)
 	}
-	if sig["version"].(float64) != 3 {
-		t.Errorf("signal version = %v; want 3", sig["version"])
+	if sig.Version != 3 {
+		t.Errorf("signal version = %d; want 3", sig.Version)
 	}
 	// Peer-Hub path must also carry Force=true + ThingID so the other Hub
 	// forwards a targeted forced replay (not a type-wide broadcast) to the
 	// exact Thing the operator clicked on.
-	if sig["force"] != true {
-		t.Errorf("hub signal force = %v; want true", sig["force"])
+	if !sig.Force {
+		t.Errorf("hub signal force = %v; want true", sig.Force)
 	}
-	if sig["thingId"] != "thing-remote" {
-		t.Errorf("hub signal thingId = %v; want thing-remote", sig["thingId"])
+	if sig.ThingID != "thing-remote" {
+		t.Errorf("hub signal thingId = %q; want thing-remote", sig.ThingID)
+	}
+}
+
+// TestRePushConfigKey_MQFallback_SignedFrame verifies that the targeted-resync
+// MQ fallback publishes an HMAC-signed hub-signal frame: with the signing
+// secret installed, the published frame round-trips VerifyAndDecodeHubSignal
+// under the same secret, and is DROPPED (ok=false) by a verifier holding a
+// different secret. Peer Hubs require the HMAC and drop unsigned frames, so a
+// resync published without SignHubSignal would never be delivered — and an
+// actor with bare MQ access must not be able to forge a forced replay.
+func TestRePushConfigKey_MQFallback_SignedFrame(t *testing.T) {
+	thing := &store.Thing{
+		ID:         "thing-remote",
+		Type:       "agent",
+		Desired:    map[string]any{"hooks": map[string]any{"enabled": true}},
+		DesiredVer: 7,
+	}
+	secret := []byte("resync-signing-secret")
+	ws := &mockWSPool{} // not connected locally ⇒ MQ fallback
+	mq := &mockMQProducer{}
+	mgr := &Manager{
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ws:           ws,
+		mq:           mq,
+		hubID:        "hub-east-1",
+		signalSecret: secret,
+	}
+
+	if err := mgr.rePushConfigKeyForThing(context.Background(), thing, "hooks"); err != nil {
+		t.Fatalf("rePushConfigKeyForThing: %v", err)
+	}
+
+	mq.mu.Lock()
+	data := append([]byte(nil), mq.lastData...)
+	mq.mu.Unlock()
+
+	sig, ok := VerifyAndDecodeHubSignal(data, secret)
+	if !ok {
+		t.Fatalf("published resync frame did not verify under the signing secret: %s", data)
+	}
+	if sig.ThingID != "thing-remote" || sig.ConfigKey != "hooks" || !sig.Force || sig.Version != 7 {
+		t.Errorf("decoded signal = %+v; want thingId=thing-remote configKey=hooks force=true version=7", sig)
+	}
+
+	// A peer holding a different secret must drop the frame.
+	if _, ok := VerifyAndDecodeHubSignal(data, []byte("other-secret")); ok {
+		t.Error("frame verified under a different secret; want drop (ok=false)")
 	}
 }
 

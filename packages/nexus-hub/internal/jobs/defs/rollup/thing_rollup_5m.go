@@ -101,7 +101,17 @@ func (j *ThingRollup5mJob) coldStartWatermark(ctx context.Context) time.Time {
 	return pickColdStartWatermark(time.Now().UTC(), rollup5mInitLookback, bucketDuration5m, earliest, ok)
 }
 
+// processOneBucket aggregates one per-Thing 5-minute bucket and advances the
+// live watermark. Used by the live catch-up loop.
 func (j *ThingRollup5mJob) processOneBucket(ctx context.Context, bucketStart time.Time) error {
+	return j.processBucket(ctx, bucketStart, true)
+}
+
+// processBucket aggregates one per-Thing 5-minute bucket inside a single
+// transaction. When writeWatermark is false (the correction backfill path) the
+// live thing-rollup-5m watermark is left untouched so re-aggregating historical
+// buckets does not rewind the live cursor.
+func (j *ThingRollup5mJob) processBucket(ctx context.Context, bucketStart time.Time, writeWatermark bool) error {
 	tx, err := j.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -122,8 +132,10 @@ func (j *ThingRollup5mJob) processOneBucket(ctx context.Context, bucketStart tim
 		return err
 	}
 
-	if err := rollupstore.SetWatermark(ctx, tx, watermarkThingRollup5m, bucketStart); err != nil {
-		return err
+	if writeWatermark {
+		if err := rollupstore.SetWatermark(ctx, tx, watermarkThingRollup5m, bucketStart); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit(ctx)

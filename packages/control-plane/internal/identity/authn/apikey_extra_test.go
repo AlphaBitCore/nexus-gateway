@@ -3,67 +3,73 @@ package auth
 import (
 	"encoding/hex"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/hmackeyring"
 )
 
-// TestHMACSecretFromEnv exercises the branch where ADMIN_KEY_HMAC_SECRET is set.
-// Verifies HMACSecret returns the env value verbatim, not the dev fallback.
-func TestHMACSecretFromEnv(t *testing.T) {
-	const want = "an-explicit-secret-from-env"
-	t.Setenv("ADMIN_KEY_HMAC_SECRET", want)
-
-	got := HMACSecret()
-	if got != want {
-		t.Errorf("HMACSecret() = %q; want env value %q", got, want)
+// setHMAC installs an injected single-version HMAC keyring for the duration of a
+// test, restoring the prior keyring afterwards. Mirrors the boot-time
+// auth.InitHMACKeyring injection (SEC-W2-01 Layer A / SEC-W2-03 Layer C) — the
+// hashing layer keys under the keyring's current version, never os.Getenv at
+// point-of-use.
+func setHMAC(t *testing.T, secret string) {
+	t.Helper()
+	prev := injectedKeyring
+	t.Cleanup(func() { injectedKeyring = prev })
+	kr, err := hmackeyring.Single(secret)
+	if err != nil {
+		t.Fatalf("hmackeyring.Single(%q): %v", secret, err)
 	}
-	if got == hmacDevFallback {
-		t.Error("HMACSecret() returned dev fallback when env was set")
-	}
-}
-
-// TestHMACSecretDevFallback exercises the branch where the env var is unset.
-// Verifies the documented dev fallback is returned (so HashAPIKey is deterministic
-// in dev across processes that share the same default).
-func TestHMACSecretDevFallback(t *testing.T) {
-	// t.Setenv with empty string would still set it; we need it unset.
-	prev, had := os.LookupEnv("ADMIN_KEY_HMAC_SECRET")
-	_ = os.Unsetenv("ADMIN_KEY_HMAC_SECRET")
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv("ADMIN_KEY_HMAC_SECRET", prev)
-		} else {
-			_ = os.Unsetenv("ADMIN_KEY_HMAC_SECRET")
-		}
-	})
-
-	if got := HMACSecret(); got != hmacDevFallback {
-		t.Errorf("HMACSecret() with unset env = %q; want dev fallback %q", got, hmacDevFallback)
+	if err := InitHMACKeyring(kr); err != nil {
+		t.Fatalf("InitHMACKeyring: %v", err)
 	}
 }
 
-// TestHashAPIKeyHonorsHMACSecret verifies that HashAPIKey actually keys the HMAC
-// with the env-provided secret — a regression here would mean rotating the
-// HMAC secret silently kept old hashes valid.
-func TestHashAPIKeyHonorsHMACSecret(t *testing.T) {
+// TestHashAPIKeyHonorsInjectedSecret verifies that HashAPIKey actually keys the
+// HMAC with the injected secret — a regression here would mean rotating the HMAC
+// secret silently kept old hashes valid. It also pins the custody invariant: the
+// hash depends ONLY on the injected plaintext, so the "command"-mode unwrapped
+// value and the "noop"/plaintext value (which are equal by the [MUST MATCH]
+// contract) produce the SAME hash, never a wrapped-blob hash.
+func TestHashAPIKeyHonorsInjectedSecret(t *testing.T) {
 	const key = "nxk_deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
-	t.Setenv("ADMIN_KEY_HMAC_SECRET", "secret-A")
+	setHMAC(t, "secret-A")
 	hashA := HashAPIKey(key)
 
-	t.Setenv("ADMIN_KEY_HMAC_SECRET", "secret-B")
+	setHMAC(t, "secret-B")
 	hashB := HashAPIKey(key)
 
 	if hashA == hashB {
 		t.Error("HashAPIKey produced the same hash under different HMAC secrets — secret rotation would not invalidate old hashes")
 	}
 	// Same secret must produce a stable hash.
-	t.Setenv("ADMIN_KEY_HMAC_SECRET", "secret-A")
+	setHMAC(t, "secret-A")
 	if HashAPIKey(key) != hashA {
 		t.Error("HashAPIKey not deterministic under a stable secret")
+	}
+}
+
+// TestHashAPIKey_DomainSeparatedFromVirtualKey is the SEC-W2-01 regression: the
+// SAME raw key hashed as an admin API key vs a virtual key must yield DIFFERENT
+// digests, because they key the HMAC with distinct HKDF-derived sub-keys. This is
+// what prevents a forgery oracle / leak scoped to one trust domain from minting a
+// credential in the other.
+func TestHashAPIKey_DomainSeparatedFromVirtualKey(t *testing.T) {
+	setHMAC(t, "shared-master-secret")
+	const key = "nxk_deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	adminFirst := HashAPIKey(key)
+	vkFirst := HashVirtualKey(key)
+	if adminFirst == vkFirst {
+		t.Fatal("SEC-W2-01 broken: admin-API-key and virtual-key hashes are identical — the two trust domains share one HMAC key")
+	}
+	// Each domain is independently deterministic: a second hash of the same
+	// raw key under the same secret must reproduce the first digest.
+	if HashAPIKey(key) != adminFirst || HashVirtualKey(key) != vkFirst {
+		t.Fatal("per-domain hashing must be deterministic")
 	}
 }
 
@@ -71,7 +77,7 @@ func TestHashAPIKeyHonorsHMACSecret(t *testing.T) {
 // the display prefix matches the documented [:12] slice, and successive calls
 // produce different keys (no PRNG re-use).
 func TestGenerateAPIKey(t *testing.T) {
-	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-secret-for-generate")
+	setHMAC(t, "test-secret-for-generate")
 
 	key, hash, prefix, err := GenerateAPIKey()
 	if err != nil {

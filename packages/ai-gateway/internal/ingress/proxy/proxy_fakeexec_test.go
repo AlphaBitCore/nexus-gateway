@@ -3,7 +3,7 @@
 // executor.API / canonicalbridge.API interface seams (introduced for
 // the final 88.6% → 95% push).
 //
-// What the real-executor tests in proxy_e2e_test.go / proxy_coverage_lift_test.go
+// What the real-executor tests in proxy_e2e_test.go / proxy_serveproxy_test.go
 // can NOT reach without spinning up real provider HTTP servers:
 //   - ExecuteWithPreparedBody.Error == ErrAllTargetsExhausted with a
 //     terminal 429 → PROVIDER_RATE_LIMITED 429 branch in
@@ -87,6 +87,7 @@ func (f *fakeExecutor) ExecuteWithPreparedBody(
 	_ configtypes.RetryPolicy,
 	preparedBody []byte,
 	_ []string,
+	_ string,
 ) *executor.ExecutionResult {
 	f.PreparedCalls++
 	f.LastTargets = targets
@@ -2182,13 +2183,29 @@ func TestServeProxy_Fake_Embeddings_CrossFormat_Gemini(t *testing.T) {
 	}
 }
 
-// TestServeProxy_Fake_Embeddings_CacheHIT_TokenFallback seeds an embeddings
-// cache entry whose stored usage is zero (a provider like Gemini that reports
-// no embed usage). On the HIT path the handler must back-fill prompt_tokens
-// from the request-side estimate via embeddingTokenFallback, exercising the
-// HIT-path fallback call sites in proxy_cache.go.
-func TestServeProxy_Fake_Embeddings_CacheHIT_TokenFallback(t *testing.T) {
-	fexec := &fakeExecutor{} // must NOT be invoked on a HIT
+// TestServeProxy_Fake_Embeddings_NeverServedFromCache is the F-0222 regression
+// guard: the response cache is endpoint-scoped, so an embeddings request must
+// NEVER be served from a seeded cache entry — even when the cache is enabled
+// and a matching entry exists. The pre-lookup classifier short-circuits the
+// embeddings endpoint (GatewayCacheSkipReasonEmbeddingsEndpoint), so the
+// request goes upstream and the seeded cache content is ignored. This both
+// fixes the cost-dashboard dilution and avoids occupying Redis with single-use
+// embedding entries.
+//
+// The test seeds a distinctive cache entry, then asserts the served response
+// carries the UPSTREAM body (from the fake executor), not the seeded entry —
+// proving the cache was skipped, not consulted.
+func TestServeProxy_Fake_Embeddings_NeverServedFromCache(t *testing.T) {
+	const upstreamMarker = "upstream-not-cache"
+	upstreamBody := []byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.9,0.9,0.9]}],"model":"text-embedding-3-small","usage":{},"_source":"` + upstreamMarker + `"}`)
+	fexec := &fakeExecutor{Result: &executor.ExecutionResult{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		Body:       upstreamBody,
+		Target:     routingcore.RoutingTarget{ProviderID: "p-openai", ProviderName: "openai", ModelID: "text-embedding-3-small", ModelCode: "text-embedding-3-small", AdapterType: "openai"},
+		Usage:      provcore.Usage{},
+		Attempts:   []executor.Attempt{{StatusCode: http.StatusOK}},
+	}}
 	deps := makeFakeDeps(t, fexec, &fakeBridge{})
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
@@ -2200,12 +2217,14 @@ func TestServeProxy_Fake_Embeddings_CacheHIT_TokenFallback(t *testing.T) {
 	}}}
 
 	body := []byte(`{"model":"text-embedding-3-small","input":"hello world"}`)
+	// Seed a cache entry that, if (incorrectly) served, would be detectable by
+	// the absence of the upstream marker.
 	cacheKey := computeStreamCacheKey(t, deps, "openai", "text-embedding-3-small", body, false)
 	entry := &cache.ResponseEntry{
 		Provider:          "openai",
 		Model:             "text-embedding-3-small",
-		CanonicalResponse: json.RawMessage(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"model":"text-embedding-3-small","usage":{}}`),
-		Usage:             provcore.Usage{}, // zero usage → fallback must fire
+		CanonicalResponse: json.RawMessage(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"model":"text-embedding-3-small","usage":{},"_source":"seeded-cache"}`),
+		Usage:             provcore.Usage{},
 		CachedAt:          time.Now().UTC(),
 	}
 	if _, err := deps.Cache.StoreResponse(context.Background(), cacheKey, entry); err != nil {
@@ -2224,6 +2243,16 @@ func TestServeProxy_Fake_Embeddings_CacheHIT_TokenFallback(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200; body=%s", w.Code, w.Body.String())
+	}
+	// The executor MUST have been called — a cache HIT would have skipped it.
+	if fexec.Calls == 0 && fexec.PreparedCalls == 0 {
+		t.Fatal("embeddings request was served from cache; F-0222 short-circuit not applied (executor never called)")
+	}
+	if !strings.Contains(w.Body.String(), upstreamMarker) {
+		t.Fatalf("response did not come from upstream; got cache content?\nbody=%s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "seeded-cache") {
+		t.Fatalf("response leaked the seeded cache entry; embeddings must not be cache-served\nbody=%s", w.Body.String())
 	}
 }
 

@@ -14,6 +14,35 @@ import (
 //	{"type":"error","error":{"type":"rate_limit_error","message":"..."}}
 type ErrorNormalizer struct{}
 
+// MapErrorType maps an Anthropic error-envelope `type` to the canonical
+// provider error code and the HTTP status the gateway surfaces. It is the
+// single source of truth shared by the unary HTTP normaliser (Normalize)
+// and the streaming `error`-event path (stream.MapAnthropicStreamError) so
+// the same upstream error class yields an identical canonical code — and
+// therefore an identical retry/failover classification — regardless of
+// whether it arrived in the response body or an SSE frame.
+// ok=false means the type is unrecognised; callers fall back to
+// status-based mapping (unary) or upstream_error/502 (stream).
+//
+// overloaded_error maps to rate_limited (the retryable bucket): Anthropic's
+// 529 overload is transient and SHOULD be retried, matching how the gateway
+// treats rate_limit_error.
+func MapErrorType(etype string) (code string, status int, ok bool) {
+	switch etype {
+	case "authentication_error", "permission_error":
+		return provcore.CodeAuthFailed, http.StatusUnauthorized, true
+	case "invalid_request_error":
+		return provcore.CodeInvalidRequest, http.StatusBadRequest, true
+	case "not_found_error":
+		return provcore.CodeInvalidRequest, http.StatusNotFound, true
+	case "rate_limit_error", "overloaded_error":
+		return provcore.CodeRateLimited, http.StatusTooManyRequests, true
+	case "api_error":
+		return provcore.CodeUpstreamError, http.StatusBadGateway, true
+	}
+	return "", 0, false
+}
+
 // Normalize implements provcore.ErrorNormalizer.
 func (ErrorNormalizer) Normalize(status int, headers http.Header, body []byte) *provcore.ProviderError {
 	pe := &provcore.ProviderError{Status: status, Raw: body}
@@ -27,20 +56,13 @@ func (ErrorNormalizer) Normalize(status int, headers http.Header, body []byte) *
 		pe.Message = http.StatusText(status)
 	}
 
-	switch pe.Type {
-	case "authentication_error", "permission_error":
-		pe.Code = provcore.CodeAuthFailed
-	case "invalid_request_error":
-		pe.Code = provcore.CodeInvalidRequest
-	case "rate_limit_error":
-		pe.Code = provcore.CodeRateLimited
-		if ra := ParseRetryAfter(headers.Get("retry-after")); ra != nil {
-			pe.RetryAfter = ra
+	if code, _, ok := MapErrorType(pe.Type); ok {
+		pe.Code = code
+		if code == provcore.CodeRateLimited {
+			if ra := ParseRetryAfter(headers.Get("retry-after")); ra != nil {
+				pe.RetryAfter = ra
+			}
 		}
-	case "overloaded_error", "api_error":
-		pe.Code = provcore.CodeUpstreamError
-	case "not_found_error":
-		pe.Code = provcore.CodeInvalidRequest
 	}
 	if pe.Code == "" {
 		switch status {

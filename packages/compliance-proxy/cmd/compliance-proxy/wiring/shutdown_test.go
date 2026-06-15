@@ -39,7 +39,7 @@ func buildTestRuntimeServer(t *testing.T) *runtimeserver.Server {
 	cm := conn.NewManager(0)
 	ex := exemption.NewStore(testLogger())
 	readiness := &atomic.Bool{}
-	tokenAuth := auth.NewTokenAuth(testLogger())
+	tokenAuth := auth.NewTokenAuth("test-token")
 	deps := config.RuntimeDeps{
 		KillSwitch:     ks,
 		ConnManager:    cm,
@@ -95,7 +95,7 @@ func TestRunShutdown_NilOptionalFieldsAreNoop(t *testing.T) {
 	runtimeSrv := buildTestRuntimeServer(t)
 	healthServer := &http.Server{Addr: "127.0.0.1:0"}
 
-	// SIEMForwarder, AuditWriter, RedisClient all nil — must not panic.
+	// AuditWriter, RedisClient (the optional fields) all nil — must not panic.
 	d := ShutdownDeps{
 		Readiness:     readiness,
 		ShutdownCoord: shutdownCoord,

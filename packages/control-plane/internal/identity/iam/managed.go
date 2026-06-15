@@ -61,7 +61,7 @@ var NexusViewer = PolicyDocument{
 		Effect: "Allow",
 		Action: []string{
 			// AI traffic plane.
-			"admin:provider.read", "admin:model.read", "admin:model-pricing.read",
+			"admin:provider.read", "admin:model.read",
 			"admin:credential.read",
 			"admin:virtual-key.read", "admin:routing-rule.read",
 			"admin:quota-policy.read", "admin:quota-override.read",
@@ -82,7 +82,7 @@ var NexusViewer = PolicyDocument{
 			"admin:device-defaults.read", "admin:agent-attestation.read",
 			// Platform ops.
 			"admin:alert.read", "admin:observability.read", "admin:observability-dlq.read", "admin:settings.read",
-			"admin:diagnostic-mode.read", "admin:node.read",
+			"admin:diagnostic-mode.read", "admin:node.read", "admin:assistant.read",
 			// IAM.
 			"admin:user.read", "admin:api-key.read",
 			"admin:organization.read", "admin:project.read",

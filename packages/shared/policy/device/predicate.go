@@ -25,7 +25,33 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 )
+
+// regexCache memoises compiled predicate regexes keyed by pattern string.
+// The `regex` op previously recompiled the pattern on every Evaluate call;
+// membership recompute runs the same smart-group predicate against every
+// device on a 60s cadge, so a single group with a regex leaf recompiled the
+// pattern N-devices times per cycle. Compiling once and reusing the immutable
+// *regexp.Regexp (concurrency-safe) keeps recompute O(1) in pattern count.
+// A bad pattern is never cached (compileRegex returns the error to the
+// caller), so a typo still surfaces as a predicate-shape error every call.
+var regexCache sync.Map // map[string]*regexp.Regexp
+
+// compileRegex returns a cached compiled regex for pattern, compiling and
+// caching it on first use. Errors are returned, not cached.
+func compileRegex(pattern string) (*regexp.Regexp, error) {
+	if v, ok := regexCache.Load(pattern); ok {
+		return v.(*regexp.Regexp), nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	// LoadOrStore collapses a concurrent compile race onto one stored value.
+	actual, _ := regexCache.LoadOrStore(pattern, re)
+	return actual.(*regexp.Regexp), nil
+}
 
 // Device is the attribute snapshot a predicate evaluates against.
 // Fields mirror the closed attribute set in the SDD. Time fields are
@@ -142,7 +168,7 @@ func evalLeaf(leaf Leaf, d *Device, nowSec int64) (bool, error) {
 		if v == "" {
 			return false, fmt.Errorf("predicate: empty regex for field %q", leaf.Field)
 		}
-		re, err := regexp.Compile(v)
+		re, err := compileRegex(v)
 		if err != nil {
 			return false, fmt.Errorf("predicate: bad regex %q for field %q: %w", v, leaf.Field, err)
 		}

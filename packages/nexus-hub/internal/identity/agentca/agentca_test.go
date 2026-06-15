@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // failReader is an io.Reader that always returns a sentinel error; it
@@ -62,55 +63,6 @@ func TestNew_LoadsExistingCA(t *testing.T) {
 
 	if ca2.cert.SerialNumber.Cmp(serial1) != 0 {
 		t.Fatal("second New() did not load same CA")
-	}
-}
-
-func TestSignCSR(t *testing.T) {
-	dir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	ca, err := New(dir, logger)
-	if err != nil {
-		t.Fatalf("New() error: %v", err)
-	}
-
-	clientKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	csrTemplate := &x509.CertificateRequest{}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, clientKey)
-	if err != nil {
-		t.Fatalf("CreateCSR error: %v", err)
-	}
-	csrPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}))
-
-	result, err := ca.SignCSR(csrPEM, "test-device")
-	if err != nil {
-		t.Fatalf("SignCSR error: %v", err)
-	}
-
-	if result.CertPEM == "" {
-		t.Fatal("cert PEM empty")
-	}
-	if result.CaCertPEM == "" {
-		t.Fatal("CA cert PEM empty")
-	}
-	if result.Serial == "" {
-		t.Fatal("serial empty")
-	}
-	if result.ExpiresAt.IsZero() {
-		t.Fatal("expiresAt zero")
-	}
-
-	block, _ := pem.Decode([]byte(result.CertPEM))
-	if block == nil {
-		t.Fatal("cannot decode cert PEM")
-	}
-	//nolint:staticcheck // SA5011: t.Fatal above terminates the test goroutine
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatalf("parse cert: %v", err)
-	}
-	if cert.Subject.CommonName != "test-device" {
-		t.Fatalf("CN = %q, want test-device", cert.Subject.CommonName)
 	}
 }
 
@@ -291,17 +243,6 @@ func contains(s, sub string) bool {
 	return false
 }
 
-func TestSignCSR_InvalidPEM(t *testing.T) {
-	dir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	ca, _ := New(dir, logger)
-	_, err := ca.SignCSR("not-pem", "test")
-	if err == nil {
-		t.Fatal("expected error for invalid PEM")
-	}
-}
-
 func TestGenerateDeviceToken(t *testing.T) {
 	plain1, hash1, err := GenerateDeviceToken()
 	if err != nil {
@@ -321,6 +262,21 @@ func TestGenerateDeviceToken(t *testing.T) {
 	}
 	if hash1 == hash2 {
 		t.Fatal("two calls produced identical hashes")
+	}
+}
+
+func TestDeviceTokenExpiry(t *testing.T) {
+	// The expiry must be exactly now + DeviceTokenTTL — the bounded lifetime
+	// that closes F-0202's "device token never expires" gap.
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	got := DeviceTokenExpiry(now)
+	if want := now.Add(DeviceTokenTTL); !got.Equal(want) {
+		t.Fatalf("DeviceTokenExpiry = %v, want %v", got, want)
+	}
+	// Guard the chosen TTL stays in the sane 1-day..60-day band so an accidental
+	// edit to a zero / forever value is caught.
+	if DeviceTokenTTL < 24*time.Hour || DeviceTokenTTL > 60*24*time.Hour {
+		t.Fatalf("DeviceTokenTTL %v outside the sane [1d,60d] band", DeviceTokenTTL)
 	}
 }
 
@@ -366,69 +322,6 @@ func TestNewFromFiles_Missing(t *testing.T) {
 	_, err := NewFromFiles("/nonexistent/ca.pem", "/nonexistent/key.pem", logger)
 	if err == nil {
 		t.Fatal("expected error for missing files")
-	}
-}
-
-func TestIssueClientCert(t *testing.T) {
-	dir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	ca, _ := New(dir, logger)
-
-	result, err := ca.IssueClientCert("legacy-device")
-	if err != nil {
-		t.Fatalf("IssueClientCert error: %v", err)
-	}
-	if result.KeyPEM == "" {
-		t.Fatal("key PEM empty for legacy issue")
-	}
-	if result.CertPEM == "" {
-		t.Fatal("cert PEM empty")
-	}
-}
-
-// TestSignCSR_ParseFailure covers the
-// `x509.ParseCertificateRequest(block.Bytes)` error branch. A PEM
-// block with the right type marker but garbage payload reaches the
-// parser and surfaces a wrapped "parse CSR" error.
-func TestSignCSR_ParseFailure(t *testing.T) {
-	ca, _ := New(t.TempDir(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
-	badCSRPEM := string(pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE REQUEST",
-		Bytes: []byte("not-a-real-csr"),
-	}))
-	_, err := ca.SignCSR(badCSRPEM, "test-cn")
-	if err == nil {
-		t.Fatal("expected ParseCertificateRequest error")
-	}
-}
-
-// TestSignCSR_BadSignature covers the `csr.CheckSignature()` error
-// branch — a CSR with a valid envelope but tampered signature must
-// reject so an attacker can't slip a CN through.
-func TestSignCSR_BadSignature(t *testing.T) {
-	ca, _ := New(t.TempDir(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
-
-	// Build a real CSR, then flip a signature byte.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("genkey: %v", err)
-	}
-	csrTemplate := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "cn"}}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, key)
-	if err != nil {
-		t.Fatalf("create CSR: %v", err)
-	}
-
-	// Flip the last byte (in the signature region of the DER) so
-	// CheckSignature rejects.
-	tampered := make([]byte, len(csrDER))
-	copy(tampered, csrDER)
-	tampered[len(tampered)-1] ^= 0xFF
-	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: tampered}))
-
-	_, err = ca.SignCSR(pemStr, "cn")
-	if err == nil {
-		t.Skip("tampered CSR was accepted by ParseCertificateRequest before CheckSignature; SDK quirk")
 	}
 }
 
@@ -606,62 +499,6 @@ func TestGenerateDeviceToken_EntropyError(t *testing.T) {
 	}
 	if plain != "" || hashed != "" {
 		t.Fatalf("expected empty strings on error, got plain=%q hash=%q", plain, hashed)
-	}
-}
-
-// TestIssueClientCert_EntropyError covers the `ecdsa.GenerateKey`
-// error branch in IssueClientCert (ca.go:147) by substituting
-// caRandReader with a failReader so client key generation fails before
-// any cert work happens.
-func TestIssueClientCert_EntropyError(t *testing.T) {
-	dir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	ca, err := New(dir, logger)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	orig := caRandReader
-	caRandReader = failReader{err: errors.New("no entropy for you")}
-	t.Cleanup(func() { caRandReader = orig })
-
-	if _, err := ca.IssueClientCert("doomed-device"); err == nil {
-		t.Fatal("expected entropy error from ecdsa.GenerateKey, got nil")
-	}
-}
-
-// TestSignCSR_CreateCertificateEntropyError covers the
-// `x509.CreateCertificate` error branch in SignCSR (ca.go:128).
-// SignCSR uses the CSR's pubkey (no GenerateKey call), so a failing
-// caRandReader surfaces only at CreateCertificate.
-func TestSignCSR_CreateCertificateEntropyError(t *testing.T) {
-	dir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	ca, err := New(dir, logger)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	// Build a real, valid CSR first so parsing + signature check pass.
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("genkey: %v", err)
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: "csr-cn"},
-	}, clientKey)
-	if err != nil {
-		t.Fatalf("create CSR: %v", err)
-	}
-	csrPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}))
-
-	// Now starve the CA's entropy so CreateCertificate fails.
-	orig := caRandReader
-	caRandReader = failReader{err: errors.New("entropy starved")}
-	t.Cleanup(func() { caRandReader = orig })
-
-	if _, err := ca.SignCSR(csrPEM, "csr-cn"); err == nil {
-		t.Fatal("expected CreateCertificate error, got nil")
 	}
 }
 

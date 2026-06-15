@@ -12,6 +12,7 @@ import (
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/models"
@@ -60,7 +61,7 @@ func testDeps(upstreamURL string) *proxy.Deps {
 		logger,
 	)
 
-	credMgr := credmanager.NewManager(nil, nil, logger)
+	credMgr := credmanager.NewManager(nil, nil)
 	healthTracker := store.NewHealthTracker()
 
 	return &proxy.Deps{
@@ -79,8 +80,20 @@ func testDeps(upstreamURL string) *proxy.Deps {
 	}
 }
 
+// okVKAuth is a VKAuthenticator stub that always authenticates a request
+// to a fixed virtual key, used to drive the post-auth admission path in
+// tests that exercise body validation / routing after auth passes.
+type okVKAuth struct{}
+
+func (okVKAuth) Authenticate(_ context.Context, _ *http.Request) (*vkauth.VKMeta, error) {
+	return &vkauth.VKMeta{ID: "vk-test", Name: "test"}, nil
+}
+
 func TestProxyHandler_MissingModel(t *testing.T) {
+	// F-0048: auth now runs BEFORE the body read, so authenticate with a
+	// passing VKAuth stub to reach the body-level model validation.
 	deps := testDeps("")
+	deps.VKAuth = okVKAuth{}
 	h := proxy.NewHandler(deps).ServeProxy(proxy.Ingress{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
@@ -102,29 +115,39 @@ func TestProxyHandler_MissingModel(t *testing.T) {
 	}
 }
 
-func TestProxyHandler_MissingVK(t *testing.T) {
-	// When VKAuth is nil (no DB), auth check is skipped in real handler.
-	// But when VKAuth is set, missing VK should return 401.
-	// For this test, we verify the missing-model check fires before auth.
+// TestProxyHandler_AuthBeforeBody asserts the F-0048 ordering: an
+// unauthenticated request is rejected at auth (401) BEFORE the body is read
+// or model-validated, so an attacker cannot force a full-body read +
+// payload capture pre-auth. A missing-model body that would 400 once
+// authenticated must instead surface the 401.
+func TestProxyHandler_AuthBeforeBody(t *testing.T) {
 	deps := testDeps("")
+	deps.VKAuth = stubAuthErr{err: vkauth.ErrMissing}
 	h := proxy.NewHandler(deps).ServeProxy(proxy.Ingress{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 	})
 
-	body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	// Body has no model — would 400 on the model check if it ran first.
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
-	// No VK header — but VKAuth is nil so it would panic. Test model validation instead.
 	rec := httptest.NewRecorder()
 
-	// This exercises the body parsing path at minimum.
 	h(rec, req)
-	// Without DB/VKAuth the handler will fail at auth or routing — that's expected.
-	// We just verify it doesn't panic.
-	if rec.Code == 0 {
-		t.Error("expected a non-zero status code")
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 (auth before body read), got %d body=%s", rec.Code, rec.Body.String())
 	}
+	if strings.Contains(rec.Body.String(), "model is required") {
+		t.Errorf("body-level model validation ran before auth — F-0048 regression: %s", rec.Body.String())
+	}
+}
+
+// stubAuthErr is a VKAuthenticator stub that always fails authentication.
+type stubAuthErr struct{ err error }
+
+func (s stubAuthErr) Authenticate(_ context.Context, _ *http.Request) (*vkauth.VKMeta, error) {
+	return nil, s.err
 }
 
 func TestModelsHandler_EmptyList(t *testing.T) {

@@ -34,6 +34,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
 )
 
+// maxFailReasonLen caps the stored upstream error text (fail_reason field).
+// Provider errors can be arbitrarily large; the field is operator-display
+// only, so truncating keeps the per-credential Redis hash bounded.
+const maxFailReasonLen = 256
+
 // ThresholdsResolver returns the effective Thresholds for a credential.
 // Production wiring resolves: per-credential override (from Credential
 // cache) merged on top of Hub-shadow globals merged on top of
@@ -262,6 +267,14 @@ func (b *Buffer) RecordAttempt(credentialID string, statusCode int, errMsg strin
 	case authFail:
 		pipe.HSet(ctx, statsKey, credstate.StatsFieldFailAt, nowStr)
 		if errMsg != "" {
+			// Cap the upstream error text before persisting: errMsg is the
+			// verbatim provider error and can be arbitrarily long (full HTML
+			// error pages, stack traces). The fail_reason field is only used
+			// for operator display, so 256 chars is ample and keeps the
+			// per-credential Redis hash bounded.
+			if len(errMsg) > maxFailReasonLen {
+				errMsg = errMsg[:maxFailReasonLen]
+			}
 			pipe.HSet(ctx, statsKey, credstate.StatsFieldFailReason, errMsg)
 		}
 	}

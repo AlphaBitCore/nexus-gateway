@@ -3,7 +3,7 @@
 # Enroll first: nexus-agent enroll --hub-url https://hub.example.com --token <token>
 #
 # Filesystem paths (cert files, audit DB, log file) intentionally left
-# blank — applyDefaults() in internal/config/config.go fills them in
+# blank — applyDefaults() in internal/sync/schema/config.go fills them in
 # from platform.DefaultPaths(), which returns OS-idiomatic locations:
 #   macOS   → /Library/Application Support/com.nexus-gateway.agent/
 #             /Library/Logs/com.nexus-gateway.agent/
@@ -33,10 +33,8 @@ heartbeatIntervalSec: 60
 auditDrainIntervalSec: 30
 auditBatchSize: 200
 auditRetentionDays: 30
-configRefreshSec: 300
 
 defaultAction: "passthrough"
-policyRules: []
 
 updaterEnabled: true
 updaterCheckSec: 3600

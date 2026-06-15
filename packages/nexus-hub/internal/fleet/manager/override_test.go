@@ -525,10 +525,9 @@ func TestManager_ClearOverride_Missing(t *testing.T) {
 	}
 }
 
-func TestManager_RePushAllKeys_FanOut(t *testing.T) {
-	// This test runs without a DB: it builds the Thing in-memory via the
-	// existing rePushConfigKeyForThing path. RePushAllKeys reads the Thing
-	// from the store, so we use a real pool to seed the thing row.
+func TestManager_ForceResyncAll_FanOut(t *testing.T) {
+	// ForceResyncAll reads the Thing from the store, bumps its desired_ver in a
+	// tx, then fans the keys out, so we use a real pool to seed the thing row.
 	pool := overrideMgrTestPool(t)
 	defer pool.Close()
 	ctx := context.Background()
@@ -552,9 +551,9 @@ func TestManager_RePushAllKeys_FanOut(t *testing.T) {
 	mgr, ws := newTestManager(t, pool)
 	ws.connectedIDs[thingID] = true
 
-	res, err := mgr.RePushAllKeys(ctx, thingID)
+	res, err := mgr.ForceResyncAll(ctx, thingID)
 	if err != nil {
-		t.Fatalf("RePushAllKeys: %v", err)
+		t.Fatalf("ForceResyncAll: %v", err)
 	}
 	if res.Pushed != 3 {
 		t.Errorf("Pushed = %d, want 3", res.Pushed)
@@ -580,13 +579,24 @@ func TestManager_RePushAllKeys_FanOut(t *testing.T) {
 		if msg["force"] != true {
 			t.Errorf("call[%d] force = %v, want true", i, msg["force"])
 		}
-		if msg["desiredVer"].(float64) != 5 {
-			t.Errorf("call[%d] desiredVer = %v, want 5", i, msg["desiredVer"])
+		// desired_ver was 5 on seed; ForceResyncAll bumps it to 6 before the
+		// push so an HTTP-fallback Thing's heartbeat compare fires (F-0116).
+		if msg["desiredVer"].(float64) != 6 {
+			t.Errorf("call[%d] desiredVer = %v, want 6 (bumped)", i, msg["desiredVer"])
 		}
+	}
+
+	// The bump must be persisted, not just stamped on the in-flight message.
+	var persistedVer int64
+	if err := pool.QueryRow(ctx, `SELECT desired_ver FROM thing WHERE id = $1`, thingID).Scan(&persistedVer); err != nil {
+		t.Fatalf("read desired_ver: %v", err)
+	}
+	if persistedVer != 6 {
+		t.Errorf("persisted desired_ver = %d, want 6", persistedVer)
 	}
 }
 
-func TestManager_RePushAllKeys_EmptyDesired(t *testing.T) {
+func TestManager_ForceResyncAll_EmptyDesired(t *testing.T) {
 	pool := overrideMgrTestPool(t)
 	defer pool.Close()
 	ctx := context.Background()
@@ -602,9 +612,9 @@ func TestManager_RePushAllKeys_EmptyDesired(t *testing.T) {
 	mgr, ws := newTestManager(t, pool)
 	ws.connectedIDs[thingID] = true
 
-	res, err := mgr.RePushAllKeys(ctx, thingID)
+	res, err := mgr.ForceResyncAll(ctx, thingID)
 	if err != nil {
-		t.Fatalf("RePushAllKeys: %v", err)
+		t.Fatalf("ForceResyncAll: %v", err)
 	}
 	if res.Pushed != 0 {
 		t.Errorf("Pushed = %d, want 0", res.Pushed)

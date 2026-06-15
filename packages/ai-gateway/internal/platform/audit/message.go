@@ -5,10 +5,20 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
+
+// isBlockingDecision reports whether a hook-stage decision string denotes a
+// rule-pack block. Both REJECT_HARD and BLOCK_SOFT carry a BlockingRule
+// attribution (see packages/shared/policy/decision), so either value on a
+// given stage means that stage produced the block.
+func isBlockingDecision(d string) bool {
+	return d == string(decision.RejectHard) || d == string(decision.BlockSoft)
+}
 
 // recordToMessage builds the wire TrafficEventMessage from a Record. Splits
 // the identity / entity / details derivation, applies cache-status unification,
@@ -143,23 +153,25 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		// executions land on request_hooks_pipeline and response-stage
 		// executions on response_hooks_pipeline; "connection" stage stays
 		// grouped with request since it occurs pre-upstream.
-		RequestHookDecision:   rec.HookDecision,
-		RequestHookReason:     rec.HookReason,
-		RequestHookReasonCode: rec.HookReasonCode,
-		ResponseHookDecision:  rec.ResponseHookDecision,
-		ComplianceTags:        rec.ComplianceTags,
-		APIKeyClass:           rec.APIKeyClass,
-		APIKeyFingerprint:     rec.APIKeyFingerprint,
-		UsageExtractionStatus: rec.UsageExtractionStatus,
-		ErrorCode:             nilIfEmpty(rec.ErrorCode),
-		ErrorReason:           nilIfEmpty(rec.ErrorReason),
-		RequestHooksPipeline:  filterHookStage(rec.HooksPipeline, "request", "connection"),
-		ResponseHooksPipeline: filterHookStage(rec.HooksPipeline, "response"),
-		RoutingTrace:          rec.RoutingTrace,
-		Details:               details,
-		CredentialID:          rec.CredentialID,
-		ThingID:               w.thingID,
-		ThingName:             w.thingName,
+		RequestHookDecision:    rec.HookDecision,
+		RequestHookReason:      rec.HookReason,
+		RequestHookReasonCode:  rec.HookReasonCode,
+		ResponseHookDecision:   rec.ResponseHookDecision,
+		ResponseHookReason:     rec.ResponseHookReason,
+		ResponseHookReasonCode: rec.ResponseHookReasonCode,
+		ComplianceTags:         rec.ComplianceTags,
+		APIKeyClass:            rec.APIKeyClass,
+		APIKeyFingerprint:      rec.APIKeyFingerprint,
+		UsageExtractionStatus:  rec.UsageExtractionStatus,
+		ErrorCode:              nilIfEmpty(rec.ErrorCode),
+		ErrorReason:            nilIfEmpty(rec.ErrorReason),
+		RequestHooksPipeline:   filterHookStage(rec.HooksPipeline, "request", "connection"),
+		ResponseHooksPipeline:  filterHookStage(rec.HooksPipeline, "response"),
+		RoutingTrace:           rec.RoutingTrace,
+		Details:                details,
+		CredentialID:           rec.CredentialID,
+		ThingID:                w.thingID,
+		ThingName:              w.thingName,
 		// Hook aggregates derive from the existing per-hook latencyMs values
 		// in HooksPipeline so even callers that don't wire a PhaseTimer still
 		// emit useful data. Upstream-side fields (Ttfb / Total) and the
@@ -213,13 +225,18 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		v := rec.AIGuardCostUsd
 		msg.AIGuardCostUsd = &v
 	}
-	if rec.NormalizedStripCount != 0 {
-		v := rec.NormalizedStripCount
-		msg.NormalizedStripCount = &v
-	}
-	if rec.NormalizedStripBytes != 0 {
-		v := rec.NormalizedStripBytes
-		msg.NormalizedStripBytes = &v
+	// Persist the strip counts whenever the normaliser actually executed —
+	// including a real 0 when it ran but stripped nothing — so a NULL on
+	// these columns distinctly means "normaliser never ran" rather than
+	// being conflated with "ran, stripped nothing". The Hub read side
+	// (cache_quality_monitor) wraps these in COALESCE(...,0), so a real 0
+	// and a NULL collapse identically there; this change only sharpens the
+	// never-ran-vs-ran-clean distinction for direct row inspection.
+	if rec.NormalizerRan {
+		c := rec.NormalizedStripCount
+		msg.NormalizedStripCount = &c
+		b := rec.NormalizedStripBytes
+		msg.NormalizedStripBytes = &b
 	}
 	if rec.CacheMarkerInjected != 0 {
 		v := rec.CacheMarkerInjected
@@ -238,8 +255,17 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		threshold = w.payloadCapture.Get().MaxInlineBodyBytes
 	}
 	ctx := context.Background()
-	msg.RequestBody = spillstore.EmitBody(ctx, w.spill, threshold, rec.RequestBody, rec.RequestContentType, rec.RequestID, "request", rec.RequestTruncated, w.logger)
-	msg.ResponseBody = spillstore.EmitBody(ctx, w.spill, threshold, rec.ResponseBody, rec.ResponseContentType, rec.RequestID, "response", rec.ResponseTruncated, w.logger)
+	// The RAW payload copy obeys the operator's storage policy before any
+	// byte leaves the process: under "redact" only the proxy-supplied
+	// redacted wire copy may persist, under "drop-content" nothing may.
+	// The captured (pre-hook) bytes below still feed normalization — the
+	// normalized copy gets span-level redaction in redact.ApplyStorageAction.
+	msg.RequestBody = spillstore.EmitBody(ctx, w.spill, threshold,
+		redact.StorageRawBody(rec.RequestBody, rec.RequestBodyRedacted, rec.RequestStorageAction),
+		rec.RequestContentType, rec.RequestID, "request", rec.RequestTruncated, w.logger)
+	msg.ResponseBody = spillstore.EmitBody(ctx, w.spill, threshold,
+		redact.StorageRawBody(rec.ResponseBody, rec.ResponseBodyRedacted, rec.ResponseStorageAction),
+		rec.ResponseContentType, rec.RequestID, "response", rec.ResponseTruncated, w.logger)
 	// Produce normalized payloads when a normalizer is wired and we have raw
 	// bytes for the direction. Failures populate status + error_reason but
 	// never block the wire message (normalize is observability, not a gate).
@@ -258,17 +284,19 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		stream := strings.Contains(strings.ToLower(rec.ResponseContentType), "event-stream")
 		if len(rec.RequestBody) > 0 {
 			raw, status, errReason := w.normalize("request", rec.RequestContentType,
-				normalizeAdapterType(rec, "request"), rec.ModelName, rec.Path, false, rec.RequestBody)
-			raw = applyStorageAction(raw, rec.RequestStorageAction, rec.RequestTransformSpans, rec.RequestRedactRuleIDs)
+				normalizeAdapterType(rec), rec.ModelName, rec.Path, false, rec.RequestBody)
+			raw, redactionSpans := redact.ApplyStorageAction(raw, rec.RequestStorageAction, rec.RequestTransformSpans, rec.RequestRedactRuleIDs, rec.RequestRedetect)
 			msg.RequestNormalized = raw
+			msg.RequestRedactionSpans = redact.MarshalSpans(redactionSpans)
 			msg.RequestNormalizeStatus = status
 			msg.RequestNormalizeError = errReason
 		}
 		if len(rec.ResponseBody) > 0 && !skipResponseNormalize {
 			raw, status, errReason := w.normalize("response", rec.ResponseContentType,
-				normalizeAdapterType(rec, "response"), rec.ModelName, rec.Path, stream, rec.ResponseBody)
-			raw = applyStorageAction(raw, rec.ResponseStorageAction, rec.ResponseTransformSpans, rec.ResponseRedactRuleIDs)
+				normalizeAdapterType(rec), rec.ModelName, rec.Path, stream, rec.ResponseBody)
+			raw, redactionSpans := redact.ApplyStorageAction(raw, rec.ResponseStorageAction, rec.ResponseTransformSpans, rec.ResponseRedactRuleIDs, rec.ResponseRedetect)
 			msg.ResponseNormalized = raw
+			msg.ResponseRedactionSpans = redact.MarshalSpans(redactionSpans)
 			msg.ResponseNormalizeStatus = status
 			msg.ResponseNormalizeError = errReason
 		}
@@ -295,7 +323,19 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 	if rec.BlockingRule != nil {
 		if b, err := json.Marshal(rec.BlockingRule); err == nil {
 			raw := json.RawMessage(b)
-			msg.RequestBlockingRule = &raw
+			// rec.BlockingRule is a single field overloaded across both hook
+			// stages: the request hook sets it pre-upstream, every response
+			// hook (live stream, broker non-stream, cache HIT) sets it
+			// post-upstream. Route it to the column owned by the stage that
+			// actually blocked. The response stage runs only after the request
+			// stage approved, so a blocking response decision unambiguously
+			// attributes the rule to the response stage; otherwise it is a
+			// request-stage block.
+			if isBlockingDecision(rec.ResponseHookDecision) {
+				msg.ResponseBlockingRule = &raw
+			} else {
+				msg.RequestBlockingRule = &raw
+			}
 		}
 	}
 	return msg

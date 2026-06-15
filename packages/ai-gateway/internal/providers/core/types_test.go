@@ -9,33 +9,40 @@ import (
 	"testing"
 )
 
-// TestLimitedReadAllN_HonorsRuntimeCap pins the contract that the
-// runtime variant uses the supplied cap, falls back to ReadAllLimit on
-// a non-positive cap (so a zeroed payload-capture row never collapses
-// the read), and never reads beyond the cap.
+// TestLimitedReadAllN pins the contract that the runtime variant uses the
+// supplied cap, falls back to ReadAllLimit on a non-positive cap (so a
+// zeroed payload-capture row never collapses the read), clamps an oversize
+// body to the cap, and — the F-0349 contract — reports truncated=true
+// exactly when the body exceeded the cap so usage extraction can refuse to
+// claim "ok" over an incomplete buffer.
 func TestLimitedReadAllN(t *testing.T) {
 	body := bytes.Repeat([]byte("a"), 5000)
 
 	cases := []struct {
-		name    string
-		cap     int64
-		wantLen int
+		name          string
+		cap           int64
+		wantLen       int
+		wantTruncated bool
 	}{
-		{"cap higher than body returns full body", 10000, 5000},
-		{"cap equal to body returns full body", 5000, 5000},
-		{"cap lower than body silently truncates at cap", 1024, 1024},
-		{"zero cap falls back to ReadAllLimit", 0, 5000},
-		{"negative cap falls back to ReadAllLimit", -1, 5000},
+		{"cap higher than body returns full body, not truncated", 10000, 5000, false},
+		{"cap equal to body returns full body, not truncated", 5000, 5000, false},
+		{"cap lower than body clamps and reports truncated", 1024, 1024, true},
+		{"cap one below body reports truncated", 4999, 4999, true},
+		{"zero cap falls back to ReadAllLimit, not truncated", 0, 5000, false},
+		{"negative cap falls back to ReadAllLimit, not truncated", -1, 5000, false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := LimitedReadAllN(bytes.NewReader(body), tc.cap)
+			got, truncated, err := LimitedReadAllN(bytes.NewReader(body), tc.cap)
 			if err != nil {
 				t.Fatalf("LimitedReadAllN: %v", err)
 			}
 			if len(got) != tc.wantLen {
 				t.Errorf("len(got): want %d, got %d", tc.wantLen, len(got))
+			}
+			if truncated != tc.wantTruncated {
+				t.Errorf("truncated: want %v, got %v", tc.wantTruncated, truncated)
 			}
 		})
 	}

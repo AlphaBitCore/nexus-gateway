@@ -86,6 +86,43 @@ func resolveL2VKScope(rec *audit.Record, varyBy string) string {
 	}
 }
 
+// resolveL1CacheScope produces the tenant-isolation token folded into the L1
+// exact-match cache key so L1 honours the same `vary_by` isolation the L2
+// semantic tier enforces. The token is type-prefixed
+// ("vk:<id>" / "user:<id>" / "org:<id>") so a VK id can never collide with a
+// user/org id that happens to share the same string.
+//
+// cc is the fleet semantic ConfigCache; the `vary_by` knob lives there as a
+// single fleet setting. We read it directly (not via fleetSemanticPolicy, which
+// gates on L2 being enabled) so that L1 isolation applies even when the L2
+// semantic cache is switched off. The raw snapshot's VaryBy is "" until the
+// first Hub push; both "" and "none" mean fleet-wide (no scope), preserving the
+// default cross-tenant dedup.
+func resolveL1CacheScope(cc *semantic.ConfigCache, rec *audit.Record) string {
+	if cc == nil || rec == nil {
+		return ""
+	}
+	switch cc.Get().VaryBy {
+	case "user":
+		if rec.UserID == "" {
+			return ""
+		}
+		return "user:" + rec.UserID
+	case "org":
+		if rec.OrganizationID == "" {
+			return ""
+		}
+		return "org:" + rec.OrganizationID
+	case "vk":
+		if rec.VirtualKeyID == "" {
+			return ""
+		}
+		return "vk:" + rec.VirtualKeyID
+	default: // "none" or unset → fleet-wide, no isolation
+		return ""
+	}
+}
+
 // canonicalMsgsToInputStaging converts []normcore.Message (from the canonical
 // NormalizedPayload) to []inputstaging.Message, joining all text content blocks
 // into a single string per message.  Images, tool calls, and tool results are
@@ -185,6 +222,9 @@ type l2ReadParams struct {
 	start         time.Time
 	logger        *slog.Logger
 	canonicalMsgs []normcore.Message
+	// hasTools reports that the normalized request declared a tools array —
+	// the round-1 agentic signal (later rounds also carry tool-role messages).
+	hasTools bool
 }
 
 // tryL2Lookup attempts an L2 semantic cache lookup after an L1 miss.
@@ -199,6 +239,10 @@ func (h *Handler) tryL2Lookup(p l2ReadParams) (hit bool) {
 	if h.deps.SemanticReader == nil {
 		return false
 	}
+	if agenticConversation(p.canonicalMsgs, p.hasTools) {
+		p.rec.GatewayCacheSkipReason = audit.GatewayCacheSkipReasonAgenticToolUse
+		return false
+	}
 
 	// Fleet-wide gate: L2 only fires when an admin has enabled the
 	// semantic_cache_config singleton AND the embedding provider/model are
@@ -211,8 +255,13 @@ func (h *Handler) tryL2Lookup(p l2ReadParams) (hit bool) {
 	// Build the embedding input via inputstaging.Plan.
 	embInput, ok2 := buildEmbeddingInput(p.canonicalMsgs, inputstaging.Strategy(pol.EmbedStrategy), pol.MaxInputTokens)
 	if !ok2 {
-		// No text content or plan failed — skip L2.
-		p.rec.GatewayCacheSkipReason = audit.GatewayCacheSkipReasonOversizeForEmbedding
+		// buildEmbeddingInput returns false when there is no text to embed
+		// (image-only / tool-only turns, or an empty staging plan) — NOT
+		// because the input was oversize (the staging step truncates oversize
+		// inputs to fit rather than rejecting them). Stamp the accurate
+		// no_embeddable_text reason so traffic_event does not mislabel these
+		// skips as oversize.
+		p.rec.GatewayCacheSkipReason = audit.GatewayCacheSkipReasonNoEmbeddableText
 		return false
 	}
 
@@ -326,21 +375,34 @@ func (h *Handler) tryL2Lookup(p l2ReadParams) (hit bool) {
 // successful live upstream dispatch.  The write is bounded by a 5-second deadline
 // so it never delays response delivery on a slow embedding provider.
 //
-// responseBody is the raw upstream response bytes; usage is the parsed token map.
-// Only non-streaming responses are written here; streaming write-back is handled
-// by the broker persisting the SSE timeline.
+// responseBody is the canonical response bytes for a non-stream entry, or the
+// JSON-encoded []cachecore.ChunkRecord timeline for a stream entry (matching
+// what ToCacheStreamEntry decodes). usage is the parsed token map.
+//
+// The VK scope is resolved here from the audit record + the fleet policy's
+// vary_by setting — NOT passed in by the caller — so a write and the matching
+// read always isolate on the same dimension (vk / user / org / none). The
+// stream/response discriminator and AllowCrossModel both come from the same
+// fleet policy so the entry key + response_kind tag line up with the reader.
 func (h *Handler) scheduleL2Write(
-	routeResult *routingcore.RouteResult,
+	rec *audit.Record,
 	primary routingcore.RoutingTarget,
 	canonicalMsgs []normcore.Message,
 	responseBody []byte,
 	usage map[string]any,
-	vkScope string,
 	isStream bool,
 	origin Ingress,
 	logger *slog.Logger,
 ) {
-	if h.deps.SemanticWriter == nil || len(responseBody) == 0 || isStream {
+	if h.deps.SemanticWriter == nil || len(responseBody) == 0 {
+		return
+	}
+	// Symmetric agentic skip: never poison the semantic index with an agent
+	// loop's turn (the lookup-side stamp covers round 1, where tools are
+	// declared but no tool message exists yet; the message scan covers every
+	// later round on all three write paths).
+	if rec.GatewayCacheSkipReason == audit.GatewayCacheSkipReasonAgenticToolUse ||
+		agenticConversation(canonicalMsgs, false) {
 		return
 	}
 	pol, ok := fleetSemanticPolicy(h.deps.SemanticConfigCache)
@@ -368,11 +430,21 @@ func (h *Handler) scheduleL2Write(
 		return
 	}
 
+	// Resolve the scope from the configured vary_by so the write isolates on
+	// the same dimension the reader filters on (the write previously
+	// hardcoded VK scope, making vary_by ∈ {user, org, none} a permanent miss).
+	vkScope := resolveL2VKScope(rec, pol.VaryBy)
+	responseKind := "response"
+	if isStream {
+		responseKind = "stream"
+	}
+
 	writeReq := semantic.WriteRequest{
 		VKScope:            vkScope,
 		UpstreamProvider:   primary.ProviderID,
 		UpstreamModel:      primary.ProviderModelID,
-		ResponseKind:       "response",
+		ResponseKind:       responseKind,
+		AllowCrossModel:    pol.AllowCrossModel,
 		EmbeddingInput:     embInput,
 		ResponseBody:       responseBody,
 		Usage:              usage,
@@ -427,4 +499,19 @@ func provcoreUsageToMap(u *provcore.Usage) map[string]any {
 		return nil
 	}
 	return m
+}
+
+// agenticConversation reports whether a request belongs to an agent loop: it
+// declares tools, or its transcript already carries tool-role messages. Such
+// conversations are excluded from the L2 semantic tier in both directions.
+func agenticConversation(msgs []normcore.Message, hasTools bool) bool {
+	if hasTools {
+		return true
+	}
+	for i := range msgs {
+		if msgs[i].Role == normcore.RoleTool {
+			return true
+		}
+	}
+	return false
 }

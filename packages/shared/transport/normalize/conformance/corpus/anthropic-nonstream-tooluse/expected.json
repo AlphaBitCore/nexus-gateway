@@ -1,0 +1,32 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "anthropic-messages",
+  "model": "claude-haiku-4-5-20251001",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "toolUse": {
+            "callId": "toolu_01SN9FDptdboKktku1zSQJ4E",
+            "name": "get_weather",
+            "input": {
+              "location": "Paris"
+            }
+          }
+        }
+      ],
+      "finishReason": "tool_use"
+    }
+  ],
+  "usage": {
+    "promptTokens": 575,
+    "completionTokens": 54,
+    "totalTokens": 629
+  },
+  "finishReason": "tool_use",
+  "confidence": 0.9750000000000001,
+  "detectedSpec": "anthropic-messages"
+}

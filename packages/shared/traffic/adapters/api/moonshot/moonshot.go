@@ -3,7 +3,7 @@
 //   - api.moonshot.cn (China region)
 //   - api.moonshot.ai (international region)
 //
-// Per session policy: dedicated adapter ID. Delegates to openai-compat
+// Convention: dedicated adapter ID. Delegates to openai-compat
 // and re-labels Provider="moonshot" with moonshot-bearer key class.
 package moonshot
 

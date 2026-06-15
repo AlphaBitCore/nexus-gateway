@@ -16,7 +16,9 @@ const (
 // StaleThingConfig holds the per-category offline thresholds.
 type StaleThingConfig struct {
 	// ServiceThreshold applies to control-plane / ai-gateway / compliance-proxy Things.
-	// Defaults to 30s when zero or negative.
+	// Defaults to 90s when zero or negative — kept at >=2x the 30s ping interval
+	// (conn.go pingInterval) so a single jittered/missed ping cannot satisfy the
+	// stale predicate and flap a healthy service offline.
 	ServiceThreshold time.Duration
 	// AgentThreshold applies to desktop agent Things. Defaults to 5m.
 	AgentThreshold time.Duration
@@ -41,7 +43,7 @@ type StaleThingJob struct {
 // If cfg thresholds are zero or negative, sensible defaults are applied.
 func NewStaleThingJob(s staleStore, interval time.Duration, logger *slog.Logger, cfg StaleThingConfig) *StaleThingJob {
 	if cfg.ServiceThreshold <= 0 {
-		cfg.ServiceThreshold = 30 * time.Second
+		cfg.ServiceThreshold = 90 * time.Second
 	}
 	if cfg.AgentThreshold <= 0 {
 		cfg.AgentThreshold = 5 * time.Minute

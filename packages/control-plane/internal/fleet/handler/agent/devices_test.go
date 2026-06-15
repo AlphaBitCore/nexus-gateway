@@ -44,7 +44,6 @@ func TestRegisterAdminAgentDeviceRoutes_MountsAll(t *testing.T) {
 		"GET /api/admin/agent-devices",
 		"GET /api/admin/agent-devices/health",
 		"GET /api/admin/agent-devices/:id",
-		"POST /api/admin/agent-devices/:id/rotate-cert",
 		"GET /api/admin/agent-devices/:id/events",
 		"GET /api/admin/agent-devices/:id/assignments",
 		"POST /api/admin/agent-devices/enroll-token",
@@ -549,113 +548,6 @@ func TestForceRefreshAgentDevice_HubError(t *testing.T) {
 	e := echo.New()
 	e.POST("/agent-devices/:id/force-refresh", h.ForceRefreshAgentDevice)
 	req := httptest.NewRequest(http.MethodPost, "/agent-devices/agent-1/force-refresh", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("code=%d", rec.Code)
-	}
-}
-
-func TestRotateAgentCert_Happy(t *testing.T) {
-	mock := newMockPool(t)
-	spy := &auditSpy{}
-	hub := &fakeHub{rotateCertResp: map[string]any{"ok": true}}
-	h := newHandlerForTest(mock, hub, spy)
-	now := nowFixture()
-	mock.ExpectQuery(`WHERE t\.id`).WithArgs("agent-1").
-		WillReturnRows(pgxmock.NewRows(agentDeviceCols).AddRow(makeAgentDeviceRow(now)...))
-
-	e := echo.New()
-	e.POST("/agent-devices/:id/rotate-cert", h.RotateAgentCert)
-	req := httptest.NewRequest(http.MethodPost, "/agent-devices/agent-1/rotate-cert", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if hub.rotateCertHits != 1 {
-		t.Errorf("rotate hits=%d", hub.rotateCertHits)
-	}
-	if spy.count() != 1 {
-		t.Errorf("audit=%d", spy.count())
-	}
-}
-
-func TestRotateAgentCert_EmptyID(t *testing.T) {
-	h := newHandlerForTest(nil, &fakeHub{}, nil)
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetParamNames("id")
-	c.SetParamValues("")
-	if err := h.RotateAgentCert(c); err != nil {
-		t.Fatalf("handler err: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("code=%d", rec.Code)
-	}
-}
-
-func TestRotateAgentCert_DBError(t *testing.T) {
-	mock := newMockPool(t)
-	h := newHandlerForTest(mock, &fakeHub{}, nil)
-	mock.ExpectQuery(`WHERE t\.id`).WithArgs("x").WillReturnError(errors.New("planner err"))
-
-	e := echo.New()
-	e.POST("/agent-devices/:id/rotate-cert", h.RotateAgentCert)
-	req := httptest.NewRequest(http.MethodPost, "/agent-devices/x/rotate-cert", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("code=%d", rec.Code)
-	}
-}
-
-func TestRotateAgentCert_NotFound(t *testing.T) {
-	mock := newMockPool(t)
-	h := newHandlerForTest(mock, &fakeHub{}, nil)
-	mock.ExpectQuery(`WHERE t\.id`).WithArgs("x").WillReturnError(pgx.ErrNoRows)
-
-	e := echo.New()
-	e.POST("/agent-devices/:id/rotate-cert", h.RotateAgentCert)
-	req := httptest.NewRequest(http.MethodPost, "/agent-devices/x/rotate-cert", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("code=%d", rec.Code)
-	}
-}
-
-func TestRotateAgentCert_HubNotConfigured(t *testing.T) {
-	mock := newMockPool(t)
-	hub := &fakeHub{rotateCertErr: hub.ErrNotConfigured}
-	h := newHandlerForTest(mock, hub, nil)
-	now := nowFixture()
-	mock.ExpectQuery(`WHERE t\.id`).WithArgs("agent-1").
-		WillReturnRows(pgxmock.NewRows(agentDeviceCols).AddRow(makeAgentDeviceRow(now)...))
-
-	e := echo.New()
-	e.POST("/agent-devices/:id/rotate-cert", h.RotateAgentCert)
-	req := httptest.NewRequest(http.MethodPost, "/agent-devices/agent-1/rotate-cert", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("code=%d", rec.Code)
-	}
-}
-
-func TestRotateAgentCert_HubError(t *testing.T) {
-	mock := newMockPool(t)
-	hub := &fakeHub{rotateCertErr: errors.New("hub boom")}
-	h := newHandlerForTest(mock, hub, nil)
-	now := nowFixture()
-	mock.ExpectQuery(`WHERE t\.id`).WithArgs("agent-1").
-		WillReturnRows(pgxmock.NewRows(agentDeviceCols).AddRow(makeAgentDeviceRow(now)...))
-
-	e := echo.New()
-	e.POST("/agent-devices/:id/rotate-cert", h.RotateAgentCert)
-	req := httptest.NewRequest(http.MethodPost, "/agent-devices/agent-1/rotate-cert", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {

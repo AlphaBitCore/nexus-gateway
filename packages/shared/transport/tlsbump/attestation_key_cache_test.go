@@ -31,12 +31,12 @@ func genKey(t *testing.T) ed25519.PublicKey {
 func TestAttestationKeyCache_HitMissAndCachesPositive(t *testing.T) {
 	pub := genKey(t)
 	var calls atomic.Int32
-	loader := func(_ context.Context, agentID string) (ed25519.PublicKey, error) {
+	loader := func(_ context.Context, agentID string) (AttestationKey, error) {
 		calls.Add(1)
 		if agentID != "agent-1" {
 			t.Fatalf("unexpected loader call for %q", agentID)
 		}
-		return pub, nil
+		return AttestationKey{Key: pub}, nil
 	}
 	c := NewAttestationKeyCache(loader, newTestLogger())
 
@@ -45,7 +45,7 @@ func TestAttestationKeyCache_HitMissAndCachesPositive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Get: %v", err)
 	}
-	if string(got) != string(pub) {
+	if string(got.Key) != string(pub) {
 		t.Error("first Get returned wrong key")
 	}
 
@@ -54,7 +54,7 @@ func TestAttestationKeyCache_HitMissAndCachesPositive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
-	if string(got2) != string(pub) {
+	if string(got2.Key) != string(pub) {
 		t.Error("second Get returned wrong key")
 	}
 	if calls.Load() != 1 {
@@ -64,9 +64,9 @@ func TestAttestationKeyCache_HitMissAndCachesPositive(t *testing.T) {
 
 func TestAttestationKeyCache_RejectsEmptyAgentID(t *testing.T) {
 	c := NewAttestationKeyCache(
-		func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+		func(_ context.Context, _ string) (AttestationKey, error) {
 			t.Fatal("loader must not be called for empty agent_id")
-			return nil, nil
+			return AttestationKey{}, nil
 		},
 		newTestLogger(),
 	)
@@ -77,9 +77,9 @@ func TestAttestationKeyCache_RejectsEmptyAgentID(t *testing.T) {
 
 func TestAttestationKeyCache_NegativeCachingShortCircuitsLoader(t *testing.T) {
 	var calls atomic.Int32
-	loader := func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+	loader := func(_ context.Context, _ string) (AttestationKey, error) {
 		calls.Add(1)
-		return nil, ErrUnknownAgent
+		return AttestationKey{}, ErrUnknownAgent
 	}
 	c := NewAttestationKeyCache(loader, newTestLogger())
 
@@ -97,9 +97,9 @@ func TestAttestationKeyCache_NegativeCachingShortCircuitsLoader(t *testing.T) {
 func TestAttestationKeyCache_PositiveTTLExpiry(t *testing.T) {
 	pub := genKey(t)
 	var calls atomic.Int32
-	loader := func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+	loader := func(_ context.Context, _ string) (AttestationKey, error) {
 		calls.Add(1)
-		return pub, nil
+		return AttestationKey{Key: pub}, nil
 	}
 	c := NewAttestationKeyCacheWith(loader, newTestLogger(),
 		50*time.Millisecond, 50*time.Millisecond, 10)
@@ -125,12 +125,12 @@ func TestAttestationKeyCache_NegativeTTLExpiry(t *testing.T) {
 	// agent's traffic into MITM.
 	var calls atomic.Int32
 	pub := genKey(t)
-	loader := func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+	loader := func(_ context.Context, _ string) (AttestationKey, error) {
 		n := calls.Add(1)
 		if n == 1 {
-			return nil, ErrUnknownAgent
+			return AttestationKey{}, ErrUnknownAgent
 		}
-		return pub, nil
+		return AttestationKey{Key: pub}, nil
 	}
 	c := NewAttestationKeyCacheWith(loader, newTestLogger(),
 		time.Minute, 5*time.Millisecond, 10)
@@ -145,44 +145,20 @@ func TestAttestationKeyCache_NegativeTTLExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after negative TTL: %v", err)
 	}
-	if string(got) != string(pub) {
+	if string(got.Key) != string(pub) {
 		t.Error("expected positive key after negative TTL expiry")
-	}
-}
-
-func TestAttestationKeyCache_InvalidateForcesReload(t *testing.T) {
-	pub := genKey(t)
-	var calls atomic.Int32
-	loader := func(_ context.Context, _ string) (ed25519.PublicKey, error) {
-		calls.Add(1)
-		return pub, nil
-	}
-	c := NewAttestationKeyCache(loader, newTestLogger())
-
-	if _, err := c.Get(context.Background(), "a"); err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	c.Invalidate("a")
-	if _, err := c.Get(context.Background(), "a"); err != nil {
-		t.Fatalf("Get after invalidate: %v", err)
-	}
-	if calls.Load() != 2 {
-		t.Errorf("loader call count = %d; want 2 (Invalidate must drop the entry)", calls.Load())
-	}
-	if c.Len() != 1 {
-		t.Errorf("Len = %d; want 1", c.Len())
 	}
 }
 
 func TestAttestationKeyCache_CapEvictsOldest(t *testing.T) {
 	// Cap = 2: insert 3 unique agents, oldest entry must be gone.
-	loader := func(_ context.Context, agentID string) (ed25519.PublicKey, error) {
+	loader := func(_ context.Context, agentID string) (AttestationKey, error) {
 		pub, _, _ := ed25519.GenerateKey(rand.Reader)
 		// Deterministic per-id key suffix so we can identify the holder
 		// without storing it externally — not used in assertion but
 		// keeps the loader honest.
 		_ = pub
-		return pub, nil
+		return AttestationKey{Key: pub}, nil
 	}
 	c := NewAttestationKeyCacheWith(loader, newTestLogger(),
 		time.Minute, time.Minute, 2)
@@ -205,9 +181,9 @@ func TestAttestationKeyCache_CapZeroClampsToOne(t *testing.T) {
 	// store its result and every call would re-invoke the loader).
 	pub := genKey(t)
 	calls := 0
-	loader := func(_ context.Context, _ string) (ed25519.PublicKey, error) {
+	loader := func(_ context.Context, _ string) (AttestationKey, error) {
 		calls++
-		return pub, nil
+		return AttestationKey{Key: pub}, nil
 	}
 	c := NewAttestationKeyCacheWith(loader, newTestLogger(),
 		time.Minute, time.Minute, 0)
@@ -228,15 +204,15 @@ func TestAttestationKeyCache_ConcurrentGetsSafe(t *testing.T) {
 	// to force overlap with the cache mutex.
 	pubs := map[string]ed25519.PublicKey{}
 	var pmu sync.Mutex
-	loader := func(_ context.Context, agentID string) (ed25519.PublicKey, error) {
+	loader := func(_ context.Context, agentID string) (AttestationKey, error) {
 		pmu.Lock()
 		defer pmu.Unlock()
 		if p, ok := pubs[agentID]; ok {
-			return p, nil
+			return AttestationKey{Key: p}, nil
 		}
 		p, _, _ := ed25519.GenerateKey(rand.Reader)
 		pubs[agentID] = p
-		return p, nil
+		return AttestationKey{Key: p}, nil
 	}
 	c := NewAttestationKeyCache(loader, newTestLogger())
 
@@ -265,11 +241,34 @@ func TestAttestationKeyCache_NilLoggerSafe(t *testing.T) {
 	// Production wires a real logger; defensive guard so a test or
 	// embedded caller passing nil doesn't crash in the negative-cache
 	// debug log path.
-	loader := func(_ context.Context, _ string) (ed25519.PublicKey, error) {
-		return nil, ErrUnknownAgent
+	loader := func(_ context.Context, _ string) (AttestationKey, error) {
+		return AttestationKey{}, ErrUnknownAgent
 	}
 	c := NewAttestationKeyCache(loader, nil)
 	if _, err := c.Get(context.Background(), "a"); !errors.Is(err, ErrUnknownAgent) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestAttestationKeyCache_CertExpiresAtRoundTrips locks the SEC-M4-01 contract:
+// the loader's CertExpiresAt is surfaced unchanged through Get (and on the
+// cached hit), so the verifier can enforce expiry.
+func TestAttestationKeyCache_CertExpiresAtRoundTrips(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	exp := time.Now().Add(42 * time.Hour).Truncate(time.Second)
+	c := NewAttestationKeyCache(func(_ context.Context, _ string) (AttestationKey, error) {
+		return AttestationKey{Key: pub, CertExpiresAt: exp}, nil
+	}, newTestLogger())
+	for _, label := range []string{"miss", "hit"} {
+		ak, err := c.Get(context.Background(), "a")
+		if err != nil {
+			t.Fatalf("%s: Get: %v", label, err)
+		}
+		if !ak.CertExpiresAt.Equal(exp) {
+			t.Errorf("%s: CertExpiresAt = %v; want %v", label, ak.CertExpiresAt, exp)
+		}
+		if string(ak.Key) != string(pub) {
+			t.Errorf("%s: key mismatch", label)
+		}
 	}
 }

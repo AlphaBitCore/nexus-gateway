@@ -5,6 +5,7 @@ package enroll
 // jti_cache.sweep (the background compaction path).
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
@@ -69,7 +70,7 @@ func TestEnroll_JWT_JWKS_CacheEmpty_Returns503(t *testing.T) {
 	// parser reaches the key-lookup callback before failing on signature.
 	api := buildAPI(&stubCA{}, nil, nil)
 	api.JWKSCache = &stubJWKS{getErr: errCacheEmptyStub}
-	api.jtiSeen = newJTICache()
+	api.jtiSeen = newJTICache(nil, nil)
 
 	// Build a JWT signed with a throwaway key — the callback will return the
 	// cache-empty error before signature verification even tries the key.
@@ -116,7 +117,7 @@ func TestEnroll_JWT_BadSignature_Returns401(t *testing.T) {
 	verifierKey := newRSAKey(t) // different key
 	api := buildAPI(&stubCA{}, nil, nil)
 	api.JWKSCache = &stubJWKS{key: &verifierKey.PublicKey}
-	api.jtiSeen = newJTICache()
+	api.jtiSeen = newJTICache(nil, nil)
 
 	exp := jwt.NewNumericDate(time.Now().Add(5 * time.Minute))
 	claims := enrollmentJWTClaims{
@@ -150,7 +151,7 @@ func TestEnroll_JWT_WrongPurpose_Returns401(t *testing.T) {
 	key := newRSAKey(t)
 	api := buildAPI(&stubCA{}, nil, nil)
 	api.JWKSCache = &stubJWKS{key: &key.PublicKey}
-	api.jtiSeen = newJTICache()
+	api.jtiSeen = newJTICache(nil, nil)
 
 	exp := jwt.NewNumericDate(time.Now().Add(5 * time.Minute))
 	claims := enrollmentJWTClaims{
@@ -183,7 +184,7 @@ func TestEnroll_JWT_MissingJTI_Returns401(t *testing.T) {
 	key := newRSAKey(t)
 	api := buildAPI(&stubCA{}, nil, nil)
 	api.JWKSCache = &stubJWKS{key: &key.PublicKey}
-	api.jtiSeen = newJTICache()
+	api.jtiSeen = newJTICache(nil, nil)
 
 	exp := jwt.NewNumericDate(time.Now().Add(5 * time.Minute))
 	claims := enrollmentJWTClaims{
@@ -238,7 +239,7 @@ func TestEnroll_JWT_Replayed_Returns401(t *testing.T) {
 	// First request: CA signs, but then DB calls happen. The first request
 	// will reach the DB (StoreDeviceTokenHash). Set expectations for first call.
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	mock.ExpectExec(`INSERT INTO thing_agent`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -296,7 +297,7 @@ func TestEnroll_JWT_ValidToken_HappyPath(t *testing.T) {
 	// DB expectations for doEnroll:
 	// 1. StoreDeviceTokenHash
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	// 2. UpdateThingAgent (no hostname/os → no UPDATE thing SET hostname)
 	mock.ExpectExec(`INSERT INTO thing_agent`).
@@ -326,7 +327,7 @@ func TestEnroll_JWT_ValidToken_HappyPath(t *testing.T) {
 	}
 	var body map[string]any
 	decodeBody(t, rec, &body)
-	for _, field := range []string{"id", "deviceToken", "certPem", "caCertPem", "certSerial", "trustLevel"} {
+	for _, field := range []string{"id", "deviceToken", "trustLevel"} {
 		if _, ok := body[field]; !ok {
 			t.Errorf("response missing field %q", field)
 		}
@@ -538,7 +539,7 @@ func TestJTICache_SweepLoop_StopsOnClose(t *testing.T) {
 	// sweepLoop must exit when the stop channel is closed. We test this by
 	// creating the cache, stopping it immediately, and verifying the goroutine
 	// does not block the test from finishing (test timeout = proof of liveness).
-	c := newJTICache()
+	c := newJTICache(nil, nil)
 	c.Stop() // signals sweepLoop to exit via stopCh
 	// If sweepLoop does not exit, the test will hang and eventually time out.
 }
@@ -614,12 +615,14 @@ func TestEnrollmentAPI_LoggerFallback(t *testing.T) {
 	}
 }
 
-// Tests: verifyEnrollmentJWT — jtiSeen nil branch (defensive path)
+// Tests: verifyEnrollmentJWT — jtiSeen nil branch FAILS CLOSED (F-0259)
 
-func TestVerifyEnrollmentJWT_JTISeenNil_AllowsWithoutReplayGuard(t *testing.T) {
-	// When jtiSeen is nil (Init() was not called), verifyEnrollmentJWT logs
-	// an error but still allows the JWT through without replay protection.
-	// This tests the defensive branch that prevents a nil-pointer panic.
+func TestVerifyEnrollmentJWT_JTISeenNil_FailsClosed(t *testing.T) {
+	// F-0259: when jtiSeen is nil (Init() never ran — a wiring bug),
+	// verifyEnrollmentJWT MUST reject rather than proceed without replay
+	// protection. The previous behaviour logged an error and accepted the
+	// JWT (fail-open), silently disabling the replay guard. We now require a
+	// JTI_STORE_UNAVAILABLE error so the request is refused.
 	key := newRSAKey(t)
 	api := &EnrollmentAPI{
 		CA:        &stubCA{},
@@ -642,14 +645,52 @@ func TestVerifyEnrollmentJWT_JTISeenNil_AllowsWithoutReplayGuard(t *testing.T) {
 	}
 	tokenStr := makeRS256JWT(t, key, claims)
 
-	userID, email, err := api.verifyEnrollmentJWT(tokenStr)
-	if err != nil {
-		t.Fatalf("with nil jtiSeen, valid JWT must still pass: %v", err)
+	userID, _, err := api.verifyEnrollmentJWT(context.Background(), tokenStr)
+	if err == nil {
+		t.Fatal("nil jtiSeen must fail closed; got nil error (fail-open regression)")
 	}
-	if userID != "user-no-jti-cache" {
-		t.Errorf("want subject 'user-no-jti-cache', got %q", userID)
+	if err.Error() != "JTI_STORE_UNAVAILABLE" {
+		t.Fatalf("err = %q, want JTI_STORE_UNAVAILABLE", err.Error())
 	}
-	_ = email
+	if userID != "" {
+		t.Errorf("rejected request must not return a subject; got %q", userID)
+	}
+}
+
+// TestEnroll_JWT_JTIStoreUnavailable_Returns503 verifies the HTTP surface:
+// a nil jtiSeen on the JWT enrollment path yields 503 JTI_STORE_UNAVAILABLE,
+// not a 200 enrollment.
+func TestEnroll_JWT_JTIStoreUnavailable_Returns503(t *testing.T) {
+	key := newRSAKey(t)
+	api := &EnrollmentAPI{
+		CA:        &stubCA{},
+		JWKSCache: &stubJWKS{key: &key.PublicKey},
+		Logger:    silentLog(),
+		// jtiSeen intentionally nil; Init() not called.
+	}
+
+	exp := jwt.NewNumericDate(time.Now().Add(5 * time.Minute))
+	tokenStr := makeRS256JWT(t, key, enrollmentJWTClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "u1",
+			Audience:  jwt.ClaimStrings{enrollAudience},
+			ExpiresAt: exp,
+			ID:        "jti-503",
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		Purpose: enrollPurpose,
+	})
+
+	rec := post(t, api, map[string]any{"csrPem": validCSR},
+		map[string]string{"Authorization": "Bearer " + tokenStr})
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var body ErrorResponse
+	decodeBody(t, rec, &body)
+	if body.Code != "JTI_STORE_UNAVAILABLE" {
+		t.Errorf("want JTI_STORE_UNAVAILABLE, got %q", body.Code)
+	}
 }
 
 // Tests: enrollWithJWT fingerprint dedupe path
@@ -712,7 +753,7 @@ func TestEnroll_Token_ResolveThingIDError_Returns500(t *testing.T) {
 	api := buildAPI(&stubCA{}, mgr, svc)
 
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	mock.ExpectExec(`INSERT INTO thing_agent`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -761,7 +802,7 @@ func TestEnroll_JWT_UpsertDeviceAssignmentError_IsNonFatal(t *testing.T) {
 	tokenStr := makeRS256JWT(t, key, claims)
 
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	mock.ExpectExec(`INSERT INTO thing_agent`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -863,7 +904,7 @@ func TestResolveThingID_RandReadError_ReturnsError(t *testing.T) {
 	defer func() { enrollRandReader = original }()
 
 	api := &EnrollmentAPI{}
-	_, err := api.resolveThingID("agent", "")
+	_, err := api.resolveThingID("agent")
 	if err == nil {
 		t.Error("rand.Read error must propagate from resolveThingID")
 	}
@@ -1005,17 +1046,20 @@ func TestEnroll_JWT_WithFingerprint_ReuseExistingThingID(t *testing.T) {
 		WithArgs("fp-abc123").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(existingThingID))
 
+	// F-0329 ownership check: the existing device is owned by the SAME SSO user
+	// (subject "user-fp"), so reuse is allowed.
+	mock.ExpectQuery(`FROM "DeviceAssignment"`).
+		WithArgs(existingThingID).
+		WillReturnRows(pgxmock.NewRows([]string{"userId", "source", "login_method", "ip_address", "assignedAt"}).
+			AddRow("user-fp", "sso", nil, nil, time.Now()))
+
 	// doEnroll DB calls using the reused thingID.
 	mock.ExpectExec(`UPDATE thing`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	mock.ExpectExec(`INSERT INTO thing_agent`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
-	// SetPhysicalID (DeviceFingerprint != "" path in doEnroll).
-	mock.ExpectExec(`UPDATE thing SET physical_id`).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	// UpsertDeviceAssignment (3 steps).
 	mock.ExpectExec(`UPDATE "DeviceAssignment"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -1055,5 +1099,170 @@ func TestEnroll_JWT_WithFingerprint_ReuseExistingThingID(t *testing.T) {
 	gotID, _ := body["id"].(string)
 	if gotID != existingThingID {
 		t.Errorf("response id = %q, want %q", gotID, existingThingID)
+	}
+}
+
+func TestEnroll_JWT_WithFingerprint_DifferentOwner_Refused(t *testing.T) {
+	// F-0329: DeviceFingerprint is an attacker-controllable request field. When
+	// it matches a device already owned by a DIFFERENT SSO user, enrollment must
+	// be REFUSED (409) — not silently rebound to the new user (device takeover).
+	key := newRSAKey(t)
+	st, mock := newPgxmockStore(t)
+	defer mock.Close()
+	mgr := &stubFleetManager{st: st}
+
+	api := buildAPI(&stubCA{}, mgr, nil)
+	api.JWKSCache = &stubJWKS{key: &key.PublicKey}
+
+	const victimThingID = "agent-victim-device"
+
+	// Fingerprint matches the victim's device...
+	mock.ExpectQuery(`SELECT id FROM thing`).
+		WithArgs("fp-victim").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(victimThingID))
+	// ...but it is owned by a DIFFERENT user ("victim-user"), not the enrolling
+	// subject ("attacker-user") → refuse. No doEnroll / rebind expectations.
+	mock.ExpectQuery(`FROM "DeviceAssignment"`).
+		WithArgs(victimThingID).
+		WillReturnRows(pgxmock.NewRows([]string{"userId", "source", "login_method", "ip_address", "assignedAt"}).
+			AddRow("victim-user", "sso", nil, nil, time.Now()))
+
+	exp := jwt.NewNumericDate(time.Now().Add(5 * time.Minute))
+	claims := enrollmentJWTClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "attacker-user",
+			Audience:  jwt.ClaimStrings{enrollAudience},
+			ExpiresAt: exp,
+			ID:        "jti-fp-takeover-" + time.Now().Format("150405.000"),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		Purpose: enrollPurpose,
+	}
+	tokenStr := makeRS256JWT(t, key, claims)
+
+	rec := post(t, api, map[string]any{
+		"csrPem":            validCSR,
+		"thingType":         "agent",
+		"deviceFingerprint": "fp-victim",
+	}, map[string]string{"Authorization": "Bearer " + tokenStr})
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409 (refuse cross-user device rebind), got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	decodeBody(t, rec, &body)
+	inner, _ := body["error"].(map[string]any)
+	if code, _ := inner["code"].(string); code != "DEVICE_OWNED_BY_ANOTHER_USER" {
+		t.Errorf("want code DEVICE_OWNED_BY_ANOTHER_USER, got %q", code)
+	}
+}
+
+func TestEnroll_JWT_WithFingerprint_OwnershipReadError_FailsClosed(t *testing.T) {
+	// F-0329 fail-closed: if the ownership check itself errors, enrollment must
+	// be refused (500) and NOT fall through to reusing/rebinding the device.
+	key := newRSAKey(t)
+	st, mock := newPgxmockStore(t)
+	defer mock.Close()
+	mgr := &stubFleetManager{st: st}
+	api := buildAPI(&stubCA{}, mgr, nil)
+	api.JWKSCache = &stubJWKS{key: &key.PublicKey}
+
+	mock.ExpectQuery(`SELECT id FROM thing`).
+		WithArgs("fp-err").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("agent-some-device"))
+	mock.ExpectQuery(`FROM "DeviceAssignment"`).
+		WithArgs("agent-some-device").
+		WillReturnError(errors.New("db unavailable"))
+	// No doEnroll expectations — the handler must bail before any write.
+
+	claims := enrollmentJWTClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "user-err",
+			Audience:  jwt.ClaimStrings{enrollAudience},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+			ID:        "jti-fp-err-" + time.Now().Format("150405.000"),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		Purpose: enrollPurpose,
+	}
+	tokenStr := makeRS256JWT(t, key, claims)
+	rec := post(t, api, map[string]any{
+		"csrPem":            validCSR,
+		"thingType":         "agent",
+		"deviceFingerprint": "fp-err",
+	}, map[string]string{"Authorization": "Bearer " + tokenStr})
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 (fail closed on ownership-read error), got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEnroll_JWT_WithFingerprint_Unowned_MintsNewThingID(t *testing.T) {
+	// SEC-C2-01: a fingerprint match with NO active assignment (e.g. a
+	// token-enrolled / trust-level-1 device) must NOT be claimed by the
+	// fingerprint alone — a world-readable DeviceFingerprint is an identifier,
+	// not an authenticator. The handler mints a NEW thing_id instead of reusing
+	// the existing one, so an attacker who knows the victim's fingerprint cannot
+	// take over the victim's thing_id (which would overwrite its token and
+	// rebind/elevate it). The response id must differ from the existing device.
+	key := newRSAKey(t)
+	st, mock := newPgxmockStore(t)
+	defer mock.Close()
+	mgr := &stubFleetManager{st: st}
+	api := buildAPI(&stubCA{}, mgr, nil)
+	api.JWKSCache = &stubJWKS{key: &key.PublicKey}
+
+	const existingThingID = "agent-unowned-device"
+	mock.ExpectQuery(`SELECT id FROM thing`).
+		WithArgs("fp-unowned").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(existingThingID))
+	// Ownership read returns NO rows → unowned → reuse proceeds.
+	mock.ExpectQuery(`FROM "DeviceAssignment"`).
+		WithArgs(existingThingID).
+		WillReturnRows(pgxmock.NewRows([]string{"userId", "source", "login_method", "ip_address", "assignedAt"}))
+	mock.ExpectExec(`UPDATE thing`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	mock.ExpectExec(`INSERT INTO thing_agent`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+	mock.ExpectExec(`UPDATE "DeviceAssignment"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+	mock.ExpectExec(`INSERT INTO "DeviceAssignment"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+	mock.ExpectExec(`UPDATE thing_agent`).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	claims := enrollmentJWTClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "user-unowned",
+			Audience:  jwt.ClaimStrings{enrollAudience},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+			ID:        "jti-fp-unowned-" + time.Now().Format("150405.000"),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		Purpose: enrollPurpose,
+	}
+	tokenStr := makeRS256JWT(t, key, claims)
+	rec := post(t, api, map[string]any{
+		"csrPem":            validCSR,
+		"thingType":         "agent",
+		"deviceFingerprint": "fp-unowned",
+	}, map[string]string{"Authorization": "Bearer " + tokenStr})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 (unowned device → new thing_id minted), got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	decodeBody(t, rec, &body)
+	gotID, _ := body["id"].(string)
+	if gotID == "" {
+		t.Fatal("response missing thing id")
+	}
+	if gotID == existingThingID {
+		t.Errorf("SEC-C2-01: response id = victim's %q — the unowned thing was taken over by fingerprint; want a NEW thing_id", existingThingID)
 	}
 }

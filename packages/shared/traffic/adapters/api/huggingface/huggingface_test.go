@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 func TestAdapter_ID(t *testing.T) {
@@ -346,23 +345,3 @@ func TestRewriteResponseBody_Unsupported(t *testing.T) {
 }
 
 // Normalize (normalize.go) — delegates to extract.NormalizeForAdapter.
-
-func TestNormalize_OpenAIChatRequest(t *testing.T) {
-	body := []byte(`{
-		"model":"meta-llama/Llama-3.3-70B-Instruct",
-		"messages":[{"role":"user","content":"hello hf"}]
-	}`)
-	a := &Adapter{}
-	payload, err := a.Normalize(context.Background(), body, normalize.Meta{
-		AdapterType:  adapterID,
-		Direction:    normalize.DirectionRequest,
-		ContentType:  "application/json",
-		EndpointPath: "/v1/chat/completions",
-	})
-	if err != nil {
-		t.Fatalf("Normalize err=%v", err)
-	}
-	if payload.DetectedSpec != adapterID {
-		t.Errorf("DetectedSpec=%q want %q", payload.DetectedSpec, adapterID)
-	}
-}

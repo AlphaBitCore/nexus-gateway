@@ -244,7 +244,7 @@ func TestCacheHit_OriginResponses_IngressChat_Reshapes(t *testing.T) {
 // stream-HIT branch in handleStreamHit: a tagged stream entry whose
 // origin shape differs from the current ingress causes
 // WithStreamHitOrigin to stamp the override on the request context.
-// Re-uses the proxy_coverage_lift_test stream-HIT seeding pattern
+// Re-uses the proxy_serveproxy_test stream-HIT seeding pattern
 // (chat-completions ingress + streaming body) so the cache key
 // derivation aligns with computeStreamCacheKey, then tags the entry
 // with a non-matching origin to trigger the override path.
@@ -345,7 +345,7 @@ func TestCacheHit_Stream_ResponsesIngress_OriginOverride(t *testing.T) {
 		Stream:     true,
 	}
 	prepReq.Target.ProviderModelID = "gpt-4o"
-	finalBody, _, err := adapter.PrepareBody(prepReq)
+	finalBody, _, _, err := adapter.PrepareBody(prepReq)
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}

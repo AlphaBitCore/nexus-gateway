@@ -28,7 +28,7 @@ const (
 	// LogLevel — per-Thing slog level.
 	LogLevel = "log_level"
 
-	// Killswitch — kill switch toggle. Wire shape: {enabled: bool}.
+	// Killswitch — kill switch toggle. Wire shape: {engaged: bool}.
 	Killswitch = "killswitch"
 
 	// AIGuard — AI Guard config blob.

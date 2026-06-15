@@ -20,7 +20,6 @@ type QuotaPolicy struct {
 	VKType          *string         `json:"vkType"`
 	PeriodType      string          `json:"periodType"`
 	CostLimitUsd    *float64        `json:"costLimitUsd"`
-	TokenLimit      *int64          `json:"tokenLimit"`
 	EnforcementMode string          `json:"enforcementMode"`
 	AlertThresholds json.RawMessage `json:"alertThresholds"`
 	Priority        int             `json:"priority"`
@@ -31,14 +30,14 @@ type QuotaPolicy struct {
 }
 
 const quotaPolicyColumns = `id, name, description, scope, "organizationId", "vkType",
-	"periodType", "costLimitUsd"::double precision, "tokenLimit", "enforcementMode",
+	"periodType", "costLimitUsd"::double precision, "enforcementMode",
 	"alertThresholds", priority, enabled, "createdBy", "createdAt", "updatedAt"`
 
 func scanQuotaPolicy(row pgx.Row) (*QuotaPolicy, error) {
 	var p QuotaPolicy
 	err := row.Scan(
 		&p.ID, &p.Name, &p.Description, &p.Scope, &p.OrganizationID, &p.VKType,
-		&p.PeriodType, &p.CostLimitUsd, &p.TokenLimit, &p.EnforcementMode,
+		&p.PeriodType, &p.CostLimitUsd, &p.EnforcementMode,
 		&p.AlertThresholds, &p.Priority, &p.Enabled, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -107,7 +106,7 @@ func (store *Store) ListQuotaPolicies(ctx context.Context, p QuotaPolicyListPara
 		var pol QuotaPolicy
 		if err := rows.Scan(
 			&pol.ID, &pol.Name, &pol.Description, &pol.Scope, &pol.OrganizationID, &pol.VKType,
-			&pol.PeriodType, &pol.CostLimitUsd, &pol.TokenLimit, &pol.EnforcementMode,
+			&pol.PeriodType, &pol.CostLimitUsd, &pol.EnforcementMode,
 			&pol.AlertThresholds, &pol.Priority, &pol.Enabled, &pol.CreatedBy, &pol.CreatedAt, &pol.UpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan quota policy: %w", err)
@@ -115,6 +114,38 @@ func (store *Store) ListQuotaPolicies(ctx context.Context, p QuotaPolicyListPara
 		policies = append(policies, pol)
 	}
 	return policies, total, rows.Err()
+}
+
+// ListEnabledPoliciesForScopes returns every enabled quota policy whose scope is
+// in the given set, ordered by priority DESC then createdAt DESC — the same
+// ordering the ai-gateway policy cache applies (policy_cache.go Load + FindPolicy)
+// so the first row that matches an entity's org/vkType is the policy the gateway
+// engine would resolve. Used by the quota analytics dashboard to mirror the
+// gateway's override→policy precedence rather than reading overrides alone.
+func (store *Store) ListEnabledPoliciesForScopes(ctx context.Context, scopes []string) ([]QuotaPolicy, error) {
+	if len(scopes) == 0 {
+		return nil, nil
+	}
+	q := fmt.Sprintf(`SELECT %s FROM "QuotaPolicy" WHERE enabled = true AND scope = ANY($1) ORDER BY priority DESC, "createdAt" DESC`, quotaPolicyColumns)
+	rows, err := store.pool.Query(ctx, q, scopes)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled policies for scopes: %w", err)
+	}
+	defer rows.Close()
+
+	policies := []QuotaPolicy{}
+	for rows.Next() {
+		var pol QuotaPolicy
+		if err := rows.Scan(
+			&pol.ID, &pol.Name, &pol.Description, &pol.Scope, &pol.OrganizationID, &pol.VKType,
+			&pol.PeriodType, &pol.CostLimitUsd, &pol.EnforcementMode,
+			&pol.AlertThresholds, &pol.Priority, &pol.Enabled, &pol.CreatedBy, &pol.CreatedAt, &pol.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan quota policy: %w", err)
+		}
+		policies = append(policies, pol)
+	}
+	return policies, rows.Err()
 }
 
 // GetQuotaPolicy returns a quota policy by ID.
@@ -136,7 +167,6 @@ type CreateQuotaPolicyParams struct {
 	VKType          *string
 	PeriodType      string
 	CostLimitUsd    *float64
-	TokenLimit      *int64
 	EnforcementMode string
 	AlertThresholds json.RawMessage
 	Priority        int
@@ -148,14 +178,14 @@ type CreateQuotaPolicyParams struct {
 func (store *Store) CreateQuotaPolicy(ctx context.Context, p CreateQuotaPolicyParams) (*QuotaPolicy, error) {
 	q := fmt.Sprintf(`
 		INSERT INTO "QuotaPolicy" (id, name, description, scope, "organizationId", "vkType",
-			"periodType", "costLimitUsd", "tokenLimit", "enforcementMode",
+			"periodType", "costLimitUsd", "enforcementMode",
 			"alertThresholds", priority, enabled, "createdBy", "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
 		RETURNING %s
 	`, quotaPolicyColumns)
 	pol, err := scanQuotaPolicy(store.pool.QueryRow(ctx, q,
 		p.Name, p.Description, p.Scope, p.OrganizationID, p.VKType,
-		p.PeriodType, p.CostLimitUsd, p.TokenLimit, p.EnforcementMode,
+		p.PeriodType, p.CostLimitUsd, p.EnforcementMode,
 		p.AlertThresholds, p.Priority, p.Enabled, p.CreatedBy,
 	))
 	if err != nil {
@@ -173,7 +203,6 @@ type UpdateQuotaPolicyParams struct {
 	VKType          *string
 	PeriodType      *string
 	CostLimitUsd    *float64
-	TokenLimit      *int64
 	EnforcementMode *string
 	AlertThresholds json.RawMessage // nil = no change
 	Priority        *int
@@ -190,17 +219,16 @@ func (store *Store) UpdateQuotaPolicy(ctx context.Context, id string, p UpdateQu
 		"vkType" = COALESCE($6, "vkType"),
 		"periodType" = COALESCE($7, "periodType"),
 		"costLimitUsd" = COALESCE($8, "costLimitUsd"),
-		"tokenLimit" = COALESCE($9, "tokenLimit"),
-		"enforcementMode" = COALESCE($10, "enforcementMode"),
-		"alertThresholds" = COALESCE($11, "alertThresholds"),
-		priority = COALESCE($12, priority),
-		enabled = COALESCE($13, enabled),
+		"enforcementMode" = COALESCE($9, "enforcementMode"),
+		"alertThresholds" = COALESCE($10, "alertThresholds"),
+		priority = COALESCE($11, priority),
+		enabled = COALESCE($12, enabled),
 		"updatedAt" = NOW()
 	WHERE id = $1 RETURNING %s`, quotaPolicyColumns)
 
 	pol, err := scanQuotaPolicy(store.pool.QueryRow(ctx, q, id,
 		p.Name, p.Description, p.Scope, p.OrganizationID, p.VKType,
-		p.PeriodType, p.CostLimitUsd, p.TokenLimit, p.EnforcementMode,
+		p.PeriodType, p.CostLimitUsd, p.EnforcementMode,
 		p.AlertThresholds, p.Priority, p.Enabled,
 	))
 	if err != nil {

@@ -24,7 +24,7 @@ import (
 func (h *Handler) RegisterMeRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
 	g.GET("/me", h.GetMe)                        // iam-exempt: self-service, returns the caller's own profile
 	g.GET("/me/permissions", h.GetMePermissions) // iam-exempt: self-service, the caller's own permissions
-	g.PATCH("/me", h.UpdateMe, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
+	g.PATCH("/me", h.UpdateMe, iamMW(iam.ResourceSettings.Action(iam.VerbUpdate)))
 	// IAM action catalog — pure metadata; any authenticated admin can read.
 	g.GET("/iam/action-catalog", h.GetActionCatalog) // iam-exempt: static reference data (action/verb catalog)
 }
@@ -174,10 +174,6 @@ func (h *Handler) GetMePermissions(c echo.Context) error {
 	aa := middleware.AdminAuthFromContext(c)
 	if aa == nil {
 		return c.JSON(http.StatusUnauthorized, errJSON("Authentication required", "authentication_error", ""))
-	}
-
-	if aa.KeyID == "bootstrap" || aa.KeyID == "dev" {
-		return c.JSON(http.StatusOK, map[string]any{"actions": allAdminActions})
 	}
 
 	if h.iamEngine == nil {

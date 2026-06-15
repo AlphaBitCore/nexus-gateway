@@ -1,0 +1,117 @@
+# nfpm config — SERVER (headless) .deb/.rpm of the Nexus Agent.
+#
+# Unlike nfpm.yaml (the desktop package), this variant ships ONLY the
+# daemon: no system-tray applet, no Wails Dashboard, no desktop / autostart
+# entries. A server (e.g. Ubuntu 22.04 Server) has no display, so those GUI
+# components are dead weight and would pull X/WebKit runtime deps onto the
+# box. The operator drives the agent entirely via the CLI
+# (`nexus-agent enroll …`) + systemd (`systemctl start nexus-agent`).
+#
+# Build only the daemon, then package:
+#   CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o dist/linux/staging/nexus-agent ./cmd/agent
+#   VERSION=1.0.0 nfpm pkg --packager deb -f packages/agent/platform/linux/installer/nfpm.server.yaml
+#
+# CGO is REQUIRED: the encrypted audit queue uses go-sqlcipher, which has
+# no non-cgo driver (a CGO_ENABLED=0 binary builds but fails at `run` when
+# it opens the audit DB). Build on a glibc <= target host (Ubuntu 22.04 =
+# glibc 2.35) so the binary runs on the target.
+name: "nexus-agent"
+arch: "amd64"
+platform: "linux"
+version: "${VERSION}"
+section: "net"
+priority: "optional"
+maintainer: "Nexus Gateway <support@nexus-gateway.com>"
+description: |
+  Nexus Agent (server / headless) — compliance + traffic-interception
+  daemon of the Nexus Gateway. Captures outbound TCP via an iptables
+  REDIRECT chain, recovers the original destination, attributes the
+  originating process, and enforces Hub-managed policy (deny / passthrough
+  / inspect). Daemon-only build: no GUI tray or dashboard.
+vendor: "Nexus Gateway"
+homepage: "https://nexus-gateway.com"
+license: "Proprietary"
+
+# Runtime dependencies. The daemon shells out to iptables/ip6tables for the
+# redirect chain; the postinstall installs the device CA into the OS trust
+# store via update-ca-certificates (ca-certificates) and creates a system
+# user (passwd/adduser tools, always present on a base system).
+# Default deps (deb = Ubuntu/Mint, rpm = Fedora/CentOS/RHEL). Both ship an
+# `iptables` and a `ca-certificates` package under these exact names. Arch is
+# overridden below because it renamed the package to `iptables-nft`.
+depends:
+  - iptables
+  - ca-certificates
+
+# Per-packager dependency names. Build one package per target family:
+#   deb       → Ubuntu, Linux Mint, Debian   (apt install ./nexus-agent_*.deb)
+#   rpm       → Fedora, CentOS, RHEL, Rocky   (dnf install ./nexus-agent-*.rpm)
+#   archlinux → Arch, Manjaro                 (pacman -U nexus-agent-*.pkg.tar.zst)
+# The single glibc-2.17 binary inside runs on all of them; only the package
+# wrapper + dependency names differ.
+overrides:
+  archlinux:
+    depends:
+      - iptables-nft
+      - ca-certificates
+
+deb:
+  fields:
+    Bugs: "https://nexus-gateway.com/support"
+
+rpm:
+  group: "Applications/System"
+  compression: "lzma"
+
+contents:
+  # ─── Daemon binary ────────────────────────────────────────────────
+  - src: ./dist/linux/staging/nexus-agent
+    dst: /usr/lib/nexus-agent/nexus-agent
+    file_info:
+      mode: 0755
+
+  # CLI symlink so `nexus-agent enroll …` works without an explicit path.
+  - src: /usr/lib/nexus-agent/nexus-agent
+    dst: /usr/bin/nexus-agent
+    type: symlink
+
+  # iptables cleanup belt — invoked by the systemd unit's ExecStopPost=
+  # to scrub the NEXUS_AGENT chain after unclean shutdowns (SIGKILL / OOM).
+  - src: ./packages/agent/platform/linux/installer/scripts/iptables-cleanup.sh
+    dst: /usr/lib/nexus-agent/iptables-cleanup.sh
+    file_info:
+      mode: 0755
+
+  # ─── Config (template; operator stamps hubURL or end-user passes
+  #     --hub-url at enroll) ────────────────────────────────────────
+  - src: ./packages/agent/platform/linux/installer/conf/agent.yaml
+    dst: /etc/nexus-agent/agent.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+
+  # ─── systemd system unit (no user tray unit) ──────────────────────
+  - src: ./packages/agent/platform/linux/installer/systemd/nexus-agent.service
+    dst: /usr/lib/systemd/system/nexus-agent.service
+    file_info:
+      mode: 0644
+
+  # ─── State + log directories (postinstall + systemd also create
+  #     these; shipping them lets the package install cleanly before
+  #     the daemon first runs) ───────────────────────────────────────
+  - dst: /var/lib/nexus-agent
+    type: dir
+    file_info:
+      mode: 0750
+  - dst: /var/log/nexus-agent
+    type: dir
+    file_info:
+      mode: 0750
+
+# Hook scripts: create the nexus-agent user, state dirs, device CA + OS
+# trust install, systemd enable. preremove stops the unit; postremove
+# reloads systemd.
+scripts:
+  postinstall: ./packages/agent/platform/linux/installer/scripts/postinstall.sh
+  preremove:   ./packages/agent/platform/linux/installer/scripts/preremove.sh
+  postremove:  ./packages/agent/platform/linux/installer/scripts/postremove.sh

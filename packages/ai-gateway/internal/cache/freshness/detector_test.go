@@ -17,8 +17,9 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// loadSeedRulesJSON returns the rule list from the canonical seed JSON
-// (tools/db-migrate/seed/data/time-sensitive-rules.json). That file is the
+// loadSeedRulesJSON returns the rule list from the canonical seed fixture
+// (tools/db-migrate/seed/fixtures/semantic_cache_config.json, the single row's
+// time_sensitive_overrides field). That fixture is the
 // single source of truth — seed.ts UPSERTs it into the DB; this test loads
 // the same file so the conformance suite below validates the rules that
 // actually ship.
@@ -32,18 +33,25 @@ func loadSeedRulesJSON(t *testing.T) []Rule {
 	// packages/ai-gateway/internal/cache/freshness/detector_test.go
 	// → ../../../../.. is the repo root.
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "..")
-	path := filepath.Join(repoRoot, "tools", "db-migrate", "seed", "data", "time-sensitive-rules.json")
+	path := filepath.Join(repoRoot, "tools", "db-migrate", "seed", "fixtures", "semantic_cache_config.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read seed rules JSON %s: %v", path, err)
+		t.Fatalf("read semantic_cache_config fixture %s: %v", path, err)
 	}
-	var blob struct {
-		Rules []Rule `json:"rules"`
+	// The canonical time-sensitive rules live in the single semantic_cache_config
+	// row's time_sensitive_overrides JSON ({"rules":[...]}).
+	var fixture []struct {
+		TimeSensitiveOverrides struct {
+			Rules []Rule `json:"rules"`
+		} `json:"time_sensitive_overrides"`
 	}
-	if err := json.Unmarshal(raw, &blob); err != nil {
-		t.Fatalf("unmarshal seed rules JSON: %v", err)
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatalf("unmarshal semantic_cache_config fixture: %v", err)
 	}
-	return blob.Rules
+	if len(fixture) == 0 {
+		t.Fatalf("semantic_cache_config fixture %s is empty", path)
+	}
+	return fixture[0].TimeSensitiveOverrides.Rules
 }
 
 // testDetector creates a Detector backed by the canonical seed rules with an

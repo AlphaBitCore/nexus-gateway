@@ -16,10 +16,11 @@ func StartWSSignalSubscriber(
 	hubID string,
 	mqConsumer mq.Consumer,
 	wsPool *ws.Pool,
+	signalSecret []byte,
 	logger *slog.Logger,
 ) {
 	if mqConsumer == nil {
 		return
 	}
-	go ws.SubscribeHubSignals(ctx, mqConsumer, wsPool, hubID, logger)
+	go ws.SubscribeHubSignals(ctx, mqConsumer, wsPool, hubID, signalSecret, logger)
 }

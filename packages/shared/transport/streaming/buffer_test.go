@@ -33,6 +33,7 @@ func TestBufferPipeline_AllApproved(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	if result.Decision != core.Approve {
 		t.Errorf("expected APPROVE, got %s", result.Decision)

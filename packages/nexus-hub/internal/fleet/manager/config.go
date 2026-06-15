@@ -2,6 +2,9 @@ package manager
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -30,15 +33,18 @@ type UpdateConfigResponse struct {
 	ThingsOnline    int   `json:"thingsOnline"`
 }
 
-// UpdateConfig performs the 6-step config update flow:
-//  1. Upsert config template (version++)
-//  2. Update desired + desired_ver for all Things of the type
-//  3. Cache in Redis
-//  4. Insert config_change_event
-//  5. Broadcast config_changed via WebSocket
-//  6. Publish hub signal via MQ for peer Hubs
+// UpdateConfig performs the 6-step config update flow. The step numbers are
+// logical labels, not execution order — the durable writes commit first, then
+// the cache and fan-out run post-commit:
+//  1. Upsert config template (version++)         — in transaction
+//  2. Update desired + desired_ver for the type  — in transaction
+//  4. Insert config_change_event                 — in transaction
+//  3. Cache in Redis                             — post-commit, best-effort
+//  5. Broadcast config_changed via WebSocket     — post-commit, best-effort
+//  6. Publish hub signal via MQ for peer Hubs    — post-commit, best-effort
 //
-// Steps 1-4 are transactional. Steps 5-6 are best-effort.
+// Steps 1, 2, and 4 are transactional (committed together). Steps 3, 5, and 6
+// run after the commit and are best-effort.
 func (m *Manager) UpdateConfig(ctx context.Context, req UpdateConfigRequest) (*UpdateConfigResponse, error) {
 	m.logger.Info("config update requested",
 		"event", "config_update_requested",
@@ -53,6 +59,15 @@ func (m *Manager) UpdateConfig(ctx context.Context, req UpdateConfigRequest) (*U
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Step 0: serialize per-type version allocation. MUST be the first statement
+	// in the tx (before any row locks) so concurrent same-type writers get
+	// distinct, strictly-increasing desired_ver values and the lock order stays
+	// consistent with the override path. See
+	// store.AcquireConfigVersionLock.
+	if err := m.store.RegistryStore().AcquireConfigVersionLock(ctx, tx, req.ThingType); err != nil {
+		return nil, fmt.Errorf("acquire config version lock: %w", err)
+	}
 
 	// Step 1: Upsert template
 	newVer, err := m.store.ConfigStore().UpsertConfigTemplate(ctx, tx, req.ThingType, req.ConfigKey, req.State, req.ActorID)
@@ -161,11 +176,13 @@ func (m *Manager) broadcastConfigChanged(thingType, configKey string, state any,
 			"config_key", configKey,
 			"desired_ver", ver,
 		)
+		m.incFanoutFailed("ws")
 		return 0
 	}
 	stateRaw, err := json.Marshal(state)
 	if err != nil {
 		m.logger.Error("marshal config_changed state", "error", err)
+		m.incFanoutFailed("ws")
 		return 0
 	}
 	msg := ConfigChangedMessage{
@@ -177,6 +194,7 @@ func (m *Manager) broadcastConfigChanged(thingType, configKey string, state any,
 	data, err := json.Marshal(msg)
 	if err != nil {
 		m.logger.Error("marshal config_changed", "error", err)
+		m.incFanoutFailed("ws")
 		return 0
 	}
 	notified := m.ws.Broadcast(thingType, data)
@@ -207,6 +225,63 @@ type HubSignal struct {
 	Force     bool   `json:"force,omitempty"`
 }
 
+// hubSignalEnvelope is the transport wrapper for nexus.hub.signal. The HMAC in
+// Sig authenticates that a Hub holding the shared signing secret published the
+// frame; a data-plane producer (or on-path actor) that can merely reach NATS
+// cannot forge it. The MAC covers the exact Payload bytes, so the
+// inner State round-trip never affects verification.
+type hubSignalEnvelope struct {
+	Sig     string          `json:"sig,omitempty"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+func hubSignalMAC(payload, secret []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// SignHubSignal marshals sig into a transport envelope, stamping an HMAC over the
+// payload when secret is non-empty.
+func SignHubSignal(sig HubSignal, secret []byte) ([]byte, error) {
+	payload, err := json.Marshal(sig)
+	if err != nil {
+		return nil, err
+	}
+	env := hubSignalEnvelope{Payload: payload}
+	if len(secret) > 0 {
+		env.Sig = hubSignalMAC(payload, secret)
+	}
+	return json.Marshal(env)
+}
+
+// VerifyAndDecodeHubSignal unwraps a nexus.hub.signal frame and decodes the inner
+// HubSignal. When secret is non-empty it REQUIRES a valid HMAC and returns
+// ok=false (drop the frame) for a missing/forged signature. When secret is empty
+// (unconfigured / tests) it accepts any well-formed frame.
+func VerifyAndDecodeHubSignal(data, secret []byte) (HubSignal, bool) {
+	var env hubSignalEnvelope
+	if err := json.Unmarshal(data, &env); err != nil || len(env.Payload) == 0 {
+		return HubSignal{}, false
+	}
+	if len(secret) > 0 {
+		want := hubSignalMAC(env.Payload, secret)
+		if env.Sig == "" || !hmac.Equal([]byte(env.Sig), []byte(want)) {
+			return HubSignal{}, false
+		}
+	}
+	var sig HubSignal
+	if err := json.Unmarshal(env.Payload, &sig); err != nil {
+		return HubSignal{}, false
+	}
+	return sig, true
+}
+
+// SetSignalSecret installs the Hub-to-Hub signing secret. Production
+// wiring always sets it (env HUB_SIGNAL_HMAC_SECRET, else a per-process random);
+// when set, published hub signals are HMAC-signed.
+func (m *Manager) SetSignalSecret(secret []byte) { m.signalSecret = secret }
+
 func (m *Manager) publishHubSignal(ctx context.Context, thingType, configKey string, state any, ver int64) {
 	if m.mq == nil {
 		return
@@ -219,12 +294,24 @@ func (m *Manager) publishHubSignal(ctx context.Context, thingType, configKey str
 		State:     state,
 		Version:   ver,
 	}
-	data, err := json.Marshal(sig)
+	data, err := SignHubSignal(sig, m.signalSecret)
 	if err != nil {
+		// Previously this branch returned silently — a marshal failure
+		// stranded every peer-Hub Thing with no log and no metric, only
+		// surfacing as a lagging shadow.drift_things gauge after the 60s
+		// drift tick.
+		m.logger.Error("marshal hub signal failed",
+			"event", "config_fanout_marshal_failed",
+			"thing_type", thingType,
+			"config_key", configKey,
+			"desired_ver", ver,
+			"error", err)
+		m.incFanoutFailed("nats")
 		return
 	}
 	if err := m.mq.Publish(ctx, "nexus.hub.signal", data); err != nil {
 		m.logger.Warn("publish hub signal failed", "error", err)
+		m.incFanoutFailed("nats")
 	}
 }
 

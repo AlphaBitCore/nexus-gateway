@@ -68,6 +68,13 @@ func TestResolveNoMatchPassthrough_SucceedsForAllowedModel(t *testing.T) {
 	if got.RuleID != "passthrough-fallback" || got.RuleName != "passthrough-fallback" {
 		t.Fatalf("rule metadata = (%q,%q), want passthrough-fallback", got.RuleID, got.RuleName)
 	}
+	// Requested side: the client pinned this specific model and passthrough
+	// sends straight to it, so the REQUESTED columns must carry it (not stay
+	// NULL — passthrough is the default-config path for specific-model requests).
+	if got.RequestedModelID != "model-1" || got.RequestedProviderID != "provider-1" || got.RequestedProviderName != "provider-1" {
+		t.Fatalf("requested side = %q/%q/%q, want model-1/provider-1/provider-1",
+			got.RequestedModelID, got.RequestedProviderID, got.RequestedProviderName)
+	}
 }
 
 func TestResolveNoMatchPassthrough_UsesProviderAdapterType(t *testing.T) {

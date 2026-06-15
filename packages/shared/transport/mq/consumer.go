@@ -12,6 +12,16 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+// MaxDeliver is the JetStream per-consumer delivery cap applied to every
+// durable pull consumer created by Consume. Once a message is delivered this
+// many times JetStream removes it for the consumer immediately — MaxAge does
+// NOT grant a grace period past exhaustion. Exported as the single source of
+// truth so a downstream consumer that dead-letters on its own redelivery
+// threshold (the Hub traffic writer's redeliveryThresholdAttempts) can pin that
+// threshold STRICTLY BELOW this cap with a compile-time assertion instead of a
+// second, drift-prone magic literal.
+const MaxDeliver = 5
+
 // NATSConsumer implements Consumer using Core NATS (topics) and JetStream (queues).
 type NATSConsumer struct {
 	nc      *nats.Conn
@@ -58,11 +68,12 @@ func NewNATSConsumer(cfg NATSConfig, logger *slog.Logger, metrics *Metrics) (*NA
 func (c *NATSConsumer) Subscribe(ctx context.Context, topic string, handler MessageHandler) error {
 	sub, err := c.nc.Subscribe(topic, func(nmsg *nats.Msg) {
 		msg := &Message{
-			Subject:   nmsg.Subject,
-			Data:      nmsg.Data,
-			Timestamp: time.Now(),                  // Core NATS carries no server timestamp
-			Ack:       func() error { return nil }, // no-op for fire-and-forget
-			Nak:       func() error { return nil },
+			Subject:      nmsg.Subject,
+			Data:         nmsg.Data,
+			Timestamp:    time.Now(),                  // Core NATS carries no server timestamp
+			Ack:          func() error { return nil }, // no-op for fire-and-forget
+			Nak:          func() error { return nil },
+			NakWithDelay: func(time.Duration) error { return nil },
 		}
 		if err := handler(ctx, msg); err != nil {
 			c.logger.Warn("natsmq: topic handler error", "topic", topic, "error", err)
@@ -98,8 +109,14 @@ func (c *NATSConsumer) Consume(ctx context.Context, queue, group string, handler
 		Durable:       jetstreamDurableName(group, queue),
 		FilterSubject: queue,
 		AckPolicy:     jetstream.AckExplicitPolicy,
-		MaxDeliver:    5,
-		AckWait:       30 * time.Second,
+		// MaxDeliver caps total deliveries; once exhausted JetStream removes the
+		// message for this consumer immediately — MaxAge does NOT grant a grace
+		// period past exhaustion. Consumers that dead-letter on a redelivery cap
+		// MUST trip their own threshold strictly below MaxDeliver (see the Hub
+		// traffic writer's redeliveryThresholdAttempts) so the DLQ/disk-fallback
+		// path still has delivery budget left to retry on.
+		MaxDeliver: MaxDeliver,
+		AckWait:    30 * time.Second,
 	})
 	if err != nil {
 		return fmt.Errorf("natsmq: create consumer %s/%s: %w", queue, group, err)
@@ -136,6 +153,7 @@ func (c *NATSConsumer) Consume(ctx context.Context, queue, group string, handler
 				NumDelivered: numDelivered,
 				Ack:          func() error { return nmsg.Ack() },
 				Nak:          func() error { return nmsg.Nak() },
+				NakWithDelay: func(d time.Duration) error { return nmsg.NakWithDelay(d) },
 			}
 
 			err := handler(ctx, msg)

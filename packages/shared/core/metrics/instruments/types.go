@@ -127,37 +127,6 @@ const (
 	MetricAgentActionVolume = "agent_action_volume"
 )
 
-// PrimaryDimensions lists the dimensions supported for rollup grouping.
-var PrimaryDimensions = []string{
-	"provider",
-	"model",
-	"entity",
-	"organization",
-	"hook_decision",
-	"status_class",
-	"compliance_tag",
-	"source",
-	"routing_rule",
-	"target_host",
-}
-
-// DimensionColumnMap maps each dimension name to its traffic_event column.
-// `compliance_tag` targets compliance_tags (text[]); the rollup job must
-// UNNEST the array so a row carrying N tags contributes one measurement
-// per tag under the compliance_tag dimension.
-var DimensionColumnMap = map[string]string{
-	"provider":       "provider_name",
-	"model":          "model_name",
-	"entity":         "entity_id",
-	"organization":   "org_id",
-	"hook_decision":  "hook_decision",
-	"status_class":   "status_class",
-	"compliance_tag": "compliance_tags",
-	"source":         "source",
-	"routing_rule":   "routing_rule_id",
-	"target_host":    "target_host",
-}
-
 // BuildDimensionKey returns a "dimension=value" string, or "" if either
 // argument is empty.
 func BuildDimensionKey(dimension, value string) string {

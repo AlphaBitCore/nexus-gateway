@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	specerrors "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specs/anthropic/errors"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -172,31 +173,15 @@ func (s *anthropicStreamSession) Close() error {
 	return s.scanner.Close()
 }
 
-// mapAnthropicStreamError translates an Anthropic stream-level `error`
-// event payload into a canonical [provcore.ProviderError]. Status codes
-// follow the same mapping the HTTP error normaliser uses so downstream
-// metrics and quota reconcile see identical signals regardless of where
-// the failure surfaced.
+// MapAnthropicStreamError translates an Anthropic stream-level `error`
+// event payload into a canonical [provcore.ProviderError]. It delegates the
+// type→(code, status) mapping to the shared specerrors.MapErrorType so the
+// streaming path and the unary HTTP normaliser can never diverge on the
+// same upstream error class. Unrecognised / empty types fall
+// back to upstream_error / 502.
 func MapAnthropicStreamError(etype, emsg string) error {
-	code := provcore.CodeUpstreamError
-	status := http.StatusBadGateway
-	switch etype {
-	case "overloaded_error":
-		code = provcore.CodeRateLimited
-		status = http.StatusTooManyRequests
-	case "rate_limit_error":
-		code = provcore.CodeRateLimited
-		status = http.StatusTooManyRequests
-	case "authentication_error", "permission_error":
-		code = provcore.CodeAuthFailed
-		status = http.StatusUnauthorized
-	case "invalid_request_error":
-		code = provcore.CodeInvalidRequest
-		status = http.StatusBadRequest
-	case "not_found_error":
-		code = provcore.CodeUpstreamError
-		status = http.StatusNotFound
-	case "api_error", "":
+	code, status, ok := specerrors.MapErrorType(etype)
+	if !ok {
 		code = provcore.CodeUpstreamError
 		status = http.StatusBadGateway
 	}

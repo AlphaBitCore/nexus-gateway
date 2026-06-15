@@ -18,6 +18,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/santhosh-tekuri/jsonschema/v5"
+
+	nexushttperr "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/httperr"
 )
 
 // adminStoreAPI is the subset of *Store the admin handlers need. Defined as
@@ -34,6 +36,7 @@ type adminStoreAPI interface {
 	InsertChannel(ctx context.Context, c Channel) (string, error)
 	GetChannel(ctx context.Context, id string) (*Channel, error)
 	ListChannels(ctx context.Context) ([]Channel, error)
+	CountChannels(ctx context.Context) (int, error)
 	UpdateChannel(ctx context.Context, c Channel) error
 	DeleteChannel(ctx context.Context, id string) error
 	InsertAlert(ctx context.Context, a Alert) (string, error)
@@ -384,12 +387,51 @@ func (h *AdminHandlers) UpdateRule(c echo.Context) error {
 		return echoErr(c, http.StatusInternalServerError, err.Error())
 	}
 
-	// Return the updated rule.
+	// Return the updated rule, plus any operational warnings about the new
+	// state — e.g. the rule is now enabled but no channel exists to deliver
+	// its notifications.
 	updated, err := h.Store.GetRule(ctx, id)
 	if err != nil {
 		return echoErr(c, http.StatusInternalServerError, err.Error())
 	}
-	return c.JSON(http.StatusOK, updated)
+	warnings, err := h.ruleStateWarnings(ctx, updated)
+	if err != nil {
+		return echoErr(c, http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusOK, ruleResponse{AlertRule: *updated, Warnings: warnings})
+}
+
+// warnNoDeliveryChannel is the machine-readable warning code returned when a
+// rule is enabled but no AlertChannel exists to deliver its notifications.
+// The admin UI maps it to a human-readable banner.
+const warnNoDeliveryChannel = "no_delivery_channel_configured"
+
+// ruleResponse is the JSON shape returned by UpdateRule. The AlertRule fields
+// are embedded at the top level (so the UI still reads the response as an
+// AlertRule) alongside a `warnings` array carrying non-fatal operational
+// notices about the resulting rule state. `warnings` is always present (empty
+// array, never null) so the UI can render it without a nil guard.
+type ruleResponse struct {
+	AlertRule
+	Warnings []string `json:"warnings"`
+}
+
+// ruleStateWarnings computes the operational warnings for a rule's resulting
+// state. The only warning today: an enabled rule with zero configured delivery
+// channels will fire alerts that go nowhere. A disabled rule never warns —
+// it delivers nothing by design. Always returns a non-nil slice.
+func (h *AdminHandlers) ruleStateWarnings(ctx context.Context, r *AlertRule) ([]string, error) {
+	warnings := []string{}
+	if r.Enabled {
+		count, err := h.Store.CountChannels(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("count channels: %w", err)
+		}
+		if count == 0 {
+			warnings = append(warnings, warnNoDeliveryChannel)
+		}
+	}
+	return warnings, nil
 }
 
 // ResetRule handles POST /api/v1/admin/alerts/rules/:id/reset. It restores the
@@ -732,9 +774,28 @@ func parseFlexibleTime(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// echoErr writes a uniform JSON error envelope.
+// echoErr writes the canonical JSON error envelope ({error:{message,type,code}}).
+// The machine-readable code is derived from the HTTP status so both the Echo
+// admin path and the raw net/http internal path (hubHTTPErr) emit the same shape.
 func echoErr(c echo.Context, code int, msg string) error {
-	return c.JSON(code, map[string]string{"error": msg})
+	codeStr := codeForStatus(code)
+	return c.JSON(code, nexushttperr.ErrJSON(msg, typeForCode(codeStr), codeStr))
+}
+
+// typeForCode maps a canonical CODE string to the errType for the nested envelope.
+func typeForCode(code string) string {
+	switch code {
+	case "UNAUTHORIZED", "FORBIDDEN":
+		return "auth_error"
+	case "NOT_FOUND":
+		return "not_found"
+	case "SERVICE_UNAVAILABLE":
+		return "service_unavailable"
+	case "INTERNAL_ERROR":
+		return "internal_error"
+	default:
+		return "validation_error"
+	}
 }
 
 // errEmptyBody is recognized by decoders to allow an empty request body.
@@ -776,6 +837,12 @@ var sensitiveKeys = map[string]bool{
 	"bottoken":     true,
 	"smtppassword": true,
 	"routingkey":   true,
+	// Slack incoming-webhook URLs embed a secret token in the path
+	// (hooks.slack.com/services/T.../B.../<secret>). Anyone with the URL can
+	// post to the channel, so it must be encrypted at rest and masked in
+	// responses exactly like the other channel secrets. Listing it
+	// here drives BOTH transformConfig (seal/open) AND maskChannelConfig.
+	"webhookurl": true,
 }
 
 // sensitiveHeaderNeedles are case-insensitive substrings that mark a header

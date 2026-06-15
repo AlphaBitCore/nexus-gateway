@@ -7,6 +7,7 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/canonicalext"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -151,7 +152,7 @@ func (codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 //
 // The only translation needed is usage.total_tokens → usage.prompt_tokens+total_tokens
 // in the canonical shape.
-func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
+func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, reqCtx provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint != typology.WireShapeVoyageEmbeddings {
 		// Unexpected — Voyage only serves embeddings; pass through opaquely.
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil
@@ -178,6 +179,15 @@ func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 			}
 			return true
 		})
+	}
+
+	// Guard against a provider silently dropping or reordering items: the
+	// canonical data[] is re-indexed by upstream position, so a count
+	// mismatch means the vectors no longer align with the request inputs.
+	// Fail the decode (→ 502) rather than serve misaligned
+	// vectors. expected counts the Voyage wire `input` (string→1, array→len).
+	if err := specutil.ValidateEmbeddingRowCount(voyageInputCount(reqCtx.RequestBody), len(floatRows)); err != nil {
+		return provcore.DecodeResult{}, fmt.Errorf("voyage embed response: %w", err)
 	}
 
 	// Build canonical data[] array.
@@ -220,4 +230,23 @@ func (codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ st
 
 	usage := provcore.ExtractUsage(canonicalBytes, provcore.FormatOpenAI)
 	return provcore.DecodeResult{CanonicalBody: canonicalBytes, Usage: usage}, nil
+}
+
+// voyageInputCount returns the number of inputs in a Voyage wire request
+// body — a string `input` counts as 1, an array counts its length. Returns
+// 0 when the body is absent or `input` is missing (disables the count
+// guard rather than rejecting). Mirrors the encode-side input handling.
+func voyageInputCount(reqBody []byte) int {
+	if len(reqBody) == 0 {
+		return 0
+	}
+	in := gjson.GetBytes(reqBody, "input")
+	switch {
+	case in.IsArray():
+		return len(in.Array())
+	case in.Exists():
+		return 1
+	default:
+		return 0
+	}
 }

@@ -230,11 +230,20 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 	// silently ignores top-level parallel_tool_calls. Map only on the
 	// disabling case (Anthropic default already enables parallel).
 	// Doc: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/parallel-tool-use
-	if v := root.Get("parallel_tool_calls"); v.Exists() && !v.Bool() {
-		if toolChoice == nil {
-			toolChoice = map[string]any{"type": "auto"}
+	//
+	// Gate on a non-empty out["tools"]: Anthropic returns a hard 400
+	// ("tool_choice may only be specified while providing tools") for ANY
+	// tool_choice on a request that carries no tools. An OpenAI SDK can
+	// legitimately send parallel_tool_calls:false on a no-tools call;
+	// synthesising a tool_choice from it would turn that into a 400.
+	// With no tools the toggle is meaningless, so drop it.
+	if _, hasTools := out["tools"]; hasTools {
+		if v := root.Get("parallel_tool_calls"); v.Exists() && !v.Bool() {
+			if toolChoice == nil {
+				toolChoice = map[string]any{"type": "auto"}
+			}
+			toolChoice["disable_parallel_tool_use"] = true
 		}
-		toolChoice["disable_parallel_tool_use"] = true
 	}
 	if toolChoice != nil {
 		out["tool_choice"] = toolChoice
@@ -248,12 +257,24 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 	if rf := root.Get("response_format"); rf.Exists() {
 		switch rf.Get("type").String() {
 		case "json_object":
-			messages = append(messages, map[string]any{
-				"role": "assistant",
-				"content": []map[string]any{
-					{"type": "text", "text": "{"},
-				},
-			})
+			// The Anthropic Messages API has no native json_object mode.
+			// The widely-used "prefill" trick (append an assistant turn
+			// whose content is a bare "{") forces JSON but is silently
+			// broken across this gateway: Anthropic completes the object
+			// WITHOUT re-emitting the prefilled "{", and neither the
+			// non-streaming DecodeResponse nor the SSE stream path can
+			// re-prepend it — the SchemaCodec/StreamDecoder interfaces are
+			// stateless and never see the originating request, so they
+			// cannot know a "{" was prefilled. The caller therefore
+			// received content beginning mid-object ("k":1}) that fails
+			// JSON.parse 100% of the time.
+			//
+			// Instead we force JSON via a system instruction. Anthropic
+			// emits the complete object (including the opening "{"), so the
+			// decode/stream paths pass it through unchanged and the caller
+			// gets parseable JSON. The instruction is appended to whatever
+			// system content already exists (none / string / text blocks).
+			out["system"] = appendSystemInstruction(out["system"], anthropicJSONObjectInstruction)
 		case "json_schema":
 			return provcore.EncodeResult{}, errUnsupportedField("response_format.json_schema")
 		}
@@ -289,6 +310,40 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 		return provcore.EncodeResult{}, err
 	}
 	return provcore.EncodeResult{Body: body, ContentType: "application/json", Rewrites: rewrites}, nil
+}
+
+// anthropicJSONObjectInstruction is appended to the system prompt when a
+// caller sends response_format:{type:"json_object"}. Anthropic's Messages
+// API has no native JSON mode; this instruction is the gateway's
+// replacement for the brace-prefill trick (see EncodeRequest).
+// It is deliberately strict about NOT wrapping the output in
+// markdown fences or surrounding prose so the decoded content parses as
+// JSON without any post-processing on the decode side.
+const anthropicJSONObjectInstruction = "You must respond with a single valid JSON object only. " +
+	"Output the raw JSON directly — do not wrap it in markdown code fences and do not add any text, " +
+	"explanation, or commentary before or after the JSON."
+
+// appendSystemInstruction appends instruction to the Anthropic top-level
+// `system` value, preserving whatever shape it already holds. The codec
+// produces three shapes for `system`: absent (nil — no system turns),
+// a plain string (exactly one system turn), or a []map[string]any of
+// text blocks (multiple system turns). The instruction is added in the
+// matching shape so the resulting body stays valid Anthropic Messages
+// wire format. An unexpected type falls back to the bare instruction.
+func appendSystemInstruction(existing any, instruction string) any {
+	switch v := existing.(type) {
+	case nil:
+		return instruction
+	case string:
+		if v == "" {
+			return instruction
+		}
+		return v + "\n\n" + instruction
+	case []map[string]any:
+		return append(v, map[string]any{"type": "text", "text": instruction})
+	default:
+		return instruction
+	}
 }
 
 // anthropicModelRejectsSamplingParams reports whether the given Anthropic
@@ -584,7 +639,7 @@ func stringifyContent(content gjson.Result) string {
 //     b. nexus.ext.anthropic.cache_creation_input_tokens — same value under
 //     the canonical-extension namespace so the encode path can round-trip
 //     it back to Anthropic targets (provider-adapter-architecture.md §3a Rule 4).
-func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
+func (Codec) DecodeResponse(endpoint typology.WireShape, nativeBody []byte, _ string, _ provcore.DecodeContext) (provcore.DecodeResult, error) {
 	if endpoint != typology.WireShapeAnthropicMessages {
 		// Models endpoint and anything else is passthrough.
 		return provcore.DecodeResult{CanonicalBody: nativeBody}, nil

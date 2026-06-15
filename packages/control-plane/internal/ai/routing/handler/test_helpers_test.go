@@ -23,9 +23,11 @@ import (
 // when the 4th domain extraction's copy demands it.
 
 // hubSpy captures Hub calls made by routing handlers during unit tests.
+// invalidateErr drives the push-failure → HTTP 502 branch.
 type hubSpy struct {
 	mu              sync.Mutex
 	invalidateCalls []hubInvalidateCall
+	invalidateErr   error
 	notifyCalls     []hub.ConfigChangeRequest
 	notifyErr       error
 	notifyResponse  *hub.ConfigChangeResponse
@@ -36,10 +38,11 @@ type hubInvalidateCall struct {
 	ConfigKey string
 }
 
-func (s *hubSpy) InvalidateConfig(_ context.Context, thingType, configKey string) {
+func (s *hubSpy) InvalidateConfigE(_ context.Context, thingType, configKey string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.invalidateCalls = append(s.invalidateCalls, hubInvalidateCall{ThingType: thingType, ConfigKey: configKey})
+	return s.invalidateErr
 }
 
 func (s *hubSpy) NotifyConfigChange(_ context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error) {

@@ -40,9 +40,9 @@ type AppliedConfig struct {
 	UserContext      *UserContextView   `json:"userContext,omitempty"`
 	OrganizationTree []OrganizationView `json:"organizationTree,omitempty"`
 
-	// Stretch sections — placeholders until later wiring.
-	DeviceGroup *DeviceGroupView `json:"deviceGroup,omitempty"`
-	DiagMode    *DiagModeView    `json:"diagMode,omitempty"`
+	// DiagMode reflects the per-thing diag_mode override (verbose
+	// diagnostics window); nil when no window is active.
+	DiagMode *DiagModeView `json:"diagMode,omitempty"`
 }
 
 // UserContextView mirrors the user_context.user JSON payload Hub serves.
@@ -183,6 +183,11 @@ type DeviceDefaultsView struct {
 	// QUIC→TCP downgrade). Surfaced here read-only so the Policies
 	// page can show the operator what's actually being intercepted.
 	ForceQUICFallbackBundles []string `json:"forceQUICFallbackBundles,omitempty"`
+	// BypassBundles is the macOS-only SOURCE-bundle exemption list the NE
+	// proxy reads to decide which apps to pass through without a TLS bump.
+	// Surfaced read-only so the Policies page can show the operator which
+	// apps are deliberately off the inspection path.
+	BypassBundles []string `json:"bypassBundles,omitempty"`
 	// AttestationEnabled is the fleet toggle for agent traffic
 	// attestation. When true, the agent signs outbound CONNECTs with its
 	// Ed25519 attestation key so the compliance-proxy can transparently
@@ -244,16 +249,6 @@ type RulePackRule struct {
 	Flags       string   `json:"flags,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Labels      []string `json:"labels,omitempty"`
-}
-
-// DeviceGroupView is a placeholder. The agent doesn't have a direct
-// thingclient channel for its group_id today; the Hub stamps the
-// group on the thing record at enrollment time but never pushes it
-// back. To populate this section we'd either need a new Hub endpoint
-// or a thingclient extension; tracked in #70.
-type DeviceGroupView struct {
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name,omitempty"`
 }
 
 // DiagModeView reflects whether admin has enabled verbose diagnostic
@@ -487,6 +482,7 @@ func parseDeviceDefaults(raw json.RawMessage) DeviceDefaultsView {
 		TrafficUploadLevel       string            `json:"trafficUploadLevel"`
 		ThemeID                  string            `json:"themeId"`
 		ForceQUICFallbackBundles []string          `json:"forceQUICFallbackBundles"`
+		BypassBundles            []string          `json:"bypassBundles"`
 		AttestationEnabled       bool              `json:"attestationEnabled"`
 	}
 	if err := json.Unmarshal(raw, &wrapped); err != nil {
@@ -506,6 +502,7 @@ func parseDeviceDefaults(raw json.RawMessage) DeviceDefaultsView {
 		TrafficUploadLevel:       wrapped.TrafficUploadLevel,
 		ThemeID:                  wrapped.ThemeID,
 		ForceQUICFallbackBundles: wrapped.ForceQUICFallbackBundles,
+		BypassBundles:            wrapped.BypassBundles,
 		AttestationEnabled:       wrapped.AttestationEnabled,
 	}
 }

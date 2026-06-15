@@ -256,3 +256,89 @@ func TestApplyDomainsShadowState_EmptyDomainListReplacesSnapshot(t *testing.T) {
 		t.Fatalf("explicit empty list should zero the snapshot; got size=%d", sz)
 	}
 }
+
+// TestApplyHooksShadowState_ReloadError exercises the hook-cache reload-failure
+// branch (pipeline.go:239-241). The HookConfigCache.Reload path bottoms out in
+// SnapshotCache.Load, which rejects a nil context before touching the loader.
+// A nil context is the realistic trigger for that failure. The function must
+// surface the wrapped error so the shadow Manager can log + retry, and it must
+// NOT corrupt the live resolver — the prior (empty) resolver stays in place
+// because Reload fails before the onLoad Swap runs.
+func TestApplyHooksShadowState_ReloadError(t *testing.T) {
+	p := NewAgentPipeline(silentLogger())
+	if p.Resolver().HasHooks("request") {
+		t.Fatal("precondition: fresh pipeline should have no request hooks")
+	}
+	before := p.Resolver()
+
+	raw, err := json.Marshal(map[string]any{
+		"hookConfigs": []hooks.HookConfig{
+			{ID: "h1", ImplementationID: "pii-detector", Name: "pii",
+				Stage: "request", Enabled: true, FailBehavior: "fail-open"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	//nolint:staticcheck // SA1012: nil ctx is the intended trigger for the reload-failure path.
+	gotErr := p.ApplyHooksShadowState(nil, json.RawMessage(raw))
+	if gotErr == nil {
+		t.Fatal("expected reload error when context is nil")
+	}
+	if got := gotErr.Error(); got != "pipeline: hook cache reload: configcache: nil context" {
+		t.Fatalf("unexpected error wrapping: %q", got)
+	}
+	// The failed reload must not swap in the new hook; the resolver pointer and
+	// its (empty) hook set are unchanged.
+	if p.Resolver() != before {
+		t.Fatal("resolver pointer must be unchanged after a failed reload")
+	}
+	if p.Resolver().HasHooks("request") {
+		t.Fatal("failed reload must not seat the new request hook")
+	}
+}
+
+// TestApplyRulePacksShadowState_ReloadError exercises the re-reload-failure
+// branch in reloadHooksWithCurrentPacks (pipeline.go:321-323). Hooks are seated
+// first so reloadHooksWithCurrentPacks proceeds past its pendingConfigs==nil
+// fast-return; then a nil-context rule-pack apply forces the HookConfigCache
+// re-reload to fail. The distinct "re-reload after rule pack update" wrapper
+// (vs the plain "hook cache reload" wrapper above) is what lets operators tell
+// the two failing call sites apart in logs.
+func TestApplyRulePacksShadowState_ReloadError(t *testing.T) {
+	p := NewAgentPipeline(silentLogger())
+	seed, err := json.Marshal(map[string]any{
+		"hookConfigs": []hooks.HookConfig{
+			{ID: "kw", ImplementationID: "pii-detector", Name: "kw",
+				Stage: "request", Enabled: true, FailBehavior: "fail-open"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal seed: %v", err)
+	}
+	if e := p.ApplyHooksShadowState(context.Background(), json.RawMessage(seed)); e != nil {
+		t.Fatalf("seed hooks: %v", e)
+	}
+
+	rulePacks, err := json.Marshal(map[string]any{
+		"installedRulePacks": []map[string]any{
+			{
+				"id": "install-1", "boundHookId": "kw", "enabled": true,
+				"rules": []map[string]any{{"ruleId": "r1", "pattern": "secret"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal rule packs: %v", err)
+	}
+
+	//nolint:staticcheck // SA1012: nil ctx is the intended trigger for the re-reload-failure path.
+	gotErr := p.ApplyRulePacksShadowState(nil, json.RawMessage(rulePacks))
+	if gotErr == nil {
+		t.Fatal("expected re-reload error when context is nil")
+	}
+	if got := gotErr.Error(); got != "pipeline: hook cache re-reload after rule pack update: configcache: nil context" {
+		t.Fatalf("unexpected error wrapping: %q", got)
+	}
+}

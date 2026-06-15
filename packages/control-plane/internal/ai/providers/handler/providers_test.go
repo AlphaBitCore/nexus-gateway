@@ -286,7 +286,7 @@ func TestCreateProvider_HappyBareProvider(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectCommit()
 	// incrementConfigVersion → 2 system_metadata calls.
@@ -327,7 +327,7 @@ func TestCreateProvider_HappyWithModelsAndCredential(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	// 1 model insert — 18 params ($1..$18 including 4 capability cols).
 	mock.ExpectQuery(`INSERT INTO "Model"`).
@@ -343,7 +343,7 @@ func TestCreateProvider_HappyWithModelsAndCredential(t *testing.T) {
 	mock.ExpectQuery(`INSERT INTO "Credential"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(credentialMetadataCols).
 			AddRow(makeCredentialRow(now)...))
 	mock.ExpectCommit()
@@ -394,7 +394,7 @@ func TestCreateProvider_HappyModelMissingCodeAndAliases(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -434,7 +434,7 @@ func TestCreateProvider_NameCollision409(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "Provider_name_key"})
 	mock.ExpectRollback()
 	h := newHandler(db, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{})
@@ -460,7 +460,7 @@ func TestCreateProvider_ModelCollision409(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Model"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
@@ -522,12 +522,12 @@ func TestCreateProvider_EnabledFalseAndOptionalFieldsBranch(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(providerCols).AddRow(makeProviderRow(now)...))
 	mock.ExpectQuery(`INSERT INTO "Credential"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows(credentialMetadataCols).
 			AddRow(makeCredentialRow(now)...))
 	mock.ExpectCommit()

@@ -50,21 +50,22 @@ func TestLoadYAML_InvalidYAML(t *testing.T) {
 	}
 }
 
-func TestMerge_LocalPathWinsAndRemoteIntervalsOverride(t *testing.T) {
+func TestMerge_LocalFieldsSurviveStaleIntervalPush(t *testing.T) {
 	local := &AgentConfig{
-		HubHTTPURL:  "https://hub.example.com",
-		AuditDBPath: "/local/audit.db",
+		HubHTTPURL:           "https://hub.example.com",
+		AuditDBPath:          "/local/audit.db",
+		HeartbeatIntervalSec: 60,
 	}
 	remote := map[string]any{
-		"heartbeatIntervalSec": float64(120),
+		"heartbeatIntervalSec": float64(120), // legacy blob field — must be ignored
 	}
 
 	merged := MergeConfig(local, remote)
 	if merged.AuditDBPath != "/local/audit.db" {
 		t.Error("local path should win")
 	}
-	if merged.HeartbeatIntervalSec != 120 {
-		t.Errorf("expected 120, got %d", merged.HeartbeatIntervalSec)
+	if merged.HeartbeatIntervalSec != 60 {
+		t.Errorf("heartbeat is local-yaml-only; a stale shadow value must not override it: got %d, want 60", merged.HeartbeatIntervalSec)
 	}
 }
 
@@ -74,8 +75,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.HeartbeatIntervalSec != 60 {
 		t.Errorf("expected default 60, got %d", cfg.HeartbeatIntervalSec)
 	}
-	if cfg.AuditDrainIntervalSec != 30 {
-		t.Errorf("expected default 30, got %d", cfg.AuditDrainIntervalSec)
+	if cfg.AuditDrainIntervalSec != 5 {
+		t.Errorf("expected default 5, got %d", cfg.AuditDrainIntervalSec)
 	}
 	if cfg.DefaultAction != "passthrough" {
 		t.Errorf("expected passthrough, got %s", cfg.DefaultAction)
@@ -115,6 +116,38 @@ func TestManager_SwapNotifiesSubscribers(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults_LogLevelEnvOverrides(t *testing.T) {
+	// The LOG_LEVEL env var must win over both the empty default and any
+	// YAML value — it's the operator's last-resort knob for turning up
+	// verbosity on a deployed daemon without editing config.
+	t.Setenv("LOG_LEVEL", "debug")
+	cfg := &AgentConfig{}
+	cfg.Log.Level = "warn" // simulate a YAML-set value
+	applyDefaults(cfg)
+	if cfg.Log.Level != "debug" {
+		t.Errorf("LOG_LEVEL env must override config; got %q want debug", cfg.Log.Level)
+	}
+}
+
+func TestManager_SwapDropsWhenSubscriberFull(t *testing.T) {
+	// A subscriber that never drains must NOT block Swap (a stuck Dashboard
+	// reader cannot stall config propagation to the rest of the daemon).
+	// The notification is dropped for that subscriber; Swap still publishes
+	// the new live config.
+	m := NewManager(&AgentConfig{HubHTTPURL: "https://old"})
+	ch := m.Subscribe() // buffered cap 4
+	for range 4 {
+		m.Swap(&AgentConfig{HubHTTPURL: "https://fill"})
+	}
+	// Channel is now full and undrained; this Swap must hit the drop branch
+	// without blocking, and still update the live config.
+	m.Swap(&AgentConfig{HubHTTPURL: "https://new"})
+	if got := m.Get().HubHTTPURL; got != "https://new" {
+		t.Errorf("Swap must publish live config even when subscriber full; got %q", got)
+	}
+	_ = ch
+}
+
 // TestEffectiveHubCA_HubCAOverride covers AgentConfig.EffectiveHubCA
 // — HubCACertFile wins when set; otherwise it falls back to
 // CACertFile (shared device CA). Without this, a misconfigured agent
@@ -135,71 +168,64 @@ func TestEffectiveHubCA_FallbackToDeviceCA(t *testing.T) {
 	}
 }
 
-// TestMergeConfig_EveryKnob exercises every remote-wins branch in
-// MergeConfig so a future refactor that drops a field would surface
-// a clear test failure.
-func TestMergeConfig_EveryKnob(t *testing.T) {
+// TestMergeConfig_LiveKnobs exercises the three shadow-overridable fields —
+// the ONLY fields the sole caller (cmd/agent configappliers) publishes.
+// Local-yaml-only fields must pass through untouched even when a legacy
+// shadow blob still carries them (heartbeat/drain/otel/exemptions/theme were
+// merge-able once; CP now strips or never sends them, and MergeConfig must
+// not resurrect them from stale desired-state JSON).
+func TestMergeConfig_LiveKnobs(t *testing.T) {
 	local := &AgentConfig{
 		HubHTTPURL:           "https://hub.example",
 		HeartbeatIntervalSec: 60,
+		DefaultAction:        "passthrough",
 	}
 	remote := map[string]any{
-		"heartbeatIntervalSec":     float64(30),
-		"auditDrainIntervalSec":    float64(15),
-		"defaultAction":            "allow",
 		"quitAllowed":              true,
 		"trafficUploadLevel":       "all",
-		"themeId":                  "morningstar",
 		"forceQUICFallbackBundles": []any{"com.openai", "com.anthropic"},
-		"otel": map[string]any{
-			"enabled":      true,
-			"endpoint":     "https://otlp.example",
-			"serviceName":  "nexus-agent",
-			"samplingRate": float64(0.25),
-		},
-		"exemptions": map[string]any{
-			"enabled":          true,
-			"failureThreshold": float64(5),
-			"windowSec":        float64(120),
-			"durationSec":      float64(3600),
-			"allowlist":        []any{"a.example.com", "b.example.com"},
-			"denylist":         []any{"c.example.com"},
-		},
+		"bypassBundles":            []any{"com.anthropic.claude-code"},
+		// Legacy/stray fields a stale shadow blob may still carry —
+		// every one of these MUST be ignored:
+		"heartbeatIntervalSec":  float64(30),
+		"auditDrainIntervalSec": float64(15),
+		"defaultAction":         "allow",
+		"themeId":               "morningstar",
+		"otel":                  map[string]any{"enabled": true, "endpoint": "https://otlp.example"},
+		"exemptions":            map[string]any{"enabled": true, "failureThreshold": float64(5)},
 	}
 	got := MergeConfig(local, remote)
 
-	if got.HeartbeatIntervalSec != 30 {
-		t.Errorf("HeartbeatIntervalSec: got %d, want 30", got.HeartbeatIntervalSec)
-	}
-	if got.AuditDrainIntervalSec != 15 {
-		t.Errorf("AuditDrainIntervalSec: got %d, want 15", got.AuditDrainIntervalSec)
-	}
-	if got.DefaultAction != "allow" {
-		t.Errorf("DefaultAction: got %q", got.DefaultAction)
-	}
+	// The three live knobs apply:
 	if got.QuitAllowed == nil || !*got.QuitAllowed {
 		t.Errorf("QuitAllowed: got %v", got.QuitAllowed)
 	}
 	if got.TrafficUploadLevel != "all" {
 		t.Errorf("TrafficUploadLevel: got %q", got.TrafficUploadLevel)
 	}
-	if got.ThemeID != "morningstar" {
-		t.Errorf("ThemeID: got %q, want morningstar", got.ThemeID)
-	}
 	if len(got.ForceQUICFallbackBundles) != 2 {
 		t.Errorf("ForceQUICFallbackBundles: got %+v", got.ForceQUICFallbackBundles)
 	}
-	if !got.OtelEnabled || got.OtelEndpoint != "https://otlp.example" {
-		t.Errorf("Otel fields: %+v", got)
+	if len(got.BypassBundles) != 1 || got.BypassBundles[0] != "com.anthropic.claude-code" {
+		t.Errorf("BypassBundles: got %+v, want [com.anthropic.claude-code]", got.BypassBundles)
 	}
-	if got.OtelSamplingRate != 0.25 {
-		t.Errorf("OtelSamplingRate: %v", got.OtelSamplingRate)
+
+	// Local-yaml-only fields survive a stale blob untouched:
+	if got.HeartbeatIntervalSec != 60 {
+		t.Errorf("HeartbeatIntervalSec must stay local: got %d, want 60", got.HeartbeatIntervalSec)
 	}
-	if !got.ExemptionEnabled || got.ExemptionFailureThreshold != 5 || got.ExemptionWindowSec != 120 || got.ExemptionDurationSec != 3600 {
-		t.Errorf("Exemption fields: %+v", got)
+	if got.DefaultAction != "passthrough" {
+		t.Errorf("DefaultAction must stay local: got %q", got.DefaultAction)
 	}
-	if len(got.ExemptionAllowlist) != 2 || len(got.ExemptionDenylist) != 1 {
-		t.Errorf("Exemption allow/deny lists: %+v %+v", got.ExemptionAllowlist, got.ExemptionDenylist)
+	if got.OtelEnabled || got.OtelEndpoint != "" {
+		t.Errorf("Otel must stay local: %+v", got)
+	}
+	if got.ExemptionEnabled || got.ExemptionFailureThreshold != 0 {
+		t.Errorf("Exemptions must stay local: %+v", got)
+	}
+	// And the original local config is not mutated (merge returns a copy).
+	if local.QuitAllowed != nil || local.TrafficUploadLevel != "" {
+		t.Errorf("MergeConfig mutated its input: %+v", local)
 	}
 }
 

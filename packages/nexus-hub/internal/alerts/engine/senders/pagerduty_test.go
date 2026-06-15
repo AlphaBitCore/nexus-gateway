@@ -75,7 +75,14 @@ func TestPagerDutySender_Non2xxIsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 402")
 	}
-	if sc != 402 {
-		t.Fatalf("sc=%d want 402", sc)
+	// PagerDuty shares the postJSON path, which collapses every non-2xx to the
+	// generic delivery error with status 0 (F-0370). The collapse is harmless
+	// here (PagerDuty's URL is fixed, not admin-supplied) and keeps one
+	// chokepoint for all webhook-style senders.
+	if sc != 0 {
+		t.Fatalf("sc=%d want 0 (collapsed)", sc)
+	}
+	if err.Error() != "alert delivery failed" {
+		t.Fatalf("err=%q want generic 'alert delivery failed'", err.Error())
 	}
 }

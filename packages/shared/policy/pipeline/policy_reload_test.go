@@ -47,7 +47,7 @@ func TestPolicyResolver_SwapPreservesUnchangedHookInstances(t *testing.T) {
 	r, counter := newResolverWithCounting("h1", configs)
 
 	// First resolve instantiates both hooks (cache miss × 2).
-	if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+	if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 		t.Fatalf("initial resolve: %v", err)
 	}
 	if got := counter.calls.Load(); got != 2 {
@@ -58,7 +58,7 @@ func TestPolicyResolver_SwapPreservesUnchangedHookInstances(t *testing.T) {
 	// in the cache; next resolve must not re-run the factory.
 	unchanged := append([]core.HookConfig(nil), configs...)
 	r.Swap(unchanged)
-	if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+	if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 		t.Fatalf("post-swap resolve: %v", err)
 	}
 	if got := counter.calls.Load(); got != 2 {
@@ -76,7 +76,7 @@ func TestPolicyResolver_SwapEvictsChangedRows(t *testing.T) {
 	}
 	r, counter := newResolverWithCounting("h1", configs)
 
-	if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+	if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 		t.Fatalf("initial resolve: %v", err)
 	}
 	if got := counter.calls.Load(); got != 2 {
@@ -89,7 +89,7 @@ func TestPolicyResolver_SwapEvictsChangedRows(t *testing.T) {
 		{ID: "h2", ImplementationID: "h1", Name: "h2", Priority: 99, Enabled: true, Stage: "request", FailBehavior: "fail-open", ApplicableIngress: []string{"ALL"}},
 	}
 	r.Swap(mutated)
-	if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+	if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 		t.Fatalf("post-swap resolve: %v", err)
 	}
 	if got := counter.calls.Load(); got != 3 {
@@ -107,7 +107,7 @@ func TestPolicyResolver_SwapEvictsRemovedRows(t *testing.T) {
 	}
 	r, counter := newResolverWithCounting("h1", configs)
 
-	if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+	if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 		t.Fatalf("initial resolve: %v", err)
 	}
 	if got := counter.calls.Load(); got != 1 {
@@ -119,7 +119,7 @@ func TestPolicyResolver_SwapEvictsRemovedRows(t *testing.T) {
 
 	// Row re-added — must cache-miss and re-instantiate.
 	r.Swap(configs)
-	if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+	if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 		t.Fatalf("resolve after re-add: %v", err)
 	}
 	if got := counter.calls.Load(); got != 2 {
@@ -154,7 +154,7 @@ func TestPolicyResolver_WarnsOncePerUnknownImplPerReload(t *testing.T) {
 	r := NewPolicyResolver(configs, registry, logger)
 
 	for i := range 4 {
-		if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+		if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 			t.Fatalf("resolve %d: %v", i, err)
 		}
 	}
@@ -167,7 +167,7 @@ func TestPolicyResolver_WarnsOncePerUnknownImplPerReload(t *testing.T) {
 	// again exactly once, even though the rows are unchanged content-wise.
 	r.Swap(configs)
 	for i := range 4 {
-		if _, err := r.ResolveHooks("request", "AI_GATEWAY"); err != nil {
+		if _, err := r.ResolveHooks("request", "AI_GATEWAY", false); err != nil {
 			t.Fatalf("post-swap resolve %d: %v", i, err)
 		}
 	}

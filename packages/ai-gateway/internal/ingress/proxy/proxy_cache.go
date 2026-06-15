@@ -73,6 +73,7 @@ func (h *Handler) runViaBroker(
 	cacheKey string,
 	preparedBody []byte,
 	preparedRewrites []string,
+	preparedURLOverride string,
 	quotaInPrice, quotaOutPrice float64,
 	quotaDecision *quota.Decision,
 	endpointType, requestID string,
@@ -104,7 +105,7 @@ func (h *Handler) runViaBroker(
 		// is fine because there are no joiners on a leaderFn-error
 		// path (Subscribe returned an error and never published the
 		// broker to the registry).
-		result, target, n, err := h.fetchUpstreamWithPreparedBody(r, w, rec, routeResult, body, isStream, in, preparedBody, preparedRewrites, start, logger)
+		result, target, n, err := h.fetchUpstreamWithPreparedBody(r, w, rec, routeResult, body, isStream, in, preparedBody, preparedRewrites, preparedURLOverride, start, logger)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -120,6 +121,15 @@ func (h *Handler) runViaBroker(
 			OriginWireShape: in.WireShape,
 		}
 		if isStream {
+			// L2 semantic write-back for the streaming leader. The
+			// broker invokes this on the terminal frame with the canonical
+			// chunk timeline JSON; scheduleL2Write embeds the prompt and HSETs
+			// a response_kind=stream entry so equivalent streaming requests can
+			// L2-hit. Only the leader (this MISS) sets it, so exactly one L2
+			// write fires per upstream stream.
+			meta.OnStreamCachePersisted = func(responseBody []byte, usage provcore.Usage) {
+				h.scheduleL2Write(rec, target, canonicalMsgs, responseBody, provcoreUsageToMap(&usage), true, in, logger)
+			}
 			return result.Stream, meta, nil
 		}
 		// Non-streaming: wrap result into a single-chunk session so
@@ -178,7 +188,7 @@ func (h *Handler) runViaBroker(
 	}
 	h.setResponseHeaders(w, rec, resolvedTarget, routeResult, start, attempts)
 	w.Header().Set("X-Nexus-Hook", traffic.FormatHookOutcome(aigwHookOutcomeFromResult(reqHookResult)))
-	h.handleNonStreamWithSubscription(r, w, rec, sub, resolvedTarget, coerced, quotaInPrice, quotaOutPrice, quotaDecision, endpointType, requestID, start, logger, routeResult, canonicalMsgs)
+	h.handleNonStreamWithSubscription(r, w, rec, sub, resolvedTarget, coerced, quotaInPrice, quotaOutPrice, quotaDecision, endpointType, requestID, start, logger, canonicalMsgs)
 }
 
 // directStreamSubscription wraps a [provcore.StreamSession] in the
@@ -242,6 +252,10 @@ func (s *singleChunkSession) Next(_ context.Context) (provcore.Chunk, error) {
 		Delta: string(s.response.Body),
 		Usage: &usage,
 		Done:  true,
+		// Propagate the leader's read-cap truncation onto the
+		// terminal chunk so the broker fan-out flags every joiner's
+		// usage_extraction_status as "truncated" instead of "ok".
+		Truncated: s.response.Truncated,
 	}, nil
 }
 

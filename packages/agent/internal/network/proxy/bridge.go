@@ -130,6 +130,12 @@ type FlowProcess struct {
 	User   string // owning OS user
 }
 
+// bumpConnectionFn is the shared TLS-bump entry point. It is a package var so
+// tests can substitute a synthetic BumpConnection result (e.g. a pinning
+// error) and exercise the fail-open / FAIL_CLOSED fallback branches without a
+// real TLS handshake. Production always uses tlsbump.BumpConnection.
+var bumpConnectionFn = tlsbump.BumpConnection
+
 // BumpFlow is the agent's NE-bridge entry point that hands a Swift-relayed
 // inspect-mode flow off to shared/tlsbump.BumpConnection.
 //
@@ -330,7 +336,7 @@ func BumpFlow(
 		"have_adapter_registry", deps.AdapterRegistry != nil,
 		"streaming_mode", streamMode,
 	)
-	if err := tlsbump.BumpConnection(ctx, wrapped, dstHost, getCert, deps.Upstream, logger, bumpOpts...); err != nil {
+	if err := bumpConnectionFn(ctx, wrapped, dstHost, getCert, deps.Upstream, logger, bumpOpts...); err != nil {
 		// Classify failure mode so logs distinguish pinning rejections
 		// from other transport errors.
 		stage := classifyBumpFailureStage(err.Error())
@@ -340,6 +346,24 @@ func BumpFlow(
 			"dst_host", dstHost,
 			"elapsed_ms", time.Since(startedAt).Milliseconds(),
 		)
+		// FAIL_CLOSED enforcement (on_adapter_error). When the matched
+		// interception domain is configured FAIL_CLOSED, a flow we cannot
+		// inspect MUST NOT be relayed uninspected — refuse it instead.
+		// This is the runtime consumer of domain.AdapterErrorFailClosed.
+		// Default is unchanged: an unmatched host, a FAIL_OPEN domain, or a
+		// missing engine all return false here and fall through to the
+		// opaqueRelay passthrough below. Refusal = returning the bump error
+		// without dialing upstream; the caller closes the client conn. The
+		// connection-level audit row was already emitted before BumpFlow.
+		if deps.DomainEngine.ShouldFailClosed(dstHost) {
+			logger.Warn("tlsbump: BumpConnection failed and matched domain is FAIL_CLOSED — refusing flow (not relaying uninspected)",
+				"failure_stage", stage,
+				"dst_host", dstHost,
+				"dst_port", dstPort,
+				"on_adapter_error", "FAIL_CLOSED",
+			)
+			return err
+		}
 		// #86: cert-pin clients (Cursor / Slack / Notion / Linear /
 		// WhatsApp Mac / iOS-style mobile apps using NSURLSession with
 		// SecTrust evaluation) reject our MITM cert at TLS handshake.

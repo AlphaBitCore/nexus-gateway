@@ -2,6 +2,7 @@ package streamcache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -209,6 +210,17 @@ type CacheMeta struct {
 	// format; tagged so cross-ingress reshape can decide whether to
 	// re-encode or serve verbatim. See cache/core.ResponseEntry.
 	OriginWireShape typology.WireShape
+
+	// OnStreamCachePersisted, when non-nil, is invoked by the broker after a
+	// streaming timeline is collected and written to L1. It carries the
+	// JSON-encoded []cache.ChunkRecord timeline (identical bytes to what L1
+	// stored) plus the final usage so the proxy can mirror the timeline into
+	// the L2 semantic cache as a response_kind=stream entry. Runs once, in the
+	// broker's pump goroutine, only on clean stream termination (Done frame).
+	// Set only by the leader path (the MISS that owns the upstream call), so
+	// exactly one L2 write fires per upstream stream. Non-stream entries use
+	// the proxy's handleNonStreamWithSubscription L2 write instead.
+	OnStreamCachePersisted func(responseBody []byte, usage provcore.Usage)
 }
 
 // Broker is per-cache-key, owns one upstream pump goroutine, has a
@@ -332,6 +344,19 @@ func (b *Broker) writeCache(collected []provcore.Chunk) {
 				Done:           c.Done,
 				NativeEvent:    c.NativeEvent,
 				RawBytes:       append([]byte(nil), c.RawBytes...),
+			}
+		}
+		// L2 semantic write-back for streams: mirror the same chunk
+		// timeline into the L2 cache as a response_kind=stream entry. The L2
+		// body is the bare []ChunkRecord JSON (what ToCacheStreamEntry decodes),
+		// distinct from the L1 StreamEntry envelope below. Best-effort; the
+		// callback itself runs the embed + HSET in a detached, deadline-bounded
+		// goroutine, so it never blocks the pump.
+		if b.meta.OnStreamCachePersisted != nil {
+			if l2Body, err := json.Marshal(records); err != nil {
+				b.log.Warn("cache: stream L2 marshal failed; skipping L2 write", "key", b.key, "error", err)
+			} else {
+				b.meta.OnStreamCachePersisted(l2Body, usage)
 			}
 		}
 		entry := &cache.StreamEntry{

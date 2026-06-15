@@ -61,6 +61,132 @@ func TestValidateMatchConditions(t *testing.T) {
 	}
 }
 
+// TestValidateStrategyType: the admin write path accepts only the closed set
+// of strategy types the AI Gateway resolver can dispatch and rejects any
+// free-string value with an operator-facing message that lists the allowed
+// set (F-0272b).
+func TestValidateStrategyType(t *testing.T) {
+	for _, st := range []string{"single", "fallback", "loadbalance", "conditional", "ab_split", "policy", "smart"} {
+		t.Run("accept_"+st, func(t *testing.T) {
+			if msg, ok := validateStrategyType(st); !ok {
+				t.Errorf("strategyType %q should be accepted; got msg=%q", st, msg)
+			}
+		})
+	}
+
+	for _, st := range []string{"", "Smart", "round-robin", "weighted", "random", "best", "unknown"} {
+		t.Run("reject_"+st, func(t *testing.T) {
+			msg, ok := validateStrategyType(st)
+			if ok {
+				t.Fatalf("strategyType %q should be rejected", st)
+			}
+			if !strings.Contains(msg, "not a recognized routing strategy") {
+				t.Errorf("msg = %q; want it to explain the rejection", msg)
+			}
+			// The message must enumerate the accepted set so an operator
+			// can self-correct without reading source.
+			if !strings.Contains(msg, "single") || !strings.Contains(msg, "smart") {
+				t.Errorf("msg = %q; want it to list the allowed strategies", msg)
+			}
+		})
+	}
+}
+
+// TestValidateStrategyConfig: a malformed config payload is rejected before it
+// can be persisted and broadcast fleet-wide; a well-shaped strategy object is
+// accepted; absent/null config defers to the required-field check (F-0272b).
+func TestValidateStrategyConfig(t *testing.T) {
+	tests := []struct {
+		name          string
+		raw           string
+		wantOK        bool
+		wantMsgSubstr string
+	}{
+		{
+			name:   "empty defers to required-field check",
+			raw:    ``,
+			wantOK: true,
+		},
+		{
+			name:   "null defers to required-field check",
+			raw:    `null`,
+			wantOK: true,
+		},
+		{
+			name:   "valid single node",
+			raw:    `{"type":"single","providerId":"p-1","modelId":"m-1"}`,
+			wantOK: true,
+		},
+		{
+			name:   "valid loadbalance node",
+			raw:    `{"type":"loadbalance","algorithm":"weighted","weightedTargets":[{"weight":1,"node":{"type":"single","providerId":"p","modelId":"m"}}]}`,
+			wantOK: true,
+		},
+		{
+			name:   "valid smart node",
+			raw:    `{"type":"smart","routerProviderId":"p","routerModelId":"m","maxTokens":256,"timeoutMs":3000}`,
+			wantOK: true,
+		},
+		{
+			name:   "object without type field is accepted (type checked elsewhere)",
+			raw:    `{"providerId":"p-1"}`,
+			wantOK: true,
+		},
+		{
+			name:          "JSON array is not a strategy object",
+			raw:           `[{"type":"single"}]`,
+			wantOK:        false,
+			wantMsgSubstr: "not a valid strategy object",
+		},
+		{
+			name:          "JSON string is not a strategy object",
+			raw:           `"single"`,
+			wantOK:        false,
+			wantMsgSubstr: "not a valid strategy object",
+		},
+		{
+			name:          "truncated JSON rejected",
+			raw:           `{"type":"single",`,
+			wantOK:        false,
+			wantMsgSubstr: "not a valid strategy object",
+		},
+		{
+			name:          "wrong type for typed field rejected",
+			raw:           `{"type":"single","providerId":123}`,
+			wantOK:        false,
+			wantMsgSubstr: "not a valid strategy object",
+		},
+		{
+			name:          "wrong type for maxTokens rejected",
+			raw:           `{"type":"smart","maxTokens":"lots"}`,
+			wantOK:        false,
+			wantMsgSubstr: "not a valid strategy object",
+		},
+		{
+			name:          "unknown node type rejected",
+			raw:           `{"type":"frobnicate"}`,
+			wantOK:        false,
+			wantMsgSubstr: "not a recognized strategy node type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var raw json.RawMessage
+			if tt.raw != "" {
+				raw = json.RawMessage(tt.raw)
+			}
+			msg, ok := validateStrategyConfig(raw)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v (msg=%q)", ok, tt.wantOK, msg)
+			}
+			if !tt.wantOK && !strings.Contains(msg, tt.wantMsgSubstr) {
+				t.Errorf("msg = %q; want substring %q", msg, tt.wantMsgSubstr)
+			}
+		})
+	}
+}
+
 // TestValidateSmartRuleMatchConditions: the admin API rejects
 // smart-strategy RoutingRules whose matchConditions would let the smart
 // strategy fire on non-"auto" traffic. The guard prevents an operator

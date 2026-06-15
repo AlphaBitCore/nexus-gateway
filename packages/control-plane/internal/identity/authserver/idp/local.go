@@ -108,11 +108,14 @@ func (l *Local) Authenticate(ctx context.Context, input map[string]string) (*Aut
 		return nil, ErrInvalidCredentials
 	}
 	if disabledAt != nil {
-		// Disabled-user enumeration is a weaker threat (the attacker already
-		// guessed the right email), but burning time keeps the timing profile
-		// uniform across all failure paths.
+		// A disabled local account returns the SAME generic invalid-credentials
+		// error as a wrong password / SSO-only / nonexistent account so an
+		// anonymous caller cannot enumerate disabled accounts. Burning
+		// time against the dummy keeps the timing profile uniform. A genuinely
+		// disabled user who knows their password is guided by support out of
+		// band; the login page never reveals account state to anonymous callers.
 		_ = auth.VerifyPassword(password, dummyHash)
-		return nil, ErrUserDisabled
+		return nil, ErrInvalidCredentials
 	}
 	if !auth.VerifyPassword(password, hash) {
 		return nil, ErrInvalidCredentials

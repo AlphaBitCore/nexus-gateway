@@ -8,6 +8,7 @@
 package configdispatch
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -53,7 +54,7 @@ type Deps struct {
 	AccessChecker        *access.Checker
 	TelemetryProvider    *telemetry.SwappableTracerProvider // may be nil
 	PayloadCaptureStore  *payloadcapture.Store
-	StreamingPolicyStore *streampolicy.Store // #115 — Hub shadow handler routes here via ApplyShadowState
+	StreamingPolicyStore *streampolicy.Store // Hub shadow handler routes here via ApplyShadowState
 	ProxyServer          *proxyserver.ProxyServer
 }
 
@@ -142,29 +143,56 @@ func reloadAllowlistAndSwap(ctx context.Context, d Deps) error {
 	return nil
 }
 
-type killswitchState struct {
-	Engaged bool `json:"engaged"`
+// parseKillSwitchDesired interprets a `killswitch` shadow payload using
+// FIELD-PRESENCE semantics. It returns (desired, act, err):
+//
+//   - act == true only when the payload carries an explicit `engaged` boolean;
+//     the caller actuates the brake to `desired`.
+//   - act == false for an empty / whitespace / `null` / `{}` payload (no
+//     `engaged` field) — a NO-OP that PRESERVES the current brake state, with
+//     a nil error.
+//
+// Fail-safe: the kill-switch is safety-critical. A blank shadow tick —
+// an unmaterialised key, a lagging push, or a padded `{}` — must NEVER silently
+// disengage an engaged brake (which would resume TLS bumping mid-incident). The
+// previous typed decode collapsed `{}`/`null`/empty to `{Engaged:false}` and
+// blindly applied it; presence-based parsing closes that hole while still
+// honouring an explicit `{"engaged":false}` disengage from an operator.
+func parseKillSwitchDesired(raw []byte) (engaged bool, act bool, err error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return false, false, nil
+	}
+	var s struct {
+		Engaged *bool `json:"engaged"`
+	}
+	if err := json.Unmarshal(trimmed, &s); err != nil {
+		return false, false, err
+	}
+	if s.Engaged == nil {
+		return false, false, nil
+	}
+	return *s.Engaged, true, nil
 }
 
 func registerKillSwitch(l *cfgloader.Loader, d Deps) {
-	cfgloader.Register(l, cfgloader.Handler[killswitchState]{
-		Key:   "killswitch",
-		Parse: cfgloader.ParseJSON[killswitchState](),
-		Apply: func(ctx context.Context, v killswitchState, ver int64) ([]byte, error) {
-			if v.Engaged != d.KillSwitch.IsEngaged() {
-				d.KillSwitch.Toggle(v.Engaged, "hub-shadow")
-			}
-			// Report the LIVE snapshot rather than echoing desired:
-			// a local rejection (or a lagging shadow tick) must surface
-			// the actually-applied state to Hub, otherwise the Nodes
-			// page shows a false "in sync".
-			snap := d.KillSwitch.Snapshot()
-			b, err := json.Marshal(snap)
-			if err != nil {
-				return nil, fmt.Errorf("build snapshot: %w", err)
-			}
-			return b, nil
-		},
+	cfgloader.RegisterRaw(l, "killswitch", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
+		desired, act, err := parseKillSwitchDesired(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse killswitch: %w", err)
+		}
+		if act && desired != d.KillSwitch.IsEngaged() {
+			d.KillSwitch.Toggle(desired, "hub-shadow")
+		}
+		// Report the LIVE snapshot rather than echoing desired: a no-op
+		// (blank) tick or a local rejection must surface the actually-applied
+		// state to Hub, otherwise the Nodes page shows a false "in sync".
+		snap := d.KillSwitch.Snapshot()
+		b, err := json.Marshal(snap)
+		if err != nil {
+			return nil, fmt.Errorf("build snapshot: %w", err)
+		}
+		return b, nil
 	})
 }
 
@@ -282,7 +310,7 @@ func registerPayloadCapture(l *cfgloader.Loader, d Deps) {
 // too so BuildConfigLoader can be invoked from a thin test harness.
 func registerStreamingCompliance(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, configkey.StreamingCompliance, func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
-		// #115 — Hub now pushes the raw blob; the Store applies it via
+		// Hub now pushes the raw blob; the Store applies it via
 		// the canonical ApplyShadowState path. No DB re-read or per-server
 		// setter wrapper needed; Store.Get() readers on the hot path see
 		// the new policy atomically.
@@ -328,6 +356,13 @@ func registerLogLevel(l *cfgloader.Loader, d Deps) {
 		Key:   "log_level",
 		Parse: cfgloader.ParseJSON[logLevelState](),
 		Apply: func(ctx context.Context, v logLevelState, ver int64) ([]byte, error) {
+			// An empty level (blank/null/{} tick, or an explicit empty string)
+			// is a NO-OP — matching ai-gateway. SetLevel("") parses to
+			// LevelInfo and would silently reset the live level, clobbering a
+			// boot-time debug.
+			if v.Level == "" {
+				return nil, nil
+			}
 			applied := logging.SetLevel(v.Level)
 			d.Logger.Info("log level updated via shadow",
 				"requested", v.Level,

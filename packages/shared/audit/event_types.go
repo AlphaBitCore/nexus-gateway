@@ -99,6 +99,15 @@ type AuditEvent struct {
 	RequestNormalized  json.RawMessage
 	ResponseNormalized json.RawMessage
 
+	// RequestRedactionSpans / ResponseRedactionSpans carry the redaction
+	// spans relocated to their offsets inside the (storage-redacted)
+	// normalized payload above, so audit UIs can mark each redaction
+	// inline. Populated by the audit emitter only when the storage policy
+	// is "redact" and span application succeeded; nil otherwise so the
+	// wire and DB columns stay NULL for unredacted rows.
+	RequestRedactionSpans  json.RawMessage
+	ResponseRedactionSpans json.RawMessage
+
 	// Latency phase breakdown. Populated by forward_handler from a
 	// traffic.PhaseSink attached to the upstream call's context and from
 	// the hook pipeline's per-hook latencyMs. Nil pointers stay NULL on

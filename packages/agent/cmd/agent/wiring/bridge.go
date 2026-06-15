@@ -165,7 +165,11 @@ func (b *ConnectionBridge) HandleConnection(conn platform.InterceptedConn) platf
 		}
 	}
 
-	slog.Info("connection decision",
+	// Debug, not Info: one line per intercepted connection. At Info this
+	// is a synchronous log write on the per-flow decision path, paid for
+	// every connection a busy page opens. Raise the level when tracing a
+	// specific flow's decision.
+	slog.Debug("connection decision",
 		"flow_id", conn.FlowID,
 		"host", conn.DstHost,
 		"port", conn.DstPort,

@@ -174,7 +174,7 @@ func TestCreateUserVirtualKey_EmptyName(t *testing.T) {
 func TestCreateUserVirtualKey_Happy(t *testing.T) {
 	h, mock, _, aud := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs(anyN(13)...).
+		WithArgs(anyN(14)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-new", "mine", strPtr("admin-1"))...))
 
 	body := `{"name":"mine","sourceApp":"cli","enabled":true,"rateLimitRpm":50,"allowedModels":["m-x"]}`
@@ -198,7 +198,7 @@ func TestCreateUserVirtualKey_Happy(t *testing.T) {
 func TestCreateUserVirtualKey_DefaultsEnabledTrue(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs(anyN(13)...).
+		WithArgs(anyN(14)...).
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-new", "mine", strPtr("admin-1"))...))
 
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{"name":"mine"}`)
@@ -215,7 +215,7 @@ func TestCreateUserVirtualKey_DefaultsEnabledTrue(t *testing.T) {
 func TestCreateUserVirtualKey_DBError(t *testing.T) {
 	h, mock, _, aud := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
-		WithArgs(anyN(13)...).
+		WithArgs(anyN(14)...).
 		WillReturnError(errors.New("constraint violation"))
 
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", `{"name":"n"}`)
@@ -643,7 +643,7 @@ func TestRegenerateUserVirtualKey_Happy(t *testing.T) {
 		WithArgs("vk-1").
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "mine", strPtr("admin-1"))...))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
-		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", "")
@@ -671,7 +671,7 @@ func TestRegenerateUserVirtualKey_DBUpdateFails(t *testing.T) {
 		WithArgs("vk-1").
 		WillReturnRows(pgxmock.NewRows(vkCols).AddRow(makeVKRow("vk-1", "mine", strPtr("admin-1"))...))
 	mock.ExpectExec(`UPDATE "VirtualKey"`).
-		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("vk-1", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("update boom"))
 
 	c, rec := makeJSONReq(t, http.MethodPost, "/x", "")

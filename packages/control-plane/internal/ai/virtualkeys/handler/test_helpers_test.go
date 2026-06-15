@@ -30,11 +30,13 @@ import (
 
 // hubSpy captures Hub calls made by virtualkey handlers during unit tests.
 // virtualkey handlers need NotifyConfigChange (for VK CRUD invalidate-by-
-// hash) and InvalidateConfig (for approve/renew/revoke fire-and-forget),
-// matching the HubVKInvalidator interface in handler.go.
+// hash) and InvalidateConfigE (for approve/renew/revoke fail-loud),
+// matching the HubVKInvalidator interface in handler.go. invalidateErr lets a
+// test drive the push-failure → HTTP 502 branch.
 type hubSpy struct {
 	mu              sync.Mutex
 	invalidateCalls []hubInvalidateCall
+	invalidateErr   error
 	notifyCalls     []hub.ConfigChangeRequest
 	notifyErr       error
 	notifyResponse  *hub.ConfigChangeResponse
@@ -45,10 +47,11 @@ type hubInvalidateCall struct {
 	ConfigKey string
 }
 
-func (s *hubSpy) InvalidateConfig(_ context.Context, thingType, configKey string) {
+func (s *hubSpy) InvalidateConfigE(_ context.Context, thingType, configKey string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.invalidateCalls = append(s.invalidateCalls, hubInvalidateCall{ThingType: thingType, ConfigKey: configKey})
+	return s.invalidateErr
 }
 
 func (s *hubSpy) NotifyConfigChange(_ context.Context, req hub.ConfigChangeRequest) (*hub.ConfigChangeResponse, error) {
@@ -199,13 +202,19 @@ var vkCols = []string{
 
 // makeVKRow returns one row matching the production scanner.
 // ownerID is passed by value so callers can pin the owner-mismatch branch
-// (Personal/Admin self-service ownership check).
+// (Personal/Admin self-service ownership check). The row is an "application"
+// VK — the type the admin surface operates on.
 func makeVKRow(id, name string, ownerID *string) []any {
+	return makeVKRowTyped(id, name, ownerID, "application")
+}
+
+// makeVKRowTyped is makeVKRow with an explicit vkType, used by tests that need
+// to pin the cap-scoping boundary (application is capped, personal is exempt).
+func makeVKRowTyped(id, name string, ownerID *string, vkType string) []any {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	expires := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	hash := "hash-" + id
 	prefix := "nvk_abcd"
-	vkType := "application"
 	vkStatus := "active"
 	return []any{
 		id, name, &hash, &prefix,

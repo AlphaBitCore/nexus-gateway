@@ -5,6 +5,9 @@ package traffic
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +26,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/store/metricsstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/compliancestore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
@@ -96,7 +98,6 @@ func newHandlerWithMock(t *testing.T) (*Handler, pgxmock.PgxPoolIface) {
 		dsar:       dsarstore.New(mock),
 		metrics:    ms,
 		compliance: compliancestore.New(mock, ms),
-		meta:       systemmetastore.New(mock),
 		audit:      noopAuditWriter(),
 		logger:     silentLogger(),
 	}
@@ -846,17 +847,6 @@ func TestProxyComplianceExport_WithTimeRange_DBError(t *testing.T) {
 	}
 }
 
-func TestProxyRejectConfigGet_DBError_Returns500(t *testing.T) {
-	h, mock := newHandlerWithMock(t)
-	mock.ExpectQuery("SELECT value FROM system_metadata").WillReturnError(errors.New("db down"))
-
-	c, rec := echoCtx(http.MethodGet, "/proxy/reject-config")
-	_ = h.ProxyRejectConfigGet(c)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rec.Code)
-	}
-}
-
 func TestComplianceAudit_DBError_Returns500(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
 	mock.ExpectQuery("SELECT COUNT").WillReturnError(errors.New("db down"))
@@ -1053,9 +1043,6 @@ func TestNew_NilPool_AllStoresNil(t *testing.T) {
 	if h.compliance != nil {
 		t.Error("expected nil compliance store when pool is nil")
 	}
-	if h.meta != nil {
-		t.Error("expected nil meta store when pool is nil")
-	}
 }
 
 func TestNew_WithPool_StoresInitialised(t *testing.T) {
@@ -1078,11 +1065,11 @@ func TestStrPtr_ReturnsPointer(t *testing.T) {
 
 // Success-path tests using pgxmock empty-row responses
 
-// adminAuditColumns mirrors the 16 columns scanned by scanAdminAuditRows.
+// adminAuditColumns mirrors the 13 columns scanned by scanAdminAuditRows.
 var adminAuditCols = []string{
 	"id", "sequenceNumber", "timestamp", "actorId", "actorLabel", "actorRole",
 	"sourceIp", "action", "entityType", "entityId", "beforeState", "afterState",
-	"nexusRequestId", "clientRequestId", "clientUserId", "clientSessionId",
+	"nexusRequestId",
 }
 
 func TestListAdminAuditLogs_EmptyResult_Returns200(t *testing.T) {
@@ -1167,26 +1154,6 @@ func TestGetTrafficEventNormalized_NotFound_Returns404(t *testing.T) {
 	_ = h.GetTrafficEventNormalized(c)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rec.Code)
-	}
-}
-
-func TestProxyRejectConfigGet_NotFound_Returns200WithDefault(t *testing.T) {
-	h, mock := newHandlerWithMock(t)
-	// GetSystemMetadata: QueryRow → empty rows → nil, nil → default response.
-	// WithArgs: the store passes the key "reject_config".
-	mock.ExpectQuery("SELECT value FROM system_metadata").
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows([]string{"value"}))
-
-	c, rec := echoCtx(http.MethodGet, "/proxy/reject-config")
-	_ = h.ProxyRejectConfigGet(c)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-	var body map[string]any
-	_ = json.NewDecoder(rec.Body).Decode(&body)
-	if body["defaultLevel"] == nil {
-		t.Error("expected 'defaultLevel' in default reject config response")
 	}
 }
 
@@ -1668,7 +1635,7 @@ func TestProxyComplianceRejectStats_WithData_ReturnsRollupResult(t *testing.T) {
 	}
 }
 
-// proxy.go — CSV row writing, formatCSVTimestamp default, ProxyRejectConfigGet JSONBlob
+// proxy.go — CSV row writing, formatCSVTimestamp default
 
 func TestFormatCSVTimestamp_DefaultBranch(t *testing.T) {
 	// The default branch is hit for types that are neither time.Time, string, nor nil.
@@ -1712,26 +1679,6 @@ func TestProxyComplianceExport_WithRows_WritesCSV(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "evt-1") {
 		t.Errorf("expected CSV to contain event ID 'evt-1', got: %s", body)
-	}
-}
-
-func TestProxyRejectConfigGet_WithValue_Returns200JSONBlob(t *testing.T) {
-	h, mock := newHandlerWithMock(t)
-	// GetSystemMetadata: QueryRow returns a non-nil JSONB value.
-	mock.ExpectQuery("SELECT value FROM system_metadata").
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnRows(pgxmock.NewRows([]string{"value"}).
-			AddRow([]byte(`{"defaultLevel":2,"contactInfo":"security@example.com"}`)))
-
-	c, rec := echoCtx(http.MethodGet, "/proxy/reject-config")
-	_ = h.ProxyRejectConfigGet(c)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-	var body map[string]any
-	_ = json.NewDecoder(rec.Body).Decode(&body)
-	if body["defaultLevel"] != float64(2) {
-		t.Errorf("expected defaultLevel=2, got %v", body["defaultLevel"])
 	}
 }
 
@@ -1865,6 +1812,67 @@ func TestComplianceOverviewExport_WithRows_WritesCSVData(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "audit-1") {
 		t.Errorf("expected CSV to contain event ID 'audit-1', got: %s", body)
+	}
+}
+
+// TestComplianceOverviewExport_NeutralizesCSVFormulaInjection locks SEC-C5-02:
+// attacker-controlled traffic_event fields (targetHost, path) that begin with a
+// spreadsheet formula trigger (= + - @ TAB CR) must be neutralized before CSV
+// emission so they cannot detonate as formulas in the auditor's spreadsheet.
+func TestComplianceOverviewExport_NeutralizesCSVFormulaInjection(t *testing.T) {
+	h, mock := newHandlerWithMock(t)
+	method := "CONNECT"
+	evilHost := `=cmd|'/C calc'!A0`
+	evilPath := `@SUM(1+1)`
+	evilReason := `+evil`
+	status := 200
+	latency := 1
+
+	mock.ExpectQuery("FROM traffic_event").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows(complianceAuditCols).AddRow(
+			"audit-evil", "compliance-proxy", "tx-evil",
+			"10.0.0.9", // sourceIp
+			evilHost,   // targetHost
+			&method, &evilPath, &status,
+			nil,         // hook_decision
+			&evilReason, // hook_reason_code
+			nil,         // bump_status
+			&latency, time.Now(),
+			[]string{"-tagformula"}, // compliance_tags
+		))
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(1))
+
+	c, rec := echoCtx(http.MethodGet, "/compliance/overview/export")
+	_ = h.ComplianceOverviewExport(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	// Parse the emitted CSV and assert NO cell begins with a formula trigger.
+	records, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("parse CSV: %v", err)
+	}
+	if len(records) < 2 {
+		t.Fatalf("expected header + 1 data row, got %d records", len(records))
+	}
+	for _, row := range records[1:] {
+		for col, cell := range row {
+			if cell == "" {
+				continue
+			}
+			switch cell[0] {
+			case '=', '+', '-', '@', '\t', '\r':
+				t.Errorf("cell %d still begins with a formula trigger %q: %q", col, cell[0], cell)
+			}
+		}
+	}
+	// And the neutralized payload is still present (apostrophe-prefixed), not dropped.
+	if !strings.Contains(rec.Body.String(), "'"+evilHost) {
+		t.Errorf("expected neutralized host cell '%s in CSV, got: %s", evilHost, rec.Body.String())
 	}
 }
 
@@ -2291,7 +2299,7 @@ func TestGetTrafficEventNormalized_Success_Returns200(t *testing.T) {
 			json.RawMessage(`{}`), json.RawMessage(`{}`),
 			ptrStr("ok"), ptrStr("ok"),
 			nil, nil,
-			json.RawMessage(`null`), json.RawMessage(`null`),
+			json.RawMessage(`[{"contentAddress":"messages.0.content.0","start":0,"end":10,"action":"redact"}]`), nil,
 			"v1", time.Now(),
 		))
 
@@ -2301,5 +2309,42 @@ func TestGetTrafficEventNormalized_Success_Returns200(t *testing.T) {
 	_ = h.GetTrafficEventNormalized(c)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestResolveSpillBody_IntegrityCheck is the SEC-M5-01 read-path regression: the
+// CP must verify fetched spill bytes against the sha256 recorded on the
+// traffic_event and refuse to serve a body whose hash does not match — so a
+// tampered (e.g. cross-node-overwritten) blob is never presented as the genuine
+// captured request/response. A legacy ref with no recorded sha is served as-is.
+func TestResolveSpillBody_IntegrityCheck(t *testing.T) {
+	h := newHandlerNilPool()
+	body := []byte(`{"captured":"genuine"}`)
+	h.spillStore = &testSpillStore{data: body, contentType: "application/json"}
+
+	// Tampered: ref.SHA256 does not match the fetched bytes → rejected.
+	tampered := sharedaudit.SpillRef{Backend: "test", Key: "k", ContentType: "application/json", SHA256: strings.Repeat("0", 64)}
+	tj, _ := json.Marshal(tampered)
+	if _, err := h.resolveSpillBody(context.Background(), tj); err == nil {
+		t.Fatal("SEC-M5-01: a blob whose sha256 != recorded ref.SHA256 must be rejected")
+	}
+
+	// Genuine: matching sha256 → served.
+	sum := sha256.Sum256(body)
+	good := sharedaudit.SpillRef{Backend: "test", Key: "k", ContentType: "application/json", SHA256: hex.EncodeToString(sum[:])}
+	gj, _ := json.Marshal(good)
+	out, err := h.resolveSpillBody(context.Background(), gj)
+	if err != nil {
+		t.Fatalf("matching sha must pass: %v", err)
+	}
+	if !json.Valid(out) {
+		t.Errorf("expected valid JSON body, got %s", out)
+	}
+
+	// Legacy ref with no recorded sha → verification skipped, still served.
+	legacy := sharedaudit.SpillRef{Backend: "test", Key: "k", ContentType: "application/json"}
+	lj, _ := json.Marshal(legacy)
+	if _, err := h.resolveSpillBody(context.Background(), lj); err != nil {
+		t.Errorf("empty-sha legacy ref must skip verification, got %v", err)
 	}
 }

@@ -41,6 +41,13 @@ type AgentConfig struct {
 	UpdaterEnabled        bool   `yaml:"updaterEnabled"`
 	UpdaterCheckSec       int    `yaml:"updaterCheckSec"`
 	QuitAllowed           *bool  `yaml:"quitAllowed"`
+	// UpstreamProxy, when set, routes the agent's MITM upstream forward through
+	// an egress proxy (e.g. "socks5://127.0.0.1:10808" or "http://127.0.0.1:8080").
+	// The agent still intercepts + inspects the flow; only the final hop to the
+	// AI provider goes via the proxy. Empty = direct egress (default). Use in
+	// environments where direct provider access is blocked and a local proxy
+	// (corporate egress / circumvention client) is the only working path.
+	UpstreamProxy string `yaml:"upstreamProxy"`
 	// TrafficUploadLevel controls which FlowResult events are uploaded
 	// to Hub in audit batches. Enum (closed set, validated in MergeConfig):
 	//   - "all"       — every flow including silent passthrough TCP
@@ -61,13 +68,6 @@ type AgentConfig struct {
 	// the local default. *bool distinguishes "unset in YAML" (nil → default
 	// true) from "explicitly false".
 	LocalBodyCapture *bool `yaml:"localBodyCapture"`
-	// ThemeID names the theme pack the agent Dashboard should render
-	// with — admin sets fleet-wide via CP UI, propagated via the
-	// agent_settings shadow. Empty means "fall through to the agent
-	// Dashboard's local default". Validated as a non-empty printable
-	// string; the Dashboard handles unknown IDs by falling back to
-	// the bundled `default` theme so a typo never breaks the UI.
-	ThemeID string `yaml:"themeId"`
 	// ForceQUICFallbackBundles is the bundle-ID allowlist whose UDP
 	// flows the macOS NE proxy must close, forcing the calling app
 	// to fall back from HTTP/3 (over QUIC/UDP) to HTTP/2 (over TCP)
@@ -79,6 +79,17 @@ type AgentConfig struct {
 	// takes the host's network down (fail-open safety rule).
 	// Empty/missing = no UDP gets killed (safe-default fail-open).
 	ForceQUICFallbackBundles []string `yaml:"forceQUICFallbackBundles"`
+
+	// BypassBundles is the source-app exemption list: outbound flows whose
+	// originating bundle (sourceAppSigningIdentifier) matches an entry are
+	// passed through to native routing by the macOS NE proxy — no TLS bump,
+	// no daemon bridge. Matching is by SOURCE bundle, never by host, so a
+	// trusted developer tool (e.g. the local claude-code CLI whose pinned
+	// TLS to api.anthropic.com breaks under bump) can be kept off the
+	// inspection path WITHOUT blinding the agent to the same host reached
+	// from other apps. Empty/missing = exempt nothing (inspect everything),
+	// the safe default; this list never ships populated.
+	BypassBundles []string `yaml:"bypassBundles"`
 
 	// MitmBridgeAddr is the loopback bind address for the macOS NE →
 	// Go MITM bridge listener. When non-empty, the daemon listens for
@@ -219,7 +230,12 @@ func applyDefaults(cfg *AgentConfig) {
 		cfg.HeartbeatIntervalSec = 60
 	}
 	if cfg.AuditDrainIntervalSec == 0 {
-		cfg.AuditDrainIntervalSec = 30
+		// 5s, not 30s: paired with the drain loop's drain-while-full
+		// behaviour, this bounds how long a small batch (fewer than
+		// AuditBatchSize events) sits before upload, so the Dashboard's
+		// unsynced count reflects reality within seconds. A backlog is
+		// cleared by the back-to-back batching, not by this interval.
+		cfg.AuditDrainIntervalSec = 5
 	}
 	if cfg.AuditBatchSize == 0 {
 		cfg.AuditBatchSize = 200
@@ -288,20 +304,15 @@ func applyDefaults(cfg *AgentConfig) {
 	}
 }
 
-// MergeConfig merges a Gateway-pulled config onto a local config.
-// Local wins for filesystem paths; Gateway wins for intervals.
+// MergeConfig overlays the Hub-pushed agent_settings fields onto a local
+// config. Only the three runtime-overridable fields its sole caller
+// (cmd/agent configappliers) actually publishes are merged: quitAllowed,
+// trafficUploadLevel, forceQUICFallbackBundles. Everything else in
+// AgentConfig is local-yaml-only (URLs, paths, intervals, otel) — the
+// shadow never overrides those, so this function must not either.
 func MergeConfig(local *AgentConfig, remote map[string]any) *AgentConfig {
 	merged := *local
 
-	if v, ok := remote["heartbeatIntervalSec"].(float64); ok {
-		merged.HeartbeatIntervalSec = int(v)
-	}
-	if v, ok := remote["auditDrainIntervalSec"].(float64); ok {
-		merged.AuditDrainIntervalSec = int(v)
-	}
-	if v, ok := remote["defaultAction"].(string); ok {
-		merged.DefaultAction = v
-	}
 	if v, ok := remote["quitAllowed"].(bool); ok {
 		merged.QuitAllowed = &v
 	}
@@ -314,52 +325,11 @@ func MergeConfig(local *AgentConfig, remote map[string]any) *AgentConfig {
 		// admin push. The OnFlowComplete consumer falls back to "processed"
 		// when the field is empty, so the agent stays in a sane state.
 	}
-	if v, ok := remote["themeId"].(string); ok {
-		// Open enum — we accept whatever ID admin sets. The Dashboard
-		// ThemeProvider verifies the theme exists in /themes/ at load
-		// time; an unknown ID falls back to the bundled `default` theme
-		// rather than rendering broken. Validating here would force a
-		// daemon redeploy every time someone adds a new theme pack.
-		merged.ThemeID = v
-	}
 	if list, ok := remote["forceQUICFallbackBundles"].([]any); ok {
 		merged.ForceQUICFallbackBundles = stringSliceFromAny(list)
 	}
-	// OTEL fields (nested object "otel")
-	if otelObj, ok := remote["otel"].(map[string]any); ok {
-		if v, ok := otelObj["enabled"].(bool); ok {
-			merged.OtelEnabled = v
-		}
-		if v, ok := otelObj["endpoint"].(string); ok && v != "" {
-			merged.OtelEndpoint = v
-		}
-		if v, ok := otelObj["serviceName"].(string); ok && v != "" {
-			merged.OtelServiceName = v
-		}
-		if v, ok := otelObj["samplingRate"].(float64); ok {
-			merged.OtelSamplingRate = v
-		}
-	}
-	// Exemption fields (nested object "exemptions")
-	if exObj, ok := remote["exemptions"].(map[string]any); ok {
-		if v, ok := exObj["enabled"].(bool); ok {
-			merged.ExemptionEnabled = v
-		}
-		if v, ok := exObj["failureThreshold"].(float64); ok {
-			merged.ExemptionFailureThreshold = int(v)
-		}
-		if v, ok := exObj["windowSec"].(float64); ok {
-			merged.ExemptionWindowSec = int(v)
-		}
-		if v, ok := exObj["durationSec"].(float64); ok {
-			merged.ExemptionDurationSec = int(v)
-		}
-		if list, ok := exObj["allowlist"].([]any); ok {
-			merged.ExemptionAllowlist = stringSliceFromAny(list)
-		}
-		if list, ok := exObj["denylist"].([]any); ok {
-			merged.ExemptionDenylist = stringSliceFromAny(list)
-		}
+	if list, ok := remote["bypassBundles"].([]any); ok {
+		merged.BypassBundles = stringSliceFromAny(list)
 	}
 	return &merged
 }

@@ -198,14 +198,19 @@ func NewForTest(t *testing.T, opts ...Option) *Harness {
 		Enrollment:   enrollSvc,
 		MQProducer:   nil,
 		ServiceToken: testServiceToken,
-		Store:        st,
-		AgentCA:      nil, // enrollment API not needed for this test
-		Raiser:       raiser,
-		AlertStore:   alertStore,
-		AlertRules:   alertRules,
-		AlertSenders: alertSenders,
-		OpsDiagPool:  opsDiagPool,
-		OpsLogger:    logger,
+		// The harness uses one value for both authorities so
+		// existing e2e calls (which present ServiceToken() to /api/hub and
+		// admin-alerts) keep passing; the prod separation invariant is asserted by
+		// the dedicated unit test (auth_authority_split_test.go), not e2e.
+		HubConfigToken: testServiceToken,
+		Store:          st,
+		AgentCA:        nil, // enrollment API not needed for this test
+		Raiser:         raiser,
+		AlertStore:     alertStore,
+		AlertRules:     alertRules,
+		AlertSenders:   alertSenders,
+		OpsDiagPool:    opsDiagPool,
+		OpsLogger:      logger,
 	})
 
 	return &Harness{

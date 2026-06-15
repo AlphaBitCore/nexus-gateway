@@ -154,57 +154,19 @@ func RegisterBuiltins(registry *traffic.AdapterRegistry) {
 // Tier 2 PatternNormalizer wired by extract.WireTier2. Migrating an adapter
 // to Tier 1 is a one-method change; the registration loop here picks it up
 // automatically via type-assert.
-// alreadyCoveredByAIBuiltins lists adapter IDs that overlap with the
-// dedicated AI normalizers registered by normalize.RegisterDefaultAIBuiltins
-// — both the openAICompatible alias set (every entry registers the
-// OpenAIChatNormalizer under that key) and the anthropic / bedrock
-// (AnthropicMessagesNormalizer) and gemini / vertex
-// (GeminiGenerateNormalizer) entries. Each of these dedicated AI
-// normalizers parses its specific wire format more precisely than the
-// extract.NormalizeForAdapter pattern probe, so we must not let the
-// per-host adapter Register collide-and-panic in the Registry.
 //
-// Keep this set in lock-step with the OpenAICompatible /
-// anthropic / gemini blocks in shared/transport/normalize/codecs/register.go's
-// RegisterDefaultAIBuiltins — any new alias added there must be added
-// here too, otherwise Hub startup panics with "duplicate registration".
-var alreadyCoveredByAIBuiltins = map[string]bool{
-	// AnthropicMessagesNormalizer keys
-	"anthropic": true,
-	"bedrock":   true,
-	// GeminiGenerateNormalizer keys
-	"gemini": true,
-	"vertex": true,
-	// OpenAIChatNormalizer aliases
-	"azure-openai": true,
-	"deepseek":     true,
-	"glm":          true,
-	"groq":         true,
-	"perplexity":   true,
-	"mistral":      true,
-	"xai":          true,
-	"huggingface":  true,
-	"replicate":    true,
-	"together":     true,
-	"fireworks":    true,
-	"moonshot":     true,
-	"minimax":      true,
-	"cohere":       true,
-	"voyage":       true,
-	// #72 — RegisterDefaultAIBuiltins now also aliases "openai-compat"
-	// to the OpenAIChatNormalizer (the traffic.Adapter ID byte-for-byte),
-	// so must NOT be re-registered here or the registry panics with
-	// "duplicate registration".
-	"openai-compat": true,
-}
-
+// The standard-API vendor adapters (api/*) carry NO Normalize method:
+// their wire formats are decoded by the shared codecs that
+// normalize.RegisterDefaultAIBuiltins registers under the same
+// adapter-type keys ("anthropic", "openai-compat", "gemini", …). Adding
+// a Normalize method to one of those adapters would make this loop
+// re-register its key and panic Hub startup with "duplicate
+// registration" — that panic IS the lock-step guard: per-host
+// Normalizers exist only for consumer/IDE surfaces whose IDs are
+// disjoint from the codec key set.
 func RegisterTier1AdapterNormalizers(reg *normalize.Registry) {
 	seen := map[string]bool{}
 	for _, e := range builtinEntries {
-		if alreadyCoveredByAIBuiltins[e.id] {
-			// AI-builtin Tier 1 normalizer is more precise — skip.
-			continue
-		}
 		// Build one instance to type-assert. Adapter instances are
 		// stateless after Configure so this is safe to retain as the
 		// live Normalizer; no per-domain Configure call is necessary

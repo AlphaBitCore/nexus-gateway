@@ -128,6 +128,13 @@ HandleGetOrigDst(_In_ WDFREQUEST Request)
         return status;
     }
 
+    // Consume on hit: each redirected connection is accepted by the
+    // proxy exactly once, so the entry's purpose is served. Removing
+    // it here means a later ephemeral-port reuse can never read THIS
+    // flow's stale original destination — the TTL sweep then only
+    // covers entries whose lookup never came.
+    NexusFlowTableRemove(in->localPort, in->isUdp != 0);
+
     WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, sizeof(*out));
     return STATUS_SUCCESS;
 }
@@ -143,6 +150,10 @@ HandleAuditPump(_In_ WDFREQUEST Request)
     if (!NT_SUCCESS(status)) {
         return status;
     }
+    // Deliver any records buffered while no IRP was pended. Without
+    // this, records enqueued during the gap sit until the NEXT emit —
+    // on a quiet host that can be minutes of audit latency.
+    NexusAuditDrainPending();
     return STATUS_PENDING;
 }
 

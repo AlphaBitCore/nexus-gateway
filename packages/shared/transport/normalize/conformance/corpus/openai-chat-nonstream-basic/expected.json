@@ -1,0 +1,26 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "openai-chat",
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello!"
+        }
+      ],
+      "finishReason": "stop"
+    }
+  ],
+  "usage": {
+    "promptTokens": 10,
+    "completionTokens": 2,
+    "totalTokens": 12
+  },
+  "finishReason": "stop",
+  "confidence": 0.9000000000000001,
+  "detectedSpec": "openai-chat"
+}

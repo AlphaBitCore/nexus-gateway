@@ -28,6 +28,13 @@ static KSPIN_LOCK g_AuditRingLock;
 static WDFQUEUE   g_AuditPumpQueue = NULL;  // pended IRPs (set by Init)
 static BOOLEAN    g_Initialised    = FALSE;
 
+// Records dropped since the last drained batch (ring overflow or
+// allocation failure). The next completed batch carries the count in
+// its first record's droppedSinceLast field, so user mode always
+// learns that the audit stream has a gap — a compliance pipeline that
+// loses evidence silently cannot be trusted by anyone auditing it.
+static volatile LONG g_AuditDropped = 0;
+
 NTSTATUS NexusAuditQueueInit(_In_ WDFDEVICE Device,
                               _Out_ WDFQUEUE* OutAuditPumpQueue)
 {
@@ -72,10 +79,19 @@ VOID NexusAuditQueueShutdown(VOID)
 }
 
 // Try to complete one waiting IRP with as many records as fit. Called
-// from NexusAuditEmit producer side when a record was just enqueued.
+// from the producer side when a record was just enqueued, and from the
+// IOCTL path when a fresh pump IRP arrives (so records buffered during
+// an IRP gap are delivered immediately instead of waiting for the NEXT
+// emit — on a quiet host that next emit can be minutes away).
 static VOID TryDrainOneIrp(VOID)
 {
     if (g_AuditPumpQueue == NULL) return;
+    if (g_AuditRingDepth <= 0) {
+        // Nothing buffered: leave any pended IRP in the queue. Pulling
+        // it out to complete with zero records would turn the user-mode
+        // pump into a busy loop.
+        return;
+    }
 
     WDFREQUEST irp = NULL;
     NTSTATUS status = WdfIoQueueRetrieveNextRequest(g_AuditPumpQueue, &irp);
@@ -110,8 +126,23 @@ static VOID TryDrainOneIrp(VOID)
     }
     KeReleaseSpinLock(&g_AuditRingLock, oldIrql);
 
+    if (written > 0) {
+        LONG drops = InterlockedExchange(&g_AuditDropped, 0);
+        if (drops > 0) {
+            dst[0].droppedSinceLast =
+                (UINT16)((drops > 0xFFFF) ? 0xFFFF : drops);
+        }
+    }
+
     size_t bytes = written * sizeof(NexusFlowAuditEntry);
     WdfRequestCompleteWithInformation(irp, STATUS_SUCCESS, bytes);
+}
+
+// IOCTL-path entry point: called by HandleAuditPump right after a pump
+// IRP is pended, so buffered records don't wait for new traffic.
+VOID NexusAuditDrainPending(VOID)
+{
+    TryDrainOneIrp();
 }
 
 VOID NexusAuditEmit(_In_ const NexusFlowAuditEntry* Entry)
@@ -119,14 +150,16 @@ VOID NexusAuditEmit(_In_ const NexusFlowAuditEntry* Entry)
     if (!g_Initialised || Entry == NULL) return;
 
     // Back-pressure: if the ring is at capacity, drop the oldest
-    // (FIFO with overflow). NFR-4: increments a dropped counter via
-    // ETW in the production build; here we silently overwrite.
+    // (FIFO with overflow). Every drop — overflow or allocation
+    // failure — increments g_AuditDropped so the gap is visible to
+    // user mode in the next batch's droppedSinceLast field.
     PNEXUS_AUDIT_NODE n = (PNEXUS_AUDIT_NODE)ExAllocatePool2(
         POOL_FLAG_NON_PAGED,
         sizeof(NEXUS_AUDIT_NODE),
         NEXUS_WFP_POOL_TAG);
     if (n == NULL) {
-        return; // memory pressure; drop this record.
+        InterlockedIncrement(&g_AuditDropped);
+        return; // memory pressure; record dropped but counted.
     }
     n->entry = *Entry;
 
@@ -134,11 +167,12 @@ VOID NexusAuditEmit(_In_ const NexusFlowAuditEntry* Entry)
     KeAcquireSpinLock(&g_AuditRingLock, &oldIrql);
 
     if (g_AuditRingDepth >= NEXUS_AUDIT_RING_CAPACITY) {
-        // Drop oldest.
+        // Drop oldest, counted.
         PLIST_ENTRY le = RemoveHeadList(&g_AuditRing);
         PNEXUS_AUDIT_NODE old = CONTAINING_RECORD(le, NEXUS_AUDIT_NODE, list);
         ExFreePoolWithTag(old, NEXUS_WFP_POOL_TAG);
         InterlockedDecrement(&g_AuditRingDepth);
+        InterlockedIncrement(&g_AuditDropped);
     }
 
     InsertTailList(&g_AuditRing, &n->list);

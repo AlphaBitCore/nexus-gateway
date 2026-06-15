@@ -17,6 +17,17 @@ import (
 // Anthropic and other non-OpenAI providers handled via the fence-parser
 // in DecodeJudgeOutput.
 //
+// SECURITY: this backend deliberately has NO field that can
+// hold a stored provider Credential. The external_url judge is the
+// operator's OWN classifier service; it authenticates ONLY via
+// CustomHeaders (e.g. the operator sets `Authorization: Bearer <their
+// judge token>` or `X-Api-Key: ...`). There is intentionally no
+// `APIKey`/credential reference — a Credential in this product is always
+// a real upstream provider key, and forwarding one to an operator-chosen
+// URL was a key-exfiltration path. Use backend_provider.go
+// (configured_provider mode) when the judge IS a real Nexus provider, so
+// the credential only ever reaches its own provider.
+//
 // COST SEMANTICS: External-URL backend deliberately does NOT populate
 // Response.Metadata.PromptTokens / CompletionTokens / CostUsd. The
 // gateway has no idea what the operator's external classifier service
@@ -30,9 +41,8 @@ import (
 // model's per-million pricing.
 type ExternalBackend struct {
 	URL           string            // base URL, e.g. https://judge.example.com/v1
-	APIKey        string            // bearer token
 	Model         string            // model identifier passed to the upstream
-	CustomHeaders map[string]string // optional custom headers
+	CustomHeaders map[string]string // operator-supplied headers; the ONLY auth channel (e.g. Authorization / X-Api-Key)
 	HTTPClient    *http.Client      // must be set; caller controls timeout
 }
 
@@ -57,7 +67,8 @@ func (b *ExternalBackend) Call(ctx context.Context, prompt string) (*Response, e
 		return nil, fmt.Errorf("aiguard external: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.APIKey)
+	// Auth is operator-supplied via CustomHeaders only (see struct doc).
+	// No provider credential is ever attached here.
 	for k, v := range b.CustomHeaders {
 		req.Header.Set(k, v)
 	}
@@ -70,7 +81,11 @@ func (b *ExternalBackend) Call(ctx context.Context, prompt string) (*Response, e
 		raw, _ := io.ReadAll(io.LimitReader(httpResp.Body, 1024))
 		return nil, fmt.Errorf("aiguard external: status=%d body=%s", httpResp.StatusCode, string(raw))
 	}
-	raw, err := io.ReadAll(httpResp.Body)
+	// Cap the success-path read: the external classifier is operator-supplied
+	// and could (mis)behave by streaming an unbounded body, which io.ReadAll
+	// would buffer entirely into memory. A judge verdict is a small JSON object,
+	// so 1 MiB is a generous ceiling.
+	raw, err := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("aiguard external: read body: %w", err)
 	}

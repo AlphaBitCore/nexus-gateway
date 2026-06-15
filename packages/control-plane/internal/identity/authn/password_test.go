@@ -21,6 +21,7 @@ func TestHashAndVerifyPassword(t *testing.T) {
 }
 
 func TestHashAPIKey(t *testing.T) {
+	setHMAC(t, "test-hmac-secret-for-hashing")
 	key := "nxk_test1234567890abcdef"
 	hash1 := HashAPIKey(key)
 	hash2 := HashAPIKey(key)

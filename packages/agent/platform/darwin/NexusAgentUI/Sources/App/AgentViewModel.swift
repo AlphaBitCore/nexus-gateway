@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import UserNotifications
+import os
 
 /// Minimal menu-bar view model (E40 Phase 1 + review fix-ups).
 ///
@@ -31,13 +32,21 @@ class AgentViewModel: ObservableObject {
     /// every poll.
     @Published var daemonVersion: String = ""
     /// Runtime policy on whether the daemon honours SHUTDOWN-style IPC.
-    /// Drives whether the menu builder includes the Restart Agent +
-    /// Quit Nexus Agent items at all (compliance always-on deployments
-    /// have this false and so neither affordance is surfaced). Defaults
-    /// to true so dev / test builds keep both items visible until the
-    /// first poll arrives — and so older daemons that don't yet emit
-    /// the field continue to render the full menu.
-    @Published var quitAllowed: Bool = true
+    /// Drives whether the menu builder includes the Quit Nexus Agent
+    /// item, and gates `quitAgent()` itself against the client-side NE
+    /// teardown that has no server gate.
+    ///
+    /// Defaults to **false** — fail safe. The destructive quit path
+    /// (removeAllConfigs tears the NE out) must never run on a device
+    /// that has not affirmatively told us quitting is allowed. If this
+    /// defaulted true, a locked device would expose Quit (and pass the
+    /// guard) during the cold-start window before the first GET_STATUS
+    /// poll, silently disabling enforcement on one fast click. The
+    /// first poll relaxes it to the daemon's real policy within ~2 s;
+    /// an unlocked device simply hides Quit for that brief window.
+    /// Back-compat for older daemons that don't emit the field is the
+    /// `?? true` at the poll site, not this initial value.
+    @Published var quitAllowed: Bool = false
     /// Live-traffic indicator (#69). True when the daemon has reported
     /// a provider-tagged audit event within the last 3 seconds, i.e.
     /// the user just made an LLM call. The tray-icon view subscribes
@@ -349,25 +358,30 @@ class AgentViewModel: ObservableObject {
         }
     }
 
-    /// Restart the daemon via SHUTDOWN IPC; launchd respawns it.
-    /// Surfaces the daemon's policy refusal (operator set
-    /// `quitAllowed: false`) instead of silently swallowing it.
-    func restartAgent() {
-        Task {
-            do {
-                let resp = try await client.shutdown()
-                if !resp.acknowledged {
-                    self.showTransient(resp.error?.isEmpty == false
-                        ? resp.error!
-                        : "Restart blocked by policy")
-                }
-            } catch {
-                self.showTransient("Restart failed: \(error.localizedDescription)")
-            }
-        }
-    }
-
     func quitAgent() {
+        // Policy gate (defense in depth). On a locked fleet the operator
+        // sets quitAllowed=false: the daemon already ignores the user-quit
+        // flag and refuses the SHUTDOWN IPC, and the menu hides the Quit
+        // item. But quitAgent() is still reachable from other call sites
+        // (the pending-enrollment menu, a stray ⌘Q, a future affordance).
+        // Without this guard those paths would still run removeAllConfigs()
+        // and tear the NE out from under a daemon that keeps running —
+        // silently disabling enforcement on a device whose whole point is
+        // that the user cannot. Refuse here so the destructive teardown can
+        // never execute on a quit-disabled device, whatever the call path.
+        guard quitAllowed else {
+            // Reached only if a caller invokes quitAgent() while policy
+            // forbids quitting. The menu hides the Quit item in that
+            // state (in both the enrolled and pending-enrollment menus),
+            // so this is a defense-in-depth backstop for some future or
+            // mis-wired caller — not a user-facing path. Refuse silently
+            // (logged) before any NE teardown; surfacing UI for an action
+            // the menu never offered would only confuse.
+            Logger(subsystem: "com.nexus-gateway.agent", category: "quit")
+                .warning("quitAgent refused: quitAllowed=false")
+            return
+        }
+
         // Quit ALWAYS confirms — it's a destructive operation that stops
         // the enterprise security daemon entirely. Two text sources, in
         // priority order:
@@ -459,6 +473,12 @@ class AgentViewModel: ObservableObject {
         }
         _ = removeSemaphore.wait(timeout: .now() + 3.0)
 
+        // Terminate the Dashboard + menu-bar app processes. The menu-bar
+        // and the nested Wails Dashboard are separate NSApplication
+        // processes; quitting one without the other leaves an orphaned
+        // window with no tray. By here the daemon is already stopped
+        // (QuitFlag + SHUTDOWN IPC) and the NE removed, so this is the
+        // final step.
         let dashboardBundleIDs = [
             "com.nexus-gateway.agent.dashboard",
             "com.wails.Nexus Agent Dashboard",

@@ -647,3 +647,58 @@ func TestSemanticSave_RejectsUnsupportedDimension(t *testing.T) {
 		t.Fatalf("expected ErrUnsupportedEmbeddingDimension, got %v", err)
 	}
 }
+
+// WireState is the contract the admin push AND the configreconcile drift loader
+// both depend on (F-0102/F-0345): it must zero ONLY the wall-clock bookkeeping
+// columns (UpdatedAt/UpdatedBy, which Save stamps from the Go clock and Get from
+// DB NOW(), so they never byte-match) while preserving every functional field —
+// else the watch would spuriously heal on each save (bookkeeping zeroed) or
+// thrash forever (a functional field dropped).
+func TestSemanticCacheConfigRow_WireState_zerosBookkeepingPreservesRest(t *testing.T) {
+	providerID := "openai"
+	dim := 1536
+	updatedBy := "admin@example.com"
+	row := &configstore.SemanticCacheConfigRow{
+		ID:                            "singleton",
+		EmbeddingProviderID:           &providerID,
+		EmbeddingDimension:            &dim,
+		EmbeddingFingerprint:          "fp-123",
+		RedisIndexName:                "nexus:semantic-cache:v2",
+		Enabled:                       true,
+		Threshold:                     0.93,
+		VaryBy:                        "org",
+		EmbedStrategy:                 "recent_turns",
+		AllowCrossModel:               true,
+		UpdatedAt:                     time.Date(2026, 6, 7, 1, 2, 3, 0, time.UTC),
+		UpdatedBy:                     &updatedBy,
+		EmbeddingProviderBaseURL:      "https://api.openai.com",
+		EmbeddingProviderModelID:      "text-embedding-3-small",
+		EmbeddingInputPricePerMillion: 0.02,
+		EmbeddingMaxInputTokens:       8191,
+	}
+
+	got := row.WireState()
+
+	// Bookkeeping columns must be zeroed (the sole save/read clock-skew source).
+	if !got.UpdatedAt.IsZero() {
+		t.Errorf("WireState.UpdatedAt = %v, want zero", got.UpdatedAt)
+	}
+	if got.UpdatedBy != nil {
+		t.Errorf("WireState.UpdatedBy = %v, want nil", *got.UpdatedBy)
+	}
+	// Every functional field must survive unchanged.
+	if got.EmbeddingFingerprint != "fp-123" || got.RedisIndexName != "nexus:semantic-cache:v2" ||
+		!got.Enabled || got.Threshold != 0.93 || got.VaryBy != "org" ||
+		got.EmbedStrategy != "recent_turns" || !got.AllowCrossModel ||
+		got.EmbeddingProviderBaseURL != "https://api.openai.com" ||
+		got.EmbeddingProviderModelID != "text-embedding-3-small" ||
+		got.EmbeddingInputPricePerMillion != 0.02 || got.EmbeddingMaxInputTokens != 8191 ||
+		got.EmbeddingProviderID == nil || *got.EmbeddingProviderID != "openai" ||
+		got.EmbeddingDimension == nil || *got.EmbeddingDimension != 1536 {
+		t.Errorf("WireState dropped/altered a functional field: %+v", got)
+	}
+	// The original row must not be mutated (WireState returns a copy).
+	if row.UpdatedAt.IsZero() || row.UpdatedBy == nil {
+		t.Error("WireState mutated the receiver; must operate on a copy")
+	}
+}

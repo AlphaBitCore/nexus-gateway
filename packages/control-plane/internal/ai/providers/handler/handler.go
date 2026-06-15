@@ -8,6 +8,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -25,13 +26,19 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 )
 
-// HubInvalidator is the narrow Hub surface providers/ needs:
-// fire-and-forget InvalidateConfig (every CUD path fan-outs to
-// ai-gateway's provider/model/credential caches). Same shape as
-// hooks/HubInvalidator — could converge with that pattern in a
-// future runbook follow-up.
+// HubInvalidator is the narrow Hub surface providers/ needs.
+//
+// InvalidateConfigE (error-returning) is used by the security-sensitive CUD
+// paths — credential / provider / model writes — so a failed push to Hub
+// surfaces as HTTP 502 instead of letting the data plane keep serving a stale
+// (e.g. just-deleted) credential.
+//
+// InvalidateConfig (fire-and-forget) remains for the two non-revocation paths:
+// the background master-key re-encryption worker (no HTTP caller to 502) and
+// the gateway-wide credential-reliability threshold tuning.
 type HubInvalidator interface {
 	InvalidateConfig(ctx context.Context, thingType, configKey string)
+	InvalidateConfigE(ctx context.Context, thingType, configKey string) error
 }
 
 // ProxyConfig is the BFF proxy snapshot providers/ needs to call
@@ -40,6 +47,10 @@ type ProxyConfig struct {
 	ComplianceProxyRuntimeURL string
 	ComplianceProxyAPIToken   string
 	AIGatewayURL              string
+	// AIGatewayInternalToken is the shared internal-service bearer token
+	// presented on CP→ai-gateway /internal/* calls (provider-test,
+	// credential probe, embedding-probe).
+	AIGatewayInternalToken string
 }
 
 // Deps is the construction-time arg shape.
@@ -99,15 +110,8 @@ func New(d Deps) *Handler {
 // /providers/:id/models routes gate on iam.ResourceModel not
 // iam.ResourceProvider) survive the move unchanged.
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 func internalServerError(c echo.Context, msg string) error {
 	return c.JSON(http.StatusInternalServerError, errJSON(msg, "server_error", ""))

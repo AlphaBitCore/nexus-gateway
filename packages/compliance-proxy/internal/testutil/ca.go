@@ -38,7 +38,13 @@ func GenerateTestCA() (caCert *x509.Certificate, caKey *ecdsa.PrivateKey, certPE
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
-		MaxPathLen:            1,
+		// pathlen:0 mirrors the production proxy-CA recipes: the CA only ever
+		// signs leaf certs, and the constraint stops a stolen CA key from
+		// minting a subordinate CA. The issuer warns at load when the
+		// constraint is absent, so the shared fixture carries it to keep that
+		// warning a real signal in every test that builds an issuer.
+		MaxPathLen:     0,
+		MaxPathLenZero: true,
 	}
 
 	caDER, err := x509.CreateCertificate(rand.Reader, template, template, &caKey.PublicKey, caKey)

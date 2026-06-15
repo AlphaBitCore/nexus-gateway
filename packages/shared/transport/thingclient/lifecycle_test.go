@@ -304,10 +304,9 @@ func TestLifecycle_ConfigPushDuringSession(t *testing.T) {
 
 	configPush := hubMessage{
 		Type:       "config_changed",
+		ConfigKey:  "routing",
+		State:      json.RawMessage(`{"rules":["/v2"]}`),
 		DesiredVer: 5,
-		Desired: map[string]ConfigState{
-			"routing": {State: json.RawMessage(`{"rules":["/v2"]}`), Version: 5},
-		},
 	}
 	data, _ := json.Marshal(configPush)
 	hub.sendCh <- data
@@ -382,20 +381,18 @@ func TestLifecycle_StaleConfigIgnored(t *testing.T) {
 
 	staleMsg := hubMessage{
 		Type:       "config_changed",
+		ConfigKey:  "routing",
+		State:      json.RawMessage(`{"v":5}`),
 		DesiredVer: 5,
-		Desired: map[string]ConfigState{
-			"routing": {State: json.RawMessage(`{"v":5}`), Version: 5},
-		},
 	}
 	data, _ := json.Marshal(staleMsg)
 	hub.sendCh <- data
 
 	freshMsg := hubMessage{
 		Type:       "config_changed",
+		ConfigKey:  "routing",
+		State:      json.RawMessage(`{"v":11}`),
 		DesiredVer: 11,
-		Desired: map[string]ConfigState{
-			"routing": {State: json.RawMessage(`{"v":11}`), Version: 11},
-		},
 	}
 	freshData, _ := json.Marshal(freshMsg)
 	hub.sendCh <- freshData

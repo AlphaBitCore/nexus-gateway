@@ -36,12 +36,20 @@ type RouteConfig struct {
 	Enrollment   *enrollment.Service
 	MQProducer   mq.Producer
 	ServiceToken string
-	Store        *store.Store
-	AgentCA      *agentca.CA
-	Raiser       *alerting.Raiser
-	AlertStore   *alerting.Store
-	AlertRules   alerting.RuleRegistry
-	AlertSenders alerting.SenderRegistry
+	// HubConfigToken gates the two config-AUTHORITY route groups — /api/hub
+	// (config-write) and /api/v1/admin/alerts (admin) — separately from
+	// ServiceToken. Control Plane is the sole caller of both
+	// groups and holds this token; the data-plane services (ai-gateway,
+	// compliance-proxy) hold only ServiceToken, so a leak of their service token
+	// can no longer write fleet config. ServiceToken still gates
+	// /api/internal/things + the WS registration path.
+	HubConfigToken string
+	Store          *store.Store
+	AgentCA        *agentca.CA
+	Raiser         *alerting.Raiser
+	AlertStore     *alerting.Store
+	AlertRules     alerting.RuleRegistry
+	AlertSenders   alerting.SenderRegistry
 	// CatB is the Cat B loader registry consumed by SingleConfigPull
 	// to assemble authoritative hook / policy / domain state from
 	// CP-owned business tables. Nil disables the dispatch and every
@@ -130,7 +138,11 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 		DLQProducer: cfg.MQProducer,
 	}
 
-	hub := cfg.Echo.Group("/api/hub", ServiceAuth(cfg.ServiceToken))
+	// /api/hub is the CP→Hub config-WRITE surface (shadow /
+	// desired-state push). It is gated by the dedicated HubConfigToken, NOT the
+	// fleet-wide ServiceToken, so a compromised data-plane service (which holds
+	// only ServiceToken) cannot inject fleet config. CP is the sole caller.
+	hub := cfg.Echo.Group("/api/hub", ServiceAuth(cfg.HubConfigToken))
 	hub.POST("/config/update", hubAPI.ConfigUpdate)
 	hub.GET("/things", hubAPI.ListThings)
 	// Static prefix BEFORE the parametric :id route — Echo matches in
@@ -141,7 +153,6 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 	hub.GET("/things/:id/shadow", hubAPI.GetThingShadow)
 	hub.GET("/things/:id/service-meta", hubAPI.GetThingServiceMeta)
 	hub.POST("/things/:id/resync", hubAPI.ResyncThing)
-	hub.POST("/things/:id/rotate-cert", hubAPI.RotateAgentCert)
 	hub.GET("/things/:id/overrides", hubAPI.ListThingOverrides)
 	hub.PUT("/things/:id/overrides/:configKey", hubAPI.SetThingOverride)
 	hub.DELETE("/things/:id/overrides/:configKey", hubAPI.ClearThingOverride)
@@ -182,7 +193,6 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 	thingsAPI := &hubapi.InternalThingsAPI{
 		Mgr:        cfg.Mgr,
 		MQProducer: cfg.MQProducer,
-		CA:         cfg.AgentCA,
 		CatB:       cfg.CatB,
 	}
 
@@ -191,13 +201,17 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 	things.POST("/register", thingsAPI.Register)
 	things.POST("/heartbeat", thingsAPI.Heartbeat)
 	things.POST("/shadow", thingsAPI.ShadowReport)
+	// Dedicated break-glass HTTP fallback (matches the thingclient HTTP path
+	// thingclient.SendBreakGlassShadowReport posts to). The route itself is the
+	// break-glass signal; the handler stamps Reason="break_glass" and enforces
+	// the server-side allowlist + schema gate before dispatch.
+	things.POST("/shadow/break-glass", thingsAPI.BreakGlassReport)
 	things.GET("/config", thingsAPI.BulkConfigPull)
 	things.GET("/config/:key", thingsAPI.SingleConfigPull)
 	things.POST("/audit", thingsAPI.AuditUpload)
 	things.POST("/deregister", thingsAPI.Deregister)
 	things.POST("/exemption", thingsAPI.ExemptionUpload)
 	things.GET("/update-check", thingsAPI.UpdateCheck)
-	things.POST("/renew-cert", thingsAPI.RenewCert)
 	// Per-agent attestation public key lookup, called by CP's
 	// AttestationKeyCache loader. Same deviceAuth group so service-token
 	// (CP) and device-token (agent self-introspection) callers both work.
@@ -248,8 +262,8 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 	// that skip the full alerting stack can still call SetupRoutes.
 	if cfg.Raiser != nil {
 		alerts := cfg.Echo.Group("/api/v1/alerts", deviceAuth)
-		alerts.POST("/raise", echo.WrapHandler(alerting.HandleRaise(cfg.Raiser)))
-		alerts.POST("/resolve", echo.WrapHandler(alerting.HandleResolve(cfg.Raiser)))
+		alerts.POST("/raise", alertCallerScoped(alerting.HandleRaise(cfg.Raiser)))
+		alerts.POST("/resolve", alertCallerScoped(alerting.HandleResolve(cfg.Raiser)))
 	}
 
 	// Admin alerting API (/api/v1/admin/alerts/*): service-token gated;
@@ -262,7 +276,10 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 			Rules:   cfg.AlertRules,
 			Senders: cfg.AlertSenders,
 		}
-		admin := cfg.Echo.Group("/api/v1/admin/alerts", ServiceAuth(cfg.ServiceToken))
+		// admin-alerts is a CP-proxied admin surface, gated by
+		// the dedicated HubConfigToken (same authority class as /api/hub), NOT the
+		// fleet-wide ServiceToken. CP is the sole caller.
+		admin := cfg.Echo.Group("/api/v1/admin/alerts", ServiceAuth(cfg.HubConfigToken))
 		// Rule routes first (static prefix).
 		admin.GET("/rules", adminH.ListRules)
 		admin.GET("/rules/:id", adminH.GetRule)
@@ -306,9 +323,19 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 			JWKSCache:  cfg.JWKSCache,
 			CpIssuer:   cfg.CpIssuer,
 			Logger:     cfg.OpsLogger,
+			// Back the enrollment-JWT replay guard with the shared
+			// Redis SETNX dedup so a captured JWT cannot be replayed across a Hub
+			// restart (or on another Hub). nil (no Redis) keeps the in-memory-only
+			// single-Hub guard.
+			JTIDedup: cfg.SpillDedup,
 		}
 		enrollAPI.Init()
 		cfg.Echo.POST("/api/internal/things/enroll", enrollAPI.Enroll)
+		// Device-token rotation. Sits inside the deviceAuth group so the
+		// caller's current (still-valid) device token authenticates the
+		// rotation; the resolved Thing in context is the identity whose
+		// token is rotated.
+		things.POST("/renew-token", enrollAPI.RenewToken)
 	}
 
 	if cfg.WSServer != nil {
@@ -316,4 +343,27 @@ func SetupRoutes(cfg RouteConfig) *enroll.EnrollmentAPI {
 	}
 
 	return enrollAPI
+}
+
+// alertCallerScoped adapts a raw alerting http.Handler to an echo.HandlerFunc
+// that injects the authenticated caller identity into the request context so
+// the raise/resolve handlers can enforce per-Thing scoping.
+//
+// The DeviceOrServiceAuth middleware sets the resolved Thing on the Echo
+// context for device-token callers and leaves it nil for service-token callers
+// (CP / Hub-internal). We translate that into an alerting.Caller: a nil Thing
+// means the service token authenticated the call (unrestricted), a non-nil
+// Thing means a device token (restricted to its own target on raise, no
+// resolve at all).
+func alertCallerScoped(h http.Handler) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		caller := alerting.Caller{IsService: true}
+		if thing := enroll.ThingFromContext(c); thing != nil {
+			caller = alerting.Caller{IsService: false, ThingID: thing.ID}
+		}
+		req := c.Request()
+		req = req.WithContext(alerting.WithCaller(req.Context(), caller))
+		h.ServeHTTP(c.Response(), req)
+		return nil
+	}
 }

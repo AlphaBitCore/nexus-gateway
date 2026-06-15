@@ -105,15 +105,17 @@ func TestKillSwitch_HistoryEmpty(t *testing.T) {
 }
 
 // ApplyBreakGlass mirrors a Toggle with changedBy="break-glass" so operators
-// can distinguish emergency PUT hits from normal shadow applies.
+// can distinguish emergency PUT hits from normal shadow applies. A break-glass
+// that changes state (here: false→true) must flip the engaged flag and record
+// exactly one history entry attributed to break-glass.
 func TestKillSwitch_ApplyBreakGlass(t *testing.T) {
 	ks := newTestKillSwitch()
 
-	if err := ks.ApplyBreakGlass(interception.Killswitch{Engaged: false}); err != nil {
+	if err := ks.ApplyBreakGlass(interception.Killswitch{Engaged: true}); err != nil {
 		t.Fatalf("ApplyBreakGlass: %v", err)
 	}
-	if ks.IsEngaged() {
-		t.Errorf("expected engaged=false after break-glass")
+	if !ks.IsEngaged() {
+		t.Errorf("expected engaged=true after break-glass")
 	}
 	hist := ks.History()
 	if len(hist) != 1 {
@@ -121,6 +123,50 @@ func TestKillSwitch_ApplyBreakGlass(t *testing.T) {
 	}
 	if hist[0].ChangedBy != "break-glass" {
 		t.Errorf("expected history changedBy=break-glass, got %q", hist[0].ChangedBy)
+	}
+	if !hist[0].Engaged {
+		t.Errorf("expected history entry engaged=true, got %v", hist[0].Engaged)
+	}
+}
+
+// TestKillSwitch_ApplyBreakGlassRedundant_NoHistory pins the short-circuit
+// semantics documented on ApplyBreakGlass: when the incoming engaged flag
+// already matches the current state, the apply is a no-op on the in-memory
+// history — no duplicate entry is appended and no toggle log line is emitted —
+// while the engaged state remains correct. This keeps a recovering Hub (which
+// may re-push the same desired state) from spamming the operational toggle log.
+func TestKillSwitch_ApplyBreakGlassRedundant_NoHistory(t *testing.T) {
+	ks := newTestKillSwitch()
+
+	// First break-glass flips false→true: one real history entry.
+	if err := ks.ApplyBreakGlass(interception.Killswitch{Engaged: true}); err != nil {
+		t.Fatalf("first ApplyBreakGlass: %v", err)
+	}
+	if got := len(ks.History()); got != 1 {
+		t.Fatalf("after first apply: expected 1 history entry, got %d", got)
+	}
+
+	// Redundant break-glass with the same engaged=true: must short-circuit.
+	if err := ks.ApplyBreakGlass(interception.Killswitch{Engaged: true}); err != nil {
+		t.Fatalf("redundant ApplyBreakGlass: %v", err)
+	}
+	if !ks.IsEngaged() {
+		t.Errorf("expected engaged=true to be preserved after redundant break-glass")
+	}
+	if got := len(ks.History()); got != 1 {
+		t.Errorf("redundant break-glass must not append history: expected 1 entry, got %d", got)
+	}
+
+	// A genuine state change (true→false) still records, proving the
+	// short-circuit only suppresses no-op applies.
+	if err := ks.ApplyBreakGlass(interception.Killswitch{Engaged: false}); err != nil {
+		t.Fatalf("state-changing ApplyBreakGlass: %v", err)
+	}
+	if ks.IsEngaged() {
+		t.Errorf("expected engaged=false after disengaging break-glass")
+	}
+	if got := len(ks.History()); got != 2 {
+		t.Errorf("state-changing break-glass must append history: expected 2 entries, got %d", got)
 	}
 }
 

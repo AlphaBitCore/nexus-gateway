@@ -178,17 +178,54 @@ func TestCompatible_EncodingFormatMismatch(t *testing.T) {
 	}
 }
 
-// TestCompatible_EncodingFormatDefault — model omits SupportedEncodingFormats,
-// defaults to ["float","base64"]. Client asks float → pass.
-func TestCompatible_EncodingFormatDefault(t *testing.T) {
+// TestCompatible_EncodingFormatDefaultIsFloatOnly (F-0215) — a model that omits
+// SupportedEncodingFormats defaults to ["float"] only. base64 must be explicitly
+// opted-in because only some provider codecs honor it, so a base64 request
+// against a descriptor-omitting model is rejected here rather than silently
+// downgraded to float downstream.
+func TestCompatible_EncodingFormatDefaultIsFloatOnly(t *testing.T) {
 	cap := makeEmbCap(&EmbeddingsCapability{}) // no SupportedEncodingFormats set
-	req := &EmbeddingRequest{BatchSize: 1, EncodingFormat: "base64"}
-	ok, _, proj := Compatible(req, cap)
-	if !ok {
-		t.Error("expected ok for default encoding formats (float/base64)")
+
+	// base64 must be rejected against the implicit default.
+	rejReq := &EmbeddingRequest{BatchSize: 1, EncodingFormat: "base64"}
+	ok, reason, proj := Compatible(rejReq, cap)
+	if ok {
+		t.Error("expected reject: base64 must not pass against the float-only default")
 	}
-	if len(proj.SupportedEncodingFormats) != 2 {
-		t.Errorf("expected 2 default formats in projection, got %d", len(proj.SupportedEncodingFormats))
+	if reason == "" {
+		t.Error("expected non-empty reason on base64 rejection")
+	}
+	if len(proj.SupportedEncodingFormats) != 1 || proj.SupportedEncodingFormats[0] != "float" {
+		t.Errorf("expected default projection [\"float\"], got %v", proj.SupportedEncodingFormats)
+	}
+
+	// float still passes against the implicit default.
+	floatReq := &EmbeddingRequest{BatchSize: 1, EncodingFormat: "float"}
+	if ok, _, _ := Compatible(floatReq, cap); !ok {
+		t.Error("expected float to pass against the float-only default")
+	}
+}
+
+// TestEffectiveEncodingFormats_Default (F-0215) — direct assertion that the
+// default produced when the descriptor omits the field is exactly ["float"].
+func TestEffectiveEncodingFormats_Default(t *testing.T) {
+	got := effectiveEncodingFormats(&EmbeddingsCapability{})
+	if len(got) != 1 || got[0] != "float" {
+		t.Fatalf("default effectiveEncodingFormats = %v, want [\"float\"]", got)
+	}
+}
+
+// TestEffectiveEncodingFormats_ExplicitOptIn (F-0215) — an explicit
+// ["float","base64"] descriptor is honored verbatim (OpenAI-style opt-in).
+func TestEffectiveEncodingFormats_ExplicitOptIn(t *testing.T) {
+	emb := &EmbeddingsCapability{SupportedEncodingFormats: []string{"float", "base64"}}
+	got := effectiveEncodingFormats(emb)
+	if len(got) != 2 || got[0] != "float" || got[1] != "base64" {
+		t.Fatalf("explicit effectiveEncodingFormats = %v, want [\"float\",\"base64\"]", got)
+	}
+	// And a base64 request against an explicit opt-in model passes.
+	if ok, _, _ := Compatible(&EmbeddingRequest{BatchSize: 1, EncodingFormat: "base64"}, makeEmbCap(emb)); !ok {
+		t.Error("expected base64 to pass against an explicit float+base64 model")
 	}
 }
 

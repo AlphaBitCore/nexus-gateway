@@ -97,11 +97,16 @@ type RegistryConfig struct {
 // overriding the env value.
 type AuthConfig struct {
 	InternalServiceToken string `yaml:"-"` // env INTERNAL_SERVICE_TOKEN — Bearer on Hub WS/HTTP + X-RS-Token on ai-gateway /v1/ai-guard/classify; must match Hub's value
+	// APIToken gates the runtime API (read surface + the break-glass
+	// PUT /runtime/config/{key}). Boot-required and fail-closed: an empty
+	// value aborts startup so the mutating break-glass verb
+	// is never reachable without a credential.
+	APIToken string `yaml:"-"` // env COMPLIANCE_PROXY_API_TOKEN — Bearer on the runtime API + break-glass PUT
 }
 
 // RuntimeAPIConfig controls the Go runtime API HTTP server address.
 type RuntimeAPIConfig struct {
-	ListenAddress string `yaml:"listenAddress"` // default "127.0.0.1:3002"
+	ListenAddress string `yaml:"listenAddress"` // default "127.0.0.1:3040"
 }
 
 // AlertingConfig controls the built-in alerting evaluator. Channel, threshold
@@ -125,7 +130,7 @@ type ComplianceConfig struct {
 	PerHookTimeoutMs int  `yaml:"perHookTimeoutMs"` // default 5000
 	TotalTimeoutMs   int  `yaml:"totalTimeoutMs"`   // default 15000
 	ParallelHooks    bool `yaml:"parallelHooks"`    // default false (aligned with ai-gateway and agent)
-	// StreamingMode YAML field deleted in #115 — admin policy
+	// StreamingMode YAML field removed — admin policy
 	// (system_metadata['streaming_compliance.config'].default_mode)
 	// is now the single source of truth across all three services
 	// (agent / compliance-proxy / ai-gateway). Operators changing
@@ -231,7 +236,11 @@ type CAConfig struct {
 // plaintext PEM. The args list may contain the "{file}" placeholder which
 // will be replaced with the on-disk ciphertext path before exec.
 type CAKMSConfig struct {
-	Provider   string   `yaml:"provider"`
+	Provider string `yaml:"provider"`
+	// Command is the KMS *decrypt* argv. In local mode it unwraps the on-disk
+	// CA private key. In remote mode it unwraps the cert-cache DEK blob read
+	// from Redis. {file} in any arg is replaced with the ciphertext temp path;
+	// stdout is the plaintext. (Operator grant: kms:Decrypt.)
 	Command    []string `yaml:"command"`
 	TimeoutSec int      `yaml:"timeoutSec"`
 	// SigningMode: "local" (default) loads the key into memory via KMS decrypt.
@@ -239,8 +248,15 @@ type CAKMSConfig struct {
 	SigningMode string `yaml:"signingMode"`
 	// SignCommand is the argv for the remote signer. {file} in any arg is
 	// replaced with the digest temp file path.
-
 	SignCommand []string `yaml:"signCommand"`
+	// EncryptCommand is the KMS *encrypt* argv, required in remote signing
+	// mode. It wraps the freshly generated 32-byte cert-cache DEK before the
+	// proxy persists it in Redis (KMS ciphertext is safe to store). {file} in
+	// any arg is replaced with the plaintext DEK temp path; stdout is the
+	// wrapped ciphertext, which must round-trip back through `command` (KMS
+	// decrypt). Ignored in local mode. (Operator grant: kms:Encrypt.) This is
+	// argv only — no secret; KMS credentials are ambient to the process.
+	EncryptCommand []string `yaml:"encryptCommand"`
 }
 
 // AccessControlConfig defines source-IP and domain allowlists.
@@ -355,6 +371,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("INTERNAL_SERVICE_TOKEN"); v != "" {
 		cfg.Auth.InternalServiceToken = v
 	}
+	if v := os.Getenv("COMPLIANCE_PROXY_API_TOKEN"); v != "" {
+		cfg.Auth.APIToken = v
+	}
 	if v := os.Getenv("MQ_DRIVER"); v != "" {
 		cfg.MQ.Driver = v
 	}
@@ -378,6 +397,8 @@ func applyEnvOverrides(cfg *Config) {
 //   - Database.URL: traffic_event writes, audit pipeline.
 //   - Auth.InternalServiceToken: Bearer on Hub WS/HTTP + X-RS-Token on
 //     ai-gateway /v1/ai-guard/classify; mismatch → all calls 403.
+//   - Auth.APIToken: gates the runtime API + break-glass PUT; boot-required
+//     and fail-closed — no dev-mode bypass.
 //   - Redis.Addrs: per-domain rate limit, idempotency, cache.
 //   - MQ.Driver (+ MQ.NATS.URL when nats): traffic_event publish to Hub.
 //   - Registry.NexusHubURL: CP-proxy registers as a Thing on boot.
@@ -396,6 +417,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Auth.InternalServiceToken == "" {
 		return fmt.Errorf("auth.internalServiceToken is required (env INTERNAL_SERVICE_TOKEN; must match Hub)")
+	}
+	if cfg.Auth.APIToken == "" {
+		return fmt.Errorf("auth.apiToken is required (env COMPLIANCE_PROXY_API_TOKEN; gates the runtime API + break-glass PUT — fail-closed, no dev bypass)")
 	}
 	if len(cfg.Redis.Addrs) == 0 && os.Getenv("REDIS_ADDRS") == "" {
 		return fmt.Errorf("redis.addrs is required (set in yaml or via REDIS_ADDRS env)")
@@ -476,7 +500,7 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// streamingMode validation deleted in #115 — admin policy is the
+	// streamingMode validation removed — admin policy is the
 	// single source of truth; validation lives in
 	// streampolicy.DecodeGlobalPolicy.
 

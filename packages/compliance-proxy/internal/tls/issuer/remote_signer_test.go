@@ -1,12 +1,15 @@
 package issuer
 
 import (
+	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +19,94 @@ import (
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/testutil"
 )
+
+// --- Fakes for the cert-cache DEK bootstrap (CertCacheDEKStore + KMS) ---
+
+// inMemoryDEKStore is a fake CertCacheDEKStore backing the wrapped DEK blob
+// in memory so tests can drive the first-boot / subsequent-boot / race-lost /
+// Redis-error branches deterministically without a live Redis.
+type inMemoryDEKStore struct {
+	blob []byte // nil = key absent
+
+	getErr   error // error from every GetWrappedDEK call
+	reGetErr error // error returned ONLY on the post-race (2nd+) GetWrappedDEK
+	setErr   error // error from SetWrappedDEKIfAbsent
+
+	// forceLostRace makes SetWrappedDEKIfAbsent report won=false (as if a
+	// concurrent instance wrote first) and installs raceWinnerBlob as the
+	// value the winner persisted.
+	forceLostRace  bool
+	raceWinnerBlob []byte
+
+	getCalls int
+	setCalls int
+}
+
+func (s *inMemoryDEKStore) GetWrappedDEK(_ context.Context) ([]byte, bool, error) {
+	s.getCalls++
+	if s.reGetErr != nil && s.getCalls >= 2 {
+		return nil, false, s.reGetErr
+	}
+	if s.getErr != nil {
+		return nil, false, s.getErr
+	}
+	if s.blob == nil {
+		return nil, false, nil
+	}
+	return s.blob, true, nil
+}
+
+func (s *inMemoryDEKStore) SetWrappedDEKIfAbsent(_ context.Context, blob []byte) (bool, error) {
+	s.setCalls++
+	if s.setErr != nil {
+		return false, s.setErr
+	}
+	if s.forceLostRace {
+		s.blob = s.raceWinnerBlob // the winner's blob now stands
+		return false, nil
+	}
+	if s.blob != nil {
+		return false, nil
+	}
+	s.blob = blob
+	return true, nil
+}
+
+// fakeKMS implements both kms.Encryptor and kms.KMSProvider with injectable
+// encrypt/decrypt behaviour. The default identity helpers wrap with a "WRAP:"
+// prefix so a wrapped blob is observably different from the DEK yet
+// round-trips, mirroring a real envelope.
+type fakeKMS struct {
+	name string
+	enc  func([]byte) ([]byte, error)
+	dec  func([]byte) ([]byte, error)
+}
+
+func (f *fakeKMS) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "fake-kms"
+}
+
+func (f *fakeKMS) Encrypt(_ context.Context, pt []byte) ([]byte, error) { return f.enc(pt) }
+func (f *fakeKMS) Decrypt(_ context.Context, ct []byte) ([]byte, error) { return f.dec(ct) }
+
+const wrapPrefix = "WRAP:"
+
+// identityKMS returns a fakeKMS whose Encrypt/Decrypt round-trip via a
+// "WRAP:" prefix — a faithful stand-in for a real KMS envelope.
+func identityKMS() *fakeKMS {
+	return &fakeKMS{
+		enc: func(b []byte) ([]byte, error) { return append([]byte(wrapPrefix), b...), nil },
+		dec: func(b []byte) ([]byte, error) {
+			if !bytes.HasPrefix(b, []byte(wrapPrefix)) {
+				return nil, errors.New("fake-kms: blob not wrapped")
+			}
+			return bytes.TrimPrefix(b, []byte(wrapPrefix)), nil
+		},
+	}
+}
 
 // stubSigner is a test double for crypto.Signer that records the digest it
 // was asked to sign and returns a canned signature. Used so SignCert can
@@ -198,20 +289,31 @@ func TestCommandSigner_Sign_EmptyOutputFails(t *testing.T) {
 	}
 }
 
-// TestNewIssuerWithRemoteSigner happy path: CA cert loads, AES key is
-// derived deterministically from the cert raw bytes (via hkdfFromBytes),
-// caKey is nil, remoteSigner is wired in, and AES key has the expected
-// 32-byte length.
-func TestNewIssuerWithRemoteSigner_HappyPath(t *testing.T) {
+// newRemoteStub builds a stub remote signer over a throwaway CA key.
+func newRemoteStub(t *testing.T) *stubSigner {
+	t.Helper()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("CA key: %v", err)
+	}
+	return &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
+}
+
+// TestNewIssuerWithRemoteSigner_FirstBoot_GeneratesWrapsAndStoresDEK pins the
+// first-boot path: the DEK is absent, so the issuer generates a fresh DEK,
+// KMS-wraps it, and SETNX-persists the wrapped blob. Observable evidence:
+// the store now holds the WRAPPED blob (not the raw DEK), Encrypt+SetNX ran
+// exactly once, and the 32-byte AES key is derived (caKey nil, signer wired).
+func TestNewIssuerWithRemoteSigner_FirstBoot_GeneratesWrapsAndStoresDEK(t *testing.T) {
 	dir := t.TempDir()
 	certPath, _, err := testutil.WriteTestCA(dir)
 	if err != nil {
 		t.Fatalf("WriteTestCA: %v", err)
 	}
-	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
+	store := &inMemoryDEKStore{}
+	k := identityKMS()
 
-	iss, err := NewIssuerWithRemoteSigner(certPath, stub)
+	iss, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
 	if err != nil {
 		t.Fatalf("NewIssuerWithRemoteSigner: %v", err)
 	}
@@ -227,39 +329,55 @@ func TestNewIssuerWithRemoteSigner_HappyPath(t *testing.T) {
 	if len(iss.aesKey) != 32 {
 		t.Errorf("aesKey length = %d, want 32", len(iss.aesKey))
 	}
+	// The store must hold the WRAPPED DEK (KMS ciphertext), never the raw key.
+	if store.blob == nil {
+		t.Fatal("first boot must persist the wrapped DEK in the store")
+	}
+	if !bytes.HasPrefix(store.blob, []byte(wrapPrefix)) {
+		t.Error("persisted blob must be the KMS-wrapped DEK, not raw key material")
+	}
+	if store.setCalls != 1 {
+		t.Errorf("SetWrappedDEKIfAbsent calls = %d, want 1", store.setCalls)
+	}
 }
 
-// TestNewIssuerWithRemoteSigner_AESKeyDeterministic verifies the AES key
-// derivation is purely a function of the CA cert raw bytes — two
-// constructions over the same cert produce the same key (so a restart can
-// still decrypt the existing Redis cache).
-func TestNewIssuerWithRemoteSigner_AESKeyDeterministic(t *testing.T) {
+// TestNewIssuerWithRemoteSigner_SubsequentBoot_ReusesStoredDEK pins the
+// restart / second-instance path: a wrapped DEK already exists, so the issuer
+// unwraps it (no generate, no SETNX) and derives the SAME AES key as the
+// instance that first created it — so cached leaf keys survive restart.
+func TestNewIssuerWithRemoteSigner_SubsequentBoot_ReusesStoredDEK(t *testing.T) {
 	dir := t.TempDir()
 	certPath, _, err := testutil.WriteTestCA(dir)
 	if err != nil {
 		t.Fatalf("WriteTestCA: %v", err)
 	}
-	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
+	store := &inMemoryDEKStore{}
+	k := identityKMS()
 
-	iss1, err := NewIssuerWithRemoteSigner(certPath, stub)
+	first, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
 	if err != nil {
-		t.Fatalf("NewIssuerWithRemoteSigner #1: %v", err)
+		t.Fatalf("first boot: %v", err)
 	}
-	iss2, err := NewIssuerWithRemoteSigner(certPath, stub)
+	// Second boot over the SAME store must NOT generate/persist again.
+	store.setCalls = 0
+	second, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
 	if err != nil {
-		t.Fatalf("NewIssuerWithRemoteSigner #2: %v", err)
+		t.Fatalf("second boot: %v", err)
 	}
-	if string(iss1.aesKey) != string(iss2.aesKey) {
-		t.Error("AES key must be deterministic per CA cert (so caches survive restart)")
+	if store.setCalls != 0 {
+		t.Errorf("subsequent boot must not SETNX again; setCalls = %d", store.setCalls)
+	}
+	if !bytes.Equal(first.aesKey, second.aesKey) {
+		t.Error("subsequent boot must derive the same AES key (cached leaf keys must survive restart)")
 	}
 }
 
-// TestNewIssuerWithRemoteSigner_DifferentCertsYieldDifferentKeys — when
-// the operator rotates the CA, the AES key MUST change so the old
-// ciphertexts can't be re-used. This is the binding behaviour the
-// docstring promises.
-func TestNewIssuerWithRemoteSigner_DifferentCertsYieldDifferentKeys(t *testing.T) {
+// TestNewIssuerWithRemoteSigner_KeyIndependentOfCACert is the core security
+// assertion for F-0019: the cache AES key must NOT be a function of the
+// (public) CA cert. Two issuers sharing the same DEK store but DIFFERENT CA
+// certs MUST derive the SAME key — proving the key comes from the
+// KMS-managed DEK, so the published CA cert grants no decryption power.
+func TestNewIssuerWithRemoteSigner_KeyIndependentOfCACert(t *testing.T) {
 	dirA := t.TempDir()
 	certA, _, err := testutil.WriteTestCA(dirA)
 	if err != nil {
@@ -270,19 +388,53 @@ func TestNewIssuerWithRemoteSigner_DifferentCertsYieldDifferentKeys(t *testing.T
 	if err != nil {
 		t.Fatalf("WriteTestCA B: %v", err)
 	}
-	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
+	store := &inMemoryDEKStore{}
+	k := identityKMS()
 
-	issA, err := NewIssuerWithRemoteSigner(certA, stub)
+	issA, err := NewIssuerWithRemoteSigner(context.Background(), certA, newRemoteStub(t), store, k, k)
 	if err != nil {
-		t.Fatalf("NewIssuerWithRemoteSigner A: %v", err)
+		t.Fatalf("issuer A: %v", err)
 	}
-	issB, err := NewIssuerWithRemoteSigner(certB, stub)
+	issB, err := NewIssuerWithRemoteSigner(context.Background(), certB, newRemoteStub(t), store, k, k)
 	if err != nil {
-		t.Fatalf("NewIssuerWithRemoteSigner B: %v", err)
+		t.Fatalf("issuer B: %v", err)
 	}
-	if string(issA.aesKey) == string(issB.aesKey) {
-		t.Error("different CA certs MUST yield different AES keys (rotation safety)")
+	if !bytes.Equal(issA.aesKey, issB.aesKey) {
+		t.Error("AES key must depend ONLY on the KMS DEK, not on the CA cert (F-0019)")
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_SETNXRaceLost_ReusesWinnerDEK pins the
+// multi-instance race: this instance generated a DEK but lost the SETNX, so
+// it must discard its own DEK, re-read the winner's wrapped blob, and derive
+// the winner's AES key — so all instances converge.
+func TestNewIssuerWithRemoteSigner_SETNXRaceLost_ReusesWinnerDEK(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, err := testutil.WriteTestCA(dir)
+	if err != nil {
+		t.Fatalf("WriteTestCA: %v", err)
+	}
+	k := identityKMS()
+
+	// The "winner" wrapped a known DEK; derive the AES key it would produce
+	// by booting an issuer that simply reads that blob.
+	winnerDEK := bytes.Repeat([]byte{0x5a}, dekLen)
+	winnerWrapped, _ := k.Encrypt(context.Background(), winnerDEK)
+	refStore := &inMemoryDEKStore{blob: winnerWrapped}
+	ref, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), refStore, k, k)
+	if err != nil {
+		t.Fatalf("reference boot: %v", err)
+	}
+
+	// This instance starts empty, generates its own DEK, but loses the race —
+	// the winner's blob is installed and SetNX reports won=false.
+	raceStore := &inMemoryDEKStore{forceLostRace: true, raceWinnerBlob: winnerWrapped}
+	loser, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), raceStore, k, k)
+	if err != nil {
+		t.Fatalf("race-lost boot: %v", err)
+	}
+	if !bytes.Equal(loser.aesKey, ref.aesKey) {
+		t.Error("after losing SETNX, the instance must adopt the winner's DEK (convergence)")
 	}
 }
 
@@ -292,7 +444,7 @@ func TestNewIssuerWithRemoteSigner_DifferentCertsYieldDifferentKeys(t *testing.T
 func TestNewIssuerWithRemoteSigner_BadCertPath(t *testing.T) {
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
-	_, err := NewIssuerWithRemoteSigner("/nonexistent/ca.pem", stub)
+	_, err := NewIssuerWithRemoteSigner(context.Background(), "/nonexistent/ca.pem", stub, &inMemoryDEKStore{}, identityKMS(), identityKMS())
 	if err == nil {
 		t.Fatal("expected error for missing CA file")
 	}
@@ -311,7 +463,7 @@ func TestNewIssuerWithRemoteSigner_BadCertPEM(t *testing.T) {
 	}
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
-	_, err := NewIssuerWithRemoteSigner(certPath, stub)
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, stub, &inMemoryDEKStore{}, identityKMS(), identityKMS())
 	if err == nil || !strings.Contains(err.Error(), "no CERTIFICATE PEM block") {
 		t.Errorf("want 'no CERTIFICATE PEM block' error; got %v", err)
 	}
@@ -328,7 +480,7 @@ func TestNewIssuerWithRemoteSigner_WrongCertPEMType(t *testing.T) {
 	}
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
-	_, err := NewIssuerWithRemoteSigner(certPath, stub)
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, stub, &inMemoryDEKStore{}, identityKMS(), identityKMS())
 	if err == nil || !strings.Contains(err.Error(), "no CERTIFICATE PEM block") {
 		t.Errorf("want PEM-type rejection; got %v", err)
 	}
@@ -345,7 +497,7 @@ func TestNewIssuerWithRemoteSigner_CertParseFails(t *testing.T) {
 	}
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
-	_, err := NewIssuerWithRemoteSigner(certPath, stub)
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, stub, &inMemoryDEKStore{}, identityKMS(), identityKMS())
 	if err == nil || !strings.Contains(err.Error(), "parse CA cert") {
 		t.Errorf("want 'parse CA cert' error; got %v", err)
 	}
@@ -374,7 +526,7 @@ func TestSignCert_UsesRemoteSigner(t *testing.T) {
 	}
 	stub := &stubSigner{pub: &caKey.PublicKey, caKey: caKey}
 
-	iss, err := NewIssuerWithRemoteSigner(certPath, stub)
+	iss, err := NewIssuerWithRemoteSigner(context.Background(), certPath, stub, &inMemoryDEKStore{}, identityKMS(), identityKMS())
 	if err != nil {
 		t.Fatalf("NewIssuerWithRemoteSigner: %v", err)
 	}
@@ -422,7 +574,7 @@ func TestSignCert_RemoteSignerError(t *testing.T) {
 		caKey:   caKey,
 		signErr: errSimulatedKMSDown,
 	}
-	iss, err := NewIssuerWithRemoteSigner(certPath, stub)
+	iss, err := NewIssuerWithRemoteSigner(context.Background(), certPath, stub, &inMemoryDEKStore{}, identityKMS(), identityKMS())
 	if err != nil {
 		t.Fatalf("NewIssuerWithRemoteSigner: %v", err)
 	}
@@ -435,33 +587,207 @@ func TestSignCert_RemoteSignerError(t *testing.T) {
 	}
 }
 
-// TestHkdfFromBytes_DeterministicAndKeyStreamLength: hkdfFromBytes is the
-// shared helper for NewIssuerWithRemoteSigner; verify it produces a
-// deterministic, sufficiently-long keystream so the consumer can pull a
-// full 32-byte AES key.
-func TestHkdfFromBytes_DeterministicAndKeyStreamLength(t *testing.T) {
-	seed := []byte("a-test-seed-of-arbitrary-length-1234567890")
-	r1 := hkdfFromBytes(seed)
-	r2 := hkdfFromBytes(seed)
-	buf1 := make([]byte, 32)
-	if _, err := io.ReadFull(r1, buf1); err != nil {
-		t.Fatalf("read r1: %v", err)
+// --- cert-cache DEK bootstrap: fail-closed error paths ---
+
+// TestBootstrap_NilStore_FailClosed: remote mode without a Redis-backed DEK
+// store must error and name redis.addrs — NEVER silently derive a key.
+func TestNewIssuerWithRemoteSigner_NilStore_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := identityKMS()
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), nil, k, k)
+	if err == nil || !strings.Contains(err.Error(), "redis.addrs") {
+		t.Errorf("nil store must fail-closed naming redis.addrs; got %v", err)
 	}
-	buf2 := make([]byte, 32)
-	if _, err := io.ReadFull(r2, buf2); err != nil {
-		t.Fatalf("read r2: %v", err)
+}
+
+// TestNewIssuerWithRemoteSigner_NilEncryptor_FailClosed: a missing KMS
+// encrypt command must error and name ca.kms.encryptCommand.
+func TestNewIssuerWithRemoteSigner_NilEncryptor_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), &inMemoryDEKStore{}, nil, identityKMS())
+	if err == nil || !strings.Contains(err.Error(), "encryptCommand") {
+		t.Errorf("nil encryptor must fail-closed naming ca.kms.encryptCommand; got %v", err)
 	}
-	if string(buf1) != string(buf2) {
-		t.Error("hkdfFromBytes must be deterministic for the same seed")
+}
+
+// TestNewIssuerWithRemoteSigner_NilDecryptor_FailClosed: a missing KMS
+// decrypt command must error and name ca.kms.command.
+func TestNewIssuerWithRemoteSigner_NilDecryptor_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), &inMemoryDEKStore{}, identityKMS(), nil)
+	if err == nil || !strings.Contains(err.Error(), "ca.kms.command") {
+		t.Errorf("nil decryptor must fail-closed naming ca.kms.command; got %v", err)
 	}
-	// Different seed must produce different keystream.
-	r3 := hkdfFromBytes([]byte("other-seed"))
-	buf3 := make([]byte, 32)
-	if _, err := io.ReadFull(r3, buf3); err != nil {
-		t.Fatalf("read r3: %v", err)
+}
+
+// TestNewIssuerWithRemoteSigner_KMSEncryptFails_FailClosed: when wrapping the
+// fresh DEK fails (e.g. missing kms:Encrypt grant), startup must abort with an
+// error naming encryptCommand and kms:Encrypt — not fall back to a CA key.
+func TestNewIssuerWithRemoteSigner_KMSEncryptFails_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := &fakeKMS{
+		enc: func([]byte) ([]byte, error) { return nil, errors.New("AccessDenied: kms:Encrypt") },
+		dec: func(b []byte) ([]byte, error) { return b, nil },
 	}
-	if string(buf1) == string(buf3) {
-		t.Error("different seeds must produce different keystream")
+	iss, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), &inMemoryDEKStore{}, k, k)
+	if err == nil {
+		t.Fatal("KMS encrypt failure must abort startup")
+	}
+	if iss != nil {
+		t.Error("must return nil Issuer (no CA-derived fallback)")
+	}
+	if !strings.Contains(err.Error(), "encryptCommand") || !strings.Contains(err.Error(), "kms:Encrypt") {
+		t.Errorf("err must name encryptCommand + kms:Encrypt; got %q", err)
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_KMSDecryptFails_FailClosed: on a subsequent
+// boot, if unwrapping the stored DEK fails (e.g. missing kms:Decrypt grant),
+// startup must abort naming ca.kms.command + kms:Decrypt.
+func TestNewIssuerWithRemoteSigner_KMSDecryptFails_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := &fakeKMS{
+		enc: func(b []byte) ([]byte, error) { return b, nil },
+		dec: func([]byte) ([]byte, error) { return nil, errors.New("AccessDenied: kms:Decrypt") },
+	}
+	// Pre-seed a stored blob so the GET-found → Decrypt path runs.
+	store := &inMemoryDEKStore{blob: bytes.Repeat([]byte{1}, dekLen)}
+	iss, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err == nil {
+		t.Fatal("KMS decrypt failure must abort startup")
+	}
+	if iss != nil {
+		t.Error("must return nil Issuer (no CA-derived fallback)")
+	}
+	if !strings.Contains(err.Error(), "ca.kms.command") || !strings.Contains(err.Error(), "kms:Decrypt") {
+		t.Errorf("err must name ca.kms.command + kms:Decrypt; got %q", err)
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_DEKWrongLength_FailClosed: a KMS decrypt that
+// returns a malformed (non-32-byte) DEK must be rejected, not silently used.
+func TestNewIssuerWithRemoteSigner_DEKWrongLength_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := &fakeKMS{
+		enc: func(b []byte) ([]byte, error) { return b, nil },
+		dec: func([]byte) ([]byte, error) { return []byte("too-short"), nil },
+	}
+	store := &inMemoryDEKStore{blob: bytes.Repeat([]byte{1}, dekLen)}
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err == nil || !strings.Contains(err.Error(), "malformed key") {
+		t.Errorf("malformed DEK length must fail-closed; got %v", err)
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_RedisGetError_FailClosed: a Redis transport
+// failure on the initial GET must NOT be treated as "absent" — it aborts
+// startup so we never generate a divergent DEK on a transient blip.
+func TestNewIssuerWithRemoteSigner_RedisGetError_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := identityKMS()
+	store := &inMemoryDEKStore{getErr: errors.New("connection refused")}
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err == nil || !strings.Contains(err.Error(), "read wrapped cert-cache DEK") {
+		t.Errorf("redis GET error must fail-closed; got %v", err)
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_SETNXError_FailClosed: a Redis failure on the
+// create-once write aborts startup with a SETNX-naming error.
+func TestNewIssuerWithRemoteSigner_SETNXError_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := identityKMS()
+	store := &inMemoryDEKStore{setErr: errors.New("connection reset")}
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err == nil || !strings.Contains(err.Error(), "SETNX") {
+		t.Errorf("redis SETNX error must fail-closed; got %v", err)
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_ReGetAfterRaceError_FailClosed: losing the
+// SETNX race and then failing the re-GET must abort, not proceed with a DEK
+// nobody else can read.
+func TestNewIssuerWithRemoteSigner_ReGetAfterRaceError_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := identityKMS()
+	store := &inMemoryDEKStore{forceLostRace: true, raceWinnerBlob: nil, reGetErr: errors.New("blip")}
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err == nil || !strings.Contains(err.Error(), "re-read winner") {
+		t.Errorf("re-GET error after race must fail-closed; got %v", err)
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_DEKVanishedAfterRace_FailClosed: we lose the
+// SETNX race but the winner's blob is then absent on re-GET (e.g. it expired
+// or was deleted in the gap). Rather than proceed with our own discarded DEK,
+// startup must abort and ask for a retry.
+func TestNewIssuerWithRemoteSigner_DEKVanishedAfterRace_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	k := identityKMS()
+	// forceLostRace with a nil winner blob → re-GET reports absent.
+	store := &inMemoryDEKStore{forceLostRace: true, raceWinnerBlob: nil}
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err == nil || !strings.Contains(err.Error(), "vanished") {
+		t.Errorf("absent winner blob after race must fail-closed; got %v", err)
+	}
+}
+
+// TestNewIssuerWithRemoteSigner_DEKEntropyFails_FailClosed drives the
+// io.ReadFull error arm for fresh-DEK generation via the dekRandReader seam.
+func TestNewIssuerWithRemoteSigner_DEKEntropyFails_FailClosed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	orig := dekRandReader
+	dekRandReader = failingReader{err: errors.New("entropy starved")}
+	defer func() { dekRandReader = orig }()
+
+	k := identityKMS()
+	_, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), &inMemoryDEKStore{}, k, k)
+	if err == nil || !strings.Contains(err.Error(), "generate cert-cache DEK") {
+		t.Errorf("DEK entropy failure must fail-closed; got %v", err)
+	}
+}
+
+// TestRemoteIssuer_CacheRoundTripUnderDEKKey proves the bootstrapped DEK
+// actually drives a working AES-GCM round-trip: a leaf key encrypted by one
+// remote issuer decrypts under a second remote issuer that re-derives the
+// SAME DEK from the shared store (the cross-restart cache-hit invariant).
+func TestRemoteIssuer_CacheRoundTripUnderDEKKey(t *testing.T) {
+	dir := t.TempDir()
+	certPath, _, _ := testutil.WriteTestCA(dir)
+	store := &inMemoryDEKStore{}
+	k := identityKMS()
+
+	a, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err != nil {
+		t.Fatalf("issuer A: %v", err)
+	}
+	leaf, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ct, nonce, err := a.EncryptPrivateKey(leaf)
+	if err != nil {
+		t.Fatalf("EncryptPrivateKey: %v", err)
+	}
+
+	b, err := NewIssuerWithRemoteSigner(context.Background(), certPath, newRemoteStub(t), store, k, k)
+	if err != nil {
+		t.Fatalf("issuer B: %v", err)
+	}
+	got, err := b.DecryptPrivateKey(ct, nonce)
+	if err != nil {
+		t.Fatalf("DecryptPrivateKey under re-derived DEK: %v", err)
+	}
+	if !got.Equal(leaf) {
+		t.Error("round-tripped leaf key must match under the shared DEK-derived AES key")
 	}
 }
 

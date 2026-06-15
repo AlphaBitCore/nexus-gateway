@@ -43,7 +43,7 @@ func TestListSessions(t *testing.T) {
 		t.Fatalf("anon list: err=%v code=%d body=%s", err, rec.Code, rec.Body.String())
 	}
 
-	// With a userId → query scoped to that user; the row is returned.
+	// With a userId → query scoped to that user.
 	mock.ExpectQuery(`SELECT id, title, "updatedAt" FROM "AssistantSession" WHERE "userId" = \$1`).
 		WithArgs("alice").
 		WillReturnRows(pgxmock.NewRows([]string{"id", "title", "updatedAt"}).AddRow("s1", "hi", time.Now()))
@@ -85,10 +85,11 @@ func TestDeleteSession(t *testing.T) {
 		t.Fatalf("blank id code=%d", rec.Code)
 	}
 
-	// Success → 204.
+	// Success → 204 (the deletion also lands a tombstone on the audit chain).
 	mock.ExpectQuery(`DELETE FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2 RETURNING "spillRef"`).
 		WithArgs("s1", "alice").
 		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow([]byte("null")))
+	expectChatChainAppend(mock, "s1", "alice")
 	c2, rec2 := ctxWithUser(e, http.MethodDelete, "/s", "alice")
 	c2.SetParamNames("id")
 	c2.SetParamValues("s1")
@@ -128,10 +129,12 @@ func TestChatStreamMultiTurnContinuesOwnedSession(t *testing.T) {
 	// session load (this test's continuation), session save (post-turn).
 	mock.ExpectQuery(`SELECT name, type, body FROM "AssistantMemory" WHERE "userId" = \$1 ORDER BY name`).
 		WithArgs("alice").WillReturnRows(pgxmock.NewRows([]string{"name", "type", "body"}))
-	mock.ExpectQuery(`SELECT "spillRef" FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2`).
-		WithArgs("s1", "alice").WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(ref))
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2`).
+		WithArgs("s1", "alice").WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(ref, rowT, rowT))
+	expectChatChainAppend(mock, "s1", "alice")
 	mock.ExpectExec(`INSERT INTO "AssistantSession"`).
-		WithArgs("s1", "alice", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("s1", "alice", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	// The session id is now a path param; continuing an owned id Loads its transcript.
@@ -141,6 +144,49 @@ func TestChatStreamMultiTurnContinuesOwnedSession(t *testing.T) {
 	}
 	if !strings.Contains(out, "All healthy.") {
 		t.Fatalf("expected the streamed reply, got:\n%s", out)
+	}
+}
+
+// TestStartChatSessionIDIsUserScoped is the F-0267 isolation assertion: the
+// client-supplied session id is resolved ONLY within the caller's own userId
+// namespace, so two different users picking the SAME id ("shared-id") can never
+// reach each other's session. We drive a turn as "bob" continuing id "shared-id"
+// and assert every DB op is scoped WHERE "userId" = 'bob' — a query bound to any
+// other user (e.g. a prior "alice" session with the same id) would fail the
+// pgxmock arg match. This is why a server-generated UUID is unnecessary for
+// safety: collision across users is structurally impossible.
+func TestStartChatSessionIDIsUserScoped(t *testing.T) {
+	mockGW := mockUpstream(t)
+	defer mockGW.Close()
+	mock, _ := pgxmock.NewPool()
+	defer mock.Close()
+	mock.MatchExpectationsInOrder(false)
+
+	prior, _ := json.Marshal([]agent.Message{agent.TextMessage(agent.RoleUser, "bob's earlier question")})
+	spill := &fakeSpill{objs: map[string][]byte{"shared-id:transcript": prior}}
+	ref, _ := json.Marshal(audit.SpillRef{Backend: "fake", Key: "shared-id:transcript"})
+
+	h := New(Config{AIGatewayURL: mockGW.URL, CPBaseURL: mockGW.URL, SystemVK: "nvk_test", Model: "m", Pool: mock, Spill: spill})
+
+	// All three turn DB ops MUST bind userId='bob'. The session load+save bind
+	// (id='shared-id', userId='bob') — never 'alice', proving cross-user
+	// isolation despite the identical client-supplied id.
+	mock.ExpectQuery(`SELECT name, type, body FROM "AssistantMemory" WHERE "userId" = \$1 ORDER BY name`).
+		WithArgs("bob").WillReturnRows(pgxmock.NewRows([]string{"name", "type", "body"}))
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2`).
+		WithArgs("shared-id", "bob").WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(ref, rowT, rowT))
+	expectChatChainAppend(mock, "shared-id", "bob")
+	mock.ExpectExec(`INSERT INTO "AssistantSession"`).
+		WithArgs("shared-id", "bob", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	_, out := driveTurnSID(t, h, "bob", "shared-id", `{"message":"is it mine?"}`)
+	if !strings.Contains(out, `"sessionId":"shared-id"`) {
+		t.Fatalf("done must echo the user-scoped session id, got:\n%s", out)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("DB ops were not all userId='bob'-scoped (cross-user isolation broken): %v", err)
 	}
 }
 
@@ -604,15 +650,15 @@ func TestGetSession(t *testing.T) {
 	defer mock.Close()
 	prior, _ := json.Marshal([]agent.Message{
 		agent.TextMessage(agent.RoleUser, "is it healthy?"),
-		agent.TextMessage(agent.RoleAssistant, "All healthy."),
+		{Role: agent.RoleAssistant, Blocks: []agent.Block{{Type: agent.BlockText, Text: "All healthy."}}},
 	})
 	spill := &fakeSpill{objs: map[string][]byte{"s1:transcript": prior}}
 	ref, _ := json.Marshal(audit.SpillRef{Backend: "fake", Key: "s1:transcript"})
 	h := New(Config{Pool: mock, Spill: spill})
 
-	mock.ExpectQuery(`SELECT "spillRef" FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2`).
+	mock.ExpectQuery(`SELECT "spillRef", "createdAt", "updatedAt" FROM "AssistantSession" WHERE id = \$1 AND "userId" = \$2`).
 		WithArgs("s1", "alice").
-		WillReturnRows(pgxmock.NewRows([]string{"spillRef"}).AddRow(ref))
+		WillReturnRows(pgxmock.NewRows([]string{"spillRef", "createdAt", "updatedAt"}).AddRow(ref, rowT, rowT))
 	c, rec := ctxWithUser(e, http.MethodGet, "/s", "alice")
 	c.SetParamNames("id")
 	c.SetParamValues("s1")
@@ -623,7 +669,6 @@ func TestGetSession(t *testing.T) {
 	if !strings.Contains(body, "is it healthy?") || !strings.Contains(body, `"role":"assistant"`) {
 		t.Fatalf("transcript not rendered: %s", body)
 	}
-
 	// A non-owned / missing id → 404.
 	mock.ExpectQuery(`SELECT "spillRef"`).WithArgs("s2", "alice").WillReturnError(pgx.ErrNoRows)
 	c2, rec2 := ctxWithUser(e, http.MethodGet, "/s", "alice")
@@ -653,5 +698,25 @@ func TestDeleteSessionNoPool(t *testing.T) {
 	_ = h.DeleteSession(c)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no-pool delete code=%d", rec.Code)
+	}
+}
+
+// TestGetSessionCarriesWorkflowArtifactIDs pins the card-survival contract
+// (E91 S9): runs and freeze reviews stamped on the assistant message at turn
+// end ride the reload payload, so the web re-mounts their cards without
+// scraping prose — including a card-only turn whose text is empty.
+// TestTurnArtifacts_NoteRunDedupes: OnRunStarted notes the run id the moment
+// it exists and lift() notes it again at tool end — the persisted stamp must
+// carry it once.
+// TestLiftFileArtifact: a successful write_file surfaces a `file` event with
+// the download path; an errored call and other tools surface nothing.
+func TestLiftFileArtifact(t *testing.T) {
+	events := map[string]int{}
+	pub := func(ev string, _ any) { events[ev]++ }
+	liftFileArtifact("write_file", []byte("Saved file f-1 ("+assistantFilesPath+"f-1)"), false, pub)
+	liftFileArtifact("write_file", []byte("Saved file f-2"), true, pub)
+	liftFileArtifact("observe_health", []byte("ok"), false, pub)
+	if events["file"] != 1 {
+		t.Fatalf("events = %v, want exactly one file event", events)
 	}
 }

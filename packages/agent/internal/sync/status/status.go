@@ -17,6 +17,12 @@ type InterceptionHealth struct {
 	ConnectionsTotal int64
 	ActiveSessions   int
 	LastFlowAt       time.Time
+	// SelfReported + DegradedReason mirror platform.InterceptionHealth.
+	// When SelfReported is true the collector trusts DegradedReason
+	// (empty = healthy) instead of the connection-count heuristic —
+	// see checkInterceptionHealth and the platform-side field docs.
+	SelfReported   bool
+	DegradedReason string
 }
 
 // InterceptionGracePeriod is the post-startup window during which a

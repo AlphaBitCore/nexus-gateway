@@ -23,7 +23,6 @@ import (
 // devices succeeded / failed.
 //
 //   POST /api/admin/device-groups/:id/force-refresh
-//   POST /api/admin/device-groups/:id/rotate-cert
 //
 // Diag mode is intentionally NOT bulk-by-group at this layer — the
 // existing diagModeApi.bulk already accepts a filter (with the
@@ -134,53 +133,6 @@ func (h *Handler) BulkForceRefreshGroup(c echo.Context) error {
 	}
 	return c.JSON(status, bulkActionResponse{
 		GroupID: id, Action: "force-refresh",
-		Total: len(members), Succeeded: succ, Failed: fail,
-		Results: results,
-	})
-}
-
-// BulkRotateCertGroup handles POST /api/admin/device-groups/:id/rotate-cert.
-// IAM: admin:device-group.update (write-level; same rationale as force-refresh).
-func (h *Handler) BulkRotateCertGroup(c echo.Context) error {
-	id := c.Param("id")
-	if id == "" {
-		return c.JSON(http.StatusBadRequest, errJSON("group id is required", "validation_error", ""))
-	}
-	g, err := h.agents.GetDeviceGroup(c.Request().Context(), id)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", "INTERNAL_ERROR"))
-	}
-	if g == nil {
-		return c.JSON(http.StatusNotFound, errJSON("Group not found", "not_found", "NOT_FOUND"))
-	}
-	members, err := h.agents.MembersOfGroup(c.Request().Context(), id)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", "INTERNAL_ERROR"))
-	}
-
-	results := runBulkFanout(c.Request().Context(), members, func(ctx context.Context, deviceID string) error {
-		if h.hub == nil {
-			return errors.New("hub not configured")
-		}
-		_, hubErr := h.hub.RotateAgentCert(ctx, deviceID)
-		if errors.Is(hubErr, hub.ErrNotConfigured) {
-			return errors.New("hub not configured")
-		}
-		return hubErr
-	})
-	succ, fail := summarize(results)
-
-	ae := audit.EntryFor(c, iam.ResourceDeviceGroup, iam.VerbUpdate)
-	ae.EntityID = id
-	ae.AfterState = map[string]any{"action": "rotate-cert", "total": len(members), "succeeded": succ, "failed": fail}
-	h.audit.LogObserved(c.Request().Context(), ae)
-
-	status := http.StatusOK
-	if fail > 0 && succ > 0 {
-		status = http.StatusMultiStatus
-	}
-	return c.JSON(status, bulkActionResponse{
-		GroupID: id, Action: "rotate-cert",
 		Total: len(members), Succeeded: succ, Failed: fail,
 		Results: results,
 	})

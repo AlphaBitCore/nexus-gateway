@@ -62,6 +62,9 @@ type SemanticCacheHandlerDeps struct {
 	// AI GW's /internal/semantic-prewarm handler. Empty string disables
 	// prewarm forwarding (returns 503 with a clear error message).
 	AIGatewayURL string
+	// AIGatewayInternalToken is the shared internal-service bearer token
+	// presented on the CP→ai-gateway /internal/semantic-prewarm call.
+	AIGatewayInternalToken string
 	// Poison is the negative-feedback poison list backend.
 	// When nil, the feedback POST endpoint returns 503 with a descriptive message.
 	Poison PoisonAdder
@@ -70,12 +73,13 @@ type SemanticCacheHandlerDeps struct {
 // SemanticCacheHandler owns /api/admin/semantic-cache/* routes.
 // Structural mirror of the AI Guard handler (governance/aiguard/handler/).
 type SemanticCacheHandler struct {
-	store        SemanticCacheStore
-	hub          SemanticCacheHubInvalidator
-	audit        *audit.Writer
-	logger       *slog.Logger
-	aiGatewayURL string      // internal AI GW base URL for prewarm forwarding
-	poison       PoisonAdder // may be nil when Redis unavailable
+	store          SemanticCacheStore
+	hub            SemanticCacheHubInvalidator
+	audit          *audit.Writer
+	logger         *slog.Logger
+	aiGatewayURL   string      // internal AI GW base URL for prewarm forwarding
+	aiGatewayToken string      // internal-service bearer for prewarm forwarding
+	poison         PoisonAdder // may be nil when Redis unavailable
 }
 
 // NewSemanticCacheHandler constructs the handler from its narrow deps.
@@ -89,12 +93,13 @@ func NewSemanticCacheHandler(d SemanticCacheHandlerDeps) *SemanticCacheHandler {
 		logger = slog.Default()
 	}
 	return &SemanticCacheHandler{
-		store:        d.Store,
-		hub:          d.Hub,
-		audit:        d.Audit,
-		logger:       logger,
-		aiGatewayURL: d.AIGatewayURL,
-		poison:       d.Poison,
+		store:          d.Store,
+		hub:            d.Hub,
+		audit:          d.Audit,
+		logger:         logger,
+		aiGatewayURL:   d.AIGatewayURL,
+		aiGatewayToken: d.AIGatewayInternalToken,
+		poison:         d.Poison,
 	}
 }
 
@@ -242,20 +247,16 @@ func (h *SemanticCacheHandler) PutConfig(c echo.Context) error {
 	// registerAGSemanticCacheConfig handler sees an empty blob, calls
 	// IndexLifecycle.OnConfigSnapshot with Enabled=false, and L2 stays
 	// disabled fleet-wide — even when this admin row has enabled=true.
-	// Propagation failure is logged but not escalated to 502 — the DB
-	// write succeeded and the reconcile job recovers within 60s.
-	// Mirrors time_sensitive.go:301 (pushTimeSensitiveToHub).
-	if h.hub != nil {
-		if _, hubErr := h.hub.NotifyConfigChange(c.Request().Context(), hub.ConfigChangeRequest{
-			ThingType: "ai-gateway",
-			ConfigKey: configkey.SemanticCacheConfig,
-			State:     saved,
-			ActorID:   actor.UserID,
-			ActorName: actor.Name,
-		}); hubErr != nil {
-			h.logger.Warn("semantic-cache: hub push failed (reconcile job will recover)",
-				"error", hubErr)
-		}
+	// A dropped push is escalated to HTTP 502 like cache.go AND, because
+	// semantic_cache.config is now in the configreconcile content-diff watch
+	// set, healed within one reconcile cycle if the admin does
+	// not retry. Both this push and the reconcile SourceLoader project through
+	// SemanticCacheConfigRow.WireState (drops the wall-clock UpdatedAt/UpdatedBy
+	// that Save and Get stamp from different clocks), so the diff is
+	// apples-to-apples and never spuriously heals on save.
+	if _, hubErr := hub.PushTypeA(c.Request().Context(), h.hub, "ai-gateway", configkey.SemanticCacheConfig, saved.WireState(), hub.Actor{ID: actor.UserID, Name: actor.Name}); hubErr != nil {
+		h.logger.Error("semantic-cache: hub push failed", "error", hubErr)
+		return hub.RespondPropagationFailure(c, hubErr)
 	}
 
 	h.emitAudit(c, audit.EntryFor(c, iam.ResourceSemanticCache, iam.VerbUpdate), saved)

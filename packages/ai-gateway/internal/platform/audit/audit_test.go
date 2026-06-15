@@ -9,6 +9,7 @@ import (
 
 	"log/slog"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
@@ -422,6 +423,196 @@ func TestRecordToMessage_BlockingRule(t *testing.T) {
 		decoded.PackVersion != "1.0.0" ||
 		decoded.RuleID != "violence-kill" {
 		t.Errorf("BlockingRule payload = %+v, want (content-safety, 1.0.0, violence-kill)", decoded)
+	}
+}
+
+// consumerView mirrors the subset of the Hub consumer-side
+// TrafficEventMessage (packages/nexus-hub/internal/observability/consumer/message.go)
+// that this fix is about. The JSON tags MUST match the wire tags exactly so a
+// round-trip through json proves the consumer reads the TYPED columns rather
+// than digging into the details JSONB. Kept local to avoid a cross-module
+// import of the Hub package.
+type consumerView struct {
+	RequestHookDecision    string           `json:"requestHookDecision,omitempty"`
+	RequestHookReason      string           `json:"requestHookReason,omitempty"`
+	RequestHookReasonCode  string           `json:"requestHookReasonCode,omitempty"`
+	ResponseHookDecision   string           `json:"responseHookDecision,omitempty"`
+	ResponseHookReason     string           `json:"responseHookReason,omitempty"`
+	ResponseHookReasonCode string           `json:"responseHookReasonCode,omitempty"`
+	RequestBlockingRule    *json.RawMessage `json:"requestBlockingRule,omitempty"`
+	ResponseBlockingRule   *json.RawMessage `json:"responseBlockingRule,omitempty"`
+}
+
+func marshalForConsumer(t *testing.T, msg *mq.TrafficEventMessage) consumerView {
+	t.Helper()
+	b, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal wire message: %v", err)
+	}
+	var cv consumerView
+	if err := json.Unmarshal(b, &cv); err != nil {
+		t.Fatalf("unmarshal into consumer view: %v", err)
+	}
+	return cv
+}
+
+// F-0057: a response-stage block must populate the TYPED response columns
+// (response_hook_reason / response_hook_reason_code / response_blocking_rule)
+// and must NOT pollute the request-stage blocking-rule column.
+func TestRecordToMessage_ResponseStageBlock(t *testing.T) {
+	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
+
+	rec := &Record{
+		RequestID:              "resp-block",
+		Timestamp:              time.Now(),
+		ResponseHookDecision:   string(decision.RejectHard),
+		ResponseHookReason:     "leaked secret in completion",
+		ResponseHookReasonCode: "PII_EGRESS",
+		BlockingRule: &rulepack.BlockingRule{
+			Pack:        "egress-dlp",
+			PackVersion: "2.1.0",
+			RuleID:      "secret-key",
+		},
+	}
+	msg := w.recordToMessage(rec)
+
+	if msg.ResponseHookReason != "leaked secret in completion" {
+		t.Errorf("ResponseHookReason = %q, want typed mapping", msg.ResponseHookReason)
+	}
+	if msg.ResponseHookReasonCode != "PII_EGRESS" {
+		t.Errorf("ResponseHookReasonCode = %q, want typed mapping", msg.ResponseHookReasonCode)
+	}
+	if msg.ResponseBlockingRule == nil {
+		t.Fatal("ResponseBlockingRule must be set for a response-stage block")
+	}
+	if msg.RequestBlockingRule != nil {
+		t.Errorf("RequestBlockingRule must be nil for a response-stage block; got %s",
+			string(*msg.RequestBlockingRule))
+	}
+	var decoded rulepack.BlockingRule
+	if err := json.Unmarshal(*msg.ResponseBlockingRule, &decoded); err != nil {
+		t.Fatalf("unmarshal ResponseBlockingRule: %v", err)
+	}
+	if decoded.Pack != "egress-dlp" || decoded.RuleID != "secret-key" {
+		t.Errorf("ResponseBlockingRule payload = %+v, want (egress-dlp, secret-key)", decoded)
+	}
+
+	// Spot-assert the Hub consumer reads the typed columns off the wire, not
+	// the details JSONB.
+	cv := marshalForConsumer(t, msg)
+	if cv.ResponseHookReason != "leaked secret in completion" || cv.ResponseHookReasonCode != "PII_EGRESS" {
+		t.Errorf("consumer view response reason/code = %q/%q, want typed values",
+			cv.ResponseHookReason, cv.ResponseHookReasonCode)
+	}
+	if cv.ResponseBlockingRule == nil {
+		t.Error("consumer view ResponseBlockingRule must be populated")
+	}
+	if cv.RequestBlockingRule != nil {
+		t.Error("consumer view RequestBlockingRule must be empty for a response-stage block")
+	}
+}
+
+// F-0057: a request-stage block routes to the request columns only; the
+// response-stage typed columns stay empty.
+func TestRecordToMessage_RequestStageBlock(t *testing.T) {
+	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
+
+	rec := &Record{
+		RequestID:      "req-block",
+		Timestamp:      time.Now(),
+		HookDecision:   string(decision.RejectHard),
+		HookReason:     "prompt contains banned phrase",
+		HookReasonCode: "PROMPT_BANNED",
+		BlockingRule: &rulepack.BlockingRule{
+			Pack:        "input-guard",
+			PackVersion: "1.2.0",
+			RuleID:      "banned-phrase",
+		},
+	}
+	msg := w.recordToMessage(rec)
+
+	if msg.RequestHookReason != "prompt contains banned phrase" || msg.RequestHookReasonCode != "PROMPT_BANNED" {
+		t.Errorf("request reason/code = %q/%q, want typed mapping",
+			msg.RequestHookReason, msg.RequestHookReasonCode)
+	}
+	if msg.RequestBlockingRule == nil {
+		t.Fatal("RequestBlockingRule must be set for a request-stage block")
+	}
+	if msg.ResponseBlockingRule != nil {
+		t.Errorf("ResponseBlockingRule must be nil for a request-stage block; got %s",
+			string(*msg.ResponseBlockingRule))
+	}
+	if msg.ResponseHookReason != "" || msg.ResponseHookReasonCode != "" {
+		t.Errorf("response typed columns must be empty for a request-stage block; got %q/%q",
+			msg.ResponseHookReason, msg.ResponseHookReasonCode)
+	}
+	var decoded rulepack.BlockingRule
+	if err := json.Unmarshal(*msg.RequestBlockingRule, &decoded); err != nil {
+		t.Fatalf("unmarshal RequestBlockingRule: %v", err)
+	}
+	if decoded.Pack != "input-guard" || decoded.RuleID != "banned-phrase" {
+		t.Errorf("RequestBlockingRule payload = %+v, want (input-guard, banned-phrase)", decoded)
+	}
+
+	cv := marshalForConsumer(t, msg)
+	if cv.RequestBlockingRule == nil {
+		t.Error("consumer view RequestBlockingRule must be populated")
+	}
+	if cv.ResponseBlockingRule != nil {
+		t.Error("consumer view ResponseBlockingRule must be empty for a request-stage block")
+	}
+}
+
+// F-0057: a BLOCK_SOFT response decision (decision="blocked"-equivalent soft
+// reject) also carries its rule attribution to the response column, not only
+// to details.
+func TestRecordToMessage_ResponseSoftBlockRoutesToResponseColumn(t *testing.T) {
+	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
+
+	rec := &Record{
+		RequestID:              "resp-soft",
+		Timestamp:              time.Now(),
+		ResponseHookDecision:   string(decision.BlockSoft),
+		ResponseHookReason:     "soft compliance flag on output",
+		ResponseHookReasonCode: "SOFT_FLAG",
+		BlockingRule: &rulepack.BlockingRule{
+			Pack:        "compliance",
+			PackVersion: "3.0.0",
+			RuleID:      "advisory-1",
+		},
+	}
+	msg := w.recordToMessage(rec)
+
+	if msg.ResponseBlockingRule == nil {
+		t.Fatal("ResponseBlockingRule must be set for a BLOCK_SOFT response decision")
+	}
+	if msg.RequestBlockingRule != nil {
+		t.Errorf("RequestBlockingRule must stay nil for a response soft block; got %s",
+			string(*msg.RequestBlockingRule))
+	}
+	cv := marshalForConsumer(t, msg)
+	if cv.ResponseHookReason != "soft compliance flag on output" {
+		t.Errorf("consumer view response reason = %q, want typed soft-block reason", cv.ResponseHookReason)
+	}
+}
+
+func TestIsBlockingDecision(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{string(decision.RejectHard), true},
+		{string(decision.BlockSoft), true},
+		{string(decision.Approve), false},
+		{string(decision.Modify), false},
+		{string(decision.Abstain), false},
+		{"", false},
+		{"BYPASSED", false},
+	}
+	for _, c := range cases {
+		if got := isBlockingDecision(c.in); got != c.want {
+			t.Errorf("isBlockingDecision(%q) = %v, want %v", c.in, got, c.want)
+		}
 	}
 }
 

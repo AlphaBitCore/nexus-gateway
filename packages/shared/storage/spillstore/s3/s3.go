@@ -5,10 +5,13 @@
 // — same date-prefix shape used by the localfs backend so retention sweeps
 // and operator inspection can scan a single day in one ListObjectsV2 page.
 //
-// The backend stamps every object with a SHA-256 of its content via the
-// per-object SSE checksum hash recorded as the `SHA256` checksum on the
-// returned `SpillRef`. SDK-side request signing handles both AWS and the
-// "anonymous + endpoint" path used by minio in dev.
+// On the server-side Put path the backend computes a SHA-256 of the
+// content and records it both as object metadata (`sha256`) and on the
+// returned `SpillRef`, so reads can verify integrity. The presigned-PUT
+// path (PresignPut, used by the agent) does NOT enforce SHA-256 at the
+// S3 layer — see PresignPut for the integrity-model rationale. SDK-side
+// request signing handles both AWS and the "anonymous + endpoint" path
+// used by minio in dev.
 package s3
 
 import (
@@ -24,7 +27,6 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyerr "github.com/aws/smithy-go"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
@@ -135,19 +137,28 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 func (s *Store) Backend() string { return BackendName }
 
 // PresignPut returns a one-shot HTTPS URL the holder can PUT exactly
-// `sizeBytes` bytes (with the supplied Content-Type and SHA-256
-// checksum) directly to S3 within `expiresIn`. The signed key is the
-// supplied `key` rendered against this Store's prefix — callers must
-// pass the same key shape Put would generate (see `KeyFor`).
+// `sizeBytes` bytes (with the supplied Content-Type) directly to S3
+// within `expiresIn`. The signed key is the supplied `key` rendered
+// against this Store's prefix — callers must pass the same key shape
+// Put would generate (see `KeyFor`).
 //
-// Security guards baked into the signed URL:
+// Integrity model (IMPORTANT — read before "hardening" this):
 //   - Content-Length is pinned to sizeBytes via the SDK's signing
-//     procedure (S3 rejects mismatching Content-Length on PUT).
-//   - X-Amz-Checksum-SHA256 is signed in so an upload whose body
-//     hashes to a different value is rejected by S3 itself, not just
-//     by Hub's pre-flight check. This makes the URL safe to hand to
-//     a less-trusted agent — the worst they can do is upload the
-//     exact bytes Hub already authorised.
+//     procedure (S3 rejects a mismatching Content-Length on PUT), so an
+//     oversized body cannot be slipped through a minted URL.
+//   - SHA-256 is NOT enforced at the S3 layer on this path. The mint
+//     request carries the agent-computed sha256 (validated as 64-hex by
+//     the Hub, recorded in the upload token and on the audit envelope's
+//     SpillRef), but it is intentionally NOT bound into the presigned
+//     URL via X-Amz-Checksum-SHA256. Binding it would require the agent
+//     PUT to send the matching x-amz-checksum-sha256 header (base64 of
+//     the digest); the agent uploader (packages/agent/internal/
+//     observability/spilluploader) does not send that header, so binding
+//     it here would reject every upload. The trust boundary is the mTLS
+//     thing identity that mints the token plus the recorded SpillRef.SHA256
+//     used for read-time verification — not an S3-side checksum on write.
+//     The server-side Put path (Store.Put) DOES hash on write because it
+//     holds the bytes; the presign path does not.
 //
 // The returned URL is opaque; the caller does not need to know
 // whether it points at AWS S3 or at a custom Endpoint.
@@ -309,12 +320,28 @@ func (s *Store) Delete(ctx context.Context, ref audit.SpillRef) error {
 	return nil
 }
 
-// Sweep removes objects older than olderThan and returns the count
-// removed. Iterates ListObjectsV2 pages; rate-limited by the SDK's
-// default retrier. Total-size cap is also enforced — once the cumulative
-// size of remaining (unsweeped) objects exceeds totalCap, the sweep
-// keeps deleting oldest first until below cap.
+// Sweep removes objects older than olderThan and returns the count removed.
+// It is the age-only sweep — equivalent to SweepFiltered with a nil filter.
+// Callers that can supply a traffic_event reference check should use
+// SweepFiltered so a blob whose spill_ref is still live is never deleted.
 func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
+	return s.SweepFiltered(ctx, olderThan, nil)
+}
+
+// SweepFiltered implements spillstore.RefAwareSweeper.
+//
+// Iterates ListObjectsV2 pages (rate-limited by the SDK's default retrier),
+// then:
+//  1. Collects every age-eligible candidate key WITHOUT deleting inline, so
+//     the reference check sees the full candidate set in a single batch.
+//  2. Asks the filter which candidate keys are still referenced; deletes only
+//     the unreferenced ones. A nil filter keeps nothing on reference grounds
+//     (pure age-based behaviour). On filter error nothing is deleted and the
+//     error is returned (fail-safe — a DB hiccup must not orphan live spills).
+//  3. Enforces the total-size cap: sorts remaining objects by mtime asc and
+//     evicts oldest-first until under cap, skipping any blob the filter marked
+//     as still referenced (same orphan hazard as the age pass).
+func (s *Store) SweepFiltered(ctx context.Context, olderThan time.Time, filter spillstore.SweepFilter) (int, error) {
 	deleted := 0
 	var continuation *string
 	type entry struct {
@@ -322,7 +349,8 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
 		size int64
 		mod  time.Time
 	}
-	var keep []entry
+	var candidates []entry // age-eligible, pending reference check
+	var keep []entry       // not age-eligible — only subject to the size cap
 
 	for {
 		out, err := s.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
@@ -337,21 +365,16 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
 			if obj.Key == nil || obj.LastModified == nil {
 				continue
 			}
-			if obj.LastModified.Before(olderThan) {
-				if _, derr := s.client.DeleteObject(ctx, &awss3.DeleteObjectInput{
-					Bucket: &s.bucket,
-					Key:    obj.Key,
-				}); derr != nil {
-					return deleted, fmt.Errorf("s3.Sweep: delete %q: %w", *obj.Key, derr)
-				}
-				deleted++
-				continue
-			}
 			size := int64(0)
 			if obj.Size != nil {
 				size = *obj.Size
 			}
-			keep = append(keep, entry{key: *obj.Key, size: size, mod: *obj.LastModified})
+			e := entry{key: *obj.Key, size: size, mod: *obj.LastModified}
+			if obj.LastModified.Before(olderThan) {
+				candidates = append(candidates, e)
+				continue
+			}
+			keep = append(keep, e)
 		}
 		if out.IsTruncated == nil || !*out.IsTruncated {
 			break
@@ -359,8 +382,40 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
 		continuation = out.NextContinuationToken
 	}
 
+	// Reference-check every resident key in one batch: BOTH the age pass and
+	// the total-size cap pass below can delete a blob, so both must honour the
+	// reference set (checking only age-eligible keys would let the cap pass
+	// evict a still-referenced blob — the same orphan hazard).
+	candidateKeys := make([]string, 0, len(candidates)+len(keep))
+	for _, c := range candidates {
+		candidateKeys = append(candidateKeys, c.key)
+	}
+	for _, k := range keep {
+		candidateKeys = append(candidateKeys, k.key)
+	}
+	referenced, err := spillstore.ResolveReferenced(ctx, filter, candidateKeys)
+	if err != nil {
+		return 0, fmt.Errorf("s3.Sweep: reference check: %w", err)
+	}
+
+	// Delete age-eligible, unreferenced candidates. Referenced candidates are
+	// retained and, because they are still resident, count toward the cap pass.
+	for _, c := range candidates {
+		if referenced[c.key] {
+			keep = append(keep, c)
+			continue
+		}
+		if _, derr := s.client.DeleteObject(ctx, &awss3.DeleteObjectInput{
+			Bucket: &s.bucket,
+			Key:    keyPtr(c.key),
+		}); derr != nil {
+			return deleted, fmt.Errorf("s3.Sweep: delete %q: %w", c.key, derr)
+		}
+		deleted++
+	}
+
 	// Total-size cap enforcement: sort remaining keep[] by mtime asc, evict
-	// oldest until under cap.
+	// oldest until under cap, never evicting a still-referenced blob.
 	if s.totalCap > 0 {
 		// simple insertion sort — keep is already roughly time-ordered by
 		// S3's ListObjectsV2 lexicographic order on the date-prefixed key
@@ -373,21 +428,26 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Time) (int, error) {
 		for _, e := range keep {
 			total += e.size
 		}
-		i := 0
-		for total > s.totalCap && i < len(keep) {
+		for i := 0; total > s.totalCap && i < len(keep); i++ {
+			if referenced[keep[i].key] {
+				continue
+			}
 			if _, derr := s.client.DeleteObject(ctx, &awss3.DeleteObjectInput{
 				Bucket: &s.bucket,
-				Key:    &keep[i].key,
+				Key:    keyPtr(keep[i].key),
 			}); derr != nil {
 				return deleted, fmt.Errorf("s3.Sweep cap: delete %q: %w", keep[i].key, derr)
 			}
 			total -= keep[i].size
 			deleted++
-			i++
 		}
 	}
 	return deleted, nil
 }
+
+// keyPtr returns a pointer to a copy of k, safe for use as an AWS SDK input
+// field inside a loop (taking &loopVar would alias the iteration variable).
+func keyPtr(k string) *string { return &k }
 
 // Stat returns runtime metadata. Iterates ListObjectsV2 (capped at 10000
 // entries to avoid runaway scans on a misconfigured prefix).
@@ -425,5 +485,3 @@ func (s *Store) Stat(ctx context.Context) (spillstore.Stats, error) {
 	}
 	return stats, nil
 }
-
-var _ = s3types.ChecksumAlgorithmSha256

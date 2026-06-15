@@ -15,9 +15,10 @@ type Pool struct {
 	byType map[string]map[string]*Conn // type -> id -> conn
 	logger *slog.Logger
 
-	connTotal  *opsmetrics.Counter
-	connGauge  *opsmetrics.Gauge
-	connByType *opsmetrics.Gauge
+	connTotal   *opsmetrics.Counter
+	connGauge   *opsmetrics.Gauge
+	connByType  *opsmetrics.Gauge
+	sendDropped *opsmetrics.Counter
 }
 
 // NewPool creates a connection pool wired to the supplied opsmetrics
@@ -42,6 +43,11 @@ func NewPool(reg *opsmetrics.Registry, logger *slog.Logger) *Pool {
 		p.connTotal = reg.NewCounter("ws.reconnects_total", nil)
 		p.connGauge = reg.NewGauge("ws.connections_active", nil)
 		p.connByType = reg.NewGauge("things.connected", []string{"type"})
+		// ws.send_dropped_total counts config/broadcast pushes dropped because
+		// the per-conn write buffer was full. A non-zero rate means a
+		// Thing's outbound buffer backed up and its config push was lost; the
+		// pool closes the conn so the Thing reconnects and rebuilds full state.
+		p.sendDropped = reg.NewCounter("ws.send_dropped_total", []string{"type"})
 	}
 	return p
 }
@@ -51,9 +57,11 @@ func (p *Pool) Add(c *Conn) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Replace existing
+	// Replace existing. Use CloseNow (not Close) so a vanished old peer's
+	// missing close-frame response cannot stall this Add while it holds the
+	// pool lock — see Conn.CloseNow.
 	if old, ok := p.conns[c.thingID]; ok {
-		old.Close()
+		old.CloseNow()
 		p.removeUnlocked(old)
 	}
 
@@ -74,16 +82,31 @@ func (p *Pool) Add(c *Conn) {
 	}
 }
 
-// Remove removes a connection from the pool.
-func (p *Pool) Remove(c *Conn) {
+// Remove removes a connection from the pool, but ONLY if it is still the
+// registered connection for its Thing ID. Returns true when this exact
+// connection was evicted; false when a newer connection has already replaced
+// it (reconnect race) or it was never present. Callers use the return value to
+// decide whether to fire side effects like MarkOffline (see ws.Server).
+func (p *Pool) Remove(c *Conn) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.removeUnlocked(c)
+	return p.removeUnlocked(c)
 }
 
-func (p *Pool) removeUnlocked(c *Conn) {
-	if _, ok := p.conns[c.thingID]; !ok {
-		return
+// removeUnlocked deletes c from the pool only when c is the connection
+// currently registered for its Thing ID. The identity guard (cur != c) is
+// load-bearing: on an ungraceful disconnect the dead connection
+// lingers until the read/ping timeout (~tens of seconds) while the Thing
+// reconnects within ~1-2s. Add installs the new connection; when the stale
+// connection's read loop finally unblocks and its defer calls Remove, a
+// thingID-only delete would evict the LIVE new connection and fire a spurious
+// MarkOffline — black-holing every subsequent config push (pool.Send returns
+// false) and defeating drift auto-repair. Mirrors the client-side guard in
+// shared/transport/thingclient (`if c.wsConn == conn`). Returns whether c was
+// actually removed.
+func (p *Pool) removeUnlocked(c *Conn) bool {
+	if cur, ok := p.conns[c.thingID]; !ok || cur != c {
+		return false
 	}
 	delete(p.conns, c.thingID)
 	if typeMap, ok := p.byType[c.thingType]; ok {
@@ -98,9 +121,11 @@ func (p *Pool) removeUnlocked(c *Conn) {
 	if p.connByType != nil {
 		p.connByType.With(c.thingType).Dec()
 	}
+	return true
 }
 
-// Send sends a message to a specific Thing by ID.
+// Send sends a message to a specific Thing by ID. Returns true only when the
+// message was queued onto the Thing's write buffer.
 func (p *Pool) Send(thingID string, msg []byte) bool {
 	p.mu.RLock()
 	c, ok := p.conns[thingID]
@@ -108,10 +133,11 @@ func (p *Pool) Send(thingID string, msg []byte) bool {
 	if !ok {
 		return false
 	}
-	return c.Write(msg) == nil
+	return p.writeOrDrop(c, msg)
 }
 
-// Broadcast sends a message to all connected Things of a given type.
+// Broadcast sends a message to all connected Things of a given type. Returns
+// the number of Things the message was successfully queued for.
 func (p *Pool) Broadcast(thingType string, msg []byte) int {
 	p.mu.RLock()
 	typeMap := p.byType[thingType]
@@ -123,11 +149,28 @@ func (p *Pool) Broadcast(thingType string, msg []byte) int {
 
 	sent := 0
 	for _, c := range conns {
-		if c.Write(msg) == nil {
+		if p.writeOrDrop(c, msg) {
 			sent++
 		}
 	}
 	return sent
+}
+
+// writeOrDrop queues msg onto c's write buffer and, on a full-buffer drop, logs
+// a WARN, increments ws.send_dropped_total, and closes the connection so the
+// Thing reconnects and rebuilds full state rather than silently missing a
+// config push. Returns true when the message was queued.
+func (p *Pool) writeOrDrop(c *Conn, msg []byte) bool {
+	if err := c.Write(msg); err != nil {
+		p.logger.Warn("ws send dropped: write buffer full; closing connection so thing reconnects",
+			"thing_id", c.thingID, "thing_type", c.thingType, "error", err)
+		if p.sendDropped != nil {
+			p.sendDropped.With(c.thingType).Inc()
+		}
+		c.Close()
+		return false
+	}
+	return true
 }
 
 // IsConnected returns true if the Thing has an active connection.

@@ -41,6 +41,42 @@ func TestExtractCacheStore_Get_singleton_returnsRow(t *testing.T) {
 	}
 }
 
+// WireState is the contract the admin push AND the configreconcile drift loader
+// both depend on (F-0102/F-0345): it must project EXACTLY the three behavioral
+// fields and drop bookkeeping columns, or the loader's source-of-truth diff
+// would thrash against the pushed blob every reconcile cycle.
+func TestExtractCacheConfigRow_WireState_projectsThreeFieldsOnly(t *testing.T) {
+	updatedBy := "admin@example.com"
+	row := &ExtractCacheConfigRow{
+		ID:                  "singleton",
+		Enabled:             true,
+		TTLSeconds:          3600,
+		ApplyFreshnessRules: true,
+		UpdatedAt:           time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC),
+		UpdatedBy:           &updatedBy,
+	}
+	got := row.WireState()
+	want := map[string]any{
+		"enabled":             true,
+		"ttlSeconds":          3600,
+		"applyFreshnessRules": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("WireState has %d keys, want %d (bookkeeping columns must be excluded): %v", len(got), len(want), got)
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("WireState[%q] = %v, want %v", k, got[k], w)
+		}
+	}
+	// Bookkeeping columns must NOT leak into the wire shape.
+	for _, k := range []string{"id", "updatedAt", "updatedBy"} {
+		if _, present := got[k]; present {
+			t.Errorf("WireState leaked bookkeeping key %q", k)
+		}
+	}
+}
+
 func TestExtractCacheStore_Get_noRow_returnsDefaults(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {

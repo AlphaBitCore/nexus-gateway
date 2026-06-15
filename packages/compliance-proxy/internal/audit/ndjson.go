@@ -4,166 +4,57 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"sync"
 	"time"
+
+	sharedndjson "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit/ndjson"
 )
 
-// NDJSONWriter writes audit events to local NDJSON files as a fallback
-// when the primary database writer is unavailable or the queue overflows.
+// NDJSONWriter writes audit events to local NDJSON spool files as a fallback
+// when the primary database/MQ writer is unavailable or the queue overflows.
+//
+// It is a thin, AuditEvent-typed adapter over the shared spill writer
+// (packages/shared/audit/ndjson): this file owns only the compliance-proxy
+// wire shape (eventToMap) and metrics, while file rotation, the per-instance
+// total-size quota, and per-instance directory isolation live in the shared
+// package and are identical to the ai-gateway audit spill path.
 type NDJSONWriter struct {
-	dir          string
-	instanceID   string
-	maxFileSize  int64
-	maxTotalSize int64
-	logger       *slog.Logger
-
-	mu          sync.Mutex
-	currentFile *os.File
-	currentSize int64
-	sequence    int
+	w      *sharedndjson.Writer
+	logger *slog.Logger
 }
 
-// NewNDJSONWriter creates an NDJSON writer with the given spool directory and limits.
-// It creates the instance-specific subdirectory if it does not exist.
+// NewNDJSONWriter creates an NDJSON writer with the given spool directory and
+// limits. maxFileSizeMB caps a single spool file before rotation;
+// maxTotalSizeMB caps the instance's total on-disk spool.
 func NewNDJSONWriter(dir, instanceID string, maxFileSizeMB, maxTotalSizeMB int, logger *slog.Logger) (*NDJSONWriter, error) {
-	instanceDir := filepath.Join(dir, instanceID)
-	if err := os.MkdirAll(instanceDir, 0700); err != nil {
-		return nil, fmt.Errorf("audit/ndjson: create spool directory %s: %w", instanceDir, err)
+	w, err := sharedndjson.New(dir, instanceID, maxFileSizeMB, maxTotalSizeMB, func(n int) {
+		if NDJSONWrites != nil {
+			NDJSONWrites.With().Inc()
+		}
+		if NDJSONBytes != nil {
+			NDJSONBytes.With().Add(float64(n))
+		}
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	return &NDJSONWriter{
-		dir:          dir,
-		instanceID:   instanceID,
-		maxFileSize:  int64(maxFileSizeMB) * 1024 * 1024,
-		maxTotalSize: int64(maxTotalSizeMB) * 1024 * 1024,
-		logger:       logger,
-	}, nil
+	return &NDJSONWriter{w: w, logger: logger}, nil
 }
 
-// Write appends a single audit event as a JSON line to the current spool file.
-// It handles file rotation when the current file exceeds maxFileSize and refuses
-// to write when the total directory size exceeds maxTotalSize.
-func (w *NDJSONWriter) Write(event AuditEvent) error {
+// Write marshals an audit event to one JSON line and appends it to the spool.
+// File rotation and the total-size quota are enforced by the shared writer; a
+// quota-exceeded or I/O error is returned to the caller (never dropped here).
+func (n *NDJSONWriter) Write(event AuditEvent) error {
 	data, err := json.Marshal(eventToMap(event))
 	if err != nil {
+		n.logger.Error("audit/ndjson: marshal event failed", "id", event.ID, "error", err)
 		return fmt.Errorf("audit/ndjson: marshal event: %w", err)
 	}
-	data = append(data, '\n')
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// Check total directory size quota.
-	totalSize, err := w.dirSize()
-	if err != nil {
-		w.logger.Warn("audit/ndjson: failed to compute directory size", "error", err)
-		// Continue anyway; better to write than to lose data over a stat error.
-	} else if totalSize >= w.maxTotalSize {
-		w.logger.Error("audit/ndjson: total spool quota exceeded, dropping event",
-			"totalSize", totalSize, "maxTotalSize", w.maxTotalSize)
-		return fmt.Errorf("audit/ndjson: total spool size %d exceeds quota %d", totalSize, w.maxTotalSize)
-	}
-
-	// Rotate if the current file exceeds max file size.
-	if w.currentFile != nil && w.currentSize+int64(len(data)) > w.maxFileSize {
-		if err := w.rotateFile(); err != nil {
-			return err
-		}
-	}
-
-	// Open a new file if needed.
-	if w.currentFile == nil {
-		if err := w.openNewFile(); err != nil {
-			return err
-		}
-	}
-
-	n, err := w.currentFile.Write(data)
-	if err != nil {
-		return fmt.Errorf("audit/ndjson: write: %w", err)
-	}
-	w.currentSize += int64(n)
-
-	if NDJSONWrites != nil {
-		NDJSONWrites.With().Inc()
-	}
-	if NDJSONBytes != nil {
-		NDJSONBytes.With().Add(float64(n))
-	}
-
-	return nil
+	return n.w.Write(data)
 }
 
-// Close closes the current file handle.
-func (w *NDJSONWriter) Close() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.currentFile != nil {
-		err := w.currentFile.Close()
-		w.currentFile = nil
-		return err
-	}
-	return nil
-}
-
-// openNewFile creates a new NDJSON spool file with the naming convention:
-// {dir}/{instanceID}/audit-{YYYYMMDD}-{sequence:04d}.ndjson
-func (w *NDJSONWriter) openNewFile() error {
-	w.sequence++
-	name := fmt.Sprintf("audit-%s-%04d.ndjson", time.Now().UTC().Format("20060102"), w.sequence)
-	path := filepath.Join(w.dir, w.instanceID, name)
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
-		return fmt.Errorf("audit/ndjson: open file %s: %w", path, err)
-	}
-
-	info, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return fmt.Errorf("audit/ndjson: stat file %s: %w", path, err)
-	}
-
-	w.currentFile = f
-	w.currentSize = info.Size()
-	return nil
-}
-
-// rotateFile closes the current file so the next Write opens a new one.
-func (w *NDJSONWriter) rotateFile() error {
-	if w.currentFile != nil {
-		if err := w.currentFile.Close(); err != nil {
-			return fmt.Errorf("audit/ndjson: close for rotation: %w", err)
-		}
-		w.currentFile = nil
-		w.currentSize = 0
-	}
-	return nil
-}
-
-// dirSize calculates the total size of all files in the instance spool directory.
-func (w *NDJSONWriter) dirSize() (int64, error) {
-	instanceDir := filepath.Join(w.dir, w.instanceID)
-	entries, err := os.ReadDir(instanceDir)
-	if err != nil {
-		return 0, err
-	}
-
-	var total int64
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		total += info.Size()
-	}
-	return total, nil
+// Close closes the underlying spool file handle.
+func (n *NDJSONWriter) Close() error {
+	return n.w.Close()
 }
 
 // eventToMap converts an AuditEvent to a map for JSON marshalling,

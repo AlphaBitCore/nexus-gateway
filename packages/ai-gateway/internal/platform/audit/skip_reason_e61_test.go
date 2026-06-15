@@ -20,11 +20,12 @@ func TestSkipReasonRoundTrip(t *testing.T) {
 		got  GatewayCacheSkipReason
 		want string
 	}{
-		// Pre-existing constants.
+		// Pre-lookup short-circuit constants (peer to disabled / no_cache /
+		// passthrough; NOT E61 semantic-cache failure modes).
 		{"disabled", GatewayCacheSkipReasonDisabled, "disabled"},
 		{"no_cache", GatewayCacheSkipReasonNoCache, "no_cache"},
 		{"passthrough", GatewayCacheSkipReasonPassthrough, "passthrough"},
-		{"not_cacheable", GatewayCacheSkipReasonNotCacheable, "not_cacheable"},
+		{"embeddings_endpoint", GatewayCacheSkipReasonEmbeddingsEndpoint, "embeddings_endpoint"},
 
 		// Time-sensitive skip.
 		{"time_sensitive", GatewayCacheSkipReasonTimeSensitive, "time_sensitive"},
@@ -39,7 +40,6 @@ func TestSkipReasonRoundTrip(t *testing.T) {
 		{"embedding_dim_mismatch", GatewayCacheSkipReasonEmbeddingDimMismatch, "embedding_dim_mismatch"},
 		{"semantic_search_error", GatewayCacheSkipReasonSemanticSearchError, "semantic_search_error"},
 		{"semantic_search_timeout", GatewayCacheSkipReasonSemanticSearchTimeout, "semantic_search_timeout"},
-		{"semantic_reindex_in_progress", GatewayCacheSkipReasonSemanticReindexInProgress, "semantic_reindex_in_progress"},
 		{"semantic_unavailable", GatewayCacheSkipReasonSemanticUnavailable, "semantic_unavailable"},
 		{"embedding_circuit_open", GatewayCacheSkipReasonEmbeddingCircuitOpen, "embedding_circuit_open"},
 		// Negative-feedback poison list.
@@ -58,8 +58,8 @@ func TestSkipReasonRoundTrip(t *testing.T) {
 	}
 }
 
-// TestE61SkipReasonCount verifies exactly 12 semantic-cache skip-reason
-// constants exist (11 base + 1 poisoned). The architecture doc
+// TestE61SkipReasonCount verifies exactly 11 semantic-cache skip-reason
+// constants exist (10 base + 1 poisoned). The architecture doc
 // response-cache-architecture.md enumerates the base reasons. This test pins
 // the count so an accidental addition or deletion surfaces immediately.
 func TestE61SkipReasonCount(t *testing.T) {
@@ -74,14 +74,13 @@ func TestE61SkipReasonCount(t *testing.T) {
 		GatewayCacheSkipReasonEmbeddingDimMismatch,
 		GatewayCacheSkipReasonSemanticSearchError,
 		GatewayCacheSkipReasonSemanticSearchTimeout,
-		GatewayCacheSkipReasonSemanticReindexInProgress,
 		GatewayCacheSkipReasonSemanticUnavailable,
 		GatewayCacheSkipReasonEmbeddingCircuitOpen,
 		// Poison-list addition.
 		GatewayCacheSkipReasonPoisoned,
 	}
-	if got := len(e61Reasons); got != 12 {
-		t.Errorf("has %d skip-reason constants, want exactly 12 (11 base + 1 poisoned)", got)
+	if got := len(e61Reasons); got != 11 {
+		t.Errorf("has %d skip-reason constants, want exactly 11 (10 base + 1 poisoned)", got)
 	}
 	// Also verify all are distinct (no accidental duplicate string values).
 	seen := make(map[string]bool, len(e61Reasons))

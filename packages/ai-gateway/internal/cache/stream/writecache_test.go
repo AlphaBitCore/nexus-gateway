@@ -121,6 +121,115 @@ func TestBroker_WriteCache_StreamEntry_PersistsTimeline(t *testing.T) {
 	}
 }
 
+// TestBroker_WriteCache_StreamEntry_InvokesL2Callback asserts F-0228: on a
+// clean streaming termination the broker invokes OnStreamCachePersisted with
+// the bare []ChunkRecord JSON timeline (what ToCacheStreamEntry decodes) and
+// the final usage, so the proxy can mirror the stream into the L2 semantic
+// cache as a response_kind=stream entry.
+func TestBroker_WriteCache_StreamEntry_InvokesL2Callback(t *testing.T) {
+	c, _ := newTestCacheForStreamcache(t)
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	usage := &provcore.Usage{PromptTokens: intPtr(7), CompletionTokens: intPtr(3)}
+	sess := &fakeSession{chunks: []provcore.Chunk{
+		{Delta: "hel", RawBytes: []byte("data: hel\n\n")},
+		{Delta: "lo", RawBytes: []byte("data: lo\n\n")},
+		{Done: true, Usage: usage},
+	}}
+
+	gotCh := make(chan []byte, 1)
+	var gotUsage provcore.Usage
+	meta := CacheMeta{
+		Provider: "openai", Model: "gpt-4o", IsStream: true,
+		OnStreamCachePersisted: func(body []byte, u provcore.Usage) {
+			gotUsage = u
+			gotCh <- body
+		},
+	}
+
+	b := newBroker(context.Background(), "k-l2", meta, c, discardLogger(), m, func() {})
+	go b.pump(sess)
+	sub := b.subscribe()
+	_ = drainSub(t, sub)
+	_ = sub.Close()
+	<-b.pumpDone
+
+	var body []byte
+	select {
+	case body = <-gotCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnStreamCachePersisted was not invoked on clean stream termination")
+	}
+
+	var records []cache.ChunkRecord
+	if err := json.Unmarshal(body, &records); err != nil {
+		t.Fatalf("callback body is not a []ChunkRecord JSON: %v", err)
+	}
+	if len(records) != 3 || records[0].Delta != "hel" || records[1].Delta != "lo" || !records[2].Done {
+		t.Errorf("callback timeline mismatch: %+v", records)
+	}
+	if gotUsage.PromptTokens == nil || *gotUsage.PromptTokens != 7 {
+		t.Errorf("callback usage mismatch: %+v", gotUsage)
+	}
+}
+
+// TestBroker_WriteCache_StreamEntry_NoL2CallbackOnIncompleteStream asserts the
+// callback does NOT fire when the stream ends without a Done frame (io.EOF):
+// writeCache is never reached, so no L2 mirror is attempted for a partial
+// timeline.
+func TestBroker_WriteCache_StreamEntry_NoL2CallbackOnIncompleteStream(t *testing.T) {
+	c, _ := newTestCacheForStreamcache(t)
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	sess := &fakeSession{chunks: []provcore.Chunk{{Delta: "partial", RawBytes: []byte("data: partial\n\n")}}}
+	fired := false
+	meta := CacheMeta{
+		Provider: "openai", Model: "gpt-4o", IsStream: true,
+		OnStreamCachePersisted: func([]byte, provcore.Usage) { fired = true },
+	}
+	b := newBroker(context.Background(), "k-l2-eof", meta, c, discardLogger(), m, func() {})
+	go b.pump(sess)
+	sub := b.subscribe()
+	_ = drainSub(t, sub)
+	_ = sub.Close()
+	<-b.pumpDone
+	if fired {
+		t.Error("OnStreamCachePersisted fired on incomplete (no-Done) stream")
+	}
+}
+
+// TestBroker_WriteCache_StreamEntry_NoL2CallbackOnProviderError asserts the L2
+// mirror callback does NOT fire when the upstream stream terminates with an
+// error before a Done frame: pump takes the rb.Fail path and returns before
+// writeCache, so a partial/errored timeline is never persisted to L2 (the
+// "an errored stream is never cached" invariant).
+func TestBroker_WriteCache_StreamEntry_NoL2CallbackOnProviderError(t *testing.T) {
+	c, _ := newTestCacheForStreamcache(t)
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	sess := &errorSession{
+		first: provcore.Chunk{Delta: "partial", RawBytes: []byte("data: partial\n\n")},
+		err:   &provcore.ProviderError{Code: provcore.CodeUpstreamError, Message: "upstream exploded"},
+	}
+	fired := false
+	meta := CacheMeta{
+		Provider: "openai", Model: "gpt-4o", IsStream: true,
+		OnStreamCachePersisted: func([]byte, provcore.Usage) { fired = true },
+	}
+	b := newBroker(context.Background(), "k-l2-err", meta, c, discardLogger(), m, func() {})
+	go b.pump(sess)
+	sub := b.subscribe()
+	_ = drainSub(t, sub)
+	_ = sub.Close()
+	<-b.pumpDone
+	if fired {
+		t.Error("OnStreamCachePersisted fired on a provider-error stream")
+	}
+}
+
 // TestBroker_WriteCache_ResponseEntry_PersistsCanonical asserts the
 // non-stream (IsStream=false) path: one terminal Done chunk whose
 // Delta carries the canonical JSON body is persisted via StoreResponse.

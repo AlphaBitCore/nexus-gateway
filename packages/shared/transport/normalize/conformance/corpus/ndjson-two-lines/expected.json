@@ -1,0 +1,21 @@
+{
+  "kind": "http-json",
+  "normalizeVersion": "2",
+  "protocol": "generic-http",
+  "http": {
+    "bodyView": {
+      "json": [
+        {
+          "id": 1,
+          "status": "ok"
+        },
+        {
+          "id": 2,
+          "status": "done"
+        }
+      ]
+    }
+  },
+  "confidence": 1,
+  "detectedSpec": "generic-http"
+}

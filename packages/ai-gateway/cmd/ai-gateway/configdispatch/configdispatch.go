@@ -17,7 +17,6 @@ import (
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
-	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/aiguard"
@@ -28,7 +27,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/cacheconfig"
 	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
-	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )
@@ -36,6 +34,16 @@ import (
 // HookConfigReloader narrows the shared HookConfigCache surface to Reload-only.
 type HookConfigReloader interface {
 	Reload(ctx context.Context) error
+}
+
+// CredCacheInvalidator narrows *credmanager.Manager to the two
+// decrypted-credential cache operations the credentials applier needs:
+// per-id eviction (granular) and a full flush (fallback). Keeping it
+// as an interface decouples configdispatch from the Manager's construction
+// surface and lets the credentials applier be unit-tested with a fake.
+type CredCacheInvalidator interface {
+	Invalidate(credentialID string)
+	ClearCache()
 }
 
 // ReliabilityReloader narrows *wiring.ReliabilityConfig to Reload-only.
@@ -53,19 +61,14 @@ type Deps struct {
 
 	DB                  *store.DB
 	CacheLayer          *cachelayer.Layer
-	CredManager         *credmanager.Manager
+	CredManager         CredCacheInvalidator
 	GeminiCacheMgrSet   *geminicache.ManagerSet
 	HookConfigCache     HookConfigReloader                 // may be nil
 	TelemetryProvider   *telemetry.SwappableTracerProvider // may be nil
 	ObservabilityState  *atomic.Pointer[telemetry.Config]
 	PayloadCaptureStore *payloadcapture.Store
-	// StreamingPolicyStore — #115. Hub's streaming_compliance shadow
-	// pushes route raw JSON directly into Store.ApplyShadowState;
-	// proxy_cache.go's SSE handler reads Store.Get() per request.
-	// Three-service alignment with agent + compliance-proxy.
-	StreamingPolicyStore *streampolicy.Store
-	Reliability          ReliabilityReloader // may be nil
-	PolicyCache          *quota.PolicyCache  // may be nil
+	Reliability         ReliabilityReloader // may be nil
+	PolicyCache         *quota.PolicyCache  // may be nil
 	// AIGuardConfigCache is fetched via a getter because the singleton is
 	// assigned after OnConfigChanged registration in main.go. Reading at
 	// apply-time (not construction time) ensures the late assignment is
@@ -94,6 +97,21 @@ type Deps struct {
 	OnModelsReloaded func(models []store.Model)
 }
 
+// errActiveKeyDepNil reports a wiring regression: a config key that IS
+// registered in ValidByThingType["ai-gateway"] (so Hub actively pushes it) was
+// applied while a dependency the gateway structurally cannot run without was
+// nil. Returning this error (instead of the (nil,nil) "applied" no-op) makes
+// the Loader record a FAILED outcome and withhold the reportedVer advance, so
+// the Thing never falsely reports convergence on a half-wired gateway.
+// This is reserved for deps that are NEVER legitimately nil in a
+// healthy gateway (DB, CacheLayer, CredManager) — optional subsystems that are
+// disabled at boot (response cache, semantic cache, freshness detector, etc.)
+// keep their (nil,nil) no-op because nil there is a valid disabled state.
+func errActiveKeyDepNil(key, dep string) error {
+	return fmt.Errorf("configdispatch: %s applier: required dependency %s is nil "+
+		"(wiring regression — the key is pushed but the subsystem is unwired)", key, dep)
+}
+
 func BuildConfigLoader(d Deps) *cfgloader.Loader {
 	l := cfgloader.New(d.Logger, d.Outcomes, d.ThingID, "ai-gateway")
 
@@ -104,7 +122,6 @@ func BuildConfigLoader(d Deps) *cfgloader.Loader {
 	registerAGHookConfig(l, d)
 	registerAGObservability(l, d)
 	registerAGPayloadCapture(l, d)
-	registerAGStreamingCompliance(l, d)
 	registerAGCredentialReliability(l, d)
 	registerAGQuotaTriad(l, d)
 	registerAGVirtualKeys(l, d)
@@ -121,20 +138,39 @@ func BuildConfigLoader(d Deps) *cfgloader.Loader {
 
 func registerAGRoutingRules(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, "routing_rules", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
-		if d.DB != nil {
-			d.DB.InvalidateRuleCache()
+		// DB is structurally required — routing rules live in the DB and a
+		// gateway with no DB cannot serve traffic.
+		if d.DB == nil {
+			return nil, errActiveKeyDepNil("routing_rules", "DB")
 		}
+		d.DB.InvalidateRuleCache()
 		return nil, nil
 	})
 }
 
 func registerAGCredentials(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, "credentials", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
-		if d.CredManager != nil {
-			d.CredManager.ClearCache()
+		// CredManager + CacheLayer are structurally required — the gateway
+		// cannot decrypt or route without them.
+		if d.CredManager == nil {
+			return nil, errActiveKeyDepNil("credentials", "CredManager")
 		}
 		if d.CacheLayer == nil {
-			return nil, nil
+			return nil, errActiveKeyDepNil("credentials", "CacheLayer")
+		}
+		// Granular invalidation: when Hub pushes a targeted
+		// invalidate-by-id envelope, evict only the changed credentials'
+		// decrypted entries instead of wiping the whole cache. A full
+		// ClearCache on every credential change triggers a re-decrypt
+		// storm for unrelated credentials. Fall back to ClearCache only
+		// when the payload carries no specific IDs (full reload signal).
+		ids := wiring.ParseInvalidateIDs(raw)
+		if len(ids) > 0 {
+			for _, id := range ids {
+				d.CredManager.Invalidate(id)
+			}
+		} else {
+			d.CredManager.ClearCache()
 		}
 		reloadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
@@ -147,12 +183,15 @@ func registerAGCredentials(l *cfgloader.Loader, d Deps) {
 
 func registerAGProviders(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, "providers", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
-		if d.CacheLayer != nil {
-			reloadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			if err := d.CacheLayer.ReloadProviders(reloadCtx); err != nil {
-				return nil, err
-			}
+		// CacheLayer is structurally required — the provider snapshot is the
+		// gateway's routing source of truth.
+		if d.CacheLayer == nil {
+			return nil, errActiveKeyDepNil("providers", "CacheLayer")
+		}
+		reloadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := d.CacheLayer.ReloadProviders(reloadCtx); err != nil {
+			return nil, err
 		}
 		// Provider list changed: ManagerSet rebuilds per-provider Gemini managers
 		// using the last cache blob already cached inside the ManagerSet.
@@ -165,8 +204,10 @@ func registerAGProviders(l *cfgloader.Loader, d Deps) {
 
 func registerAGModels(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, "models", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
+		// CacheLayer is structurally required — the model snapshot drives
+		// routing, pricing, and capability resolution.
 		if d.CacheLayer == nil {
-			return nil, nil
+			return nil, errActiveKeyDepNil("models", "CacheLayer")
 		}
 		reloadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
@@ -232,30 +273,16 @@ func registerAGPayloadCapture(l *cfgloader.Loader, d Deps) {
 	})
 }
 
-// registerAGStreamingCompliance wires the streaming_compliance Cat A
-// shadow handler. Hub pushes the raw admin Policy blob inline; the
-// handler hands it to Store.ApplyShadowState which decodes + atomically
-// installs onto the Store the proxy SSE handler reads via Get(). #115
-// three-service alignment — identical pattern to compliance-proxy's
-// registerStreamingCompliance.
-func registerAGStreamingCompliance(l *cfgloader.Loader, d Deps) {
-	cfgloader.RegisterRaw(l, "streaming_compliance", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
-		if d.StreamingPolicyStore == nil {
-			return nil, nil
-		}
-		if err := d.StreamingPolicyStore.ApplyShadowState(ctx, raw); err != nil {
-			return nil, fmt.Errorf("apply streaming compliance shadow state: %w", err)
-		}
-		policy := d.StreamingPolicyStore.Get()
-		d.Logger.Info("streaming compliance policy reloaded",
-			"mode", string(policy.Mode),
-			"failBehavior", string(policy.FailBehavior),
-			"chunkBytes", policy.ChunkBytes,
-			"hookTimeoutMs", policy.HookTimeoutMs,
-		)
-		return nil, nil
-	})
-}
+// NOTE: ai-gateway intentionally has NO streaming_compliance applier.
+// `streaming_compliance` is absent from ValidByThingType["ai-gateway"]
+// (packages/shared/schemas/configkey/validation.go), so the CP write path
+// never fans the key out to ai-gateway — a registered applier would be dead
+// code that can never run. The gateway's streaming compliance policy is
+// seeded once at boot from system_metadata via streampolicy.BootStore
+// (wiring.InitStreamingPolicyStore) and read by the proxy SSE handler; live
+// admin changes to that policy reach the interception nodes (compliance-proxy
+// + agent), which DO carry the key, not ai-gateway. The previous "three-service
+// alignment" applier here was a propagation no-op (deleted).
 
 func registerAGCredentialReliability(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, "credential_reliability", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
@@ -289,12 +316,14 @@ func registerAGQuotaTriad(l *cfgloader.Loader, d Deps) {
 
 func registerAGVirtualKeys(l *cfgloader.Loader, d Deps) {
 	cfgloader.RegisterRaw(l, "virtual_keys", func(ctx context.Context, raw []byte, ver int64) ([]byte, error) {
+		// CacheLayer is structurally required — VK auth resolves against the
+		// VK snapshot it owns.
+		if d.CacheLayer == nil {
+			return nil, errActiveKeyDepNil("virtual_keys", "CacheLayer")
+		}
 		// Targeted invalidate by hash: payload may carry a list of
 		// affected hashes via the Hub invalidate-by-id form; fall
 		// back to a full purge if none provided.
-		if d.CacheLayer == nil {
-			return nil, nil
-		}
 		hashes := wiring.ParseInvalidateIDs(raw)
 		if len(hashes) > 0 {
 			d.CacheLayer.InvalidateVirtualKeys(hashes...)

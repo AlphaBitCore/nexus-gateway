@@ -43,7 +43,7 @@ func TestInitStreamingPolicyStore_NilDBReturnsDefault(t *testing.T) {
 		t.Fatal("InitStreamingPolicyStore returned nil Store")
 	}
 	// When DB is nil we expect the Store seeded with DefaultPolicy
-	// (non-empty Mode). #115: the shared streampolicy.BootStore
+	// (non-empty Mode). The shared streampolicy.BootStore
 	// helper guarantees this invariant across all 3 services.
 	policy := store.Get()
 	if string(policy.Mode) == "" {

@@ -6,6 +6,7 @@ package agent
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -40,7 +41,6 @@ type HubAPI interface {
 	InvalidateConfig(ctx context.Context, thingType, configKey string)
 	CreateEnrollmentToken(ctx context.Context, req hub.CreateEnrollmentTokenRequest) (*hub.CreateEnrollmentTokenResponse, error)
 	ForceResyncAll(ctx context.Context, thingID string) (map[string]any, error)
-	RotateAgentCert(ctx context.Context, thingID string) (map[string]any, error)
 }
 
 // Deps is the construction-time arg shape. Pool accepts the concrete
@@ -99,15 +99,8 @@ func New(d Deps) *Handler {
 	return h
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 // Actor mirrors handler.Actor.
 type Actor struct {

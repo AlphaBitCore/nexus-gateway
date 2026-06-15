@@ -73,6 +73,7 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 			ComplianceProxyRuntimeURL: h.Proxy.ComplianceProxyRuntimeURL,
 			ComplianceProxyAPIToken:   h.Proxy.ComplianceProxyAPIToken,
 			AIGatewayURL:              h.Proxy.AIGatewayURL,
+			AIGatewayInternalToken:    h.Proxy.AIGatewayInternalToken,
 		},
 		Redis: h.Redis,
 	})
@@ -81,7 +82,7 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 	provHandler.RegisterCredentialRoutes(g, iamMW)
 	// Virtual key routes — R6 fifth domain (handler/virtualkey/ subpackage).
 	// HubVKInvalidator combines NotifyConfigChange (targeted invalidate-by-hash)
-	// and InvalidateConfig (fire-and-forget).
+	// and InvalidateConfigE (fail-loud 502 on push failure for approve/renew/revoke).
 	vkHandler := virtualkey.New(virtualkey.Deps{
 		Pool:   h.DB.InternalPool(),
 		Hub:    h.Hub,
@@ -96,7 +97,7 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 		Hub:    h.Hub,
 		Audit:  h.Audit,
 		Logger: h.Logger,
-		Proxy:  routing.ProxyConfig{AIGatewayURL: h.Proxy.AIGatewayURL},
+		Proxy:  routing.ProxyConfig{AIGatewayURL: h.Proxy.AIGatewayURL, AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken},
 	}).RegisterRoutingRoutes(g, iamMW)
 	// Quota policy + override + analytics routes — R8-B16 extracted into
 	// handler/quota/ subpackage.
@@ -273,15 +274,14 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 	iamBundle.RegisterOAuthClientRoutes(g, iamMW)
 	// IAM policies/groups/attachments
 	iamBundle.RegisterIAMRoutes(g, iamMW)
-	// Provider connectivity tests, provider health, and pricing —
+	// Provider connectivity tests and provider health —
 	// moved to ai/providers/handler per P8.12.
 	provHandler.RegisterProviderTestRoutes(g, iamMW)
-	provHandler.RegisterPricingRoutes(g, iamMW)
 	// Embedding probe route — admin "Test Embedding" on Cache Settings.
 	provHandler.RegisterEmbeddingProbeRoutes(g, iamMW)
 	// Hook extras (implementations registry, execution chain, hook test/dry-run) —
 	// moved to governance/hooks/handler per P8.12.
-	hooksHandler.RegisterHookExtrasRoutes(g, iamMW, hooks.ProxyConfig{AIGatewayURL: h.Proxy.AIGatewayURL})
+	hooksHandler.RegisterHookExtrasRoutes(g, iamMW, hooks.ProxyConfig{AIGatewayURL: h.Proxy.AIGatewayURL, AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken})
 	// Fleet analytics — moved to fleet/handler/agent per P8.12.
 	// (registered above via agentHandler.RegisterRoutes → RegisterFleetAnalyticsRoutes)
 	// /me + /me/permissions + PATCH /me + /iam/action-catalog + /organizations/tree —

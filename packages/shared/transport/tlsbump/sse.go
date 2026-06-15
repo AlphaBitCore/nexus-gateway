@@ -118,6 +118,42 @@ func handleSSEResponse(
 		_ = resp.Body.Close()
 	}()
 
+	// SEC-W3-01 / F-0371: strict (appliance) fail-closed guard, evaluated
+	// BEFORE any response header is written to the client. If a mandatory
+	// fail-closed response hook cannot be built under strict policy, the
+	// streamed body CANNOT be inspected — refuse with 451 rather than relaying
+	// uninspected SSE chunks. Once w.WriteHeader fires below we can no longer
+	// send a clean status, so this check must precede the header copy. The
+	// agent NE host-packet path passes strictFailClosed=false, skips this
+	// guard, and stays fail-open by design (CLAUDE.md NE safety rule).
+	if bo.strictFailClosed && respInput != nil {
+		// Endpoint type is not classified at SSE stage — pass "" so all hooks
+		// are considered, mirroring the per-mode BuildPipeline calls below.
+		if _, pErr := bo.policyResolver.BuildPipeline(
+			"response", "COMPLIANCE_PROXY",
+			"", nil,
+			bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
+			true, // strict
+			logger,
+		); pErr != nil {
+			logger.Error("SSE response blocked: mandatory fail-closed hook unbuildable under strict policy",
+				"target", respInput.TargetHost,
+				"error", pErr,
+			)
+			blockResult := &core.CompliancePipelineResult{
+				Decision:   compliance.RejectHard,
+				Reason:     "compliance pipeline unavailable (fail-closed)",
+				ReasonCode: core.ReasonFailClosed,
+			}
+			if bo.auditEmitter != nil && audCtx != nil {
+				emitAudit(logger, audCtx, respInput, auditInfo, bo, blockResult, http.StatusUnavailableForLegalReasons, requestStart, traffic.UsageMeta{}, nil)
+			}
+			stampRejectMarkers(w.Header(), bo.identity, "", "", cpHookOutcomeFromResult(blockResult))
+			http.Error(w, "Forbidden", http.StatusUnavailableForLegalReasons)
+			return
+		}
+	}
+
 	// Strip dynamically-listed hop-by-hop headers per RFC 7230 §6.1, then
 	// strip the static set. Both must happen before copying to the client.
 	stripDynamicHopByHop(resp.Header)
@@ -153,6 +189,23 @@ func handleSSEResponse(
 		mode = "passthrough"
 	}
 
+	// Diagnostic (Info so it shows in prod agent.log): which streaming mode the
+	// flow resolved to, per host. chunked_async = real-time relay; buffer_full_block
+	// = hold the whole response (breaks SSE realtime); passthrough = relay only.
+	// Grep "SSE streaming relay" + the host to see if e.g. claude.ai is being
+	// buffered (a per-host override) vs streamed.
+	sseHost, ssePath := "", ""
+	if respInput != nil {
+		sseHost = respInput.TargetHost
+		ssePath = respInput.Path
+	}
+	logger.Info("SSE streaming relay: resolved mode",
+		"host", sseHost,
+		"path", ssePath,
+		"mode", mode,
+		"statusCode", resp.StatusCode,
+		"contentType", resp.Header.Get("Content-Type"),
+	)
 	logger.Debug("SSE handler entry",
 		"mode", mode,
 		"audCtxNil", audCtx == nil,
@@ -189,7 +242,6 @@ func handleSSEResponse(
 	// 5-byte frame envelope; use frame-aware passthrough that tees payloads
 	// through the adapter's ExtractStreamChunk for audit regardless of mode.
 	if strings.Contains(resp.Header.Get("Content-Type"), "application/connect+proto") {
-		payloadGzip := strings.Contains(resp.Header.Get("Connect-Content-Encoding"), "gzip")
 		var extractor streaming.ConnectRPCFrameExtractor
 		if audCtx != nil && audCtx.adapter != nil {
 			adap := audCtx.adapter
@@ -206,13 +258,15 @@ func handleSSEResponse(
 		if captureMax > 0 {
 			captureBuf = streaming.NewCappedBuffer(captureMax)
 		}
-		accumulated, relayErr := streaming.PassthroughWithConnectRPCExtract(ctx, resp.Body, w, captureBuf, extractor, payloadGzip)
+		accumulated, relayErr := streaming.PassthroughWithConnectRPCExtract(ctx, resp.Body, w, captureBuf, extractor)
 		if relayErr != nil {
 			target := ""
 			if respInput != nil {
 				target = respInput.TargetHost
 			}
-			logger.Error("ConnectRPC passthrough failed", "target", target, "error", relayErr)
+			logger.Error("ConnectRPC passthrough failed", "target", target, "error", relayErr,
+				"cancel_cause", cancelCause(ctx),
+				"duration_ms", int(time.Since(requestStart).Milliseconds()))
 		}
 		if respInput != nil && accumulated != "" {
 			respInput.Normalized = core.PayloadFromTextSegments([]string{accumulated})
@@ -248,6 +302,8 @@ func handleSSEResponse(
 			logger.Error("SSE passthrough failed",
 				"target", target,
 				"error", err,
+				"cancel_cause", cancelCause(ctx),
+				"duration_ms", int(time.Since(requestStart).Milliseconds()),
 			)
 		}
 		stampSSEResponseNormalized(ctx, bo, audCtx, auditInfo, respInput, captureBuf.Bytes(), respContentType, logger)
@@ -261,9 +317,14 @@ func handleSSEResponse(
 			respPipeline, pErr := bo.policyResolver.BuildPipeline(
 				"response", "COMPLIANCE_PROXY",
 				"", nil,
-				bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks, logger,
+				bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
+				bo.strictFailClosed, // per-caller: false for the agent NE host-packet path (fail-open); true for the compliance-proxy appliance (refuse on unbuildable fail-closed hook)
+				logger,
 			)
 			if pErr != nil {
+				// Strict (appliance) fail-closed is refused up front by the
+				// guard at SSE entry (clean 451 before headers); reaching here
+				// means a non-strict caller, so fall back to passthrough.
 				logger.Warn("failed to build SSE live pipeline, falling back to passthrough",
 					"error", pErr,
 				)
@@ -322,6 +383,9 @@ func handleSSEResponse(
 			logger.Error("SSE live pipeline error",
 				"target", target,
 				"error", err,
+				"cancel_cause", cancelCause(ctx),
+				"bytes_captured", len(livePipeline.CapturedBytes()),
+				"duration_ms", int(time.Since(requestStart).Milliseconds()),
 			)
 		}
 		emitAudit(logger, audCtx, respInput, auditInfo, bo, result, resp.StatusCode, requestStart, finalizeUsage(ctx, acc), livePipeline.CapturedBytes())
@@ -333,9 +397,13 @@ func handleSSEResponse(
 			respPipeline, pErr := bo.policyResolver.BuildPipeline(
 				"response", "COMPLIANCE_PROXY",
 				"", nil,
-				bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks, logger,
+				bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
+				bo.strictFailClosed, // per-caller: false for the agent NE host-packet path (fail-open); true for the compliance-proxy appliance (refuse on unbuildable fail-closed hook)
+				logger,
 			)
 			if pErr != nil {
+				// Strict fail-closed is refused up front by the SSE-entry guard;
+				// reaching here means a non-strict caller → passthrough fallback.
 				logger.Warn("failed to build SSE buffer pipeline, falling back to passthrough",
 					"error", pErr,
 				)

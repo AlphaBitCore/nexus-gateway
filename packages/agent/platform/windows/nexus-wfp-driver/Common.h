@@ -174,7 +174,10 @@ typedef struct _NexusFlowAuditEntry {
     UINT8   reserved;
     UINT8   srcAddr[16];
     UINT16  srcPort;           // host byte order
-    UINT16  reserved2;
+    UINT16  droppedSinceLast;  // records lost (ring overflow / alloc
+                               // failure) since the previous drained
+                               // batch; stamped on the FIRST record of
+                               // a batch only, saturates at 65535.
     UINT8   origDstAddr[16];
     UINT16  origDstPort;       // host byte order
     UINT16  reserved3;
@@ -190,8 +193,10 @@ typedef struct _NexusFlowAuditEntry {
 //
 // In-driver policy snapshot. Hot path: callouts read this struct on
 // every connect to decide redirect / block / permit. Pointer swap is
-// atomic via InterlockedExchangePointer; the previous pointer is
-// freed at PASSIVE_LEVEL via a deferred work-item.
+// atomic via InterlockedExchangePointer; the superseded snapshot is
+// reclaimed refcount + grace-period — the swapper drops its reference
+// only after a per-CPU DPC rendezvous proves no reader is still inside
+// the acquire window (PolicyState.c).
 //
 typedef struct _NEXUS_POLICY {
     volatile LONG refCount;      // active readers + 1 for being-active.
@@ -211,8 +216,8 @@ NTSTATUS NexusPolicyInit(VOID);
 VOID     NexusPolicyShutdown(VOID);
 
 // Apply a serialised policy body (architecture §7 layout) atomically.
-// On success the new policy is active; the previous one is queued for
-// PASSIVE-level free.
+// PASSIVE only: on success the new policy is active and the call has
+// already waited out the reader grace period for the previous one.
 NTSTATUS NexusPolicyApply(
     _In_reads_bytes_(BufferLength) const VOID* Buffer,
     _In_ ULONG BufferLength);
@@ -269,6 +274,7 @@ NTSTATUS NexusAuditQueueInit(_In_ WDFDEVICE Device, _Out_ WDFQUEUE* OutAuditPump
 VOID     NexusAuditQueueShutdown(VOID);
 
 VOID NexusAuditEmit(_In_ const NexusFlowAuditEntry* Entry);
+VOID NexusAuditDrainPending(VOID); // deliver buffered records to a freshly-pended pump IRP
 
 //
 // Internal forward decls (defined in each .c file).
@@ -277,6 +283,7 @@ extern WDFDEVICE g_NexusWfpDevice;
 
 NTSTATUS NexusWfpFilterEngineOpen(VOID);
 VOID     NexusWfpFilterEngineClose(VOID);
+HANDLE   NexusWfpFilterEngineHandle(VOID); // dynamic session: anchors ALL FWPM objects (sublayer, filters, callout mgmt)
 NTSTATUS NexusWfpRegisterAllCallouts(_In_ PDEVICE_OBJECT DeviceObject);
 VOID     NexusWfpUnregisterAllCallouts(VOID);
 NTSTATUS NexusWfpFilterAddAll(VOID);       // Add filters that bind callouts to layers.

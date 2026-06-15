@@ -206,6 +206,43 @@ func TestGeminiGenerate_Response_NoCandidates(t *testing.T) {
 	}
 }
 
+func TestGeminiGenerate_Response_NonGeminiCandidatesDeclined(t *testing.T) {
+	// A body that unmarshals but where NO candidate carries content and
+	// usageMetadata is absent is not a Gemini response — it's some other
+	// API's "candidates" list. The codec must decline with ErrUnsupported
+	// so the registry walk continues to a structural projection, instead
+	// of claiming an empty ai-chat payload.
+	cases := map[string]string{
+		"object candidates no gemini shape": `{"candidates":[{"name":"alice"},{"name":"bob"}]}`,
+		"finish-reason-less empty objects":  `{"candidates":[{}],"total":1}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewGeminiGenerateNormalizer().Normalize(context.Background(), []byte(body), core.Meta{Direction: core.DirectionResponse})
+			if !errors.Is(err, core.ErrUnsupported) {
+				t.Fatalf("expected core.ErrUnsupported, got %v", err)
+			}
+		})
+	}
+}
+
+func TestGeminiGenerate_Response_ContentlessWithUsageStillClaims(t *testing.T) {
+	// A genuine empty Gemini response (safety block) carries finishReason
+	// + usageMetadata and no content — that must still normalize, with
+	// the finish reason and usage preserved for the audit row.
+	body := `{"candidates":[{"finishReason":"SAFETY","index":0}],"usageMetadata":{"promptTokenCount":9,"totalTokenCount":9}}`
+	got, err := NewGeminiGenerateNormalizer().Normalize(context.Background(), []byte(body), core.Meta{Direction: core.DirectionResponse})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.FinishReason != "SAFETY" {
+		t.Fatalf("FinishReason = %q, want SAFETY", got.FinishReason)
+	}
+	if got.Usage == nil || got.Usage.PromptTokens == nil || *got.Usage.PromptTokens != 9 {
+		t.Fatalf("Usage not preserved: %+v", got.Usage)
+	}
+}
+
 func TestGeminiGenerate_Stream_SSE(t *testing.T) {
 	raw := strings.Join([]string{
 		`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]},"index":0}]}`,
@@ -236,6 +273,32 @@ func TestGeminiGenerate_Stream_SSE(t *testing.T) {
 	}
 	if got.Usage == nil || got.Usage.PromptTokens == nil || *got.Usage.PromptTokens != 4 {
 		t.Fatalf("Usage: %+v", got.Usage)
+	}
+}
+
+// Stream confidence is frame coverage: a frame that parses as JSON but
+// carries neither candidates nor usageMetadata counts toward the total
+// only, so the operator sees an honest fraction of the stream the
+// decoder understood instead of a field-shape score off the first frame.
+func TestGeminiGenerate_StreamConfidenceIsFrameCoverage(t *testing.T) {
+	raw := strings.Join([]string{
+		`data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]},"index":0}]}`,
+		``,
+		`data: {"ping":"keepalive"}`, // parses, no generateContent structure: total only
+		``,
+		`data: {"candidates":[{"content":{"parts":[{"text":"!"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":3,"totalTokenCount":7}}`,
+		``,
+	}, "\n")
+	got, err := NewGeminiGenerateNormalizer().Normalize(context.Background(), []byte(raw), core.Meta{Direction: core.DirectionResponse, Stream: true})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	want := 2.0 / 3.0
+	if got.Confidence != want {
+		t.Errorf("confidence = %v, want %v (2 of 3 frames recognized)", got.Confidence, want)
+	}
+	if got.Messages[0].Content[0].Text != "Hi!" {
+		t.Errorf("recognized frames not folded: %q", got.Messages[0].Content[0].Text)
 	}
 }
 

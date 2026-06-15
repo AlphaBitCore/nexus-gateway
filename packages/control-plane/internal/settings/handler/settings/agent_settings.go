@@ -10,6 +10,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/systembundles"
 )
 
 // GetAgentSettings returns the fleet-wide agent runtime defaults pushed to
@@ -68,6 +69,12 @@ func (h *Handler) GetAgentSettings(c echo.Context) error {
 		// closing their UDP takes the host network down (fail-open safety).
 		// Empty/absent = no UDP gets killed (safe-default).
 		"forceQUICFallbackBundles": mapStringSlice(settings, "forceQUICFallbackBundles"),
+		// bypassBundles — SOURCE app bundle IDs the macOS NE proxy passes
+		// through without TLS bump (self-exemption). Matching is by source
+		// bundle, never host, so a trusted developer tool can be kept off
+		// the inspection path without blinding the agent to the same host
+		// from other apps. Empty/absent = exempt nothing (inspect all).
+		"bypassBundles": mapStringSlice(settings, "bypassBundles"),
 		// attestationEnabled — fleet-wide opt-in for agent attestation.
 		// When true, agents sign every outbound CONNECT with their Ed25519
 		// attestation key; when CP verifies the signature it transparently
@@ -129,6 +136,42 @@ func mapStringSlice(m map[string]any, key string) []string {
 	return out
 }
 
+// sanitizeBundleIDList validates an admin-supplied bundle-ID list shared by
+// forceQUICFallbackBundles and bypassBundles: it drops empties, dedupes,
+// rejects >200 chars or non-printable-ASCII/whitespace, and caps at 64
+// entries. It returns the cleaned list and an empty error string on success,
+// or a non-empty message (the caller turns it into a 400) naming `field` so
+// the admin sees which list was wrong. Hard-reject rather than silent-drop —
+// surfacing the bad value beats "I added it and it disappeared". The caps
+// keep the agent_settings JSON blob (Hub serves it inline) bounded.
+func sanitizeBundleIDList(in []string, field string) ([]string, string) {
+	seen := make(map[string]struct{})
+	clean := make([]string, 0, len(in))
+	for _, b := range in {
+		b = strings.TrimSpace(b)
+		if b == "" {
+			continue
+		}
+		if len(b) > 200 {
+			return nil, field + " entry exceeds 200 chars: " + b[:32] + "…"
+		}
+		for _, r := range b {
+			if r < 0x20 || r > 0x7E || r == ' ' {
+				return nil, field + " entries must be printable ASCII without whitespace"
+			}
+		}
+		if _, dup := seen[b]; dup {
+			continue
+		}
+		seen[b] = struct{}{}
+		clean = append(clean, b)
+	}
+	if len(clean) > 64 {
+		return nil, field + " supports at most 64 entries"
+	}
+	return clean, ""
+}
+
 // UpdateAgentSettings updates the fleet-wide agent runtime defaults.
 // Accepts quitAllowed + shutdownWarning (multi-locale map). Fields omitted
 // from the request body are left unchanged. The next configreconcile tick
@@ -148,7 +191,15 @@ func (h *Handler) UpdateAgentSettings(c echo.Context) error {
 		// Both states matter — clearing must propagate to NE so admin
 		// can disable QUIC blocking entirely without a code change.
 		ForceQUICFallbackBundles *[]string `json:"forceQUICFallbackBundles"`
-		AttestationEnabled       *bool     `json:"attestationEnabled"`
+		// BypassBundles is a *pointer-to-slice* for the same absent-vs-empty
+		// distinction as ForceQUICFallbackBundles: empty means "exempt
+		// nothing" and must propagate so an admin can clear the list. Entries
+		// are SOURCE app bundle IDs whose flows the macOS NE passes through
+		// without inspection (e.g. a pinned developer tool). Unlike the QUIC
+		// list there is no protected-system-bundle reject: exempting a bundle
+		// only removes it from inspection, which is harmless.
+		BypassBundles      *[]string `json:"bypassBundles"`
+		AttestationEnabled *bool     `json:"attestationEnabled"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
@@ -246,46 +297,36 @@ func (h *Handler) UpdateAgentSettings(c echo.Context) error {
 		current["themeId"] = t
 	}
 	if body.ForceQUICFallbackBundles != nil {
-		// Sanitize: drop empties + dedupe + cap at 64 entries. Each
-		// entry must look like a bundle ID (printable ASCII without
-		// whitespace, max 200 chars). Hard reject if any entry fails
-		// validation rather than silently drop — surfacing the bad
-		// value lets the admin see what they typed wrong instead of
-		// debugging "I added it and it disappeared". The 64-cap and
-		// 200-char-cap defend against an over-stuffed admin payload
-		// blowing up the agent_settings JSON blob (Hub serves this
-		// inline; size matters).
-		seen := make(map[string]struct{})
-		clean := make([]string, 0, len(*body.ForceQUICFallbackBundles))
-		for _, b := range *body.ForceQUICFallbackBundles {
-			b = strings.TrimSpace(b)
-			if b == "" {
-				continue
-			}
-			if len(b) > 200 {
-				return c.JSON(http.StatusBadRequest, errJSON(
-					"forceQUICFallbackBundles entry exceeds 200 chars: "+b[:32]+"…",
-					"validation_error", ""))
-			}
-			for _, r := range b {
-				if r < 0x20 || r > 0x7E || r == ' ' {
-					return c.JSON(http.StatusBadRequest, errJSON(
-						"forceQUICFallbackBundles entries must be printable ASCII without whitespace",
-						"validation_error", ""))
-				}
-			}
-			if _, dup := seen[b]; dup {
-				continue
-			}
-			seen[b] = struct{}{}
-			clean = append(clean, b)
+		clean, errMsg := sanitizeBundleIDList(*body.ForceQUICFallbackBundles, "forceQUICFallbackBundles")
+		if errMsg != "" {
+			return c.JSON(http.StatusBadRequest, errJSON(errMsg, "validation_error", ""))
 		}
-		if len(clean) > 64 {
-			return c.JSON(http.StatusBadRequest, errJSON(
-				"forceQUICFallbackBundles supports at most 64 entries",
-				"validation_error", ""))
+		// QUIC-kill specific: reject any entry that would close UDP for a
+		// macOS system networking/push/continuity daemon — the daemon itself
+		// or an over-broad ancestor prefix (e.g. "com.apple") the NE's
+		// prefix-capable kill would fan out across every com.apple.* daemon.
+		// Honoring such an entry takes down DNS / DHCP / APNs fleet-wide from a
+		// routine settings permission (CLAUDE.md NE rule 5).
+		for _, b := range clean {
+			if protected, bad := systembundles.Covers(b); bad {
+				msg := "forceQUICFallbackBundles entry would disable UDP for a protected system service: " + b
+				if protected != "" {
+					msg += " (matches " + protected + ")"
+				}
+				return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+			}
 		}
 		current["forceQUICFallbackBundles"] = clean
+	}
+	if body.BypassBundles != nil {
+		// No systembundles.Covers reject here (unlike forceQUIC): a bypass
+		// entry only removes a bundle from inspection — it cannot close UDP —
+		// so even a system-daemon entry is a harmless no-op.
+		clean, errMsg := sanitizeBundleIDList(*body.BypassBundles, "bypassBundles")
+		if errMsg != "" {
+			return c.JSON(http.StatusBadRequest, errJSON(errMsg, "validation_error", ""))
+		}
+		current["bypassBundles"] = clean
 	}
 	if body.AttestationEnabled != nil {
 		current["attestationEnabled"] = *body.AttestationEnabled

@@ -23,18 +23,31 @@ import (
 )
 
 type fakeDB struct {
-	mu         sync.Mutex
-	rows       map[string]*dsarstore.DSARRequest
-	listErr    error
-	getErr     error
-	createErr  error
-	updateErr  error
-	accessErr  error
-	erasureErr error
+	mu            sync.Mutex
+	rows          map[string]*dsarstore.DSARRequest
+	listErr       error
+	getErr        error
+	createErr     error
+	updateErr     error
+	accessErr     error
+	erasureErr    error
+	subjectExists bool
+	subjectErr    error
 }
 
 func newFakeDB() *fakeDB {
-	return &fakeDB{rows: map[string]*dsarstore.DSARRequest{}}
+	// subjectExists defaults to true so existing fulfill tests exercise the
+	// happy path; subject-not-found tests flip it to false.
+	return &fakeDB{rows: map[string]*dsarstore.DSARRequest{}, subjectExists: true}
+}
+
+func (f *fakeDB) SubjectExists(_ context.Context, _ string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.subjectErr != nil {
+		return false, f.subjectErr
+	}
+	return f.subjectExists, nil
 }
 
 func (f *fakeDB) seed(r dsarstore.DSARRequest) {
@@ -140,9 +153,15 @@ func (f *fakeDB) FulfillDSARAccess(_ context.Context, subjectID string) (*dsarst
 		return nil, f.accessErr
 	}
 	return &dsarstore.DSARAccessExport{
+		User:      map[string]any{"id": subjectID, "displayName": "Jane"},
+		IAMGroups: []map[string]any{{"groupName": "Compliance"}},
 		VKRows:    []map[string]any{{"id": "te-1", "subjectId": subjectID}},
 		AgentRows: []map[string]any{},
 		Devices:   []map[string]any{},
+		Payloads:  []map[string]any{{"trafficEventId": "te-1"}},
+		Assistant: dsarstore.DSARAssistantExport{
+			Sessions: []map[string]any{{"id": "ses1"}},
+		},
 	}, nil
 }
 
@@ -152,7 +171,12 @@ func (f *fakeDB) FulfillDSARErasure(_ context.Context, _ string) (*dsarstore.DSA
 	if f.erasureErr != nil {
 		return nil, f.erasureErr
 	}
-	return &dsarstore.DSARErasureResult{VKAnonymised: 5, AgentAnonymised: 2, TotalAnonymised: 7}, nil
+	return &dsarstore.DSARErasureResult{
+		VKAnonymised: 5, AgentAnonymised: 2, TotalAnonymised: 7,
+		// Account-record deletion stage (F-0335): surfaced in the outcome + audit.
+		VKOwnedDeleted: 3, AdminApiKeysDeleted: 1, FederatedIdentitiesDeleted: 2,
+		RefreshTokensDeleted: 4, ScimTokensDeleted: 1, AccountDeleted: true,
+	}, nil
 }
 
 // mqNop satisfies mq.Producer; used by audit.NewWriter in tests.
@@ -745,6 +769,19 @@ func TestFulfillDSAR_ERASURE_HappyPath(t *testing.T) {
 	if outcome["vkAnonymised"].(float64) != 5 {
 		t.Errorf("vkAnonymised = %v; want 5", outcome["vkAnonymised"])
 	}
+	// Account-record deletion counts (F-0335) must surface in the response outcome.
+	if outcome["vkOwnedDeleted"].(float64) != 3 {
+		t.Errorf("vkOwnedDeleted = %v; want 3", outcome["vkOwnedDeleted"])
+	}
+	if outcome["federatedIdentitiesDeleted"].(float64) != 2 {
+		t.Errorf("federatedIdentitiesDeleted = %v; want 2", outcome["federatedIdentitiesDeleted"])
+	}
+	if outcome["scimTokensDeleted"].(float64) != 1 {
+		t.Errorf("scimTokensDeleted = %v; want 1", outcome["scimTokensDeleted"])
+	}
+	if outcome["accountDeleted"].(bool) != true {
+		t.Errorf("accountDeleted = %v; want true", outcome["accountDeleted"])
+	}
 }
 
 func TestFulfillDSAR_ERASURE_FulfillError_Returns500(t *testing.T) {
@@ -776,6 +813,114 @@ func TestFulfillDSAR_ERASURE_UpdateError_Returns500(t *testing.T) {
 	}
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d; want 500", rec.Code)
+	}
+}
+
+// F-0264: a subjectId that does not resolve to a NexusUser must NOT be
+// force-completed. The request is marked REJECTED and the response is 422.
+
+func TestFulfillDSAR_ERASURE_UnknownSubject_RejectsNotCompleted(t *testing.T) {
+	db := newFakeDB()
+	db.subjectExists = false
+	db.seed(dsarstore.DSARRequest{ID: "d9", SubjectID: "typo-id", Type: "ERASURE", Status: "IN_PROGRESS", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	h := newTestHandler(db)
+	c, rec := echoCtx(http.MethodPost, "/dsar/d9/fulfill", "")
+	c.SetParamNames("id")
+	c.SetParamValues("d9")
+	if err := h.FulfillDSAR(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d; want 422 (unknown subject)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "subject_not_found") {
+		t.Errorf("expected subject_not_found code; got %s", rec.Body.String())
+	}
+	// The DSAR must be REJECTED, never COMPLETED.
+	got, _ := db.GetDSARRequest(context.Background(), "d9")
+	if got.Status != "REJECTED" {
+		t.Errorf("status = %q; want REJECTED (must not be COMPLETED)", got.Status)
+	}
+}
+
+func TestFulfillDSAR_ACCESS_UnknownSubject_Rejects(t *testing.T) {
+	db := newFakeDB()
+	db.subjectExists = false
+	db.seed(dsarstore.DSARRequest{ID: "d10", SubjectID: "ghost", Type: "ACCESS", Status: "IN_PROGRESS", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	h := newTestHandler(db)
+	c, rec := echoCtx(http.MethodPost, "/dsar/d10/fulfill", "")
+	c.SetParamNames("id")
+	c.SetParamValues("d10")
+	if err := h.FulfillDSAR(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d; want 422", rec.Code)
+	}
+}
+
+func TestFulfillDSAR_UnknownSubject_UpdateError_Returns500(t *testing.T) {
+	db := newFakeDB()
+	db.subjectExists = false
+	db.updateErr = errors.New("db down")
+	db.seed(dsarstore.DSARRequest{ID: "d11", SubjectID: "ghost", Type: "ERASURE", Status: "IN_PROGRESS", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	h := newTestHandler(db)
+	c, rec := echoCtx(http.MethodPost, "/dsar/d11/fulfill", "")
+	c.SetParamNames("id")
+	c.SetParamValues("d11")
+	if err := h.FulfillDSAR(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d; want 500 (reject-update failed)", rec.Code)
+	}
+}
+
+func TestFulfillDSAR_SubjectExistsError_Returns500(t *testing.T) {
+	db := newFakeDB()
+	db.subjectErr = errors.New("db down")
+	db.seed(dsarstore.DSARRequest{ID: "d12", SubjectID: "s1", Type: "ERASURE", Status: "IN_PROGRESS", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	h := newTestHandler(db)
+	c, rec := echoCtx(http.MethodPost, "/dsar/d12/fulfill", "")
+	c.SetParamNames("id")
+	c.SetParamValues("d12")
+	if err := h.FulfillDSAR(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d; want 500", rec.Code)
+	}
+}
+
+// F-0263: the audit digest must carry only counts, never the export PII.
+func TestAccessExportDigest_CountsOnly_NoPII(t *testing.T) {
+	exp := &dsarstore.DSARAccessExport{
+		User:      map[string]any{"displayName": "Jane Doe", "email": "jane@x.com"},
+		IAMGroups: []map[string]any{{"groupName": "Compliance"}},
+		VKRows:    []map[string]any{{}, {}},
+		AgentRows: []map[string]any{{}},
+		Devices:   []map[string]any{{}},
+		Payloads:  []map[string]any{{"requestBody": "secret-prompt"}},
+		Assistant: dsarstore.DSARAssistantExport{
+			Sessions: []map[string]any{{}, {}, {}},
+			Memory:   []map[string]any{{}},
+		},
+	}
+	d := accessExportDigest(exp)
+	if d["userPresent"] != true || d["iamGroups"] != 1 || d["vk"] != 2 || d["agent"] != 1 ||
+		d["devices"] != 1 || d["payloads"] != 1 || d["assistantSessions"] != 3 || d["assistantMemory"] != 1 {
+		t.Fatalf("digest counts wrong: %+v", d)
+	}
+	// The digest must not leak any actual field value (name, email, body).
+	raw := mustJSON(t, d)
+	for _, leak := range []string{"Jane Doe", "jane@x.com", "secret-prompt", "Compliance"} {
+		if strings.Contains(raw, leak) {
+			t.Errorf("digest leaked PII %q: %s", leak, raw)
+		}
+	}
+	// Nil-safe.
+	if len(accessExportDigest(nil)) != 0 {
+		t.Errorf("nil export digest should be empty")
 	}
 }
 

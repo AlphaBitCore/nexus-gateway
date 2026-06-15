@@ -5,6 +5,7 @@ package traffic
 
 import (
 	"context"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,7 +18,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	cpgx "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/pgx"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/settings/store/metricsstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/compliancestore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
 	metricspkg "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
@@ -47,7 +47,6 @@ type Handler struct {
 	dsar       *dsarstore.Store
 	metrics    *metricsstore.Store
 	compliance *compliancestore.Store
-	meta       *systemmetastore.Store
 	audit      *audit.Writer
 	logger     *slog.Logger
 	spillStore spillstore.SpillStore
@@ -70,20 +69,12 @@ func New(d Deps) *Handler {
 		h.dsar = dsarstore.New(d.Pool)
 		h.metrics = ms
 		h.compliance = compliancestore.New(d.Pool, ms)
-		h.meta = systemmetastore.New(d.Pool)
 	}
 	return h
 }
 
-func errJSON(message, errType, code string) map[string]any {
-	return map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    errType,
-			"code":    code,
-		},
-	}
-}
+// errJSON is the canonical admin error envelope helper (see internal/platform/httperr).
+var errJSON = httperr.ErrJSON
 
 func internalServerError(c echo.Context, msg string) error {
 	return c.JSON(http.StatusInternalServerError, errJSON(msg, "server_error", ""))

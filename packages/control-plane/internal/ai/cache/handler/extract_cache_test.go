@@ -257,7 +257,12 @@ func TestExtractCachePutConfig_StoreError_Returns500(t *testing.T) {
 	}
 }
 
-func TestExtractCachePutConfig_HubErrorIsFireAndForget(t *testing.T) {
+// A dropped Hub push escalates to 502 with the propagation_error envelope
+// (mirrors cache.go) instead of silently returning 200, so the admin sees the
+// failure immediately. The configreconcile watch for this key (F-0102/F-0345)
+// additionally heals it within one cycle, so the unified message's
+// auto-recovery promise holds.
+func TestExtractCachePutConfig_HubErrorReturns502(t *testing.T) {
 	store := &stubExtractStore{}
 	hubStub := &fakeExtractHub{err: errors.New("hub down")}
 	e := mountExtractRoutes(t, newExtractHandler(store, hubStub))
@@ -268,9 +273,11 @@ func TestExtractCachePutConfig_HubErrorIsFireAndForget(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	// Hub failure is logged + ignored; the DB write already succeeded.
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200 (hub error is fire-and-forget), got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want 502 (no reconcile backstop for this key), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "propagation_error") {
+		t.Errorf("missing propagation_error envelope; body=%s", rec.Body.String())
 	}
 }
 

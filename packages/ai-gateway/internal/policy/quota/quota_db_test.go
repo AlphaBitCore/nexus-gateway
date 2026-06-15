@@ -87,11 +87,11 @@ func TestPolicyCache_Load_HappyPath(t *testing.T) {
 	enf := "downgrade"
 	period := "weekly"
 	overrideRows := pgxmock.NewRows([]string{
-		"id", "targetType", "targetId", "costLimitUsd", "enforcementMode", "periodType",
+		"id", "targetType", "targetId", "costLimitUsd", "enforcementMode", "periodType", "expiresAt",
 	}).
-		AddRow("o1", "virtual_key", "vk-1", floatPtr(2.5), &enf, &period).
+		AddRow("o1", "virtual_key", "vk-1", floatPtr(2.5), &enf, &period, (*time.Time)(nil)).
 		// all-nullable: still inserted but with zero/empty values
-		AddRow("o2", "user", "u-1", (*float64)(nil), (*string)(nil), (*string)(nil))
+		AddRow("o2", "user", "u-1", (*float64)(nil), (*string)(nil), (*string)(nil), (*time.Time)(nil))
 
 	mock.ExpectQuery(`FROM "QuotaOverride"`).WillReturnRows(overrideRows)
 
@@ -144,6 +144,142 @@ func TestPolicyCache_Load_HappyPath(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestPolicyCache_LoadedFlag locks SEC-C6-01: the cache reports Loaded()==false
+// until the FIRST successful Load (so the engine can distinguish a boot-time
+// load failure → silent fail-open from a legitimately empty policy set), and a
+// failing Load does NOT flip it to loaded.
+func TestPolicyCache_LoadedFlag(t *testing.T) {
+	mock := newMockPool(t)
+	c := NewPolicyCacheWithPgxPool(mock, testLogger())
+
+	if c.Loaded() {
+		t.Fatal("Loaded() must be false before any Load")
+	}
+
+	// A failing load must leave Loaded() false (the fail-open window).
+	mock.ExpectQuery(`FROM "QuotaPolicy"`).WillReturnError(errors.New("db down"))
+	if err := c.Load(context.Background()); err == nil {
+		t.Fatal("expected Load error")
+	}
+	if c.Loaded() {
+		t.Error("Loaded() must stay false after a failing Load")
+	}
+
+	// A successful (even empty) load flips it to loaded.
+	mock.ExpectQuery(`FROM "QuotaPolicy"`).WillReturnRows(
+		pgxmock.NewRows([]string{"id", "scope", "organizationId", "vkType", "periodType", "costLimitUsd", "enforcementMode", "priority"}))
+	mock.ExpectQuery(`FROM "QuotaOverride"`).WillReturnRows(
+		pgxmock.NewRows([]string{"id", "targetType", "targetId", "costLimitUsd", "enforcementMode", "periodType", "expiresAt"}))
+	mock.ExpectQuery(`FROM "Organization"`).WillReturnRows(
+		pgxmock.NewRows([]string{"id", "parentId"}))
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.Loaded() {
+		t.Error("Loaded() must be true after a successful Load (even with zero policies)")
+	}
+}
+
+// TestPolicyCache_Load_NormalizesVKScope locks SEC-C6-02: a VK-scoped policy /
+// override persisted by the CP UI as scope/targetType "vk" must be enforced
+// under the engine's canonical "virtual_key" lookup. Before the fix these rows
+// were keyed as "vk" and the engine's "virtual_key" queries never found them, so
+// a VK quota set in the UI was silently a no-op.
+func TestPolicyCache_Load_NormalizesVKScope(t *testing.T) {
+	mock := newMockPool(t)
+	c := NewPolicyCacheWithPgxPool(mock, testLogger())
+
+	orgA := "org-A"
+	vkPersonal := "personal"
+	// Policy + override written by the UI with the "vk" token.
+	mock.ExpectQuery(`FROM "QuotaPolicy"`).WillReturnRows(
+		pgxmock.NewRows([]string{"id", "scope", "organizationId", "vkType", "periodType", "costLimitUsd", "enforcementMode", "priority"}).
+			AddRow("p-vk", "vk", &orgA, &vkPersonal, "monthly", floatPtr(7.0), "reject", 100))
+	enf := "reject"
+	period := "monthly"
+	mock.ExpectQuery(`FROM "QuotaOverride"`).WillReturnRows(
+		pgxmock.NewRows([]string{"id", "targetType", "targetId", "costLimitUsd", "enforcementMode", "periodType", "expiresAt"}).
+			AddRow("o-vk", "vk", "vk-abc", floatPtr(0.05), &enf, &period, (*time.Time)(nil)))
+	mock.ExpectQuery(`FROM "Organization"`).WillReturnRows(
+		pgxmock.NewRows([]string{"id", "parentId"}).AddRow("org-A", ""))
+
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// The engine queries "virtual_key" — the "vk" rows must resolve under it.
+	if p := c.FindPolicy("virtual_key", "org-A", "personal"); p == nil || p.CostLimitCents != 700 {
+		t.Errorf("vk-scoped policy not enforced under virtual_key: %+v", p)
+	}
+	if o := c.GetOverride("virtual_key", "vk-abc"); o == nil || o.EnforcementMode != "reject" {
+		t.Errorf("vk-scoped override not enforced under virtual_key: %+v", o)
+	}
+}
+
+// TestPolicyCache_Load_OverrideQueryFiltersExpired asserts the override load
+// query carries the expiry predicate so expired overrides (a past "expiresAt")
+// are never pulled into the enforcement cache — the F-0161 fix. The strict
+// ExpectQuery regex fails if the WHERE clause is dropped, guarding the
+// regression where a "temporary" exception permanently raised a limit.
+func TestPolicyCache_Load_OverrideQueryFiltersExpired(t *testing.T) {
+	mock := newMockPool(t)
+	c := NewPolicyCacheWithPgxPool(mock, testLogger())
+
+	mock.ExpectQuery(`FROM "QuotaPolicy"`).WillReturnRows(
+		pgxmock.NewRows([]string{
+			"id", "scope", "organizationId", "vkType", "periodType",
+			"costLimitUsd", "enforcementMode", "priority",
+		}),
+	)
+	// The DB applies the filter; the mock cannot execute SQL, but matching the
+	// predicate text proves the gateway asks for non-expired rows only.
+	mock.ExpectQuery(`FROM "QuotaOverride"\s+WHERE "expiresAt" IS NULL OR "expiresAt" > NOW\(\)`).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "targetType", "targetId", "costLimitUsd", "enforcementMode", "periodType", "expiresAt",
+		}).AddRow("o-live", "user", "u-live", floatPtr(1.0), (*string)(nil), (*string)(nil), (*time.Time)(nil)))
+	mock.ExpectQuery(`FROM "Organization"`).WillReturnRows(
+		pgxmock.NewRows([]string{"id", "parentId"}),
+	)
+
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if o := c.GetOverride("user", "u-live"); o == nil {
+		t.Fatal("expected the non-expired override to be loaded")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestPolicyCache_GetOverride_ReadPathExpiryCheck verifies that GetOverride
+// returns nil for an override whose ExpiresAt is in the past, even if it was
+// loaded into the cache (i.e., the DB filter ran before it expired). This
+// closes the enforcement gap where a cached override would outlive its expiry
+// until the next Load() trigger (F-0161).
+func TestPolicyCache_GetOverride_ReadPathExpiryCheck(t *testing.T) {
+	c := NewPolicyCacheWithPgxPool(nil, testLogger())
+	past := time.Now().Add(-1 * time.Second)
+	future := time.Now().Add(1 * time.Hour)
+
+	// Inject directly to bypass DB load.
+	c.SetOverridesForTest(map[string]*CachedOverride{
+		"user:u-expired": {ID: "o-expired", TargetType: "user", TargetID: "u-expired", CostLimitCents: 999, ExpiresAt: &past},
+		"user:u-live":    {ID: "o-live", TargetType: "user", TargetID: "u-live", CostLimitCents: 100, ExpiresAt: &future},
+		"user:u-never":   {ID: "o-never", TargetType: "user", TargetID: "u-never", CostLimitCents: 50, ExpiresAt: nil},
+	})
+
+	if got := c.GetOverride("user", "u-expired"); got != nil {
+		t.Errorf("expired override must return nil at read time, got %+v", got)
+	}
+	if got := c.GetOverride("user", "u-live"); got == nil {
+		t.Error("future-expiry override must be returned")
+	}
+	if got := c.GetOverride("user", "u-never"); got == nil {
+		t.Error("nil-expiry (never-expires) override must be returned")
 	}
 }
 
@@ -289,7 +425,7 @@ func TestPolicyCache_OverrideSnapshot_SkipsNil(t *testing.T) {
 func TestUsageCache_Backfill_NilRedis_NoOp(t *testing.T) {
 	c := NewUsageCache(nil, testLogger())
 	mock := newMockPool(t)
-	if err := c.backfillWithPgxPool(context.Background(), mock, testLogger()); err != nil {
+	if err := c.backfillWithPgxPool(context.Background(), mock, []string{"monthly"}, testLogger()); err != nil {
 		t.Errorf("nil rdb: %v", err)
 	}
 	// No expectations to assert; backfill must short-circuit before
@@ -308,7 +444,7 @@ func TestUsageCache_Backfill_NilPool_NoOp(t *testing.T) {
 	c := NewUsageCache(rdb, testLogger())
 	// Calling the prod-shape Backfill with a nil concrete pool must
 	// short-circuit (cold-start where DB hasn't connected yet).
-	if err := c.Backfill(context.Background(), nil, testLogger()); err != nil {
+	if err := c.Backfill(context.Background(), nil, []string{"monthly"}, testLogger()); err != nil {
 		t.Errorf("nil pool: %v", err)
 	}
 }
@@ -322,7 +458,9 @@ func TestUsageCache_Backfill_HappyPath_SeedsAllDimensions(t *testing.T) {
 	c := NewUsageCache(rdb, testLogger())
 	mock := newMockPool(t)
 
-	// Backfill iterates 3 dimensions in order: user, virtual_key, organization.
+	// Backfill iterates 4 dimensions in order: user, virtual_key, project,
+	// organization (F-0151 — project must be seeded so a Redis cold-start
+	// does not zero the project counter and grant a full extra budget).
 	now := time.Now().UTC()
 	periodKey := now.Format("2006-01")
 
@@ -342,13 +480,19 @@ func TestUsageCache_Backfill_HappyPath_SeedsAllDimensions(t *testing.T) {
 			AddRow("virtual_key=", 7.77).        // empty entityID, skip
 			AddRow("virtual_key=vk-zero", 0.0))  // zero cents, skip
 
+	// project dimension.
+	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "project=%").
+		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}).
+			AddRow("project=proj-1", 3.00))
+
 	// organization dimension.
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "organization=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}).
 			AddRow("organization=org-1", 5.00))
 
-	if err := c.backfillWithPgxPool(context.Background(), mock, testLogger()); err != nil {
+	if err := c.backfillWithPgxPool(context.Background(), mock, []string{"monthly"}, testLogger()); err != nil {
 		t.Fatalf("Backfill: %v", err)
 	}
 
@@ -360,6 +504,11 @@ func TestUsageCache_Backfill_HappyPath_SeedsAllDimensions(t *testing.T) {
 	got, _ = rdb.Get(context.Background(), usageKey("virtual_key", "vk-1", periodKey)).Result()
 	if got != "200" {
 		t.Errorf("vk usage: %q want 200", got)
+	}
+	// F-0151: project counter seeded from the rollup.
+	got, _ = rdb.Get(context.Background(), usageKey("project", "proj-1", periodKey)).Result()
+	if got != "300" {
+		t.Errorf("project usage: %q want 300 (F-0151 — project dimension must be backfilled)", got)
 	}
 	got, _ = rdb.Get(context.Background(), usageKey("organization", "org-1", periodKey)).Result()
 	if got != "500" {
@@ -380,7 +529,7 @@ func TestUsageCache_Backfill_HappyPath_SeedsAllDimensions(t *testing.T) {
 }
 
 // TestUsageCache_Backfill_SetNXDoesNotOverwrite — live counters from
-// IncrUsage must not be clobbered by Backfill (the core invariant of
+// IncrMulti must not be clobbered by Backfill (the core invariant of
 // SetNX-based seeding).
 func TestUsageCache_Backfill_SetNXDoesNotOverwrite(t *testing.T) {
 	mr, _ := miniredis.Run()
@@ -408,10 +557,13 @@ func TestUsageCache_Backfill_SetNXDoesNotOverwrite(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "virtual_key=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "project=%").
+		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
+	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "organization=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
 
-	if err := c.backfillWithPgxPool(context.Background(), mock, testLogger()); err != nil {
+	if err := c.backfillWithPgxPool(context.Background(), mock, []string{"monthly"}, testLogger()); err != nil {
 		t.Fatalf("Backfill: %v", err)
 	}
 
@@ -442,12 +594,16 @@ func TestUsageCache_Backfill_QueryErrorContinues(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "virtual_key=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}).
 			AddRow("virtual_key=vk-after-err", 0.42))
-	// Third dim (organization) succeeds (empty).
+	// Third dim (project) succeeds (empty).
+	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "project=%").
+		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
+	// Fourth dim (organization) succeeds (empty).
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "organization=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
 
-	if err := c.backfillWithPgxPool(context.Background(), mock, testLogger()); err != nil {
+	if err := c.backfillWithPgxPool(context.Background(), mock, []string{"monthly"}, testLogger()); err != nil {
 		t.Fatalf("Backfill must swallow per-dim error: %v", err)
 	}
 
@@ -484,10 +640,13 @@ func TestUsageCache_Backfill_ScanErrorSkipsRow(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "virtual_key=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "project=%").
+		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
+	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "organization=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
 
-	if err := c.backfillWithPgxPool(context.Background(), mock, testLogger()); err != nil {
+	if err := c.backfillWithPgxPool(context.Background(), mock, []string{"monthly"}, testLogger()); err != nil {
 		t.Fatalf("Backfill: %v", err)
 	}
 
@@ -512,7 +671,7 @@ func TestEngine_Check_FailsOpenOnUsageCacheError(t *testing.T) {
 		{ID: "p", Scope: "virtual_key", PeriodType: "monthly", CostLimitCents: 100, EnforcementMode: "reject", Priority: 100},
 	}
 	usageCache := NewUsageCache(rdb, testLogger())
-	engine := NewEngine(policyCache, usageCache, testLogger())
+	engine := NewEngine(policyCache, usageCache, testLogger(), nil)
 
 	d := engine.Check(context.Background(),
 		[]CheckLevel{{TargetType: "virtual_key", TargetID: "vk-1"}},
@@ -532,13 +691,13 @@ func TestEngine_Reconcile_LogsOnIncrMultiError(t *testing.T) {
 	rdb.Close()
 
 	usageCache := NewUsageCache(rdb, testLogger())
-	engine := NewEngine(NewPolicyCache(nil, testLogger()), usageCache, testLogger())
+	engine := NewEngine(NewPolicyCache(nil, testLogger()), usageCache, testLogger(), nil)
 
 	dec := &Decision{
 		Levels:    []CheckLevel{{TargetType: "virtual_key", TargetID: "vk-1"}},
 		PeriodKey: "2026-05",
 	}
-	actual := ActualUsage{PromptTokens: 1_000_000, InputPricePM: 1, OutputPricePM: 1}
+	actual := ActualUsage{CostUSD: 1}
 	// Must not panic.
 	engine.Reconcile(context.Background(), dec, actual)
 }
@@ -546,7 +705,7 @@ func TestEngine_Reconcile_LogsOnIncrMultiError(t *testing.T) {
 func TestEngine_OrgParents_DelegatesToPolicyCache(t *testing.T) {
 	c := NewPolicyCache(nil, testLogger())
 	c.orgParents["org-x"] = "org-y"
-	e := NewEngine(c, NewUsageCache(nil, testLogger()), testLogger())
+	e := NewEngine(c, NewUsageCache(nil, testLogger()), testLogger(), nil)
 	got := e.OrgParents()
 	if got["org-x"] != "org-y" {
 		t.Errorf("delegation broken: %+v", got)
@@ -561,7 +720,7 @@ func TestEngine_OrgParents_DelegatesToPolicyCache(t *testing.T) {
 func TestEngine_UsageForTarget_DelegatesToUsageCache(t *testing.T) {
 	uc := NewUsageCache(nil, testLogger())
 	uc.memUsage[usageKey("virtual_key", "vk-1", "2026-05")] = 777
-	e := NewEngine(NewPolicyCache(nil, testLogger()), uc, testLogger())
+	e := NewEngine(NewPolicyCache(nil, testLogger()), uc, testLogger(), nil)
 
 	got, err := e.UsageForTarget(context.Background(), "virtual_key", "vk-1", "2026-05")
 	if err != nil {
@@ -639,18 +798,6 @@ func TestUsageCache_Redis_GetUsageReturnsError(t *testing.T) {
 	}
 }
 
-func TestUsageCache_Redis_IncrUsageReturnsError(t *testing.T) {
-	mr, _ := miniredis.Run()
-	defer mr.Close()
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	rdb.Close()
-
-	c := NewUsageCache(rdb, testLogger())
-	if err := c.IncrUsage(context.Background(), "virtual_key", "v", "p", 10); err == nil {
-		t.Errorf("expected wrapped INCRBY error")
-	}
-}
-
 func TestUsageCache_Redis_IncrMultiReturnsError(t *testing.T) {
 	mr, _ := miniredis.Run()
 	defer mr.Close()
@@ -662,35 +809,6 @@ func TestUsageCache_Redis_IncrMultiReturnsError(t *testing.T) {
 		[]UsageLevel{{TargetType: "virtual_key", TargetID: "v"}}, "p", 10)
 	if err == nil {
 		t.Errorf("expected wrapped pipeline error")
-	}
-}
-
-func TestUsageCache_Redis_IncrUsageSecondCallDoesNotResetTTL(t *testing.T) {
-	// Second IncrUsage on the same key must NOT call Expire — TTL set
-	// once on first increment and never refreshed. (Branch: newVal !=
-	// costCents.)
-	mr, _ := miniredis.Run()
-	defer mr.Close()
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer rdb.Close()
-
-	c := NewUsageCache(rdb, testLogger())
-	ctx := context.Background()
-
-	if err := c.IncrUsage(ctx, "virtual_key", "v", "2026-05", 100); err != nil {
-		t.Fatalf("first: %v", err)
-	}
-	ttl1 := mr.TTL(usageKey("virtual_key", "v", "2026-05"))
-	// Advance mock time by 1 minute, then increment again.
-	mr.FastForward(1 * time.Minute)
-	if err := c.IncrUsage(ctx, "virtual_key", "v", "2026-05", 100); err != nil {
-		t.Fatalf("second: %v", err)
-	}
-	ttl2 := mr.TTL(usageKey("virtual_key", "v", "2026-05"))
-	// TTL should have decreased (or stayed equal if fastforward < tick),
-	// never increased (which would indicate a refresh).
-	if ttl2 > ttl1 {
-		t.Errorf("TTL refreshed on 2nd incr: before=%v after=%v", ttl1, ttl2)
 	}
 }
 
@@ -725,6 +843,9 @@ func TestUsageCache_Backfill_PipelineExecError(t *testing.T) {
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "virtual_key=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
 	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "project=%").
+		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
+	mock.ExpectQuery(`FROM "metric_rollup_1h"`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "organization=%").
 		WillReturnRows(pgxmock.NewRows([]string{"dimensionKey", "total_cost"}))
 
@@ -734,7 +855,7 @@ func TestUsageCache_Backfill_PipelineExecError(t *testing.T) {
 	mr.Close()
 
 	// Backfill must still return nil even though the pipe.Exec errors.
-	if err := c.backfillWithPgxPool(context.Background(), mock, testLogger()); err != nil {
+	if err := c.backfillWithPgxPool(context.Background(), mock, []string{"monthly"}, testLogger()); err != nil {
 		t.Errorf("backfill must swallow pipeline exec err: %v", err)
 	}
 }
@@ -757,12 +878,12 @@ func TestUsageCache_Backfill_ProdShape_NonNilPool(t *testing.T) {
 	t.Cleanup(pool.Close)
 
 	c := NewUsageCache(nil, testLogger()) // nil rdb → short-circuit inside seam
-	if err := c.Backfill(context.Background(), pool, testLogger()); err != nil {
+	if err := c.Backfill(context.Background(), pool, []string{"monthly"}, testLogger()); err != nil {
 		t.Errorf("non-nil pool forwarding: %v", err)
 	}
 
 	// And nil-pool branch.
-	if err := c.Backfill(context.Background(), nil, testLogger()); err != nil {
+	if err := c.Backfill(context.Background(), nil, []string{"monthly"}, testLogger()); err != nil {
 		t.Errorf("nil-pool branch: %v", err)
 	}
 }

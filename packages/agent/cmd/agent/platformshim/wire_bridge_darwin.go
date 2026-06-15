@@ -4,6 +4,7 @@ package platformshim
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/cmd/agent/wiring"
 	agentcompliance "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/compliance"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/attestation"
+	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/identity/keystore"
 	agentproxy "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/proxy"
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/backpressure"
@@ -19,6 +21,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/darwin"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform/paths"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
+	localfsspill "github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/localfs"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore/spillsweep"
 	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
@@ -29,6 +32,10 @@ import (
 // needs from main.go. Kept as a struct (not positional args) so adding
 // new wire points doesn't churn callers.
 type DarwinBridgeArgs struct {
+	// Keystore supplies the device-held secret for the spill store's
+	// at-rest key. The composition root passes the platform store; tests
+	// pass a memory store. Nil skips spill (bodies truncate inline).
+	Keystore             keystore.Store
 	Logger               *slog.Logger
 	BridgeAddr           string
 	AgentPipeline        *agentcompliance.AgentPipeline
@@ -101,7 +108,11 @@ func WireDarwinBridge(ctx context.Context, plat api.Platform, args DarwinBridgeA
 	} else if args.AgentPipeline != nil {
 		// Same encrypted localfs store the audit drain reads back from
 		// (wiring.NewLocalSpillStore is the single keyed construction point).
-		spill, spillErr := wiring.NewLocalSpillStore()
+		var spill *localfsspill.Store
+		spillErr := fmt.Errorf("no keystore supplied")
+		if args.Keystore != nil {
+			spill, spillErr = wiring.NewLocalSpillStore(args.Keystore)
+		}
 		if spillErr != nil {
 			logger.Warn("bridge: localfs spillstore init failed; oversize bodies will truncate",
 				"error", spillErr)

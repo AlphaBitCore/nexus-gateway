@@ -12,8 +12,8 @@
 // content extraction while attributing traffic to the AI-Studio
 // surface separately for audit.
 //
-// Per the session policy: every vendor / surface gets its own adapter
-// ID even when the wire is shared.
+// Convention (provider-adapter-architecture.md §3a): every vendor / surface
+// gets its own adapter ID even when the wire protocol is shared.
 package googleaistudioweb
 
 import (

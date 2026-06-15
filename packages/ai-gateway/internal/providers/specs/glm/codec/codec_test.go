@@ -254,7 +254,7 @@ func TestGLMCodec_DecodeResponse_EmbeddingIdentity(t *testing.T) {
 		"model":"embedding-3",
 		"usage":{"prompt_tokens":5,"total_tokens":5}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse err=%v", err)
 	}
@@ -273,7 +273,7 @@ func TestGLMCodec_DecodeResponse_UsageExtracted(t *testing.T) {
 		"model":"embedding-3",
 		"usage":{"prompt_tokens":10,"total_tokens":10}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse err=%v", err)
 	}
@@ -294,7 +294,7 @@ func TestGLMCodec_DecodeResponse_ChatIdentity(t *testing.T) {
 		"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
 		"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}
 	}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, body, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIChat, body, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse chat err=%v", err)
 	}
@@ -328,7 +328,7 @@ func TestGLMCodec_RoundTrip_StringInput(t *testing.T) {
 
 	// Decode: embedding response must be identity with usage extracted.
 	respBody := []byte(`{"object":"list","data":[{"object":"embedding","embedding":[0.5,0.6],"index":0}],"model":"embedding-3","usage":{"prompt_tokens":4,"total_tokens":4}}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, respBody, "application/json")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, respBody, "application/json", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse err=%v", err)
 	}
@@ -363,7 +363,7 @@ func TestGLMCodec_RoundTrip_StringArrayInput(t *testing.T) {
 	}
 
 	respBody := []byte(`{"object":"list","data":[{"object":"embedding","embedding":[0.1],"index":0},{"object":"embedding","embedding":[0.2],"index":1},{"object":"embedding","embedding":[0.3],"index":2}],"model":"embedding-2","usage":{"prompt_tokens":6,"total_tokens":6}}`)
-	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, respBody, "")
+	decRes, err := c.DecodeResponse(typology.WireShapeOpenAIEmbeddings, respBody, "", provcore.DecodeContext{})
 	if err != nil {
 		t.Fatalf("DecodeResponse err=%v", err)
 	}

@@ -38,8 +38,8 @@ type ApproveResponse struct {
 // already signed in — the dance no longer goes through the password form.
 //
 // Without this endpoint the SPA navigates the operator to "/" the moment
-// status becomes authenticated, dropping the OAuth flow and leaving the
-// nexus-cli loopback listener hanging until its 3-minute timeout.
+// status becomes authenticated, dropping the OAuth flow and leaving a
+// loopback PKCE client's listener hanging until it times out.
 func ApproveHandler(d ApproveDeps) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		claims := jwtverifier.ClaimsFrom(c)

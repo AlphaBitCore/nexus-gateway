@@ -1,0 +1,6 @@
+{
+  "adapterType": "anthropic",
+  "direction": "response",
+  "endpointPath": "/v1/messages",
+  "stream": true
+}

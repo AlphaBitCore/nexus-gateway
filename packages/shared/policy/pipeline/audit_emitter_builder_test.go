@@ -64,6 +64,7 @@ func TestNewAuditEmitter_AssignsFields(t *testing.T) {
 	e := NewAuditEmitter(w, logger)
 	if e == nil {
 		t.Fatal("New returned nil")
+		return
 	}
 	if e.writer == nil {
 		t.Error("writer not assigned")

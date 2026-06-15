@@ -90,13 +90,34 @@ func (s *Store) SetConfig(cfg Config) {
 	s.cfg = cfg
 }
 
+// matchesHostList reports whether host matches any entry in the map, using
+// both exact lookup and wildcard-suffix matching.  A wildcard entry is stored
+// as "*.example.com" and matches any host whose name ends with ".example.com"
+// and has at least one label before the suffix (so "*.example.com" does NOT
+// match bare "example.com").  Deep subdomains ("foo.api.example.com") are also
+// matched — semantics identical to the exempt-side wildcard path.
+func matchesHostList(host string, list map[string]struct{}) bool {
+	if _, ok := list[host]; ok {
+		return true
+	}
+	for pattern := range list {
+		if strings.HasPrefix(pattern, "*.") {
+			suffix := pattern[1:] // e.g. ".example.com"
+			if strings.HasSuffix(host, suffix) && len(host) > len(suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsExempt reports whether the host is currently exempted.
 // Order: denylist (always reject) → exact match → wildcard suffix match.
 func (s *Store) IsExempt(host string) (bool, string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, denied := s.denylist[host]; denied {
+	if matchesHostList(host, s.denylist) {
 		return false, "denied"
 	}
 
@@ -131,7 +152,8 @@ func (s *Store) RecordFailure(host string) (bool, time.Time) {
 	}
 
 	// Denylist hosts are never auto-exempted, even after failures.
-	if _, denied := s.denylist[host]; denied {
+	// Uses wildcard matching so "*.openai.com" blocks "api.openai.com".
+	if matchesHostList(host, s.denylist) {
 		return false, time.Time{}
 	}
 
@@ -213,23 +235,19 @@ func (s *Store) SetDenylist(hosts []string) {
 // Hub-pushed shadow payload — shape:
 //
 //	{
-//	  "auto_exempt_cert_pinned": <bool>,
-//	  "admin_exemptions":        [host, ...],
-//	  "denylist":                [host, ...]
+//	  "admin_exemptions": [host, ...],
+//	  "denylist":         [host, ...]
 //	}
 //
 // — and updates the allowlist / denylist accordingly. Empty or null raw
 // is a no-op so an initial tick before P0-C does not wipe local defaults.
-// The auto_exempt_cert_pinned flag is not yet consumed at runtime; it is
-// accepted but ignored pending a future pipeline wiring task.
 func (s *Store) ApplyShadowState(_ context.Context, raw json.RawMessage) error {
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
 		return nil
 	}
 	var payload struct {
-		AutoExemptCertPinned bool     `json:"auto_exempt_cert_pinned"`
-		AdminExemptions      []string `json:"admin_exemptions"`
-		Denylist             []string `json:"denylist"`
+		AdminExemptions []string `json:"admin_exemptions"`
+		Denylist        []string `json:"denylist"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return fmt.Errorf("exemption: parse shadow state: %w", err)

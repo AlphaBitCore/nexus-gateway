@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -30,13 +31,16 @@ func (h *Handler) ApproveVirtualKey(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to approve virtual key", "server_error", ""))
 	}
 
+	if h.hub != nil {
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "virtual_keys"); err != nil {
+			h.logger.Error("approve virtual key: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
+	}
+
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbApprove)
 	ae.EntityID = id
 	h.audit.LogObserved(c.Request().Context(), ae)
-
-	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "virtual_keys")
-	}
 
 	return c.JSON(http.StatusOK, map[string]any{"message": "Virtual key approved"})
 }
@@ -74,6 +78,12 @@ func (h *Handler) RejectVirtualKey(c echo.Context) error {
 }
 
 func (h *Handler) RenewVirtualKey(c echo.Context) error {
+	// A non-super-admin may only renew a VK they own (mirrors the
+	// Update/Delete CRUD owner re-check); without this a narrow virtual-key:renew
+	// grant could extend any application key's expiry.
+	if vk, resp := h.ownedVKOrDeny(c); vk == nil {
+		return resp
+	}
 	id := c.Param("id")
 
 	var body struct {
@@ -82,17 +92,15 @@ func (h *Handler) RenewVirtualKey(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid request body", "validation_error", ""))
 	}
-	if body.ExpiresAt.IsZero() {
-		return c.JSON(http.StatusBadRequest, errJSON("expiresAt is required", "validation_error", ""))
+	// Renew only ever targets an active APPLICATION key (the store-side query
+	// filters to vk_type='application'), so the same cap as create/update applies.
+	// A zero/omitted expiresAt is the nil case the shared helper rejects.
+	var expiresAt *time.Time
+	if !body.ExpiresAt.IsZero() {
+		expiresAt = &body.ExpiresAt
 	}
-
-	now := time.Now().UTC()
-	maxExpiry := now.AddDate(0, 3, 0)
-	if body.ExpiresAt.After(maxExpiry) {
-		return c.JSON(http.StatusBadRequest, errJSON("expiresAt must not exceed 3 months from now", "validation_error", ""))
-	}
-	if !body.ExpiresAt.After(now) {
-		return c.JSON(http.StatusBadRequest, errJSON("expiresAt must be in the future", "validation_error", ""))
+	if msg := capApplicationExpiry(expiresAt); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
 	}
 
 	if err := h.vks.RenewVirtualKey(c.Request().Context(), id, body.ExpiresAt); err != nil {
@@ -106,9 +114,13 @@ func (h *Handler) RenewVirtualKey(c echo.Context) error {
 	// Invalidate the ai-gateway VK cache so the renewed expiry takes
 	// effect on the next request rather than the next cache TTL — users
 	// who renew a key expect requests through it to stop being rejected
-	// as expired immediately.
+	// as expired immediately. Fail loud on push failure so the admin
+	// retries instead of believing the renewal already took effect.
 	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "virtual_keys")
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "virtual_keys"); err != nil {
+			h.logger.Error("renew virtual key: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
 	}
 
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbRenew)
@@ -120,6 +132,12 @@ func (h *Handler) RenewVirtualKey(c echo.Context) error {
 }
 
 func (h *Handler) RevokeVirtualKey(c echo.Context) error {
+	// A non-super-admin may only revoke a VK they own (mirrors the
+	// Update/Delete CRUD owner re-check); without this a narrow virtual-key:revoke
+	// grant could disable any other principal's production key (data-plane DoS).
+	if vk, resp := h.ownedVKOrDeny(c); vk == nil {
+		return resp
+	}
 	id := c.Param("id")
 
 	if err := h.vks.RevokeVirtualKey(c.Request().Context(), id); err != nil {
@@ -130,13 +148,18 @@ func (h *Handler) RevokeVirtualKey(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to revoke virtual key", "server_error", ""))
 	}
 
+	// Revocation MUST reach the gateway or the revoked key keeps
+	// authenticating from the VK cache — fail loud so the admin retries.
+	if h.hub != nil {
+		if err := h.hub.InvalidateConfigE(c.Request().Context(), "ai-gateway", "virtual_keys"); err != nil {
+			h.logger.Error("revoke virtual key: hub invalidate failed", "id", id, "error", err)
+			return hub.RespondPropagationFailure(c, err)
+		}
+	}
+
 	ae := audit.EntryFor(c, iam.ResourceVirtualKey, iam.VerbRevoke)
 	ae.EntityID = id
 	h.audit.LogObserved(c.Request().Context(), ae)
-
-	if h.hub != nil {
-		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "virtual_keys")
-	}
 
 	return c.JSON(http.StatusOK, map[string]any{"message": "Virtual key revoked"})
 }

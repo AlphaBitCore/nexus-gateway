@@ -74,7 +74,7 @@ func (identityCodec) EncodeRequest(endpoint typology.WireShape, canonicalBody []
 // bridge layer handles any ingress-format projection upstream. Usage is
 // extracted via the shared Tier-1 normalizer so the audit pipeline sees
 // consistent token counts.
-func (identityCodec) DecodeResponse(_ typology.WireShape, nativeBody []byte, _ string) (provcore.DecodeResult, error) {
+func (identityCodec) DecodeResponse(_ typology.WireShape, nativeBody []byte, _ string, _ provcore.DecodeContext) (provcore.DecodeResult, error) {
 	return provcore.DecodeResult{
 		CanonicalBody: nativeBody,
 		Usage:         provcore.ExtractUsage(nativeBody, provcore.FormatOpenAI),

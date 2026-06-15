@@ -106,14 +106,14 @@ func insertChainRow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, p Has
             "actorId", "actorLabel", "actorRole",
             action, "entityType", "entityId",
             "beforeState", "afterState",
-            "nexusRequestId", "clientRequestId", "clientUserId", "clientSessionId",
+            "nexusRequestId",
             "previousHash", "integrityHash", "hashInput"
         ) VALUES (
             $1, to_timestamp($2 / 1000.0),
             $3, $3, NULL,
             $4, $5, $6,
             $7, $8,
-            NULL, NULL, NULL, NULL,
+            NULL,
             $9, $10, $11
         )
         RETURNING "sequenceNumber"
@@ -298,14 +298,14 @@ func TestNextHash_ConcurrentInserts(t *testing.T) {
                     "actorId", "actorLabel", "actorRole",
                     action, "entityType", "entityId",
                     "beforeState", "afterState",
-                    "nexusRequestId", "clientRequestId", "clientUserId", "clientSessionId",
+                    "nexusRequestId",
                     "previousHash", "integrityHash", "hashInput"
                 ) VALUES (
                     $1, to_timestamp($2 / 1000.0),
                     $3, $3, NULL,
                     $4, $5, $6,
                     NULL, NULL,
-                    NULL, NULL, NULL, NULL,
+                    NULL,
                     $7, $8, $9
                 )
             `, id, p.TimestampMs, p.ActorID, p.Action, p.EntityType, p.EntityID, prevArg, integ, hashInput); err != nil {

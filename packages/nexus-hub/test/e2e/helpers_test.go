@@ -247,32 +247,34 @@ func (h *testHarness) queryTemplateVersion(t *testing.T, thingType, configKey st
 	return v, true
 }
 
-// sendShadowReportHTTP posts to /api/internal/things/shadow using the service
-// token (the service-token auth path accepts any thing for shadow reports;
-// tests that want to exercise the device-token path should build their own
-// request). Payload fields follow thingmgr.ShadowReportRequest.
-func (h *testHarness) sendShadowReportHTTP(t *testing.T, payload map[string]any) {
+// sendBreakGlassReportHTTP posts to the dedicated break-glass route
+// /api/internal/things/shadow/break-glass using the service token — the same
+// path the production thingclient HTTP fallback posts to. Payload fields follow
+// manager.ShadowReportRequest (id / reported / reportedVer / keyVersions /
+// sourceIp / actorTokenId). The route itself is the break-glass signal; the
+// handler stamps reason="break_glass".
+func (h *testHarness) sendBreakGlassReportHTTP(t *testing.T, payload map[string]any) {
 	t.Helper()
 	body, err := json.Marshal(payload)
 	if err != nil {
-		t.Fatalf("sendShadowReportHTTP: marshal: %v", err)
+		t.Fatalf("sendBreakGlassReportHTTP: marshal: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(h.ctx, http.MethodPost,
-		h.hubHTTP+"/api/internal/things/shadow", bytes.NewReader(body))
+		h.hubHTTP+"/api/internal/things/shadow/break-glass", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("sendShadowReportHTTP: new request: %v", err)
+		t.Fatalf("sendBreakGlassReportHTTP: new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.hub.ServiceToken())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("sendShadowReportHTTP: do: %v", err)
+		t.Fatalf("sendBreakGlassReportHTTP: do: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("sendShadowReportHTTP: status=%d", resp.StatusCode)
+		t.Fatalf("sendBreakGlassReportHTTP: status=%d", resp.StatusCode)
 	}
 }
 

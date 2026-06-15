@@ -1,0 +1,4 @@
+data: {"candidates": [{"content": {"parts": [{"text": "A gateway is a point of"}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 11,"candidatesTokenCount": 6,"totalTokenCount": 17,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 11}],"serviceTier": "standard"},"modelVersion": "gemini-2.5-flash-lite","responseId": "Y4AratODN5rYjuMPgf2YwQg"}
+
+data: {"candidates": [{"content": {"parts": [{"text": " entry or access to another system or network."}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 11,"candidatesTokenCount": 15,"totalTokenCount": 26,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 11}],"serviceTier": "standard"},"modelVersion": "gemini-2.5-flash-lite","responseId": "Y4AratODN5rYjuMPgf2YwQg"}
+

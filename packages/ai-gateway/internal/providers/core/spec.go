@@ -106,7 +106,13 @@ type Transport interface {
 	// Do executes the prepared request and returns the raw http.Response.
 	// Implementations may wrap a shared *http.Client with provider-tuned
 	// timeouts and transport options.
-	Do(ctx context.Context, r *http.Request) (*http.Response, error)
+	//
+	// target is the fully-resolved upstream target for this call. Most
+	// transports authenticate in ApplyAuth and ignore it here. Transports
+	// that must sign the request AFTER the body is finalised (AWS SigV4 in
+	// the Bedrock transport) read their credentials from target.Extras at
+	// this point instead of smuggling them through internal request headers.
+	Do(ctx context.Context, r *http.Request, target CallTarget) (*http.Response, error)
 
 	// Probe performs the adapter-specific health check. It is invoked
 	// by the registry's health pipeline and by the admin "test provider"
@@ -131,6 +137,24 @@ type EncodeResult struct {
 	Headers     http.Header
 	URLOverride string
 	Rewrites    []string
+}
+
+// DecodeContext carries the originating-request information a response
+// codec needs to validate and enrich its decode against the request that
+// produced the response. It is built by the dispatcher from the in-flight
+// [Request] and passed to [SchemaCodec.DecodeResponse].
+//
+//   - Target is the resolved upstream target (ProviderModelID, Extras, …).
+//   - RequestBody is the wire-shape request body that was actually sent
+//     upstream (the output of EncodeRequest / passthrough). Embedding
+//     codecs count the request inputs from it to assert the provider
+//     returned exactly one vector per input; the Gemini embedding codec
+//     also estimates prompt tokens from it when the wire response carries
+//     no usage. A zero RequestBody (e.g. a direct unit-test call) disables
+//     those request-relative checks — they fail open, never closed.
+type DecodeContext struct {
+	Target      CallTarget
+	RequestBody []byte
 }
 
 // DecodeResult is the structured output of [SchemaCodec.DecodeResponse].
@@ -174,7 +198,14 @@ type SchemaCodec interface {
 	// that only serve application/json may ignore it (_ = contentType).
 	// The shape parameter discriminates the wire-shape the codec must
 	// decode from (chat / responses / embeddings / etc.).
-	DecodeResponse(shape typology.WireShape, nativeBody []byte, contentType string) (DecodeResult, error)
+	//
+	// reqCtx carries the originating request (target + wire request body)
+	// so the codec can validate the response against the request it
+	// answered — e.g. an embedding codec asserts the provider returned one
+	// vector per request input. Chat codecs that need no
+	// request context pass _ = reqCtx; a zero DecodeContext disables every
+	// request-relative check (fail-open).
+	DecodeResponse(shape typology.WireShape, nativeBody []byte, contentType string, reqCtx DecodeContext) (DecodeResult, error)
 }
 
 // StreamDecoder wraps the provider's streaming response body and

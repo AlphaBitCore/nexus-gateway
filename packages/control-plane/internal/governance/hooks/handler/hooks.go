@@ -85,8 +85,8 @@ func (h *Handler) CreateHookConfig(c echo.Context) error {
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
-	if msg := ValidateHookEnums(body.Stage, body.FailBehavior, body.Type, body.ImplementationID); msg != "" {
-		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+	if msg, code := ValidateHookEnums(body.Stage, body.FailBehavior, body.Type, body.ImplementationID); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, code, ""))
 	}
 	// Empty-slice guard: a client that serialized "applicableIngress: []"
 	// would otherwise persist an array that matches no ingress type, making
@@ -162,8 +162,8 @@ func (h *Handler) UpdateHookConfig(c echo.Context) error {
 	failBehavior := deref(body.FailBehavior)
 	hookType := deref(body.Type)
 	implID := deref(body.ImplementationID)
-	if msg := ValidateHookEnums(stage, failBehavior, hookType, implID); msg != "" {
-		return c.JSON(http.StatusBadRequest, errJSON(msg, "validation_error", ""))
+	if msg, code := ValidateHookEnums(stage, failBehavior, hookType, implID); msg != "" {
+		return c.JSON(http.StatusBadRequest, errJSON(msg, code, ""))
 	}
 	if body.ApplicableIngress != nil && len(body.ApplicableIngress) == 0 {
 		return c.JSON(http.StatusBadRequest, errJSON(

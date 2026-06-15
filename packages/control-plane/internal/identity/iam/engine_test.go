@@ -110,6 +110,36 @@ func TestEngineEvaluate(t *testing.T) {
 	}
 }
 
+// TestEngineEvaluate_BackfillsCurrentTime locks SEC-M7-01: a Deny guarded by a
+// Date condition on nexus:CurrentTime fires even when the caller passes nil/empty
+// condCtx, because Evaluate backfills the real wall clock centrally. Before the
+// fix the empty CurrentTime made time.Parse fail → the Date condition was false →
+// the Deny never matched → the broad Allow fail-opened.
+func TestEngineEvaluate_BackfillsCurrentTime(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	policies := []LoadedPolicy{
+		{ID: "allow", Name: "broad-enroll", Source: "direct",
+			Document: PolicyDocument{Version: PolicyVersion, Statement: []Statement{
+				{Effect: "Allow", Action: []string{"device-enrollment.enroll"}, Resource: []string{"nrn:nexus:*:*:*/*"}},
+			}}},
+		{ID: "deny", Name: "expired-grant", Source: "direct",
+			Document: PolicyDocument{Version: PolicyVersion, Statement: []Statement{
+				// "this grant expired at 2000": Deny once CurrentTime is past it.
+				{Effect: "Deny", Action: []string{"device-enrollment.enroll"}, Resource: []string{"nrn:nexus:*:*:*/*"},
+					Condition: ConditionBlock{"DateGreaterThan": {"nexus:CurrentTime": "2000-01-01T00:00:00Z"}}},
+			}}},
+	}
+	engine := NewEngine(&mockLoader{policies: policies}, logger)
+	// nil condCtx — exactly the sso-enroll / iamauth fail-open scenario.
+	result, err := engine.Evaluate(context.Background(), "user", "alice", "device-enrollment.enroll", "nrn:nexus:hub:*:thing/agent-1", nil)
+	if err != nil {
+		t.Fatalf("Evaluate error: %v", err)
+	}
+	if result.Decision != "Deny" {
+		t.Errorf("decision = %q, want Deny (time-windowed Deny must fire via central CurrentTime backfill; reason: %s)", result.Decision, result.Reason)
+	}
+}
+
 // TestEngineEvaluateMulti_GroupScopedSemantics covers the candidate-list
 // form of Evaluate used by RequireIAMPermissionForDevice. Verifies the
 // AWS-IAM-like semantics: a Statement matches when ANY pattern matches

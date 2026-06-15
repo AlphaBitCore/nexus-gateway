@@ -31,6 +31,15 @@ type l1Entry struct {
 // use cases this is acceptable — a minute of overhang at the deadline is within
 // tolerance for windows measured in hours. For immediate revocation, callers
 // can invoke Invalidate(principalKey) directly.
+//
+// Cross-replica coherency: Invalidate / InvalidateAll clear THIS process's L1
+// and the shared Redis L2, but do not signal other Control Plane replicas (no
+// Redis pub/sub by design). On an HA deployment a sibling replica's in-process
+// L1 keeps serving the pre-change policy until its entry expires (defaultL1TTL,
+// 10s) — a bounded stale-grant window. Privilege *reductions* are additionally
+// covered by the MQ token-revocation fan-out the mutation handlers perform, so
+// the residual exposure is limited to changes that do not revoke the token. See
+// docs/.../control-plane/iam-identity-architecture.md "Cache-coherency bound".
 type PolicyCache struct {
 	mu    sync.RWMutex
 	l1    map[string]*l1Entry

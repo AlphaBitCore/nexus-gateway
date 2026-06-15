@@ -10,9 +10,17 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
+
+// wrapEnv wraps a bare HubSignal JSON payload in the unsigned transport envelope
+// the subscriber now expects (SEC-C3-01); used by the nil-secret tests where no
+// HMAC is required.
+func wrapEnv(payloadJSON string) []byte {
+	return []byte(`{"payload":` + payloadJSON + `}`)
+}
 
 // fakeMQConsumer is the smallest mq.Consumer implementation that satisfies
 // SubscribeHubSignals. It captures the handler so the test can inject
@@ -132,6 +140,75 @@ func buildPoolWithRecord(t *testing.T, recs *recorder, things []struct{ ID, Type
 	return p
 }
 
+// TestSubscribeHubSignals_RejectsForgedSignal locks SEC-C3-01: when a signing
+// secret is configured, a nexus.hub.signal frame that is unsigned or signed with
+// the wrong key (a data-plane producer / on-path actor that can reach NATS but
+// lacks the Hub-to-Hub secret) is DROPPED — never broadcast to nodes. This is the
+// fleet-wide config-injection (incl. permissive killswitch) the finding describes.
+func TestSubscribeHubSignals_RejectsForgedSignal(t *testing.T) {
+	recs := &recorder{}
+	pool := buildPoolWithRecord(t, recs, []struct{ ID, Type string }{{"agent-1", "agent"}})
+	fmq := newFakeMQ(true, nil)
+	secret := []byte("hub-peer-secret-xyz")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", secret, nullLogger())
+	waitSubscribed(t, fmq)
+
+	// (a) Unsigned envelope (attacker lacks the secret).
+	fmq.invoke(t, wrapEnv(`{"action":"config_changed","sourceHub":"evil","thingId":"agent-1","configKey":"killswitch","state":{"engaged":false},"version":9999999,"force":true}`))
+	// (b) Envelope signed with the WRONG secret.
+	forged, err := manager.SignHubSignal(manager.HubSignal{
+		Action: "config_changed", SourceHub: "evil", ThingID: "agent-1",
+		ConfigKey: "killswitch", Version: 9999999, Force: true,
+	}, []byte("wrong-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmq.invoke(t, forged)
+
+	// Give any (erroneous) async send a chance to land, then assert none did.
+	time.Sleep(100 * time.Millisecond)
+	if recs.sendCount() != 0 {
+		t.Fatalf("forged/unsigned hub signals must be dropped, got %d sends", recs.sendCount())
+	}
+}
+
+// TestSubscribeHubSignals_AcceptsValidlySignedSignal verifies a peer Hub's
+// correctly-signed frame is accepted and broadcast (SEC-C3-01 — no false drops).
+func TestSubscribeHubSignals_AcceptsValidlySignedSignal(t *testing.T) {
+	recs := &recorder{}
+	pool := buildPoolWithRecord(t, recs, []struct{ ID, Type string }{{"agent-1", "agent"}})
+	fmq := newFakeMQ(true, nil)
+	secret := []byte("hub-peer-secret-xyz")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", secret, nullLogger())
+	waitSubscribed(t, fmq)
+
+	signed, err := manager.SignHubSignal(manager.HubSignal{
+		Action: "config_changed", SourceHub: "peer-hub", ThingID: "agent-1",
+		ConfigKey: "hooks", Version: 3,
+	}, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmq.invoke(t, signed)
+
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if recs.sendCount() >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if recs.sendCount() != 1 {
+		t.Fatalf("a validly-signed peer-Hub signal must be broadcast, got %d sends", recs.sendCount())
+	}
+}
+
 // TestSubscribeHubSignals_BadJSON exercises the json.Unmarshal-failure
 // branch of the handler — handler returns nil, no Send/Broadcast.
 func TestSubscribeHubSignals_BadJSON(t *testing.T) {
@@ -141,7 +218,7 @@ func TestSubscribeHubSignals_BadJSON(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nullLogger())
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nil, nullLogger())
 	waitSubscribed(t, fmq)
 
 	fmq.invoke(t, []byte("not-json"))
@@ -159,11 +236,11 @@ func TestSubscribeHubSignals_SameHubSkipped(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nullLogger())
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nil, nullLogger())
 	waitSubscribed(t, fmq)
 
 	payload := `{"action":"config_changed","sourceHub":"this-hub","thingId":"agent-1"}`
-	fmq.invoke(t, []byte(payload))
+	fmq.invoke(t, wrapEnv(payload))
 	if recs.sendCount() != 0 {
 		t.Fatalf("same-hub signal must be skipped, got %d sends", recs.sendCount())
 	}
@@ -178,11 +255,11 @@ func TestSubscribeHubSignals_ConfigChangedToThingID(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nullLogger())
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nil, nullLogger())
 	waitSubscribed(t, fmq)
 
 	payload := `{"action":"config_changed","sourceHub":"other-hub","thingId":"agent-1","configKey":"hooks","version":3,"force":true}`
-	fmq.invoke(t, []byte(payload))
+	fmq.invoke(t, wrapEnv(payload))
 
 	// Allow drainer goroutine to capture the write.
 	deadline := time.Now().Add(1 * time.Second)
@@ -210,11 +287,11 @@ func TestSubscribeHubSignals_ConfigChangedToThingType(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nullLogger())
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nil, nullLogger())
 	waitSubscribed(t, fmq)
 
 	payload := `{"action":"config_changed","sourceHub":"other-hub","thingType":"agent","configKey":"hooks","version":1}`
-	fmq.invoke(t, []byte(payload))
+	fmq.invoke(t, wrapEnv(payload))
 
 	deadline := time.Now().Add(1 * time.Second)
 	for time.Now().Before(deadline) {
@@ -237,10 +314,10 @@ func TestSubscribeHubSignals_ConfigChangedNoTarget(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nullLogger())
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nil, nullLogger())
 	waitSubscribed(t, fmq)
 
-	fmq.invoke(t, []byte(`{"action":"config_changed","sourceHub":"other-hub"}`))
+	fmq.invoke(t, wrapEnv(`{"action":"config_changed","sourceHub":"other-hub"}`))
 	if recs.sendCount() != 0 {
 		t.Fatalf("no-target signal must not fan out, got %d", recs.sendCount())
 	}
@@ -254,10 +331,10 @@ func TestSubscribeHubSignals_UnknownAction(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nullLogger())
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nil, nullLogger())
 	waitSubscribed(t, fmq)
 
-	fmq.invoke(t, []byte(`{"action":"some_unknown","sourceHub":"other-hub"}`))
+	fmq.invoke(t, wrapEnv(`{"action":"some_unknown","sourceHub":"other-hub"}`))
 	if recs.sendCount() != 0 {
 		t.Fatalf("unknown action must not Send, got %d", recs.sendCount())
 	}
@@ -272,7 +349,7 @@ func TestSubscribeHubSignals_CtxCancelExit(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		SubscribeHubSignals(ctx, fmq, NewPool(nil, nullLogger()), "this-hub", nullLogger())
+		SubscribeHubSignals(ctx, fmq, NewPool(nil, nullLogger()), "this-hub", nil, nullLogger())
 		close(done)
 	}()
 	waitSubscribed(t, fmq)
@@ -291,7 +368,7 @@ func TestSubscribeHubSignals_HardErrorExit(t *testing.T) {
 	fmq := newFakeMQ(false, errors.New("connection lost"))
 	done := make(chan struct{})
 	go func() {
-		SubscribeHubSignals(context.Background(), fmq, NewPool(nil, nullLogger()), "this-hub", nullLogger())
+		SubscribeHubSignals(context.Background(), fmq, NewPool(nil, nullLogger()), "this-hub", nil, nullLogger())
 		close(done)
 	}()
 	select {
@@ -310,11 +387,11 @@ func TestSubscribeHubSignals_ConfigChangedMarshalsExpectedShape(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nullLogger())
+	go SubscribeHubSignals(ctx, fmq, pool, "this-hub", nil, nullLogger())
 	waitSubscribed(t, fmq)
 
 	payload := `{"action":"config_changed","sourceHub":"other-hub","thingId":"agent-1","configKey":"k","state":{"x":1},"version":9,"force":true,"desired":{"a":"b"}}`
-	fmq.invoke(t, []byte(payload))
+	fmq.invoke(t, wrapEnv(payload))
 
 	deadline := time.Now().Add(1 * time.Second)
 	for time.Now().Before(deadline) {

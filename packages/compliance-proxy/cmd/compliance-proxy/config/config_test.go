@@ -55,6 +55,7 @@ func writeTempYAML(t *testing.T, content string) string {
 func setRequiredEnvBaseline(t *testing.T) {
 	t.Helper()
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
+	t.Setenv("COMPLIANCE_PROXY_API_TOKEN", "test-api-token")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("COMPLIANCE_PROXY_PUBLIC_URL", "http://localhost:3128")
 	t.Setenv("REDIS_ADDRS", "localhost:6379")
@@ -363,7 +364,7 @@ log:
 	}
 }
 
-// (TestLoad_ComplianceStreamingModeValidation deleted in #115 —
+// (TestLoad_ComplianceStreamingModeValidation removed —
 // streamingMode yaml field is gone; admin policy drives mode now,
 // validation lives in streampolicy.DecodeGlobalPolicy. Unknown yaml
 // keys are silently ignored by yaml.v3, so leaving the field in an
@@ -426,6 +427,14 @@ ca:
 				return writeTempYAML(t, minimalYAML)
 			},
 			wantInErr: "auth.internalServiceToken is required",
+		},
+		{
+			name: "missing Auth.APIToken",
+			mutate: func(t *testing.T) string {
+				t.Setenv("COMPLIANCE_PROXY_API_TOKEN", "")
+				return writeTempYAML(t, minimalYAML)
+			},
+			wantInErr: "auth.apiToken is required",
 		},
 		{
 			name: "missing Redis.Addrs",

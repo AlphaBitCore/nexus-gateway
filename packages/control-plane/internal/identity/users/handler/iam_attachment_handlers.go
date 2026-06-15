@@ -33,6 +33,14 @@ func (h *Handler) AttachPrincipalPolicy(c echo.Context) error {
 	ctx := c.Request().Context()
 	principalType := c.Param("type")
 	principalID := c.Param("id")
+
+	// Grant ceiling — attaching a policy confers its permissions to
+	// the target principal (including the caller itself). The caller must already
+	// hold every permission the policy grants, else this is privilege escalation.
+	if blocked, resp := h.ceilingBlocksPolicyID(c, body.PolicyID); blocked {
+		return resp
+	}
+
 	id, err := h.iam.AttachPrincipalPolicy(ctx, principalType, principalID, body.PolicyID, expiresAtTime)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to attach policy", "server_error", ""))
@@ -50,7 +58,9 @@ func (h *Handler) AttachPrincipalPolicy(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamPolicy, iam.VerbCreate)
 	ae.EntityID = id
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.JSON(http.StatusCreated, map[string]any{"id": id})
 }
 
@@ -87,6 +97,8 @@ func (h *Handler) DetachPrincipalPolicy(c echo.Context) error {
 
 	ae := audit.EntryFor(c, iam.ResourceIamPolicy, iam.VerbDelete)
 	ae.EntityID = attachmentID
-	h.audit.LogObserved(ctx, ae)
+	if err := h.audit.LogCritical(ctx, ae); err != nil {
+		return c.JSON(http.StatusInternalServerError, errJSON("Audit failure", "server_error", ""))
+	}
 	return c.NoContent(http.StatusNoContent)
 }

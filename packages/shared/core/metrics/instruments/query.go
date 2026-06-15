@@ -32,8 +32,10 @@ func BuildResult(q MetricsQuery, rows []RollupRow, granularity Granularity) *Met
 	return result
 }
 
-// buildSummary sums all row values by MetricName, filtered to the requested
-// metrics list.
+// buildSummary folds all row values by MetricName, filtered to the requested
+// metrics list. Additive metrics sum; distinct-cardinality metrics take the
+// max across buckets (see CombineValues) so a multi-bucket read window does not
+// over-count distinct entities / orgs / sources.
 func buildSummary(rows []RollupRow, metrics []string) map[string]float64 {
 	allowed := makeSet(metrics)
 	sums := make(map[string]float64, len(metrics))
@@ -41,7 +43,7 @@ func buildSummary(rows []RollupRow, metrics []string) map[string]float64 {
 		if !allowed[r.MetricName] {
 			continue
 		}
-		sums[r.MetricName] += r.Value
+		sums[r.MetricName] = CombineValues(r.MetricName, sums[r.MetricName], r.Value)
 	}
 	return sums
 }
@@ -93,9 +95,12 @@ func buildSummaryMetadata(rows []RollupRow) map[string]any {
 	return meta
 }
 
-// buildGroups groups rows by DimensionKey, sums values per metric per group,
-// and optionally truncates to topN entries sorted by the first metric
-// descending.
+// buildGroups groups rows by DimensionKey, folds values per metric per group
+// (additive metrics sum; distinct-cardinality metrics take the max across the
+// group's buckets — see CombineValues), and optionally truncates to topN
+// entries sorted by the first metric descending. The max fold is what keeps
+// per-group distinct counts (e.g. the Top Destinations DeviceCount) from being
+// inflated by the number of buckets in the read window.
 func buildGroups(rows []RollupRow, metrics []string, topN int) []MetricsGroup {
 	allowed := makeSet(metrics)
 
@@ -116,7 +121,7 @@ func buildGroups(rows []RollupRow, metrics []string, topN int) []MetricsGroup {
 			grouped[r.DimensionKey] = acc
 			order = append(order, r.DimensionKey)
 		}
-		acc.values[r.MetricName] += r.Value
+		acc.values[r.MetricName] = CombineValues(r.MetricName, acc.values[r.MetricName], r.Value)
 	}
 
 	groups := make([]MetricsGroup, 0, len(grouped))
@@ -192,8 +197,10 @@ func buildGroupMetadata(rows []RollupRow) map[string]any {
 	return meta
 }
 
-// buildTimeSeries groups rows by BucketStart, sums values per metric per
-// bucket, and returns chronologically ordered buckets.
+// buildTimeSeries groups rows by BucketStart, folds values per metric per
+// bucket (additive metrics sum; distinct-cardinality metrics take the max
+// across the rows that fall in the same bucket — see CombineValues), and
+// returns chronologically ordered buckets.
 func buildTimeSeries(rows []RollupRow, metrics []string) []MetricsBucket {
 	allowed := makeSet(metrics)
 
@@ -219,7 +226,7 @@ func buildTimeSeries(rows []RollupRow, metrics []string) []MetricsBucket {
 			buckets[key] = acc
 			order = append(order, key)
 		}
-		acc.values[r.MetricName] += r.Value
+		acc.values[r.MetricName] = CombineValues(r.MetricName, acc.values[r.MetricName], r.Value)
 	}
 
 	result := make([]MetricsBucket, 0, len(buckets))

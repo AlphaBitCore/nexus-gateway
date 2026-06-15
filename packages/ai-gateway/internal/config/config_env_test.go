@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,6 +9,42 @@ import (
 	"testing"
 	"time"
 )
+
+// TestLoad_SecretCustody_CommandUnwrapsCrownJewel pins the SEC-W2-03 Layer C
+// wiring on ai-gateway: with secretCustody.provider="command", Load() resolves
+// the crown-jewel env vars as base64 wrapped blobs and unwraps each at boot. The
+// unwrapped plaintext is what ai-gw uses to decrypt provider credentials + hash
+// VKs — it MUST equal the Control Plane's (both wrap under their own grant; the
+// match is on the plaintext). `cat {file}` is an identity decrypt.
+func TestLoad_SecretCustody_CommandUnwrapsCrownJewel(t *testing.T) {
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte("unwrapped-cred-key")))
+	t.Setenv("ADMIN_KEY_HMAC_SECRET", base64.StdEncoding.EncodeToString([]byte("unwrapped-hmac")))
+
+	p := writeYAML(t, "secretCustody:\n  provider: command\n  command: [\"cat\", \"{file}\"]\n")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.CredentialMasterKey != "unwrapped-cred-key" {
+		t.Errorf("CredentialMasterKey = %q, want the unwrapped plaintext", cfg.Auth.CredentialMasterKey)
+	}
+	if cfg.Auth.HMACSecret != "unwrapped-hmac" {
+		t.Errorf("HMACSecret = %q, want the unwrapped plaintext", cfg.Auth.HMACSecret)
+	}
+}
+
+// TestLoad_SecretCustody_CommandFailClosed: under provider=command a crown jewel
+// that is not a valid wrapped blob aborts boot.
+func TestLoad_SecretCustody_CommandFailClosed(t *testing.T) {
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "not-valid-base64!!")
+
+	p := writeYAML(t, "secretCustody:\n  provider: command\n  command: [\"cat\", \"{file}\"]\n")
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected fail-closed error for an unwrappable crown jewel under provider=command")
+	}
+}
 
 // setRequiredEnvBaseline stamps every env-side input that validate() now
 // requires, so a test reaches the branch it actually wants to exercise.
@@ -24,6 +61,33 @@ func setRequiredEnvBaseline(t *testing.T) {
 	t.Setenv("ADMIN_KEY_HMAC_SECRET", "hmac-sentinel")
 	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "cred-master-sentinel")
 	t.Setenv("NEXUS_HUB_URL", "http://localhost:3060")
+}
+
+func TestServerBindAddr(t *testing.T) {
+	// Empty Host → all interfaces (":port"), the historical default that
+	// container / Kubernetes / direct deployments rely on; the appliance sets
+	// Host=127.0.0.1 so the unauthenticated /internal/* surface stays loopback.
+	if got := (ServerConfig{Port: 3050}).BindAddr(); got != ":3050" {
+		t.Errorf("empty Host BindAddr = %q, want \":3050\"", got)
+	}
+	if got := (ServerConfig{Host: "127.0.0.1", Port: 3050}).BindAddr(); got != "127.0.0.1:3050" {
+		t.Errorf("loopback BindAddr = %q, want \"127.0.0.1:3050\"", got)
+	}
+}
+
+func TestLoad_ServerHost_FromEnv(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "does-not-exist.yaml")
+	setRequiredEnvBaseline(t)
+	t.Setenv("AI_GATEWAY_HOST", "127.0.0.1")
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Host != "127.0.0.1" {
+		t.Errorf("Server.Host = %q, want 127.0.0.1 (from AI_GATEWAY_HOST)", cfg.Server.Host)
+	}
 }
 
 // TestLoad_MissingFile_UsesDefaults verifies that a non-existent path is NOT an
@@ -47,14 +111,17 @@ func TestLoad_MissingFile_UsesDefaults(t *testing.T) {
 	if cfg.Server.WriteTimeout != 60*time.Second {
 		t.Errorf("default WriteTimeout = %v, want 60s", cfg.Server.WriteTimeout)
 	}
-	if cfg.Upstream.TimeoutSec != 120 {
-		t.Errorf("default Upstream.TimeoutSec = %d, want 120", cfg.Upstream.TimeoutSec)
+	if cfg.Upstream.TimeoutSec != 600 {
+		t.Errorf("default Upstream.TimeoutSec = %d, want 600", cfg.Upstream.TimeoutSec)
+	}
+	if cfg.Upstream.StreamIdleTimeoutSec != 120 {
+		t.Errorf("default Upstream.StreamIdleTimeoutSec = %d, want 120", cfg.Upstream.StreamIdleTimeoutSec)
 	}
 	if cfg.Upstream.DialTimeoutSec != 15 {
 		t.Errorf("default Upstream.DialTimeoutSec = %d, want 15", cfg.Upstream.DialTimeoutSec)
 	}
-	if cfg.Upstream.MaxIdleConns != 200 {
-		t.Errorf("default Upstream.MaxIdleConns = %d, want 200", cfg.Upstream.MaxIdleConns)
+	if cfg.Upstream.MaxIdleConns != 2000 {
+		t.Errorf("default Upstream.MaxIdleConns = %d, want 2000", cfg.Upstream.MaxIdleConns)
 	}
 	if cfg.HTTPClients.Webhook.TimeoutSec != 10 {
 		t.Errorf("default Webhook.TimeoutSec = %d, want 10", cfg.HTTPClients.Webhook.TimeoutSec)
@@ -301,15 +368,17 @@ func TestValidate_RequiredFields(t *testing.T) {
 				t.Setenv("ADMIN_KEY_HMAC_SECRET", "")
 				return ""
 			},
-			wantInErr: "auth.hmacSecret is required",
+			wantInErr: "an HMAC secret is required",
 		},
 		{
-			name: "missing Auth.CredentialMasterKey",
+			name: "missing both credential keys (master AND key map)",
 			mutate: func(t *testing.T) string {
+				// F-0085: only fails when NEITHER the single key NOR the map is set.
 				t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "")
+				t.Setenv("CREDENTIAL_KEY_MAP", "")
 				return ""
 			},
-			wantInErr: "auth.credentialMasterKey is required",
+			wantInErr: "a credential decryption key is required",
 		},
 		{
 			name: "missing Redis.Addrs (yaml empty AND env empty)",
@@ -360,5 +429,45 @@ func TestValidate_RequiredFields(t *testing.T) {
 				t.Errorf("error should mention %q; got %q", c.wantInErr, err.Error())
 			}
 		})
+	}
+}
+
+// TestValidate_CredentialKeyMapOnlyBoots is the F-0085 regression guard: a
+// deployment that sets ONLY CREDENTIAL_KEY_MAP (no single CREDENTIAL_ENCRYPTION_KEY)
+// must pass validate() — the map is a standalone credential-decryption mode.
+func TestValidate_CredentialKeyMapOnlyBoots(t *testing.T) {
+	setRequiredEnvBaseline(t)
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "")
+	t.Setenv("CREDENTIAL_KEY_MAP", "v1:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+	path := filepath.Join(t.TempDir(), "absent.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("map-only config should boot, got error: %v", err)
+	}
+	if cfg.Auth.CredentialMasterKey != "" {
+		t.Errorf("CredentialMasterKey should be empty in map-only mode, got %q", cfg.Auth.CredentialMasterKey)
+	}
+	if cfg.Auth.CredentialKeyMap == "" {
+		t.Error("CredentialKeyMap should be populated from CREDENTIAL_KEY_MAP")
+	}
+}
+
+// TestLoad_EnvBoolsForceFalse verifies the env overrides are symmetric: an
+// explicit "false"/"0" turns a yaml-enabled flag OFF (the env could
+// previously only force true, so disabling cache/CORS required a yaml edit).
+func TestLoad_EnvBoolsForceFalse(t *testing.T) {
+	p := writeYAML(t, "cache:\n  enabled: true\ncors:\n  enabled: true\n")
+	setRequiredEnvBaseline(t)
+	t.Setenv("AI_GATEWAY_CACHE_ENABLED", "false")
+	t.Setenv("AI_GATEWAY_CORS_ENABLED", "0")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Cache.Enabled {
+		t.Error("Cache.Enabled = true, want false (AI_GATEWAY_CACHE_ENABLED=false must win over yaml true)")
+	}
+	if cfg.CORS.Enabled {
+		t.Error("CORS.Enabled = true, want false (AI_GATEWAY_CORS_ENABLED=0 must win over yaml true)")
 	}
 }

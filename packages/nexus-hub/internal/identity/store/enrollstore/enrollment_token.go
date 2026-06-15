@@ -96,28 +96,45 @@ func (s *Store) InsertEnrollmentToken(ctx context.Context, p InsertEnrollmentTok
 	return et, rawToken, nil
 }
 
-// ValidateEnrollmentToken checks a raw token string against the DB.
-// Returns the token row if found (caller checks status/expiry).
-func (s *Store) ValidateEnrollmentToken(ctx context.Context, rawToken string) (*EnrollmentToken, error) {
+// ConsumeEnrollmentToken atomically transitions a pending, unexpired token to
+// 'used' and returns the consumed row in a single statement. This is the
+// single-use enforcement point: the previous validate-then-mark
+// two-step let two concurrent enrollments both pass the SELECT and both enroll
+// before either marked the token used. The UPDATE ... WHERE status='pending'
+// AND expires_at > NOW() RETURNING makes the pending→used transition the race
+// arbiter — Postgres serialises the row write, so exactly one caller gets a
+// row back and the rest get ErrAlreadyUsed.
+//
+// thing_id is intentionally NOT set here: the caller mints the thing id only
+// after the token is consumed, then links it via LinkEnrollmentTokenThing.
+func (s *Store) ConsumeEnrollmentToken(ctx context.Context, rawToken string) (*EnrollmentToken, error) {
 	tokenHash := hashTokenSHA256(rawToken)
 	et, err := scanEnrollmentToken(s.db.QueryRow(ctx, `
-		SELECT `+enrollmentTokenColumns+`
-		FROM enrollment_token
-		WHERE token_hash = $1`, tokenHash))
+		UPDATE enrollment_token
+		SET status = 'used', used_at = NOW()
+		WHERE token_hash = $1 AND status = 'pending' AND expires_at > NOW()
+		RETURNING `+enrollmentTokenColumns, tokenHash))
 	if err != nil {
-		return nil, fmt.Errorf("validate enrollment token: %w", err)
+		return nil, fmt.Errorf("consume enrollment token: %w", err)
+	}
+	if et == nil {
+		// No row matched the (hash, pending, unexpired) predicate: the token
+		// is unknown, already used by a concurrent request, or expired.
+		return nil, ErrAlreadyUsed
 	}
 	return et, nil
 }
 
-// MarkEnrollmentTokenUsed marks a token as used and links it to a thing.
-func (s *Store) MarkEnrollmentTokenUsed(ctx context.Context, id, thingID string) error {
+// LinkEnrollmentTokenThing associates an already-consumed token with the thing
+// id minted for it. Called after ConsumeEnrollmentToken once the thing id is
+// known. A no-op when the row is already linked; never the race arbiter.
+func (s *Store) LinkEnrollmentTokenThing(ctx context.Context, id, thingID string) error {
 	tag, err := s.db.Exec(ctx, `
 		UPDATE enrollment_token
-		SET status = 'used', thing_id = $2, used_at = NOW()
-		WHERE id = $1 AND status = 'pending'`, id, thingID)
+		SET thing_id = $2
+		WHERE id = $1`, id, thingID)
 	if err != nil {
-		return fmt.Errorf("mark token used: %w", err)
+		return fmt.Errorf("link enrollment token thing: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

@@ -6,9 +6,30 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"time"
 )
 
 const DeviceTokenLen = 32
+
+// DeviceTokenTTL is the lifetime of a device bearer token from the moment it is
+// issued (at enrollment) or rotated (POST /api/internal/things/renew-token).
+// Bounded so a stolen plaintext token — read from the agent's on-disk
+// `device-token` file — is replayable for at most this window rather than
+// forever. The agent renews well before expiry (see
+// DeviceTokenRenewWindow on the agent side), so a healthy device never lets its
+// token lapse; an attacker who exfiltrates a token and goes quiet loses it when
+// the legitimate agent's next rotation overwrites the stored hash.
+//
+// 30 days balances replay-window minimisation against renewal churn: the token
+// rotates roughly monthly, and the agent's multi-day renewal window leaves ample
+// retries before a transient Hub outage could let it expire.
+const DeviceTokenTTL = 30 * 24 * time.Hour
+
+// DeviceTokenExpiry returns the absolute expiry for a token issued at `now`.
+// Callers stamp the result onto thing.device_token_expires_at.
+func DeviceTokenExpiry(now time.Time) time.Time {
+	return now.Add(DeviceTokenTTL)
+}
 
 // tokenRandReader is the entropy source used by GenerateDeviceToken. It is a
 // package-level variable solely so tests can substitute a failing reader and

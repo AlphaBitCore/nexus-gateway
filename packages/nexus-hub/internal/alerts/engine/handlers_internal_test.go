@@ -130,11 +130,135 @@ func TestHandleRaise_UnknownRule(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	// Verify JSON error body.
-	var resp map[string]string
+	// Verify JSON error body has nested {error:{message,...}} shape (F-0319).
+	var resp map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp["error"] == "" {
-		t.Fatalf("missing error in body: %s", rec.Body.String())
+	inner, _ := resp["error"].(map[string]any)
+	if inner == nil {
+		t.Fatalf("missing error object in body: %s", rec.Body.String())
+	}
+	if msg, _ := inner["message"].(string); msg == "" {
+		t.Fatalf("missing error.message in body: %s", rec.Body.String())
+	}
+}
+
+// raiseWithCaller posts a raise envelope with the given caller stamped into the
+// request context and returns the recorder.
+func raiseWithCaller(t *testing.T, m *mockRaiser, caller alerting.Caller, env alertclient.AlertEnvelope) *httptest.ResponseRecorder {
+	t.Helper()
+	h := alerting.HandleRaise(m)
+	body, _ := json.Marshal(env)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/raise", bytes.NewReader(body))
+	req = req.WithContext(alerting.WithCaller(req.Context(), caller))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandleRaise_DeviceCallerOwnTargetAllowed(t *testing.T) {
+	m := &mockRaiser{}
+	rec := raiseWithCaller(t, m,
+		alerting.Caller{IsService: false, ThingID: "n1"},
+		alertclient.AlertEnvelope{RuleID: "proxy.hook_failure_rate", TargetKey: "proxy:n1", Severity: "high"},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if m.raiseInput == nil || m.raiseInput.TargetKey != "proxy:n1" {
+		t.Fatalf("raise not called for own target: %+v", m.raiseInput)
+	}
+}
+
+func TestHandleRaise_DeviceCallerForeignTargetForbidden(t *testing.T) {
+	m := &mockRaiser{}
+	rec := raiseWithCaller(t, m,
+		alerting.Caller{IsService: false, ThingID: "n1"},
+		alertclient.AlertEnvelope{RuleID: "proxy.hook_failure_rate", TargetKey: "proxy:n2", Severity: "high"},
+	)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s, want 403", rec.Code, rec.Body.String())
+	}
+	if m.raiseInput != nil {
+		t.Fatalf("raiser must NOT be called when device targets a foreign thing; got %+v", m.raiseInput)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	inner, _ := resp["error"].(map[string]any)
+	if code, _ := inner["code"].(string); code != "FORBIDDEN" {
+		t.Errorf("error envelope code=%q, want FORBIDDEN; body=%s", inner["code"], rec.Body.String())
+	}
+}
+
+func TestHandleRaise_ServiceCallerAnyTargetAllowed(t *testing.T) {
+	m := &mockRaiser{}
+	rec := raiseWithCaller(t, m,
+		alerting.Caller{IsService: true},
+		alertclient.AlertEnvelope{RuleID: "quota.threshold", TargetKey: "org:x", Severity: "high"},
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if m.raiseInput == nil || m.raiseInput.TargetKey != "org:x" {
+		t.Fatalf("service caller raise must pass through any target: %+v", m.raiseInput)
+	}
+}
+
+func TestHandleResolve_DeviceCallerForbidden(t *testing.T) {
+	m := &mockRaiser{}
+	h := alerting.HandleResolve(m)
+	body, _ := json.Marshal(alertclient.ResolveRequest{RuleID: "r", TargetKey: "proxy:n1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/resolve", bytes.NewReader(body))
+	req = req.WithContext(alerting.WithCaller(req.Context(), alerting.Caller{IsService: false, ThingID: "n1"}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s, want 403", rec.Code, rec.Body.String())
+	}
+	if m.resolveArgs != nil {
+		t.Fatalf("device caller must NOT reach Resolve; got %+v", m.resolveArgs)
+	}
+}
+
+func TestHandleResolve_ServiceCallerAllowed(t *testing.T) {
+	m := &mockRaiser{}
+	h := alerting.HandleResolve(m)
+	body, _ := json.Marshal(alertclient.ResolveRequest{RuleID: "r", TargetKey: "proxy:n1", Reason: "ok"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/resolve", bytes.NewReader(body))
+	req = req.WithContext(alerting.WithCaller(req.Context(), alerting.Caller{IsService: true}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if m.resolveArgs == nil || m.resolveArgs.TargetKey != "proxy:n1" {
+		t.Fatalf("service caller resolve must pass through: %+v", m.resolveArgs)
+	}
+}
+
+// TestHubHTTPErr_CanonicalShape verifies F-0319/F-0320: the raw net/http error
+// path emits the nested {error:{message,type,code}} envelope matching the Echo
+// handlers.
+func TestHubHTTPErr_CanonicalShape(t *testing.T) {
+	h := alerting.HandleRaise(&mockRaiser{})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/raise", bytes.NewReader([]byte("not json")))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("body not JSON: %s", rec.Body.String())
+	}
+	inner, _ := resp["error"].(map[string]any)
+	if inner == nil {
+		t.Fatalf("envelope missing error object; got %v", resp)
+	}
+	if msg, _ := inner["message"].(string); msg == "" {
+		t.Errorf("envelope.error.message empty; got %v", resp)
+	}
+	if code, _ := inner["code"].(string); code != "INVALID_REQUEST" {
+		t.Errorf("envelope.error.code=%q; want INVALID_REQUEST", code)
 	}
 }
 

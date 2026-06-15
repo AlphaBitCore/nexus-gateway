@@ -82,10 +82,13 @@ func TestErrorNormalizer_rateLimitError_retryAfterSeconds(t *testing.T) {
 }
 
 func TestErrorNormalizer_overloadedError(t *testing.T) {
+	// F-0227: overloaded_error maps to rate_limited (the retryable bucket),
+	// consistent with the streaming path. Anthropic's 529 overload is
+	// transient and should be retried.
 	pe := norm(http.StatusServiceUnavailable, nil,
 		[]byte(`{"type":"error","error":{"type":"overloaded_error","message":"server busy"}}`))
-	if pe.Code != provcore.CodeUpstreamError {
-		t.Errorf("code: got %q, want %q", pe.Code, provcore.CodeUpstreamError)
+	if pe.Code != provcore.CodeRateLimited {
+		t.Errorf("code: got %q, want %q", pe.Code, provcore.CodeRateLimited)
 	}
 }
 

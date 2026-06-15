@@ -17,6 +17,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	fleetstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/store"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillupload"
@@ -107,6 +108,18 @@ type mockDedup struct {
 
 func (d *mockDedup) SetNX(context.Context, string, time.Duration) (bool, error) {
 	return d.acquired, d.err
+}
+
+// countingDedup records how many times SetNX was called so tests can assert the
+// dedup slot is acquired ONLY after a durable, verified Put (F-0188).
+type countingDedup struct {
+	acquired bool
+	calls    int
+}
+
+func (d *countingDedup) SetNX(context.Context, string, time.Duration) (bool, error) {
+	d.calls++
+	return d.acquired, nil
 }
 
 func rawMint(t *testing.T, h *SpillUploadAPI, body string) *httptest.ResponseRecorder {
@@ -454,7 +467,139 @@ func TestPutBlob_Success(t *testing.T) {
 	}
 }
 
+// TestPutBlob_PutErrorDoesNotBurnDedup verifies F-0188: a failed Put must NOT
+// acquire the one-shot dedup slot, so a legitimate retry of a never-stored body
+// is not permanently rejected with 409.
+func TestPutBlob_PutErrorDoesNotBurnDedup(t *testing.T) {
+	secrets := newSecrets(t)
+	body := []byte("hello")
+	token := signToken(t, secrets, claimsFor(body))
+	dedup := &countingDedup{acquired: true}
+	h := &SpillUploadAPI{
+		Spill:        &mockSpill{putErr: errors.New("disk full")},
+		Secrets:      secrets,
+		Dedup:        dedup,
+		SpillBackend: "localfs",
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if rec := putBlob(t, h, token, body, int64(len(body))); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("put error should be 500, got %d", rec.Code)
+	}
+	if dedup.calls != 0 {
+		t.Fatalf("dedup SetNX must NOT be called when Put fails; calls=%d", dedup.calls)
+	}
+}
+
+// TestPutBlob_SHAMismatchDoesNotBurnDedup verifies F-0188: a sha256 mismatch
+// (body corrupted in flight) must NOT acquire the dedup slot, so the agent can
+// retry with the correct body.
+func TestPutBlob_SHAMismatchDoesNotBurnDedup(t *testing.T) {
+	secrets := newSecrets(t)
+	body := []byte("hello")
+	cl := claimsFor(body)
+	cl.SHA256 = strings.Repeat("c", 64) // wrong hash for body
+	token := signToken(t, secrets, cl)
+	dedup := &countingDedup{acquired: true}
+	h := &SpillUploadAPI{
+		Spill:        &mockSpill{},
+		Secrets:      secrets,
+		Dedup:        dedup,
+		SpillBackend: "localfs",
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if rec := putBlob(t, h, token, body, int64(len(body))); rec.Code != http.StatusBadRequest {
+		t.Fatalf("sha mismatch should be 400, got %d", rec.Code)
+	}
+	if dedup.calls != 0 {
+		t.Fatalf("dedup SetNX must NOT be called on sha mismatch; calls=%d", dedup.calls)
+	}
+}
+
+// TestPutBlob_SuccessAcquiresDedupOnce verifies the slot IS acquired exactly
+// once after a durable, verified Put.
+func TestPutBlob_SuccessAcquiresDedupOnce(t *testing.T) {
+	secrets := newSecrets(t)
+	body := []byte("the quick brown fox")
+	token := signToken(t, secrets, claimsFor(body))
+	dedup := &countingDedup{acquired: true}
+	h := &SpillUploadAPI{
+		Spill:        &mockSpill{},
+		Secrets:      secrets,
+		Dedup:        dedup,
+		SpillBackend: "localfs",
+	}
+	if rec := putBlob(t, h, token, body, int64(len(body))); rec.Code != http.StatusNoContent {
+		t.Fatalf("happy path should be 204, got %d", rec.Code)
+	}
+	if dedup.calls != 1 {
+		t.Fatalf("dedup SetNX must be called exactly once on success; calls=%d", dedup.calls)
+	}
+}
+
 // logf is nil-safe; a handler with a logger should not panic either.
 func TestLogfNilSafe(t *testing.T) {
 	(&SpillUploadAPI{}).logf(0, "noop") // Logger nil → no-op, must not panic
+}
+
+// mintAsNode invokes MintSpillUpload with the given device (Thing) identity set
+// in context, exactly as enroll.DeviceOrServiceAuth would for an mTLS agent.
+func mintAsNode(t *testing.T, h *SpillUploadAPI, nodeID string, r SpillUploadMintRequest) SpillUploadMintResponse {
+	t.Helper()
+	body, _ := json.Marshal(r)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/things/spill-uploads", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if nodeID != "" {
+		c.Set("thing", &fleetstore.Thing{ID: nodeID})
+	}
+	if err := h.MintSpillUpload(c); err != nil {
+		t.Fatalf("MintSpillUpload: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mint code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp SpillUploadMintResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode mint resp: %v", err)
+	}
+	return resp
+}
+
+// TestMint_NamespacesKeyByNode is the SEC-M5-01 binding test: the storage key is
+// namespaced by the authenticated node identity, so two different nodes minting
+// for the SAME eventId get DIFFERENT keys and cannot overwrite one another's
+// spill object. The signed token also carries NodeID so the blob handler writes
+// to the bound key.
+func TestMint_NamespacesKeyByNode(t *testing.T) {
+	h := &SpillUploadAPI{Spill: &mockSpill{}, Secrets: newSecrets(t), SpillBackend: "localfs", HubURL: "https://hub.example"}
+	req := validMintReq() // same eventId for both nodes
+
+	respA := mintAsNode(t, h, "node-A", req)
+	respB := mintAsNode(t, h, "node-B", req)
+
+	if !strings.HasPrefix(respA.Key, "node-A/") {
+		t.Errorf("node-A key not namespaced: %q", respA.Key)
+	}
+	if !strings.HasPrefix(respB.Key, "node-B/") {
+		t.Errorf("node-B key not namespaced: %q", respB.Key)
+	}
+	if respA.Key == respB.Key {
+		t.Errorf("SEC-M5-01: two nodes minting for the same eventId got the SAME key %q — cross-node overwrite still possible", respA.Key)
+	}
+
+	// The token must bind NodeID + the namespaced key (HMAC-signed, so a node
+	// cannot retarget the write).
+	token := strings.TrimPrefix(respA.UploadURL, "https://hub.example/api/internal/spill/blob/")
+	claims, err := spillupload.Verify(h.Secrets, token, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("verify minted token: %v", err)
+	}
+	if claims.NodeID != "node-A" {
+		t.Errorf("token NodeID = %q; want node-A", claims.NodeID)
+	}
+	if claims.Key != respA.Key || !strings.HasPrefix(claims.Key, "node-A/") {
+		t.Errorf("token Key = %q; want the node-A-namespaced key", claims.Key)
+	}
 }

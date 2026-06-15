@@ -1,0 +1,68 @@
+{
+  "kind": "ai-chat",
+  "normalizeVersion": "2",
+  "protocol": "claude-web",
+  "model": "claude-opus-4-7",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "show_widget",
+      "description": "Show visual content — SVG graphics, diagrams, charts, or interactive HTML widgets — that renders inline alongside your text response.\nUse for flowcharts, architecture diagrams, dashboards, forms, calculators, data tables, games, illustrations, or any visual content.\nThe code is auto-detected: starts with \u003csvg = SVG mode, otherwise HTML mode.\nA global sendPrompt(text) function is available — it sends a message to chat as if the user typed it.\nIMPORTANT: Call read_me before your first show_widget call. Do NOT narrate or mention the read_me call to the user — call it silently, then respond as if you went straight to building the visualization."
+    },
+    {
+      "name": "read_me",
+      "description": "Returns required context for show_widget (CSS variables, colors, typography, layout rules, examples). Call before your first show_widget call. Call again later if you need a different module. Do NOT mention or narrate this call to the user — it is an internal setup step. Call it silently and proceed directly to the visualization in your response."
+    },
+    {
+      "name": "web_search"
+    },
+    {
+      "name": "artifacts"
+    },
+    {
+      "name": "repl"
+    },
+    {
+      "name": "weather_fetch"
+    },
+    {
+      "name": "recipe_display_v0"
+    },
+    {
+      "name": "places_map_display_v0"
+    },
+    {
+      "name": "message_compose_v1"
+    },
+    {
+      "name": "ask_user_input_v0"
+    },
+    {
+      "name": "recommend_claude_apps"
+    },
+    {
+      "name": "places_search"
+    },
+    {
+      "name": "fetch_sports_data"
+    }
+  ],
+  "http": {
+    "bodyView": {
+      "text": "{\"prompt\":\"hello\",\"parent_message_uuid\":\"019e5619-824c-758b-ac13-98d2ec5f438d\",\"timezone\":\"Asia/Kuala_Lumpur\",\"personalized_styles\":[{\"type\":\"default\",\"key\":\"Default\",\"name\":\"Normal\",\"nameKey\":\"normal_style_name\",\"prompt\":\"Normal\\n\",\"summary\":\"Default responses from Claude\",\"summaryKey\":\"normal_style_summary\",\"isDefault\":true}],\"locale\":\"en-US\",\"model\":\"claude-opus-4-7\",\"tools\":[{\"name\":\"show_widget\",\"description\":\"Show visual content — SVG graphics, diagrams, charts, or interactive HTML widgets — that renders inline alongside your text response.\\nUse for flowcharts, architecture diagrams, dashboards, forms, calculators, data tables, games, illustrations, or any visual content.\\nThe code is auto-detected: starts with \u003csvg = SVG mode, otherwise HTML mode.\\nA global sendPrompt(text) function is available — it sends a message to chat as if the user typed it.\\nIMPORTANT: Call read_me before your first show_widget call. Do NOT narrate or mention the read_me call to the user — call it silently, then respond as if you went straight to building the visualization.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"loading_messages\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":1,\"maxItems\":4,\"description\":\"1–4 loading messages shown to the user while the visual renders, each roughly 5 words long. Write them in the same language the user is using. Use 1 for simple visuals, more for complex ones. If the topic is serious — illness, disease, pandemics, death, grief, war, conflict, poverty, disaster, trauma, abuse, addiction, medical decisions, politically charged subjects, or anything where the reader might be personally affected — keep these BORING: describe what the code is doing in the dullest generic way, no jargon-as-drama, no evocative terms. Pandemic growth model — NOT ['Simulating patient zero', 'Modeling the curve'] (documentary-narrator voice), YES ['Setting up the model', 'Running the calculation']. Cancer timeline — NOT ['Charting the battle ahead'], YES ['Laying out the stages']. If you have to ask whether it's serious, it is. Otherwise, have fun — reach for alliteration, puns, personification, wordplay, whatever lands in that language. Playful examples — revenue chart: ['Bribing bars to stand taller', 'Asking Q4 where it went']; kanban: ['Herding cards into columns', 'Dragging, dropping, not stopping'].\"},\"title\":{\"type\":\"string\",\"description\":\"Short snake_case identifier for this visual. Must be specific and disambiguating — if the conversation has multiple visuals, this title alone should tell you which one is being referenced (e.g. 'q4_revenue_by_product_line' not 'chart', 'oauth_login_flow' not 'diagram'). Also used as the download filename, so no spaces or special characters.\"},\"widget_code\":{\"type\":\"string\",\"description\":\"SVG or HTML code to render. For SVG: raw SVG code starting with \u003csvg\u003e tag, must use CSS variables for colors. Example: \u003csvg viewBox=\\\"0 0 700 400\\\" xmlns=\\\"http://www.w3.org/2000/svg\\\"\u003e...\u003c/svg\u003e. For HTML: raw HTML content to render, do NOT include DOCTYPE, \u003chtml\u003e, \u003chead\u003e, or \u003cbody\u003e tags. Use CSS variables for theming. Keep background transparent and avoid top-level padding. Scripts are supported but execute after streaming completes.\"}},\"required\":[\"loading_messages\",\"title\",\"widget_code\"]},\"integration_name\":\"visualize\",\"is_mcp_app\":true},{\"name\":\"read_me\",\"description\":\"Returns required context for show_widget (CSS variables, colors, typography, layout rules, examples). Call before your first show_widget call. Call again later if you need a different module. Do NOT mention or narrate this call to the user — it is an internal setup step. Call it silently and proceed directly to the visualization in your response.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"modules\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"diagram\",\"mockup\",\"interactive\",\"data_viz\",\"art\",\"chart\",\"elicitation\"]},\"description\":\"Which module(s) to load. Pick all that fit.\"},\"platform\":{\"type\":\"string\",\"enum\":[\"mobile\",\"desktop\",\"unknown\"],\"description\":\"The client platform the widget will render on. Pass 'mobile' when your system prompt indicates a mobile client (narrow ~380px viewport) so SVG viewBox and layout guidance are sized accordingly; otherwise pass 'desktop'. Defaults to 'unknown' (desktop sizing).\"}}},\"integration_name\":\"visualize\",\"is_mcp_app\":false},{\"type\":\"web_search_v0\",\"name\":\"web_search\"},{\"type\":\"artifacts_v0\",\"name\":\"artifacts\"},{\"type\":\"repl_v0\",\"name\":\"repl\"},{\"type\":\"widget\",\"name\":\"weather_fetch\"},{\"type\":\"widget\",\"name\":\"recipe_display_v0\"},{\"type\":\"widget\",\"name\":\"places_map_display_v0\"},{\"type\":\"widget\",\"name\":\"message_compose_v1\"},{\"type\":\"widget\",\"name\":\"ask_user_input_v0\"},{\"type\":\"widget\",\"name\":\"recommend_claude_apps\"},{\"type\":\"widget\",\"name\":\"places_search\"},{\"type\":\"widget\",\"name\":\"fetch_sports_data\"}],\"turn_message_uuids\":{\"human_message_uuid\":\"019e5ab0-6e20-7729-9e9c-3bad66f49475\",\"assistant_message_uuid\":\"019e5ab0-6e20-7668-9ff3-3eb9a8f1cedd\"},\"attachments\":[],\"files\":[],\"sync_sources\":[],\"rendering_mode\":\"messages\"}\n"
+    }
+  },
+  "confidence": 0.6000000000000001,
+  "detectedSpec": "claude-web",
+  "selectionEvidence": "host"
+}

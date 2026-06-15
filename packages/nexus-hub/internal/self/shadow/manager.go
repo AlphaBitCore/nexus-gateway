@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
@@ -332,11 +331,27 @@ func (m *Manager) applyAll(ctx context.Context) error {
 		h := handlersCopy[key]
 		applyErr := m.dispatchOne(ctx, key, h, stateJSON)
 		m.recordOutcome(key, thing.DesiredVer, applyErr)
-		// Echo the desired value into reported so the inSync diff in the
-		// Configuration tab converges once Apply has run. We mirror the
-		// raw desired value rather than a handler-returned value because
-		// the wire shape is whatever Hub pushed; per-key normalization
+		// Echo the desired value into reported ONLY when Apply succeeded so the
+		// inSync diff in the Configuration tab converges to the truth: a failed
+		// handler leaves reported[key] at its previous value (or absent), so the
+		// key shows out-of-sync rather than falsely "applied". We
+		// mirror the raw desired value rather than a handler-returned value
+		// because the wire shape is whatever Hub pushed; per-key normalization
 		// belongs in the handler.
+		if applyErr == nil {
+			reported[key] = raw
+		}
+	}
+
+	// Unmanaged desired keys — present in thing.desired but with no registered
+	// handler — are mirrored verbatim into reported. No handler means
+	// the apply is a no-op, which IS the truthful "already applied" state;
+	// leaving them unmirrored would make the Configuration tab show a permanent
+	// false out-of-sync for keys Hub does not act on locally.
+	for key, raw := range thing.Desired {
+		if _, managed := handlersCopy[key]; managed {
+			continue
+		}
 		reported[key] = raw
 	}
 
@@ -390,39 +405,12 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// pooledConn is the minimum *pgxpool.Conn surface poolConnAdapter
-// depends on. Decoupling from the concrete pool conn type lets unit
-// tests inject a fake that returns canned pgconn notifications and
-// errors without standing up a real Postgres listener. Same seam
-// pattern used by thingmgr.PgxPool and the cp/store pgxmock harness.
-type pooledConn interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
-	WaitForNotification(ctx context.Context) (*pgconn.Notification, error)
-	Release()
-}
-
-// pgxpoolConnWrapper adapts *pgxpool.Conn to the pooledConn interface.
-// The wrapper exists because *pgxpool.Conn exposes WaitForNotification
-// indirectly via Conn() (the underlying *pgx.Conn) rather than on the
-// pool conn itself; flattening that hop here keeps the seam uniform.
-type pgxpoolConnWrapper struct {
-	conn *pgxpool.Conn
-}
-
-// Exec implements pooledConn.
-func (w *pgxpoolConnWrapper) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
-	return w.conn.Exec(ctx, sql, arguments...)
-}
-
-// WaitForNotification implements pooledConn.
-func (w *pgxpoolConnWrapper) WaitForNotification(ctx context.Context) (*pgconn.Notification, error) {
-	return w.conn.Conn().WaitForNotification(ctx)
-}
-
-// Release implements pooledConn.
-func (w *pgxpoolConnWrapper) Release() { w.conn.Release() }
-
-// poolAdapter wraps *pgxpool.Pool to satisfy the notifier seam.
+// poolAdapter wraps *pgxpool.Pool to satisfy the notifier seam. It is
+// the only adapter layer between the pool and the listen loop: Acquire
+// returns a *pgxPoolConnAdapter that implements pooledListener directly
+// against *pgxpool.Conn. Tests inject a fakeNotifier that returns a
+// fake pooledListener directly, so no intermediate interface is needed
+// for testability.
 type poolAdapter struct {
 	pool *pgxpool.Pool
 }
@@ -433,27 +421,26 @@ func (a *poolAdapter) Acquire(ctx context.Context) (pooledListener, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &poolConnAdapter{conn: &pgxpoolConnWrapper{conn: conn}}, nil
+	return &pgxPoolConnAdapter{conn: conn}, nil
 }
 
-// poolConnAdapter wraps a pooledConn so the listener loop can speak
-// to it through the pooledListener interface. In production the
-// underlying pooledConn is a *pgxpoolConnWrapper around *pgxpool.Conn;
-// in unit tests it's a fake conn supplying canned notifications and
-// errors.
-type poolConnAdapter struct {
-	conn pooledConn
+// pgxPoolConnAdapter implements pooledListener directly on *pgxpool.Conn.
+// WaitForNotification is reached via conn.Conn() because *pgxpool.Conn
+// delegates it to the underlying *pgx.Conn; this single hop is the only
+// reason an adapter is needed at all.
+type pgxPoolConnAdapter struct {
+	conn *pgxpool.Conn
 }
 
 // Exec implements pooledListener.
-func (c *poolConnAdapter) Exec(ctx context.Context, sql string) error {
+func (c *pgxPoolConnAdapter) Exec(ctx context.Context, sql string) error {
 	_, err := c.conn.Exec(ctx, sql)
 	return err
 }
 
 // WaitForNotification implements pooledListener.
-func (c *poolConnAdapter) WaitForNotification(ctx context.Context) (*pgconnNotification, error) {
-	n, err := c.conn.WaitForNotification(ctx)
+func (c *pgxPoolConnAdapter) WaitForNotification(ctx context.Context) (*pgconnNotification, error) {
+	n, err := c.conn.Conn().WaitForNotification(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -461,11 +448,10 @@ func (c *poolConnAdapter) WaitForNotification(ctx context.Context) (*pgconnNotif
 }
 
 // Release implements pooledListener.
-func (c *poolConnAdapter) Release() { c.conn.Release() }
+func (c *pgxPoolConnAdapter) Release() { c.conn.Release() }
 
 // Compile-time assertions: the production wiring satisfies the seams.
 var (
 	_ notifier       = (*poolAdapter)(nil)
-	_ pooledListener = (*poolConnAdapter)(nil)
-	_ pooledConn     = (*pgxpoolConnWrapper)(nil)
+	_ pooledListener = (*pgxPoolConnAdapter)(nil)
 )

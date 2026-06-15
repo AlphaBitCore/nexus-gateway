@@ -65,8 +65,8 @@ func seedPasswordFixture(t *testing.T) passwordFixture {
 	clientID := "test-pw-client-" + suffix
 	redirectURI := "http://127.0.0.1:54321/callback"
 	_, err = pool.Exec(ctx,
-		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","requirePkce","updatedAt")
-		 VALUES ($1,$2,'public',$3,$4,TRUE,NOW())`,
+		`INSERT INTO "OAuthClient"(id,name,type,"redirectUris","allowedScopes","updatedAt")
+		 VALUES ($1,$2,'public',$3,$4,NOW())`,
 		clientID, "Password Test Client",
 		[]string{redirectURI}, []string{"openid"})
 	if err != nil {

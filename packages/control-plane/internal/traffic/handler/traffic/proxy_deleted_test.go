@@ -13,8 +13,10 @@ import (
 // removal of the pre-notifier proxy routes. All mutating /api/admin/proxy/*
 // endpoints for killswitch, exemptions, and the alert/* config family have
 // been replaced by /api/admin/compliance/* handlers that go through the Hub
-// notifier (see Tasks 4-10 of the runtimeapi-slimming plan). If any of these
-// legacy routes come back by mistake, this test fails.
+// notifier (see Tasks 4-10 of the runtimeapi-slimming plan). The reject-config
+// admin surface (GET + PUT /proxy/reject-config) is gone entirely: reject
+// response verbosity is a compliance-proxy yaml knob (compliance.rejectResponse),
+// not an admin API. If any of these routes come back by mistake, this test fails.
 //
 // The test uses an in-process echo.Echo with a no-op IAM middleware, so it
 // does not touch the DB, Hub, or compliance-proxy runtime. Echo returns 404
@@ -38,10 +40,9 @@ func TestLegacyProxyMutatingRoutesDeleted(t *testing.T) {
 
 	h.RegisterProxyRoutes(g, noopIAM)
 
-	// The 14 (method, path) pairs that must no longer be served. The plan
-	// referenced 15 entries, but PUT/DELETE /proxy/alerts/channels/:id was
-	// already gone at audit time, so 14 is the correct count for the current
-	// codebase.
+	// The 15 (method, path) pairs that must no longer be served: 13 legacy
+	// killswitch/exemption/alert routes plus both verbs of the deleted
+	// reject-config surface.
 	cases := []struct {
 		method string
 		path   string
@@ -59,6 +60,7 @@ func TestLegacyProxyMutatingRoutesDeleted(t *testing.T) {
 		{http.MethodGet, "/api/admin/proxy/alerts/channels"},
 		{http.MethodPost, "/api/admin/proxy/alerts/channels"},
 		{http.MethodGet, "/api/admin/proxy/compliance/killswitch-history"},
+		{http.MethodGet, "/api/admin/proxy/reject-config"},
 		{http.MethodPut, "/api/admin/proxy/reject-config"},
 	}
 
