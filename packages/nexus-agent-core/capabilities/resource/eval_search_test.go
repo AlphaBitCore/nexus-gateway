@@ -39,7 +39,14 @@ var searchGoldenSet = []goldenQuestion{
 	{"download the proxy ca certificate", "structural", []string{"setupGetCACert"}},
 	{"trigger a scheduled job now", "structural", []string{"jobsTrigger"}},
 	{"import a rule pack from yaml", "structural", []string{"import"}},
-	{"rotate a device certificate", "structural", []string{"rotateAgentCert"}},
+	// NOTE: the "rotate a device certificate" → rotateAgentCert question was
+	// removed when that endpoint was deleted (arch-audit F-0203). The P-256 mTLS
+	// surface — SignCSR / renew-cert / RotateAgentCert — was withdrawn; the agent
+	// now self-signs device.pem and the Hub CA issues Ed25519 attestation certs
+	// only, so there is no longer any server-side device-cert-rotation operation
+	// in the catalog to retrieve. The golden set tracks the catalog (see the
+	// "Golden-set ownership" note above), so the question was dropped rather than
+	// pointing at a non-existent operationId.
 	{"delete a quota override", "structural", []string{"deleteQuotaOverride"}},
 	{"list dead letter queue entries", "structural", []string{"listDLQ"}},
 
@@ -69,11 +76,29 @@ var searchGoldenSet = []goldenQuestion{
 	{"cache hit rate and savings", "purpose", []string{"cacheStats", "analyticsCacheROI"}},
 }
 
-// Baseline floors measured on the pre-card implementation (2026-06-05).
-// CI fails if retrieval drops below these; raise after verified improvements.
+// Baseline floors measured on the pre-card implementation (2026-06-05), re-measured
+// after the arch-audit catalog shrink (2026-06-07) and held UNCHANGED. CI fails if
+// retrieval drops below these; raise after verified improvements.
+//
+// The arch-audit fix program legitimately removed dead/withdrawn surface from the
+// embedded CP catalog — ModelPricing endpoints + pricing.yaml, AdminAuditLog client*
+// correlation fields, redaction_spans, applicableEndpoints, getEffective, and the
+// P-256 device-cert-rotation operations (rotateAgentCert etc., F-0203). That is a
+// smaller, honest corpus, not a scorer regression. The only golden question that
+// targeted any removed surface was "rotate a device certificate" → rotateAgentCert;
+// it was dropped above because the endpoint no longer exists. With that dead question
+// removed, the surviving 30-question set re-measures to EXACTLY the original numbers
+// (top-1 80 / top-5 86 / top-20 93), so the floors are kept as-is rather than lowered:
+//
+//	structural 100 / 100 / 100 (n=9)   summary 90 / 100 / 100 (n=11)
+//	purpose     50 /  60 /  80 (n=10)  — the "purpose" misses (probeCredential /
+//	providerTest, getMePermissions) are PRE-EXISTING baseline behavior, present and
+//	identical on the 2026-06-05 catalog; those endpoints still exist with intact
+//	descriptions, so this is a known scorer limit the baseline already encoded, not a
+//	corpus-shrink effect.
 const (
-	evalFloorTop1  = 80 // baseline 2026-06-05: structural 100 / summary 90 / purpose 50
-	evalFloorTop5  = 86 // rank 6-8 had zero hits on the baseline set → card count K=5
+	evalFloorTop1  = 80 // structural 100 / summary 90 / purpose 50
+	evalFloorTop5  = 86 // rank 6-8 had zero hits on the set → card count K=5
 	evalFloorTop20 = 93 // the thin tail's recall margin over the cards (+7pp)
 )
 

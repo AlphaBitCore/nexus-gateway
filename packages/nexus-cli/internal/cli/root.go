@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/restable"
 )
 
 // NewRootCmd builds the `nexus` command tree bound to a.
@@ -69,8 +70,6 @@ func NewRootCmd(a *App) *cobra.Command {
 		newPassthroughCmd(a),
 		newVKCmd(a),
 		newResourceCmd(a),
-		newMCPCmd(a),
-		newSkillCmd(a),
 	)
 	return root
 }
@@ -78,13 +77,16 @@ func NewRootCmd(a *App) *cobra.Command {
 // Main is the process entry point: it builds the app, executes, and returns the
 // documented exit code.
 func Main() int {
-	a := &App{Out: os.Stdout, ErrOut: os.Stderr}
+	a := &App{Out: os.Stdout, ErrOut: os.Stderr, In: os.Stdin}
 	// Close the diagnostic log file on exit. ensureConfig (run in the command
 	// tree's PersistentPreRunE) opens it; Close is a no-op when it never did.
 	defer func() { _ = a.Close() }()
 	root := NewRootCmd(a)
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(a.ErrOut, "error:", err)
+		// The error string can embed a server-supplied response body (a 4xx/5xx body
+		// is wrapped into the transport error). Sanitize it so an attacker-controlled
+		// body cannot inject terminal escape sequences on the error path.
+		fmt.Fprintln(a.ErrOut, "error:", restable.SanitizeTerminal(err.Error()))
 		return exitCode(err)
 	}
 	return 0

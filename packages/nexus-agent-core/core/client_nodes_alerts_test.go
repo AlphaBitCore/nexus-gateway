@@ -116,7 +116,7 @@ func TestClient_CreateVK_NoPlaintext(t *testing.T) {
 	}
 }
 
-func TestClient_Wave1ErrorPaths(t *testing.T) {
+func TestClient_NodesAlertsErrorPaths(t *testing.T) {
 	c, done := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)

@@ -9,7 +9,6 @@ import (
 
 func TestToolActionLabel(t *testing.T) {
 	cases := []struct{ name, input, want string }{
-		{"use_skill", `{"name":"incident-triage"}`, "loading skill incident-triage"},
 		{"analyze_cost", `{"window":"7d","groupBy":"provider"}`, "analyze_cost · 7d, by provider"},
 		{"analyze_slo", `{"window":"24h"}`, "analyze_slo · 24h"},
 		{"resource_search", `{"query":"hooks"}`, "resource_search · hooks"},
@@ -41,9 +40,6 @@ func TestToolActionLabel(t *testing.T) {
 func TestToolResultPeek(t *testing.T) {
 	if got := toolResultPeek("resource_read", []byte(`{"data":[{"id":"a"},{"id":"b"},{"id":"c"}]}`), false); got != "3 rows" {
 		t.Errorf("collection peek = %q, want '3 rows'", got)
-	}
-	if got := toolResultPeek("use_skill", []byte("Skill loaded. Follow…"), false); got != "playbook loaded" {
-		t.Errorf("use_skill peek = %q", got)
 	}
 	if got := toolResultPeek("mitigate_x", []byte("boom: provider not found"), true); !strings.HasPrefix(got, "⚠ ") {
 		t.Errorf("error peek should be flagged: %q", got)

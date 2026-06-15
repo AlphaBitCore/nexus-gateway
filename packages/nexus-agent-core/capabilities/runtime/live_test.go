@@ -8,8 +8,7 @@
 //
 // These tests uniquely verify what unit tests cannot: that the AI Gateway passes
 // native `tools`/`tool_calls` through the VK pipeline, that a full agent Turn
-// drives a real tool and answers, and that a registry built from a real client
-// bridges onto MCP. They create only their own throwaway VK (touch own data).
+// drives a real tool and answers. They create only their own throwaway VK (touch own data).
 package runtime
 
 import (
@@ -20,8 +19,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
@@ -114,7 +111,7 @@ func TestLive_ToolCallingModel(t *testing.T) {
 			Parameters: json.RawMessage(`{"type":"object","properties":{"groupBy":{"type":"string"}}}`),
 		}},
 	}
-	resp, err := m.Generate(ctx, req, nil)
+	resp, err := m.Generate(ctx, req, nil, nil)
 	if isComplianceBlock(err) {
 		t.Skipf("VK pipeline blocked the request (by design, §7): %v", err)
 	}
@@ -145,8 +142,8 @@ func TestLive_AgentTurn(t *testing.T) {
 	ag, err := BuildAgent(ctx, AgentDeps{
 		Streamer: c, Gateway: c, Canvas: &fakeCanvas{},
 		VKSecret: vk, Model: model, Env: "local",
-		SkillDir: dir, MemoryDir: dir, SessionDir: dir,
-		Confirm: func(agent.Tool, json.RawMessage, string) bool { return true },
+		MemoryDir: dir, SessionDir: dir,
+		Confirm: func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return true, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,64 +163,4 @@ func TestLive_AgentTurn(t *testing.T) {
 	if metas, _ := ag.Store.List(); len(metas) == 0 {
 		t.Fatal("the agent turn must persist a session")
 	}
-}
-
-func TestLive_MCPBridge(t *testing.T) {
-	c, _ := liveClient(t)
-	// A registry built from the LIVE client must satisfy capabilities.Gateway and
-	// bridge onto MCP — proving the real *core.Client wires the whole chain.
-	reg := NewMCPRegistry(c, MCPOptions{})
-	srv := mcpServerFor(reg)
-	cltSess, sctx := connectLive(t, srv)
-
-	lt, err := cltSess.ListTools(sctx, nil)
-	if err != nil {
-		t.Fatalf("ListTools over the live-built registry: %v", err)
-	}
-	names := map[string]bool{}
-	for _, tool := range lt.Tools {
-		names[tool.Name] = true
-	}
-	for _, want := range []string{"observe_health", "analyze_cost", "route_explain"} {
-		if !names[want] {
-			t.Fatalf("the live MCP registry must expose %q, got %v", want, lt.Tools)
-		}
-	}
-	t.Logf("live MCP bridge exposes %d tools", len(lt.Tools))
-}
-
-// mcpServerFor builds an SDK server bridging the registry (mirrors internal/mcp's
-// NewServer; duplicated here to avoid an import cycle in the live test).
-func mcpServerFor(reg *agent.Registry) *sdk.Server {
-	s := sdk.NewServer(&sdk.Implementation{Name: "nexus", Version: "live"}, nil)
-	for _, name := range reg.Names() {
-		tool, _ := reg.Get(name)
-		def := &sdk.Tool{Name: tool.Name(), Description: tool.Description(), InputSchema: json.RawMessage(tool.Schema())}
-		h := func(tl agent.Tool) sdk.ToolHandler {
-			return func(c context.Context, r *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
-				res, err := tl.Run(c, r.Params.Arguments)
-				if err != nil {
-					return nil, err
-				}
-				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: res.Content}}, IsError: res.IsError}, nil
-			}
-		}(tool)
-		s.AddTool(def, h)
-	}
-	return s
-}
-
-func connectLive(t *testing.T, srv *sdk.Server) (*sdk.ClientSession, context.Context) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	t.Cleanup(cancel)
-	ct, st := sdk.NewInMemoryTransports()
-	go func() { _ = srv.Run(ctx, st) }()
-	client := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "v1"}, nil)
-	sess, err := client.Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(func() { _ = sess.Close() })
-	return sess, ctx
 }

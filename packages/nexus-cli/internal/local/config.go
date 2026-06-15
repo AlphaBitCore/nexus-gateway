@@ -131,7 +131,7 @@ func (c *Config) Save() error {
 }
 
 // Resolve picks the active environment using the precedence
-// flagEnv > sessionEnv > default_env (FR-5). It returns a clear error when no
+// flagEnv > sessionEnv > default_env. It returns a clear error when no
 // name resolves or the named env is not defined.
 func (c *Config) Resolve(flagEnv, sessionEnv string) (core.Env, error) {
 	name := firstNonEmpty(flagEnv, sessionEnv, c.DefaultEnv)

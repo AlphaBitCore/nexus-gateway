@@ -21,7 +21,7 @@ type funcTool struct {
 	confirmDetail func(input json.RawMessage) string
 	// impact, when set on a high-blast-radius confirm-tier tool, reads current state
 	// and returns a structured impact preview (current → effect) for the confirm card
-	// (FR-22/AC-6). Read-only; may call the gateway, so it takes a ctx. Optional.
+	// Read-only; may call the gateway, so it takes a ctx. Optional.
 	impact func(ctx context.Context, input json.RawMessage) (any, error)
 }
 

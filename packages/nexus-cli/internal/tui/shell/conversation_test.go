@@ -41,6 +41,7 @@ type recordingRunner struct {
 	confirm     agent.ConfirmFunc
 	canvasOK    bool
 	compactFn   func() (agent.CompactStat, bool, error) // drives the manual /compact path
+	gotResume   *agent.Session                          // the session the build seam was asked to resume (nil = fresh)
 }
 
 func (r *recordingRunner) Turn(_ context.Context, userText, activeView string) (string, error) {
@@ -59,10 +60,11 @@ func (r *recordingRunner) Compact(_ context.Context) (agent.CompactStat, bool, e
 // exposes what Turn saw (active view / user text) for assertions.
 func newTestConv(s Session, script convScript) (*conversation, *recordingRunner) {
 	rr := &recordingRunner{script: script}
-	build := func(canvas capabilities.Canvas, confirm agent.ConfirmFunc, onText, onReasoning func(string), onTool func(string, []byte), _ func(string, []byte, bool), _ func(agent.ContextStats, int), onCompact func(agent.CompactStat)) (AgentRunner, error) {
-		rr.onText, rr.onReasoning, rr.onTool, rr.confirm = onText, onReasoning, onTool, confirm
-		rr.onCompact = onCompact
+	build := func(canvas capabilities.Canvas, confirm agent.ConfirmFunc, stream AgentStream, resume *agent.Session) (AgentRunner, error) {
+		rr.onText, rr.onReasoning, rr.onTool, rr.confirm = stream.OnText, stream.OnReasoning, stream.OnToolStart, confirm
+		rr.onCompact = stream.OnCompact
 		rr.canvasOK = canvas != nil
+		rr.gotResume = resume
 		return rr, nil
 	}
 	return newConversation(s, build), rr
@@ -717,10 +719,18 @@ func TestConversationSlashClearAndHelp(t *testing.T) {
 			t.Fatalf("/help should render a full reference incl. %q, got %q", want, help)
 		}
 	}
-	c.input.SetValue("/bogus")
+	// An unknown /-prefixed input is NOT eaten: it goes to the assistant as a
+	// normal message (a pasted "/v1/messages returns 404" must reach the model).
+	c.input.SetValue("/v1/messages returns 404")
 	c.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !strings.Contains(c.notice, "unknown") {
-		t.Fatalf("an unknown command should be reported, got %q", c.notice)
+	sawUser := false
+	for _, ln := range c.lines {
+		if ln.tag == "you" && strings.Contains(ln.text, "/v1/messages") {
+			sawUser = true
+		}
+	}
+	if !sawUser {
+		t.Fatal("an unknown slash input must be submitted to the assistant, not eaten")
 	}
 }
 
@@ -830,7 +840,7 @@ func TestConversationHandleKeyEditsInput(t *testing.T) {
 
 func TestConversationEnsureAgentBuildError(t *testing.T) {
 	boom := errors.New("skill dir unreadable")
-	c := newConversation(testSessionLocal(), func(_ capabilities.Canvas, _ agent.ConfirmFunc, _, _ func(string), _ func(string, []byte), _ func(string, []byte, bool), _ func(agent.ContextStats, int), _ func(agent.CompactStat)) (AgentRunner, error) {
+	c := newConversation(testSessionLocal(), func(_ capabilities.Canvas, _ agent.ConfirmFunc, _ AgentStream, _ *agent.Session) (AgentRunner, error) {
 		return nil, boom
 	})
 	c.input.SetValue("hello")

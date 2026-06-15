@@ -128,6 +128,9 @@ func (h *Handler) registerWidgets(g *echo.Group, iamMW func(action string) echo.
 	g.GET("/widgets/:id", h.GetWidget, iamMW(iam.ResourceWidget.Action(iam.VerbRead)))
 	g.PUT("/widgets/:id", h.UpdateWidget, iamMW(iam.ResourceWidget.Action(iam.VerbUpdate)))
 	g.DELETE("/widgets/:id", h.DeleteWidget, iamMW(iam.ResourceWidget.Action(iam.VerbDelete)))
+	// Delegates its query-string parsing to a shared helper — exercises the
+	// generator following a same-package helper for its QueryParam reads.
+	g.GET("/widgets/:id/events", h.ListWidgetEvents, iamMW(iam.ResourceWidget.Action(iam.VerbRead)))
 
 	// Reaching registerExtras a second time exercises the visited-guard.
 	registerExtras(g, iamMW)
@@ -157,6 +160,25 @@ func (h *Handler) ListWidgets(c echo.Context) error {
 	_ = c.QueryParam("status")
 	_ = c.QueryParam("scope") // duplicate read must not duplicate the parameter
 	return c.JSON(http.StatusOK, map[string]any{"data": []Widget{}, "total": 0})
+}
+
+// ListWidgetEvents pages a widget's events but reads its query parameters through
+// a shared helper — the generator must follow widgetPaging to document them.
+func (h *Handler) ListWidgetEvents(c echo.Context) error {
+	afterSeq, limit := widgetPaging(c)
+	_, _ = afterSeq, limit
+	return c.JSON(http.StatusOK, map[string]any{"events": []Widget{}})
+}
+
+// widgetPaging is the shared query-string helper ListWidgetEvents delegates to.
+func widgetPaging(c echo.Context) (afterSeq, limit int) {
+	if c.QueryParam("afterSeq") != "" {
+		afterSeq = 1
+	}
+	if c.QueryParam("limit") != "" {
+		limit = 1
+	}
+	return afterSeq, limit
 }
 
 // CreateWidget binds an anonymous struct covering pointer/slice/map/RawMessage.

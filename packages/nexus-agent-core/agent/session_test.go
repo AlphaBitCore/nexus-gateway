@@ -53,6 +53,49 @@ func TestSessionStoreSaveLoadList(t *testing.T) {
 	if metas[0].Title == "" {
 		t.Fatal("List meta should derive a title from the first user message")
 	}
+	// The meta carries each session's transcript length (the picker's msg badge).
+	if metas[0].Messages != 1 || metas[1].Messages != 2 {
+		t.Fatalf("List metas must carry message counts (1, 2), got (%d, %d)", metas[0].Messages, metas[1].Messages)
+	}
+}
+
+func TestSessionStoreDeleteRemovesDurably(t *testing.T) {
+	st := openStoreAt(t.TempDir())
+	doomed := NewSession("local")
+	doomed.Messages = []Message{TextMessage(RoleUser, "delete me")}
+	if err := st.Save(doomed); err != nil {
+		t.Fatal(err)
+	}
+	keep := NewSession("local")
+	keep.Messages = []Message{TextMessage(RoleUser, "keep me")}
+	if err := st.Save(keep); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.Delete(doomed.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Durably gone: no longer listed, no longer loadable — and ONLY the deleted
+	// session is affected.
+	metas, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].ID != keep.ID {
+		t.Fatalf("Delete must remove exactly the deleted session, got %+v", metas)
+	}
+	if _, err := st.Load(doomed.ID); err == nil {
+		t.Fatal("a deleted session must not load")
+	}
+
+	// Named failure modes: an empty id and an id that was never saved both error
+	// (a miss means the caller's listing is stale — surface it, don't swallow).
+	if err := st.Delete(""); err == nil {
+		t.Fatal("Delete with no id must error")
+	}
+	if err := st.Delete("never-existed"); err == nil {
+		t.Fatal("Delete of a missing session must error")
+	}
 }
 
 func TestSessionStoreIOErrorsSurface(t *testing.T) {

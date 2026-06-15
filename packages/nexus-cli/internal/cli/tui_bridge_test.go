@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"
+	capabilities "github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/capabilities/runtime"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/local"
+	tui "github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/shell"
 )
 
 // stubCanvas is a no-op capabilities.Canvas for wiring the conversation agent in
@@ -42,22 +44,29 @@ func TestTuiDeps_BuildAgentWired(t *testing.T) {
 	if build == nil {
 		t.Fatal("tuiDeps must wire BuildAgent so the conversation sidebar has an agent")
 	}
+	// A /sessions pick hands the seam a session to resume: the built agent must
+	// be bound to that SAME session (same id), so its next turn appends to it.
+	resumed := agent.NewSession("local")
+	resumed.Messages = []agent.Message{agent.TextMessage(agent.RoleUser, "earlier question")}
 	var sawText bool
 	runner, err := build(
 		stubCanvas{},
 		func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return false, nil },
-		func(string) { sawText = true },
-		func(string) {},
-		func(string, []byte) {},
-		func(string, []byte, bool) {},
-		func(agent.ContextStats, int) {},
-		func(agent.CompactStat) {},
+		tui.AgentStream{OnText: func(string) { sawText = true }},
+		resumed,
 	)
 	if err != nil {
 		t.Fatalf("BuildAgent: %v", err)
 	}
 	if runner == nil {
 		t.Fatal("BuildAgent must return a runnable agent, not nil")
+	}
+	ag, ok := runner.(*agent.Agent)
+	if !ok {
+		t.Fatalf("the seam returns the kernel agent, got %T", runner)
+	}
+	if ag.Session != resumed {
+		t.Fatalf("a resumed build must bind the picked session (id %s), got %+v", resumed.ID, ag.Session)
 	}
 	_ = sawText // the callback is wired into the agent; exercised by the agent loop, not here
 }
@@ -75,16 +84,57 @@ func TestTuiDeps_BuildAgentConfigDirError(t *testing.T) {
 	runner, err := a.tuiDeps().BuildAgent(
 		stubCanvas{},
 		func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return false, nil },
-		func(string) {}, func(string) {}, func(string, []byte) {},
-		func(string, []byte, bool) {},
-		func(agent.ContextStats, int) {},
-		func(agent.CompactStat) {},
+		tui.AgentStream{},
+		nil, // no session to resume — a fresh conversation
 	)
 	if err == nil {
 		t.Fatal("BuildAgent must surface a config-dir resolution failure")
 	}
 	if runner != nil {
 		t.Fatal("a failed build must return a nil agent, not a half-built one")
+	}
+}
+
+// TestTuiDeps_OpenSessionsWired proves the /sessions picker seam: tuiDeps
+// resolves the ACTIVE env's on-disk session store, so a conversation saved by
+// the agent is listable (and resumable/deletable) through the same seam.
+func TestTuiDeps_OpenSessionsWired(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	a := appWithVK(srv)
+
+	open := a.tuiDeps().OpenSessions
+	if open == nil {
+		t.Fatal("tuiDeps must wire OpenSessions so /sessions can list past conversations")
+	}
+	br, err := open()
+	if err != nil {
+		t.Fatalf("OpenSessions: %v", err)
+	}
+	// The browser is the env's real store: a session saved there lists through it.
+	sess := agent.NewSession(a.Env.Name)
+	sess.Messages = []agent.Message{agent.TextMessage(agent.RoleUser, "find my session")}
+	dir, err := capabilities.DefaultSessionDir(a.Env.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.OpenStoreAt(dir).Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	metas, err := br.List()
+	if err != nil || len(metas) != 1 || metas[0].ID != sess.ID || metas[0].Title != "find my session" {
+		t.Fatalf("the seam must list the env's saved sessions, got %+v err=%v", metas, err)
+	}
+
+	// Named failure mode: an unresolvable config dir surfaces, not a nil browser.
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	if _, err := open(); err == nil {
+		t.Fatal("OpenSessions must surface a config-dir resolution failure")
 	}
 }
 
@@ -249,5 +299,34 @@ func TestSLOCmd_ErrorAndNoFallbacks(t *testing.T) {
 	out, err := runCLI(t, newTestApp(srv2, false), "slo")
 	if err != nil || !strings.Contains(out, "availability: 100.00%") {
 		t.Fatalf("slo with no data should show 100%% availability: %q err=%v", out, err)
+	}
+}
+
+// TestTuiDeps_EnvEditorsRejectBadInput pins the wizard env editors' named
+// failure modes: a malformed URL is rejected before anything is saved, and
+// updating an environment that does not exist fails by name.
+func TestTuiDeps_EnvEditorsRejectBadInput(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	a := appWithVK(srv)
+	deps := a.tuiDeps()
+
+	if _, _, err := deps.CreateEnv("e1", "not a url", srv.URL, false); err == nil {
+		t.Fatal("CreateEnv must reject a malformed Control Plane URL")
+	}
+	if _, _, err := deps.CreateEnv("e1", srv.URL, "not a url", false); err == nil {
+		t.Fatal("CreateEnv must reject a malformed AI Gateway URL")
+	}
+	if _, _, _, err := deps.UpdateEnv("local", "not a url", srv.URL, false); err == nil {
+		t.Fatal("UpdateEnv must reject a malformed Control Plane URL")
+	}
+	if _, _, _, err := deps.UpdateEnv("local", srv.URL, "not a url", false); err == nil {
+		t.Fatal("UpdateEnv must reject a malformed AI Gateway URL")
+	}
+	if _, _, _, err := deps.UpdateEnv("ghost", srv.URL, srv.URL, false); err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("UpdateEnv must name the unknown environment, got %v", err)
 	}
 }

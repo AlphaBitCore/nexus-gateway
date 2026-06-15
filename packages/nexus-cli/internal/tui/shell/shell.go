@@ -1,7 +1,9 @@
 package shell
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -12,6 +14,24 @@ import (
 // quitting + relaunching.
 type wantEnvSwitchMsg struct{}
 
+// wantLoginMsg / wantLogoutMsg are emitted by the dashboard's /login and /logout
+// slash commands. The Shell owns them because credentials live at the CLI layer
+// (the keychain), not inside the dashboard model. /login re-runs the browser
+// OAuth flow in place: on success the dashboard's existing gateway recovers on
+// its next poll (the token source re-reads the freshly stored token), so an
+// expired-session "(showing last-good data)" view heals without losing context.
+// /logout clears the stored credentials and drops back to the entry wizard,
+// which then requires a fresh login.
+type wantLoginMsg struct{}
+type wantLogoutMsg struct{}
+
+// loginResultMsg carries the outcome of an in-place /login browser flow.
+type loginResultMsg struct{ err error }
+
+// reauthTimeout bounds an in-place /login so an abandoned browser flow cannot
+// leave the loopback-callback goroutine waiting forever.
+const reauthTimeout = 3 * time.Minute
+
 // Shell is the top-level program model. It runs the entry wizard first when the
 // stored selection is missing/invalid, then hands off to the dashboard. Once on
 // the dashboard it is a thin pass-through.
@@ -21,11 +41,16 @@ type Shell struct {
 	wiz      *wizard
 	dash     Model
 
+	// loggingIn is true while an in-place /login browser flow is outstanding; the
+	// dashboard keeps polling underneath, but the View shows a re-auth notice so
+	// the operator knows to finish the login in the opened browser tab.
+	loggingIn bool
+
 	width, height int
 }
 
 // needWizard reports whether the wizard must run: no usable session, or no
-// remembered model + VK secret to skip it (FR-13).
+// remembered model + VK secret to skip it.
 func needWizard(d Deps) bool {
 	if d.HasSession == nil || !d.HasSession() {
 		return true
@@ -54,6 +79,9 @@ func (s *Shell) wireDash() {
 	if s.deps.SaveSelection != nil {
 		s.dash.applyModel = s.deps.SaveSelection
 	}
+	if s.deps.OpenSessions != nil {
+		s.dash.openSessions = s.deps.OpenSessions
+	}
 	if s.dash.conv != nil {
 		s.dash.conv.log = s.deps.Log
 	}
@@ -79,6 +107,26 @@ func (s *Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// switch / edit / delete without quitting.
 	if _, ok := msg.(wantEnvSwitchMsg); ok && !s.inWizard {
 		return s.reopenWizard()
+	}
+	// /login re-authenticates in place; /logout clears credentials + reopens the
+	// wizard. Both are no-ops mid-wizard (it owns its own login step).
+	if _, ok := msg.(wantLoginMsg); ok && !s.inWizard {
+		return s.startReauth()
+	}
+	if _, ok := msg.(wantLogoutMsg); ok && !s.inWizard {
+		if s.deps.Logout != nil {
+			_ = s.deps.Logout()
+		}
+		return s.reopenWizard()
+	}
+	if r, ok := msg.(loginResultMsg); ok {
+		s.loggingIn = false
+		// On success nothing else is needed: the dashboard's gateway shares the
+		// keychain-backed token source, so its next poll picks up the fresh token
+		// and the "(showing last-good data)" banner clears. On failure the
+		// dashboard's own unauthorized banner stays up; the operator can retry.
+		_ = r.err
+		return s, nil
 	}
 	if s.inWizard {
 		next, cmd := s.wiz.Update(msg)
@@ -109,6 +157,23 @@ func (s *Shell) reopenWizard() (tea.Model, tea.Cmd) {
 	})
 }
 
+// startReauth kicks off an in-place browser login. The dashboard is left intact
+// (and keeps polling) so a successful re-auth resumes exactly where the operator
+// was. A nil Login dep (single-env / test builds) is a no-op. The flow is bounded
+// by reauthTimeout so an abandoned browser tab cannot wedge the callback.
+func (s *Shell) startReauth() (tea.Model, tea.Cmd) {
+	if s.deps.Login == nil {
+		return s, nil
+	}
+	s.loggingIn = true
+	login := s.deps.Login
+	return s, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), reauthTimeout)
+		defer cancel()
+		return loginResultMsg{err: login(ctx)}
+	}
+}
+
 // enterDashboard builds the dashboard from the wizard's resolved session and
 // (possibly env-switched) gateway, and re-sends the last window size so the
 // first frame is laid out correctly.
@@ -129,6 +194,13 @@ func (s *Shell) View() tea.View {
 			h = 24
 		}
 		v := tea.NewView(s.wiz.View(s.width, h))
+		v.AltScreen = true
+		return v
+	}
+	if s.loggingIn {
+		v := tea.NewView("\n  Re-authenticating…\n\n" +
+			"  Complete the sign-in in the browser tab that just opened.\n" +
+			"  This screen resumes the dashboard automatically once you're signed in.\n")
 		v.AltScreen = true
 		return v
 	}

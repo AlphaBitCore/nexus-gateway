@@ -114,15 +114,17 @@ func rawArgs(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
 // fakeGateway implements Gateway with canned returns, a per-method error toggle,
 // and write-call counters so tool wiring is asserted without a network.
 type fakeGateway struct {
-	sparkline  *core.SparklineResult
-	instances  *core.InstancesResult
-	providers  *core.ProvidersResult
-	rules      []core.RoutingRule
-	vks        []core.VirtualKey
-	traffic    *core.TrafficList
-	event      *core.TrafficEvent
-	rawForward json.RawMessage
-	errOn      string // method name to fail
+	sparkline   *core.SparklineResult
+	instances   *core.InstancesResult
+	providers   *core.ProvidersResult
+	rules       []core.RoutingRule
+	vks         []core.VirtualKey
+	traffic     *core.TrafficList
+	event       *core.TrafficEvent
+	rawForward  json.RawMessage
+	killSwitch  *core.KillSwitchState     // ontology live-data: kill-switch probe
+	passthrough *core.PassthroughSnapshot // ontology live-data: passthrough probe
+	errOn       string                    // method name to fail
 
 	setProviderCalls, revokeCalls, ruleCalls, killCalls, flushCalls, passthroughCalls int
 
@@ -261,11 +263,17 @@ func (f *fakeGateway) KillSwitchStatus(context.Context) (*core.KillSwitchState, 
 	if err := f.fail("KillSwitchStatus"); err != nil {
 		return nil, err
 	}
+	if f.killSwitch != nil {
+		return f.killSwitch, nil
+	}
 	return &core.KillSwitchState{}, nil
 }
 func (f *fakeGateway) PassthroughSnapshot(context.Context) (*core.PassthroughSnapshot, error) {
 	if err := f.fail("PassthroughSnapshot"); err != nil {
 		return nil, err
+	}
+	if f.passthrough != nil {
+		return f.passthrough, nil
 	}
 	return &core.PassthroughSnapshot{}, nil
 }

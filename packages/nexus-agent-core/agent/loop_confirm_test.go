@@ -23,7 +23,7 @@ func TestLoopConfirmErrorDenies(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(mit)
 	fm := newFakeModel(asstToolUse("u1", "mitigate_kill", `{}`), asstText("ok"))
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(),
+	l := newLoop(fm, reg, NewGate(nil, nil, false),
 		func(context.Context, Tool, json.RawMessage, string) (bool, error) {
 			return true, errors.New("confirm backend failed")
 		})
@@ -49,7 +49,7 @@ func TestLoopConfirmCtxTimeoutDeniesNoLeak(t *testing.T) {
 		<-ctx.Done()
 		return false, ctx.Err()
 	}
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), confirm)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), confirm)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	done := make(chan struct{})
@@ -88,7 +88,7 @@ func TestLoopConfirmAsyncResolveRuns(t *testing.T) {
 			return false, ctx.Err()
 		}
 	}
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), confirm)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), confirm)
 	go func() { time.Sleep(15 * time.Millisecond); reply <- true }() // out-of-band authorize
 	l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "kill it"))
 	select {

@@ -66,6 +66,31 @@ func TestMemoryEdgesAndTiers(t *testing.T) {
 // TestMemoryCRUDAndScope covers the per-fact store end to end: remember writes a
 // scoped file, the merged index lists both scopes, recall returns a body, update
 // rewrites it in place, and forget deletes it.
+func TestMemoryList(t *testing.T) {
+	m := OpenMemoryStore(t.TempDir(), "prod")
+	if facts := m.List(); len(facts) != 0 {
+		t.Fatalf("empty store should List to 0 facts, got %d", len(facts))
+	}
+	// A preference (global) and a baseline (env) — List returns both scopes.
+	if err := m.Remember(MemoryFact{Name: "Quiet mode", Type: MemPreference, Body: "terse"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Remember(MemoryFact{Name: "latency baseline", Type: MemBaseline, Body: "p95 ~90ms"}); err != nil {
+		t.Fatal(err)
+	}
+	facts := m.List()
+	if len(facts) != 2 {
+		t.Fatalf("List returned %d facts, want 2: %+v", len(facts), facts)
+	}
+	bodies := map[string]bool{}
+	for _, f := range facts {
+		bodies[f.Body] = true
+	}
+	if !bodies["terse"] || !bodies["p95 ~90ms"] {
+		t.Fatalf("List missing facts across scopes: %+v", facts)
+	}
+}
+
 func TestMemoryCRUDAndScope(t *testing.T) {
 	m := OpenMemoryStore(t.TempDir(), "prod")
 

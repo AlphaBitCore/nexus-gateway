@@ -118,7 +118,7 @@ func (c *Client) openChatStream(ctx context.Context, vkSecret string, req ChatRe
 // GatewayModels returns the model ids the given Virtual Key may actually use, by
 // calling the AI Gateway's VK-scoped GET /v1/models (the same endpoint every upstream
 // provider exposes). Callers use it to derive an offered model set from a VK's real
-// allowed models (E90 FR-17) rather than a static list that could name an unreachable
+// allowed models rather than a static list that could name an unreachable
 // model. The OpenAI-shape response is parsed (`{data:[{id}]}`); Nexus extension fields
 // are ignored.
 func (c *Client) GatewayModels(ctx context.Context, vkSecret string) ([]string, error) {

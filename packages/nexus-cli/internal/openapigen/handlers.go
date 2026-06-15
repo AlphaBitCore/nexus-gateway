@@ -23,9 +23,7 @@ func (l *loaded) analyzeHandler(handlerExpr ast.Expr, info *types.Info, rep *Rep
 
 	var req types.Type
 	var resps []response
-	var queryParams []string
 	seenStatus := map[int]bool{}
-	seenQuery := map[string]bool{}
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -52,17 +50,52 @@ func (l *loaded) analyzeHandler(handlerExpr ast.Expr, info *types.Info, rep *Rep
 			if len(call.Args) >= 1 {
 				addResponse(&resps, seenStatus, constStatus(call.Args[0], bodyInfo), nil)
 			}
-		case "QueryParam":
+		}
+		return true
+	})
+
+	// Query parameters are collected separately because a handler often delegates
+	// its query-string parsing to a shared helper (e.g. pageParams(c) reading
+	// afterSeq/limit). collectQueryParams follows same-package callees so those
+	// reads are not missed; cf. the inline c.QueryParam reads other handlers do.
+	var queryParams []string
+	l.collectQueryParams(body, bodyInfo, &queryParams, map[string]bool{}, map[*types.Func]bool{})
+	return name, req, resps, queryParams
+}
+
+// collectQueryParams walks body for c.QueryParam("literal") reads, recursing into
+// same-package functions it calls (the query-string-helper delegation pattern) so
+// a handler whose query parameters live in a shared helper is still documented.
+// visited bounds the recursion against cycles; seen dedupes the parameter names.
+func (l *loaded) collectQueryParams(body *ast.BlockStmt, info *types.Info, out *[]string, seen map[string]bool, visited map[*types.Func]bool) {
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "QueryParam" {
 			if len(call.Args) == 1 {
-				if q, ok := stringLit(call.Args[0]); ok && !seenQuery[q] {
-					seenQuery[q] = true
-					queryParams = append(queryParams, q)
+				if q, ok := stringLit(call.Args[0]); ok && !seen[q] {
+					seen[q] = true
+					*out = append(*out, q)
 				}
+			}
+			return true
+		}
+		// A call to a resolvable same-package function: recurse into its body for
+		// the query params it reads on the handler's behalf.
+		if fn := calleeFunc(call, info); fn != nil && !visited[fn] {
+			if fd, ok := l.funcDecl[fn]; ok && fd.Body != nil {
+				visited[fn] = true
+				binfo := l.infoFor(fd.Body.Pos())
+				if binfo == nil {
+					binfo = info
+				}
+				l.collectQueryParams(fd.Body, binfo, out, seen, visited)
 			}
 		}
 		return true
 	})
-	return name, req, resps, queryParams
 }
 
 // addResponse records a (status, body type) pair, keeping the first body seen

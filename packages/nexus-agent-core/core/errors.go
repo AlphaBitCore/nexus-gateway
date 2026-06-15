@@ -1,7 +1,7 @@
 // Package core is the single component that authenticates to a Nexus
 // deployment, holds the active profile, stores secrets in the OS keychain, and
 // exposes typed capability functions over the existing admin API and /v1/*.
-// The CLI, TUI, and MCP faces are thin presenters over this package and never
+// The CLI and TUI faces are thin presenters over this package and never
 // talk to HTTP, IAM, or token storage directly.
 package core
 

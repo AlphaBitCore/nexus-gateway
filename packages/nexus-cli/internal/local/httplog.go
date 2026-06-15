@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptrace"
+	"sync"
 	"time"
 )
 
@@ -29,17 +30,25 @@ type LoggingTransport struct {
 }
 
 // reqTrace collects wall-clock timestamps for each connection phase as the
-// httptrace callbacks fire. The callbacks run on the transport's own goroutine,
-// but each phase pair (start/done) is observed sequentially within a single
-// RoundTrip and read only after RoundTrip returns, so no additional
-// synchronisation is needed.
+// httptrace callbacks fire. The callbacks run on the transport's dial
+// goroutine, which can OUTLIVE RoundTrip: a cancelled/timed-out request
+// returns while its abandoned dial keeps resolving DNS and firing callbacks,
+// concurrent with the post-return log read. mu makes both sides safe.
 type reqTrace struct {
+	mu                        sync.Mutex
 	start                     time.Time
 	dnsStart, dnsDone         time.Time
 	connectStart, connectDone time.Time
 	tlsStart, tlsDone         time.Time
 	gotFirstByte              time.Time
 	reused                    bool
+}
+
+// set runs fn under the trace lock (the httptrace callback write side).
+func (tr *reqTrace) set(fn func()) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	fn()
 }
 
 // RoundTrip performs req through Base, timing each connection phase via
@@ -58,19 +67,28 @@ func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	tr := &reqTrace{start: time.Now()}
 	trace := &httptrace.ClientTrace{
 		GetConn:              func(string) {},
-		GotConn:              func(info httptrace.GotConnInfo) { tr.reused = info.Reused },
-		DNSStart:             func(httptrace.DNSStartInfo) { tr.dnsStart = time.Now() },
-		DNSDone:              func(httptrace.DNSDoneInfo) { tr.dnsDone = time.Now() },
-		ConnectStart:         func(string, string) { tr.connectStart = time.Now() },
-		ConnectDone:          func(string, string, error) { tr.connectDone = time.Now() },
-		TLSHandshakeStart:    func() { tr.tlsStart = time.Now() },
-		TLSHandshakeDone:     func(tls.ConnectionState, error) { tr.tlsDone = time.Now() },
-		GotFirstResponseByte: func() { tr.gotFirstByte = time.Now() },
+		GotConn:              func(info httptrace.GotConnInfo) { tr.set(func() { tr.reused = info.Reused }) },
+		DNSStart:             func(httptrace.DNSStartInfo) { tr.set(func() { tr.dnsStart = time.Now() }) },
+		DNSDone:              func(httptrace.DNSDoneInfo) { tr.set(func() { tr.dnsDone = time.Now() }) },
+		ConnectStart:         func(string, string) { tr.set(func() { tr.connectStart = time.Now() }) },
+		ConnectDone:          func(string, string, error) { tr.set(func() { tr.connectDone = time.Now() }) },
+		TLSHandshakeStart:    func() { tr.set(func() { tr.tlsStart = time.Now() }) },
+		TLSHandshakeDone:     func(tls.ConnectionState, error) { tr.set(func() { tr.tlsDone = time.Now() }) },
+		GotFirstResponseByte: func() { tr.set(func() { tr.gotFirstByte = time.Now() }) },
 	}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 
 	resp, err := base.RoundTrip(req)
 	total := time.Since(tr.start)
+	// Snapshot under the lock: the abandoned dial of a cancelled request can
+	// still be firing callbacks on its own goroutine at this point.
+	tr.mu.Lock()
+	reused := tr.reused
+	dnsMS := phaseMS(tr.dnsStart, tr.dnsDone)
+	connectMS := phaseMS(tr.connectStart, tr.connectDone)
+	tlsMS := phaseMS(tr.tlsStart, tr.tlsDone)
+	ttfbMS := phaseMS(tr.start, tr.gotFirstByte)
+	tr.mu.Unlock()
 
 	status := ""
 	if resp != nil {
@@ -92,11 +110,11 @@ func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		"url", safeURL,
 		"status", status,
 		"err", errStr,
-		"reused", tr.reused,
-		"dns_ms", phaseMS(tr.dnsStart, tr.dnsDone),
-		"connect_ms", phaseMS(tr.connectStart, tr.connectDone),
-		"tls_ms", phaseMS(tr.tlsStart, tr.tlsDone),
-		"ttfb_ms", phaseMS(tr.start, tr.gotFirstByte),
+		"reused", reused,
+		"dns_ms", dnsMS,
+		"connect_ms", connectMS,
+		"tls_ms", tlsMS,
+		"ttfb_ms", ttfbMS,
 		"total_ms", total.Milliseconds(),
 	)
 	return resp, err

@@ -5,8 +5,8 @@
 > views as it answers, and run the same triage you'd do in the web Control Plane —
 > governed by exactly the same IAM, because everything goes through the same admin API.
 
-One static Go binary, three faces over one core: an interactive **TUI** (the console),
-a scriptable **CLI**, and an **MCP server** for agents.
+One static Go binary, two faces over one core: an interactive **TUI** (the console)
+and a scriptable **CLI**.
 
 ---
 
@@ -121,11 +121,13 @@ transient error never blanks the screen.
 
 `/` on an empty chat prompt opens a fuzzy palette:
 
-- `/<view>` — open any view (`/cost`, `/nodes`, `/alerts`, …)
+- `/<view>` — open any view (`/cost`, `/nodes`, `/alerts`, `/chat` the raw playground, …)
 - `/resource` — browse **any** admin kind (pick a kind → list → drill a record), all local, no LLM
 - `/model [name]` — switch the chat model
-- `/event <id>` — open a traffic event by id
-- `/clear` — reset the conversation (and the agent's context)
+- `/event <id>` — open a traffic event by id · `/sessions` — resume a past conversation
+- `/clear` — reset the conversation (and the agent's context) · `/compact` — condense older turns
+- `/context` — context-usage breakdown · `/verbose` — expand tool I/O
+- `/env` — switch environment · `/login` / `/logout`
 - `/help` — the full keys-and-commands reference
 
 ---
@@ -144,12 +146,11 @@ transient error never blanks the screen.
 
 ---
 
-## Scripting & agents
+## Scripting
 
 Every capability is also a CLI command (`nexus health`, `nexus cost --group provider`,
 `nexus traffic ls`, …) with `--output json` for a stable shape and distinct exit codes for
-branching. For agents and partner platforms, `nexus mcp serve` exposes the toolkit as MCP
-tools over stdio (writes gated behind `--enable-mitigate`).
+branching.
 
 ---
 

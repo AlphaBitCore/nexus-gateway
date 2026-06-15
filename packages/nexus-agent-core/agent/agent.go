@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Config wires the kernel units into an Agent. Model, Registry, Gate, Skills,
+// Config wires the kernel units into an Agent. Model, Registry, Gate,
 // Memory, Store, Compactor, Situation, and Session are required.
 //
 // CONCURRENCY & ISOLATION CONTRACT (load-bearing for the web face): an Agent is
@@ -17,12 +17,11 @@ import (
 // instance, or an impl that derives the user from its own construction). A web
 // backend therefore builds ONE Agent (with that caller's Memory/Store/Session)
 // per turn/session — sharing an Agent, or a user-bound Memory/Store, across
-// callers would cross-contaminate sessions and memory. See e90-s1 AC-3.
+// callers would cross-contaminate sessions and memory.
 type Config struct {
 	Model     Model
 	Registry  *Registry
 	Gate      *Gate
-	Skills    *SkillSet
 	Memory    MemoryStore
 	Store     SessionStore
 	Compactor *Compactor
@@ -32,7 +31,7 @@ type Config struct {
 	Env    string
 	IsProd bool
 	// Surface is the face the agent runs behind ("web" for the web assistant, ""
-	// for the CLI/TUI). It only re-words the system-prompt persona (FR-20); it never
+	// for the CLI/TUI). It only re-words the system-prompt persona; it never
 	// changes capabilities or safety. See PromptInput.Surface.
 	Surface string
 
@@ -60,6 +59,11 @@ type Config struct {
 	// before prompt entry — a data-governance requirement. The CLI leaves it nil
 	// (passthrough): the operator sees real data in their own terminal.
 	Redactor Redactor
+
+	// Domain is standing per-host concept text appended to the system prompt's
+	// domain-context section every turn (static — prompt-cache friendly); empty
+	// = no section.
+	Domain string
 }
 
 // Redactor scrubs tool output before it enters the prompt. Implementations must
@@ -95,8 +99,7 @@ type Agent struct {
 }
 
 // New builds an Agent and registers the kernel builtin memory tools so the model
-// can recall/remember/update/forget durable facts. (use_skill is advertised by the
-// loop itself.)
+// can recall/remember/update/forget durable facts.
 func New(cfg Config) *Agent {
 	cfg.Registry.Register(newRecallTool(cfg.Memory))
 	cfg.Registry.Register(newRememberTool(cfg.Memory))
@@ -106,7 +109,6 @@ func New(cfg Config) *Agent {
 		Model:       cfg.Model,
 		Registry:    cfg.Registry,
 		Gate:        cfg.Gate,
-		Skills:      cfg.Skills,
 		StepCap:     DefaultStepCap,
 		Confirm:     cfg.Confirm,
 		Compactor:   cfg.Compactor,
@@ -120,14 +122,12 @@ func New(cfg Config) *Agent {
 	return &Agent{cfg: cfg, loop: loop, Memory: cfg.Memory, Store: cfg.Store, Session: cfg.Session}
 }
 
-// ToolNames returns the names of every tool this agent can invoke: the
-// registered tools plus the always-advertised `use_skill` loop builtin (which is
-// not in the Registry). Callers use it to classify a model-emitted tool name —
-// an unrecognized name must collapse to a single "unknown" bucket so a
-// hallucinated or adversarially-prompted tool name can never become an unbounded
-// metric label or sink key.
+// ToolNames returns the names of every tool this agent can invoke. Callers use
+// it to classify a model-emitted tool name — an unrecognized name must collapse
+// to a single "unknown" bucket so a hallucinated or adversarially-prompted tool
+// name can never become an unbounded metric label or sink key.
 func (a *Agent) ToolNames() []string {
-	return append(a.loop.Registry.Names(), "use_skill")
+	return a.loop.Registry.Names()
 }
 
 // Turn takes one user message to completion. It assembles the system prompt and the
@@ -142,10 +142,10 @@ func (a *Agent) Turn(ctx context.Context, userText, activeView string) (string, 
 	bundle, _ := AssembleContext(ctx, a.cfg.Situation, memText, activeView)
 
 	system := BuildSystemPrompt(PromptInput{
-		Env:          a.cfg.Env,
-		IsProd:       a.cfg.IsProd,
-		Surface:      a.cfg.Surface,
-		SkillCatalog: a.cfg.Skills.Catalog(),
+		Env:           a.cfg.Env,
+		IsProd:        a.cfg.IsProd,
+		Surface:       a.cfg.Surface,
+		DomainContext: a.cfg.Domain,
 	})
 
 	// The context bundle rides as a leading user-context block THIS turn only — the
@@ -182,10 +182,20 @@ func (a *Agent) Turn(ctx context.Context, userText, activeView string) (string, 
 		}
 		// Prepend the (ephemeral, unpersisted) bundle so the per-component split counts it.
 		convForStats := append([]Message{{Role: RoleUser, Blocks: []Block{{Type: BlockText, Text: bundle}}}}, modelView...)
-		cs := contextStats(system, a.loop.exposedTools(nil), bundle, convForStats, usage)
+		cs := contextStats(system, a.loop.exposedTools(), bundle, convForStats, usage)
 		cs.Messages = len(a.Session.Messages)
 		cs.CompactBudget = a.cfg.Compactor.trimBudget
 		a.cfg.OnContext(cs)
+	}
+	// Auto-compaction: a clean turn whose ACTUAL prompt usage crossed the window
+	// threshold durably compacts the session NOW (the same summarize-and-rewrite
+	// the manual /compact runs, OnCompact notice included) instead of waiting for
+	// a human — otherwise the deterministic trimmer re-elides the same overgrown
+	// transcript every turn and the persisted session never shrinks. Best-effort:
+	// a summary failure changes nothing (FitToWindow keeps bounding the view),
+	// and an errored/cancelled turn skips it (its ctx may already be dead).
+	if err == nil && usage != nil && a.cfg.Compactor.ShouldAutoCompact(usage.PromptTokens) {
+		_, _, _ = a.Compact(ctx)
 	}
 	return finalText(produced), err
 }

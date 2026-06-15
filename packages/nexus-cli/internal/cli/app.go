@@ -36,10 +36,10 @@ type App struct {
 	HTTP       *http.Client
 	Out        io.Writer
 	ErrOut     io.Writer
-	Format     string // "table" | "json"
-	EnvFlag    string // value of --env
-	ConfigPath string // override for tests; empty → DefaultConfigPath
-	SkillDir   string // override for tests; empty → capabilities.DefaultSkillDir
+	In         io.Reader // interactive input (the gate two-phase challenge prompt); tests preset it; nil → os.Stdin
+	Format     string    // "table" | "json"
+	EnvFlag    string    // value of --env
+	ConfigPath string    // override for tests; empty → DefaultConfigPath
 	Client     *core.Client
 	// Log is the diagnostic file logger built by ensureConfig from the resolved
 	// config's log level. It writes to a user-scoped file (never the TUI's
@@ -146,7 +146,7 @@ func (a *App) Close() error {
 	return nil
 }
 
-// ensureEnv loads config and resolves the active environment (FR-5 precedence).
+// ensureEnv loads config and resolves the active environment (flag > session > default precedence).
 func (a *App) ensureEnv() error {
 	if err := a.ensureConfig(); err != nil {
 		return err

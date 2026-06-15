@@ -2,7 +2,7 @@
 // agent-core kernel seams — the OS-keychain SecretStore, the on-disk config file, and
 // the interactive PKCE login. They live in the CLI module (not the shared
 // nexus-agent-core kernel) so the kernel — and every server that embeds it, including
-// the E90 web assistant — does not carry the keychain / toml / browser-login
+// the web assistant — does not carry the keychain / toml / browser-login
 // dependencies it never uses. The web face supplies its own bearer-token source and
 // has no local config file or keychain (M5).
 package local

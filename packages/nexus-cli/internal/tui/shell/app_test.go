@@ -19,10 +19,11 @@ import (
 // root Update). The recordingRunner exposes what Turn saw for assertions.
 func newTestModel(s Session, script convScript) (Model, *recordingRunner) {
 	rr := &recordingRunner{script: script}
-	build := func(canvas capabilities.Canvas, confirm agent.ConfirmFunc, onText, onReasoning func(string), onTool func(string, []byte), _ func(string, []byte, bool), _ func(agent.ContextStats, int), onCompact func(agent.CompactStat)) (AgentRunner, error) {
-		rr.onText, rr.onReasoning, rr.onTool, rr.confirm = onText, onReasoning, onTool, confirm
-		rr.onCompact = onCompact
+	build := func(canvas capabilities.Canvas, confirm agent.ConfirmFunc, stream AgentStream, resume *agent.Session) (AgentRunner, error) {
+		rr.onText, rr.onReasoning, rr.onTool, rr.confirm = stream.OnText, stream.OnReasoning, stream.OnToolStart, confirm
+		rr.onCompact = stream.OnCompact
 		rr.canvasOK = canvas != nil
+		rr.gotResume = resume
 		return rr, nil
 	}
 	return NewModel(sampleGateway(), s, build), rr

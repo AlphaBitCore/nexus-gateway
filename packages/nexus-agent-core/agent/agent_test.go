@@ -18,7 +18,6 @@ func newTestAgent(t *testing.T, model Model, reg *Registry) *Agent {
 		Model:     model,
 		Registry:  reg,
 		Gate:      NewGate(NewCommandClassifier(), nil, false),
-		Skills:    NewSkillSet(Skill{Name: "cost-investigation", Description: "find cost driver"}),
 		Memory:    mem,
 		Store:     store,
 		Compactor: NewCompactor(model, 0),
@@ -104,8 +103,7 @@ func TestAgentProdPromptFlag(t *testing.T) {
 	fm := newFakeModel(asstText("ok"))
 	dir := t.TempDir()
 	a := New(Config{
-		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(),
-		Memory: OpenMemoryStore(dir, "prod"), Store: openStoreAt(dir),
+		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Memory: OpenMemoryStore(dir, "prod"), Store: openStoreAt(dir),
 		Compactor: NewCompactor(fm, 0), Situation: fakeSituation{}, Env: "prod", IsProd: true, Session: NewSession("prod"),
 	})
 	a.Turn(context.Background(), "hi", "")
@@ -146,8 +144,7 @@ func TestAgentTurnBoundsModelViewButPersistsFullHistory(t *testing.T) {
 	comp.keepRecent = 2
 	var trimmed *CompactStat
 	a := New(Config{
-		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(),
-		Memory: OpenMemoryStore(dir, "local"), Store: openStoreAt(dir),
+		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Memory: OpenMemoryStore(dir, "local"), Store: openStoreAt(dir),
 		Compactor: comp, Situation: fakeSituation{}, Env: "local", Session: NewSession("local"),
 		OnCompact: func(s CompactStat) { trimmed = &s },
 	})
@@ -199,8 +196,7 @@ func TestAgentManualCompactRewritesAndPersists(t *testing.T) {
 	comp.keepTarget = 2
 	var fired *CompactStat
 	a := New(Config{
-		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(),
-		Memory: OpenMemoryStore(dir, "local"), Store: openStoreAt(dir),
+		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Memory: OpenMemoryStore(dir, "local"), Store: openStoreAt(dir),
 		Compactor: comp, Situation: fakeSituation{}, Env: "local", Session: NewSession("local"),
 		OnCompact: func(s CompactStat) { fired = &s },
 	})
@@ -248,8 +244,7 @@ func TestAgentManualCompactSurfacesModelError(t *testing.T) {
 	comp.keepRecent = 2
 	comp.keepTarget = 2
 	a := New(Config{
-		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(),
-		Memory: OpenMemoryStore(dir, "local"), Store: openStoreAt(dir),
+		Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Memory: OpenMemoryStore(dir, "local"), Store: openStoreAt(dir),
 		Compactor: comp, Situation: fakeSituation{}, Env: "local", Session: NewSession("local"),
 	})
 	for i := 0; i < 6; i++ {
@@ -311,11 +306,11 @@ func TestAgentTurnStepCapReturnsSignalAndPersists(t *testing.T) {
 	}
 }
 
-// TestAgentToolNames asserts ToolNames returns the registered tools, the kernel
-// memory builtins, and the loop's always-advertised use_skill — and nothing
-// else. This is the bounded set callers clamp model-emitted tool names against
-// (an unrecognized name must NOT be a real tool, so it collapses to "unknown"
-// at the metric/sink boundary rather than becoming an unbounded label).
+// TestAgentToolNames asserts ToolNames returns the registered tools and the
+// kernel memory builtins — and nothing else. This is the bounded set callers
+// clamp model-emitted tool names against (an unrecognized name must NOT be a
+// real tool, so it collapses to "unknown" at the metric/sink boundary rather
+// than becoming an unbounded label).
 func TestAgentToolNames(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(&stubTool{name: "observe_traffic", tier: TierAuto})
@@ -325,7 +320,7 @@ func TestAgentToolNames(t *testing.T) {
 	for _, n := range a.ToolNames() {
 		set[n] = true
 	}
-	for _, want := range []string{"observe_traffic", "recall", "remember", "update_memory", "forget", "use_skill"} {
+	for _, want := range []string{"observe_traffic", "recall", "remember", "update_memory", "forget"} {
 		if !set[want] {
 			t.Errorf("ToolNames missing %q; got %v", want, a.ToolNames())
 		}
@@ -334,5 +329,79 @@ func TestAgentToolNames(t *testing.T) {
 	// the whole point of the bounded set.
 	if set["definitely_not_a_tool"] {
 		t.Errorf("ToolNames must not contain a non-tool name")
+	}
+}
+
+// TestAgentTurnAutoCompactsPastThreshold: a clean turn whose ACTUAL prompt
+// usage crosses the window threshold durably compacts the session right away —
+// the same summarize-and-rewrite the manual /compact runs, with the OnCompact
+// notice — instead of waiting for a human while the trimmer re-elides the same
+// transcript every turn. A turn below the threshold leaves the session alone.
+func TestAgentTurnAutoCompactsPastThreshold(t *testing.T) {
+	reg := NewRegistry()
+	// Response 1: the turn's answer, billed OVER threshold (window 1000 → fires
+	// at 700). Response 2 is consumed by the auto-compaction summary call.
+	heavy := asstText("done with the audit.")
+	heavy.Usage = &Usage{PromptTokens: 800, TotalTokens: 820}
+	fm := newFakeModel(heavy, asstText("BRIEFING: long audit session"))
+	a := newTestAgent(t, fm, reg)
+	a.cfg.Compactor = NewCompactor(fm, 1000)
+	a.cfg.Compactor.keepRecent = 2
+	a.cfg.Compactor.keepTarget = 2
+	var compacted []CompactStat
+	a.cfg.OnCompact = func(s CompactStat) { compacted = append(compacted, s) }
+	a.Session.Messages = altHistory(12) // enough older history to summarize
+
+	before := len(a.Session.Messages)
+	if _, err := a.Turn(context.Background(), "wrap up", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(compacted) != 1 || compacted[0].Kind != "summary" {
+		t.Fatalf("an over-threshold turn must auto-compact once via the summary path, got %+v", compacted)
+	}
+	if len(a.Session.Messages) >= before {
+		t.Fatalf("auto-compaction must durably shrink the persisted session, %d→%d", before, len(a.Session.Messages))
+	}
+	if !strings.Contains(a.Session.Messages[0].Text(), "BRIEFING") {
+		t.Fatalf("the persisted session must begin with the summary, got %q", a.Session.Messages[0].Text())
+	}
+	// The rewrite is persisted, not just in memory.
+	loaded, err := a.Store.Load(a.Session.ID)
+	if err != nil || !strings.Contains(loaded.Messages[0].Text(), "BRIEFING") {
+		t.Fatalf("compacted session must be saved, err=%v", err)
+	}
+
+	// Below threshold: nothing fires.
+	light := asstText("ok.")
+	light.Usage = &Usage{PromptTokens: 100, TotalTokens: 110}
+	fm2 := newFakeModel(light)
+	b := newTestAgent(t, fm2, reg)
+	b.cfg.Compactor = NewCompactor(fm2, 1000)
+	b.cfg.OnCompact = func(CompactStat) { t.Fatal("a light turn must not auto-compact") }
+	b.Session.Messages = altHistory(12)
+	n := len(b.Session.Messages)
+	if _, err := b.Turn(context.Background(), "quick one", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Session.Messages) != n+2 {
+		t.Fatalf("light turn must only append its own messages, %d→%d", n, len(b.Session.Messages))
+	}
+}
+
+// TestShouldAutoCompactBoundary pins the trigger arithmetic and nil-safety.
+func TestShouldAutoCompactBoundary(t *testing.T) {
+	c := NewCompactor(newFakeModel(), 1000)
+	if c.ShouldAutoCompact(699) {
+		t.Fatal("below 70% of the window must not trigger")
+	}
+	if !c.ShouldAutoCompact(700) {
+		t.Fatal("at 70% of the window must trigger")
+	}
+	if c.ShouldAutoCompact(0) {
+		t.Fatal("zero usage (no billing data) must not trigger")
+	}
+	var nilC *Compactor
+	if nilC.ShouldAutoCompact(999999) {
+		t.Fatal("nil compactor must be a safe no-op")
 	}
 }

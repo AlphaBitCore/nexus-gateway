@@ -33,6 +33,17 @@ func (c *conversation) revealing() bool { return c.reveal < visibleLen(c.streamF
 // verbatim (uncounted) so a styled string is never sliced mid-escape; a trailing
 // reset is appended only when s carried escapes so a cut style cannot bleed. Raw
 // text (the assistant stream, /help source) is just truncated.
+//
+// SECURITY — INTENTIONAL ANSI passthrough, do NOT sanitize here. Unlike
+// the CLI's `restable.SanitizeTerminal` (which strips control sequences from
+// server-supplied table cells and error bodies), this TUI conversation view
+// deliberately renders ANSI for styling: the typewriter reveal of the assistant's
+// own streamed answer relies on copying escape sequences through so styled output
+// shows correctly. An operator who explicitly opens the interactive conversation
+// view to watch AI traffic is knowingly rendering that styled content; stripping
+// ANSI here would break the product's core display. The injection-hardening
+// boundary is the non-interactive, scriptable surface (table cells, error prints),
+// which IS sanitized — not this opt-in interactive view.
 func revealANSI(s string, n int) string {
 	if n < 0 {
 		n = 0

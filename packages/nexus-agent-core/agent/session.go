@@ -42,6 +42,9 @@ type SessionMeta struct {
 	Env     string
 	Updated time.Time
 	Title   string
+	// Messages is the persisted transcript length — the "12 msgs" badge a
+	// session picker shows next to the title.
+	Messages int
 }
 
 // SessionStore is the kernel's session-persistence seam. The CLI binds a
@@ -108,6 +111,19 @@ func (s *Store) Load(id string) (*Session, error) {
 	return &sess, nil
 }
 
+// Delete removes a persisted session by id. Deleting a session that does not
+// exist is an error — the caller offered it from a listing, so a miss means the
+// listing is stale and should be surfaced, not swallowed.
+func (s *Store) Delete(id string) error {
+	if id == "" {
+		return fmt.Errorf("session has no id")
+	}
+	if err := os.Remove(filepath.Join(s.dir, id+".json")); err != nil {
+		return fmt.Errorf("delete session %s: %w", id, err)
+	}
+	return nil
+}
+
 // List returns session metadata newest-first (by Updated).
 func (s *Store) List() ([]SessionMeta, error) {
 	entries, err := os.ReadDir(s.dir)
@@ -127,7 +143,7 @@ func (s *Store) List() ([]SessionMeta, error) {
 		if err != nil {
 			continue // skip a corrupt file rather than failing the whole list
 		}
-		metas = append(metas, SessionMeta{ID: sess.ID, Env: sess.Env, Updated: sess.Updated, Title: sessionTitle(sess)})
+		metas = append(metas, SessionMeta{ID: sess.ID, Env: sess.Env, Updated: sess.Updated, Title: sessionTitle(sess), Messages: len(sess.Messages)})
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Updated.After(metas[j].Updated) })
 	return metas, nil
@@ -139,7 +155,7 @@ func sessionTitle(sess *Session) string {
 		if m.Role == RoleUser {
 			t := strings.TrimSpace(m.Text())
 			if len(t) > 60 {
-				t = t[:60] + "…"
+				t = CutText(t, 60) + "…"
 			}
 			if t != "" {
 				return t

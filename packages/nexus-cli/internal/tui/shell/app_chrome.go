@@ -140,6 +140,9 @@ func (m Model) footerBar(width int) string {
 	if m.slashOpen {
 		return m.slash.View()
 	}
+	if m.sessionsOpen {
+		return m.sessionPick.View()
+	}
 	// While a turn runs the working spinner + elapsed time replaces the keybar on
 	// the left; the env indicator stays bottom-right.
 	left := styles.HelpBar.Render(m.helpText())

@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// Poll intervals: the radar refreshes fast; aggregate views slower (NFR-4).
+// Poll intervals: the radar refreshes fast; aggregate views slower.
 const (
 	PollFast = 2 * time.Second
 	PollSlow = 5 * time.Second
@@ -25,10 +25,14 @@ const ConvAnimInterval = 80 * time.Millisecond
 // closes when it fires so a never-completed login does not hang the wizard).
 const LoginTimeout = 3 * time.Minute
 
-// AgentTurnTimeout bounds one agent turn so a stuck model/tool never wedges the
-// UI; the bridge cancels the turn's context when it fires (the agent loop returns
-// the model/context error, which rides back on agentDoneMsg).
-const AgentTurnTimeout = 5 * time.Minute
+// AgentTurnIdleTimeout bounds how long one agent turn may go WITHOUT progress
+// (no streamed delta, no tool event, no canvas drive, no resolved confirm)
+// before the bridge cancels it. It is an idle watchdog, not a total cap: a
+// turn that is actively working is never severed, however long it runs — a
+// fixed total cap used to cut legitimate long multi-tool turns (slow models
+// iterating draft→freeze) mid-stream. Waiting on a human confirm card pauses
+// the clock.
+const AgentTurnIdleTimeout = 5 * time.Minute
 
 // DefaultViewWidth is the fallback render width before the first WindowSizeMsg.
 const DefaultViewWidth = 100

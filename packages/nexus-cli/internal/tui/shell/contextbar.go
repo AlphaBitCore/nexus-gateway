@@ -139,7 +139,7 @@ func contextPanel(s agent.ContextStats, window int, model string) string {
 		v           int
 	}{
 		{"~system", "fixed", s.System},
-		{"~tools", "fixed; narrow via a skill", s.Tools},
+		{"~tools", "fixed", s.Tools},
 		{"~history", "← /clear to reset", s.History},
 		{"~bundle", "situation + view + memory", s.Bundle},
 	} {

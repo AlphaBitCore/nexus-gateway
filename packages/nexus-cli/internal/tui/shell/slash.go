@@ -65,15 +65,19 @@ func defaultSlashCommands() []slashCmd {
 		{name: "model", desc: "switch the chat model", kind: slashView, aliases: []string{"llm", "use"}},
 		{name: "keys", desc: "virtual keys (revoke/regenerate)", kind: slashView, aliases: []string{"vk"}},
 		{name: "rules", desc: "routing rules (toggle)", kind: slashView, aliases: []string{"routing"}},
+		{name: "chat", desc: "raw model playground (A/B compare)", kind: slashView, aliases: []string{"playground", "raw"}},
 		{name: "resource", desc: "browse any admin kind (cascade)", kind: slashView, aliases: []string{"res", "kind", "kinds"}},
 		{name: "kill", desc: "kill-switch + passthrough", kind: slashView, aliases: []string{"killswitch", "passthrough"}},
 		{name: "lab", desc: "request lab + routing dry-run", kind: slashView, aliases: []string{"sim", "simulate"}},
 		{name: "event", desc: "open an event by id", kind: slashView, aliases: []string{"drill"}},
 		{name: "clear", desc: "clear the conversation", kind: slashAgent},
+		{name: "sessions", desc: "list + resume past conversations", kind: slashAgent, aliases: []string{"history", "resume", "past"}},
 		{name: "context", desc: "context-usage breakdown", kind: slashAgent, aliases: []string{"ctx"}},
 		{name: "compact", desc: "summarize older turns to free context", kind: slashAgent, aliases: []string{"summarize", "shrink"}},
 		{name: "help", desc: "key + command help", kind: slashAgent},
 		{name: "env", desc: "switch · add · edit · delete the environment", kind: slashShell, aliases: []string{"envs", "environment", "switch"}},
+		{name: "login", desc: "re-authenticate (renew an expired session)", kind: slashShell, aliases: []string{"signin", "auth", "reauth"}},
+		{name: "logout", desc: "sign out (clear stored credentials)", kind: slashShell, aliases: []string{"signout"}},
 	}
 }
 

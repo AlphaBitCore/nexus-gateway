@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -163,5 +164,34 @@ func TestCommandClassifier(t *testing.T) {
 				t.Fatal("a dangerous verdict must carry a reason")
 			}
 		})
+	}
+}
+
+// dynTool is a confirm-tier tool whose DynamicTier downgrades per input.
+type dynTool struct{ Tool }
+
+func (d dynTool) TierFor(input json.RawMessage) Tier {
+	if strings.Contains(string(input), "readonly") {
+		return TierAuto
+	}
+	return TierConfirm
+}
+
+// TestGateHonorsDynamicTier pins the V14 seam: a confirm-tier tool whose
+// grounded per-input tier is auto runs without asking; any other input still
+// asks. YOLO still bypasses everything.
+func TestGateHonorsDynamicTier(t *testing.T) {
+	g := NewGate(nil, nil, false)
+	base := &stubTool{name: "workflow_run_start", tier: TierConfirm}
+	d := dynTool{Tool: base}
+	if dec, _ := g.Decide(d, json.RawMessage(`{"mode":"readonly"}`)); dec != Allow {
+		t.Fatalf("a grounded-readonly call must run without asking, got %v", dec)
+	}
+	if dec, _ := g.Decide(d, json.RawMessage(`{"mode":"effectful"}`)); dec != Ask {
+		t.Fatalf("an effectful call must still ask, got %v", dec)
+	}
+	// The static tool (no DynamicTier) keeps asking.
+	if dec, _ := g.Decide(base, json.RawMessage(`{}`)); dec != Ask {
+		t.Fatalf("a static confirm tool must ask, got %v", dec)
 	}
 }

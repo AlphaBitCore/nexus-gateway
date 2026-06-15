@@ -187,9 +187,9 @@ func TestLive_E2EFlow(t *testing.T) {
 	}
 }
 
-// TestLive_Wave1 exercises the v1.1 Wave 1 read surfaces against the local
+// TestLive_ReadSurfaces exercises the v1.1 Wave 1 read surfaces against the local
 // stack: DLQ, Nodes (+ drift), Alerts, and the routing dry-run.
-func TestLive_Wave1(t *testing.T) {
+func TestLive_ReadSurfaces(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	env := liveEnv()
@@ -237,12 +237,12 @@ func TestLive_Wave1(t *testing.T) {
 	t.Logf("route: substituted=%v targets=%d warnings=%d", rs.Substituted, len(rs.Targets), len(rs.Warnings))
 }
 
-// TestLive_Wave3 validates the Wave 3 mitigation surfaces against the real CP:
+// TestLive_VirtualKeyLifecycle validates the Wave 3 mitigation surfaces against the real CP:
 // the routing-rules + VK list read shapes (field-name drift), and the
 // revoke/regenerate writes end-to-end. The writes act ONLY on a throwaway
 // personal VK this test creates itself, so it never mutates pre-existing data
 // (binding: tests only touch their own data).
-func TestLive_Wave3(t *testing.T) {
+func TestLive_VirtualKeyLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	env := liveEnv()

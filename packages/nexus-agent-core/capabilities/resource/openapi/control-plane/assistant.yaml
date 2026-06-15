@@ -20,10 +20,13 @@ paths:
                 against the backend allow-list) overrides the default. A second chat
                 while a turn is already in flight for the same session is rejected 409
                 (turn_in_progress) — the server-side half of the "no new command while
-                one is running" rule. Login-only and requires an interactive bearer
-                admin session — API-key / service principals are rejected (422). No new
-                IAM action: every tool the agent runs is IAM-checked at the admin API it
-                self-calls under the caller's own bearer.
+                one is running" rule. Requires an interactive bearer admin session —
+                API-key / service principals are rejected (422) — AND the
+                `admin:assistant.write` IAM action (403 otherwise); inference (and the
+                system-VK spend it incurs) happens before any tool runs, so the surface
+                itself is IAM-gated. Each tool the agent runs is additionally IAM-checked
+                at the admin API it self-calls under the caller's own bearer (defense in
+                depth).
             x-nexus-tier: confirm
             parameters:
                 - name: id
@@ -60,11 +63,8 @@ paths:
                                 properties:
                                     sessionId:
                                         type: string
-                                    seq:
-                                        type: integer
                             example:
                                 sessionId: sess_8fa1
-                                seq: 0
                 "400":
                     description: validation_error — message is empty or the session id is invalid.
                 "409":
@@ -111,7 +111,7 @@ paths:
                         for the model to echo the URL), `gap` (history truncated on a
                         long reconnect), `error` {code,message}, `turn_aborted`
                         {sessionId} (stopped — not an error), and a terminal `done`
-                        {sessionId,seq}.
+                        {sessionId}.
                     content:
                         text/event-stream:
                             schema:
@@ -123,7 +123,7 @@ paths:
 
                                 id: 2
                                 event: done
-                                data: {"sessionId":"sess_8fa1","seq":0}
+                                data: {"sessionId":"sess_8fa1"}
                 "400":
                     description: validation_error — the session id is invalid.
                 "404":
@@ -366,8 +366,10 @@ paths:
             summary: Get a session transcript
             description: >-
                 One owned conversation as a flat role + text transcript for re-rendering
-                in the widget. userId-scoped (a non-owned or missing id is 404);
-                tool-only and empty turns are omitted.
+                in the widget, plus the trusted-audit verdict for its revision chain.
+                userId-scoped (a non-owned or missing id is 404); tool-only and empty
+                turns are omitted. A `kind: summary` message is the auto-compact
+                condensed briefing (system-authored context, not operator input).
             x-nexus-tier: auto
             parameters:
                 - name: id
@@ -378,7 +380,7 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: The session id and its ordered role + text messages.
+                    description: The session id, its ordered role + text messages, and the chain verdict.
                     content:
                         application/json:
                             schema:
@@ -398,6 +400,28 @@ paths:
                                                         - assistant
                                                 text:
                                                     type: string
+                                                kind:
+                                                    type: string
+                                                    enum:
+                                                        - summary
+                                                    description: Present only on the auto-compact condensed-briefing message.
+                                    integrity:
+                                        type: object
+                                        description: >-
+                                            The trusted-audit verdict for the session's hash-chained
+                                            revision log, verified on every load. A broken chain is
+                                            served WITH the break named (never silently) and durably
+                                            stamped on the session row.
+                                        properties:
+                                            status:
+                                                type: string
+                                                enum:
+                                                    - verified
+                                                    - unchained
+                                                    - chain_broken
+                                                    - content_mismatch
+                                            detail:
+                                                type: string
                             example:
                                 id: sess_8fa1
                                 messages:
@@ -405,6 +429,8 @@ paths:
                                       text: Which rules are off?
                                     - role: assistant
                                       text: Two routing rules are disabled.
+                                integrity:
+                                    status: verified
                 "400":
                     description: validation_error — session id missing.
                 "404":

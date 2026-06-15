@@ -36,7 +36,7 @@ type ConfirmDetailer interface {
 // ImpactDetailer is an optional Tool capability: a high-blast-radius confirm-tier
 // tool that can produce a structured, human-facing preview of what executing it
 // WOULD change — current state → effect — for display in the confirm card BEFORE the
-// operator approves (E90 FR-22 / AC-6). Unlike ConfirmDetailer (pure, string, called
+// operator approves. Unlike ConfirmDetailer (pure, string, called
 // in the Gate), ImpactDetail may read current state, so it takes a ctx and returns a
 // JSON-serializable value. It MUST NOT mutate anything. A (nil, nil) return means
 // "no preview for this tool/input" (the common case); a non-nil error means the
@@ -44,6 +44,16 @@ type ConfirmDetailer interface {
 // "unavailable" note) so a degraded read never blocks an emergency mitigation.
 type ImpactDetailer interface {
 	ImpactDetail(ctx context.Context, input json.RawMessage) (any, error)
+}
+
+// DynamicTier lets a tool refine its STATIC tier per input: a tool whose risk
+// depends on what it is asked to do (running a workflow whose grounded blast
+// radius is empty is a read; one that revokes keys is a mitigation) reports
+// the tier for THIS call. Implementations must be grounded and fail SAFE —
+// when the risk cannot be established, return the static tier (or TierConfirm),
+// never TierAuto. The gate consults it before the static Tier().
+type DynamicTier interface {
+	TierFor(input json.RawMessage) Tier
 }
 
 // Gate is the pre-execution permission check. It mirrors Claude Code: auto runs
@@ -67,7 +77,11 @@ func (g *Gate) Decide(tool Tool, input json.RawMessage) (Decision, string) {
 	if g.yolo {
 		return Allow, ""
 	}
-	if tool.Tier() == TierConfirm {
+	tier := tool.Tier()
+	if dt, ok := tool.(DynamicTier); ok {
+		tier = dt.TierFor(input)
+	}
+	if tier == TierConfirm {
 		if d, ok := tool.(ConfirmDetailer); ok {
 			if detail := strings.TrimSpace(d.ConfirmDetail(input)); detail != "" {
 				return Ask, detail

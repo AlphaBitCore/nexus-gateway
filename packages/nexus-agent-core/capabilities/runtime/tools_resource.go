@@ -79,7 +79,18 @@ func adminResult(method, path string, raw json.RawMessage, status int, err error
 // send the body, and relay the HTTP outcome verbatim so the model self-corrects on
 // a 400/403. Tier is enforced by the agent's permission gate off the tool's
 // declared tier, not here.
+//
+// The assistant's own surface is refused: the catalog documents the
+// /api/admin/assistant/* endpoints for human consumers, but an agent operating
+// its own chat plumbing is self-referential — and the GET stream endpoint is a
+// long-lived SSE response the in-process self-call transport must never relay
+// (it assumes single-JSON bodies; relaying the agent's own stream would also
+// supersede the human's live subscriber and park the turn inside its own tool
+// call until the turn deadline).
 func executeOp(ctx context.Context, gw Gateway, op resource.Operation, params, query map[string]string, body json.RawMessage) (agent.Result, error) {
+	if strings.HasPrefix(op.Path, "/api/admin/assistant/") {
+		return errResult("%s operates the assistant's own chat surface — not available as an agent tool (ask the operator to use the chat UI instead)", op.OperationID), nil
+	}
 	path, err := resource.SubstituteParams(op.Path, params)
 	if err != nil {
 		return errResult("%s %s: %s", op.Method, op.OperationID, err), nil
@@ -110,8 +121,22 @@ func resourceReadTools(gw Gateway) []agent.Tool {
 					Query string `json:"query"`
 					Limit int    `json:"limit"`
 				}
-				_ = json.Unmarshal(in, &a)
+				// A malformed or empty call must teach the schema, never search
+				// for "" (which silently returns an arbitrary ranking the model
+				// then trusts).
+				if err := json.Unmarshal(in, &a); err != nil {
+					return errResult(`resource_search takes {"query":"free text","limit":20} — could not parse the input: %v`, err), nil
+				}
+				if strings.TrimSpace(a.Query) == "" {
+					return errResult(`resource_search needs a non-empty "query" (free text matched against kind/operationId/path/label/summary, e.g. "node override" or "cache stats")`), nil
+				}
 				res := resource.SearchCards(a.Query, 0, a.Limit)
+				if len(res.Cards) == 0 && len(res.More) == 0 {
+					// A dead-end answer strands the model; name the recovery
+					// paths and the searchable kind space instead.
+					return errResult("no operations matched %q. Try broader words (the match is code-level over kind/operationId/path/label/summary), or read one kind directly with resource_describe. Available kinds: %s",
+						a.Query, strings.Join(resource.KindNames(), ", ")), nil
+				}
 				out := struct {
 					Query string `json:"query"`
 					resource.SearchResult
@@ -163,6 +188,17 @@ func resourceReadTools(gw Gateway) []agent.Tool {
 // resourceWriteTools are the confirm-tier write tools (the agent loop's confirm
 // gate authorizes them; MCP includes them only behind --enable-mitigate). One
 // generic tool reaches every mutating operation in the catalog by operationId.
+//
+// Per-mutation confirmation: resource_invoke is TierConfirm, and the
+// agent loop's permission Gate maps EVERY TierConfirm tool to a mandatory human
+// authorization (agent.Gate.Decide → Ask) before execution — fail-closed: a nil
+// Confirm handler, a Confirm error, or a ctx timeout all DENY and the operation
+// never runs (see agent/loop.go and the loop_confirm_test.go suite). The single
+// generic tool does NOT weaken this: it reaches every mutation by operationId,
+// but each individual call is still gated, and confirmDetail resolves the exact
+// METHOD + substituted path + operationId so the operator confirms the concrete
+// mutation, not a generic prompt. The run handler additionally rejects any
+// non-mutating op (use resource_read), so nothing slips through as a "read".
 func resourceWriteTools(gw Gateway) []agent.Tool {
 	return []agent.Tool{
 		&funcTool{name: "resource_invoke", tier: agent.TierConfirm,

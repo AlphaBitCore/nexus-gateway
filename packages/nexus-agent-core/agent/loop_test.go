@@ -23,31 +23,6 @@ func (m *cancelOnGenModel) Generate(_ context.Context, _ ModelRequest, _, _ func
 	return m.resp, nil
 }
 
-// TestLoopAnnouncesUseSkill: loading a skill must fire OnToolStart so the operator
-// SEES it in the transcript (a silent load looked like nothing happened).
-func TestLoopAnnouncesUseSkill(t *testing.T) {
-	skills := NewSkillSet(Skill{Name: "incident-triage", Description: "walk an alert", Body: "step 1"})
-	fm := newFakeModel(
-		asstToolUse("u1", "use_skill", `{"name":"incident-triage"}`),
-		asstText("done"),
-	)
-	var announced []string
-	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), skills, nil)
-	l.OnToolStart = func(name string, _ json.RawMessage) { announced = append(announced, name) }
-	if _, _, err := l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "triage")); err != nil {
-		t.Fatal(err)
-	}
-	var sawSkill bool
-	for _, n := range announced {
-		if n == "use_skill" {
-			sawSkill = true
-		}
-	}
-	if !sawSkill {
-		t.Fatalf("use_skill must be announced via OnToolStart, got %v", announced)
-	}
-}
-
 // TestLoopCancelBetweenAnswerAndTools covers the mid-turn cancel branch: when the
 // turn is cancelled after the model proposes tool calls but before they execute, the
 // loop must return the cancellation and run NO tool (the esc-interrupt must take
@@ -62,7 +37,7 @@ func TestLoopCancelBetweenAnswerAndTools(t *testing.T) {
 	reg.Register(tool)
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &cancelOnGenModel{cancel: cancel, resp: asstToolUse("u1", "observe_cost", `{}`)}
-	l := newLoop(m, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(m, reg, NewGate(nil, nil, false), nil)
 
 	_, _, err := l.Run(ctx, "SYS", nil, TextMessage(RoleUser, "go"))
 	if !errors.Is(err, context.Canceled) {
@@ -73,14 +48,14 @@ func TestLoopCancelBetweenAnswerAndTools(t *testing.T) {
 	}
 }
 
-func newLoop(model Model, reg *Registry, gate *Gate, skills *SkillSet, confirm ConfirmFunc) *Loop {
-	return &Loop{Model: model, Registry: reg, Gate: gate, Skills: skills, StepCap: 8, Confirm: confirm}
+func newLoop(model Model, reg *Registry, gate *Gate, confirm ConfirmFunc) *Loop {
+	return &Loop{Model: model, Registry: reg, Gate: gate, StepCap: 8, Confirm: confirm}
 }
 
 // 1. A turn that ends with text (no tool_use) returns that text and never loops.
 func TestLoopPlainAnswer(t *testing.T) {
 	fm := newFakeModel(asstText("p95 is 90ms"))
-	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), nil)
 	hist, _, err := l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "what is p95?"))
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +80,7 @@ func TestLoopRunsToolAndFeedsResult(t *testing.T) {
 		asstToolUse("u1", "observe_cost", `{"window":"1h"}`),
 		asstText("Your top cost is anthropic at $3/hr."),
 	)
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 	hist, _, err := l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "cost?"))
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +117,7 @@ func TestLoopToolErrorBecomesResult(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(tool)
 	fm := newFakeModel(asstToolUse("u1", "observe_cost", `{}`), asstText("could not read cost"))
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 	hist, _, err := l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "cost?"))
 	if err != nil {
 		t.Fatal("a tool error must not abort the loop")
@@ -155,7 +130,7 @@ func TestLoopToolErrorBecomesResult(t *testing.T) {
 // 4. An unknown tool name → recoverable error result, not a crash.
 func TestLoopUnknownTool(t *testing.T) {
 	fm := newFakeModel(asstToolUse("u1", "ghost_tool", `{}`), asstText("ok"))
-	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), nil)
 	hist, _, err := l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "x"))
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +147,7 @@ func TestLoopConfirmGate(t *testing.T) {
 	reg.Register(mit)
 
 	fm := newFakeModel(asstToolUse("u1", "mitigate_kill", `{}`), asstText("understood, leaving it on"))
-	declined := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), func(context.Context, Tool, json.RawMessage, string) (bool, error) { return false, nil })
+	declined := newLoop(fm, reg, NewGate(nil, nil, false), func(context.Context, Tool, json.RawMessage, string) (bool, error) { return false, nil })
 	hist, _, _ := declined.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "kill it"))
 	if atomic.LoadInt32(&mit.calls) != 0 {
 		t.Fatal("declined mitigation must NOT run")
@@ -185,7 +160,7 @@ func TestLoopConfirmGate(t *testing.T) {
 	reg2 := NewRegistry()
 	reg2.Register(mit2)
 	fm2 := newFakeModel(asstToolUse("u1", "mitigate_kill", `{}`), asstText("done"))
-	approved := newLoop(fm2, reg2, NewGate(nil, nil, false), NewSkillSet(), func(context.Context, Tool, json.RawMessage, string) (bool, error) { return true, nil })
+	approved := newLoop(fm2, reg2, NewGate(nil, nil, false), func(context.Context, Tool, json.RawMessage, string) (bool, error) { return true, nil })
 	approved.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "kill it"))
 	if atomic.LoadInt32(&mit2.calls) != 1 {
 		t.Fatal("approved mitigation must run")
@@ -202,7 +177,7 @@ func TestLoopStepCap(t *testing.T) {
 		resps[i] = asstToolUse("u", "loop_tool", `{}`)
 	}
 	fm := &fakeModel{resps: resps}
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 	l.StepCap = 3
 	_, _, err := l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "go"))
 	if err == nil || !strings.Contains(err.Error(), "step cap") {
@@ -238,7 +213,7 @@ func TestLoopParallelReads(t *testing.T) {
 		{Type: BlockToolUse, ID: "2", ToolName: "b", Input: json.RawMessage(`{}`)},
 	}}, StopReason: StopToolUse}
 	fm := newFakeModel(twoCalls, asstText("done"))
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 	l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "go"))
 	if atomic.LoadInt32(&maxInflight) < 2 {
 		t.Fatalf("independent reads must run in parallel, max inflight=%d", maxInflight)
@@ -266,44 +241,12 @@ func TestLoopToolStartCallbackIsSerial(t *testing.T) {
 		{Type: BlockToolUse, ID: "2", ToolName: "b", Input: json.RawMessage(`{}`)},
 	}}, StopReason: StopToolUse}
 	fm := newFakeModel(twoCalls, asstText("done"))
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 	var started []string // intentionally unguarded: the contract guarantees serial calls
 	l.OnToolStart = func(name string, _ json.RawMessage) { started = append(started, name) }
 	l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "go"))
 	if len(started) != 2 {
 		t.Fatalf("both parallel tools must be announced exactly once, got %v", started)
-	}
-}
-
-// 8. use_skill narrows the exposed tools on the next model request.
-func TestLoopUseSkillNarrows(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register(&stubTool{name: "observe_cost", tier: TierAuto})
-	reg.Register(&stubTool{name: "observe_alerts", tier: TierAuto})
-	skills := NewSkillSet(Skill{Name: "cost-investigation", Description: "d", Body: "B", AllowedTools: []string{"observe_cost"}})
-	fm := newFakeModel(
-		asstToolUse("u1", "use_skill", `{"name":"cost-investigation"}`),
-		asstText("done"),
-	)
-	l := newLoop(fm, reg, NewGate(nil, nil, false), skills, nil)
-	l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "investigate cost"))
-	if len(fm.gotReqs) < 2 {
-		t.Fatal("expected a follow-up model call")
-	}
-	names := map[string]bool{}
-	for _, ts := range fm.gotReqs[1].Tools {
-		names[ts.Name] = true
-	}
-	if !names["observe_cost"] || names["observe_alerts"] {
-		t.Fatalf("after use_skill, tools must narrow to the allow-list, got %v", names)
-	}
-	// The first request, before narrowing, exposed both tools.
-	first := map[string]bool{}
-	for _, ts := range fm.gotReqs[0].Tools {
-		first[ts.Name] = true
-	}
-	if !first["observe_cost"] || !first["observe_alerts"] || !first["use_skill"] {
-		t.Fatalf("first request should expose all tools + use_skill, got %v", first)
 	}
 }
 
@@ -313,7 +256,7 @@ func TestLoopStreamsProgress(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(tool)
 	fm := newFakeModel(asstToolUse("u1", "observe_cost", `{}`), asstText("answer text"))
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 	var texts []string
 	var startedTools []string
 	l.OnText = func(s string) { texts = append(texts, s) }
@@ -335,7 +278,7 @@ func TestLoopStreamsProgress(t *testing.T) {
 func TestLoopStreamsReasoning(t *testing.T) {
 	fm := newFakeModel(asstText("the answer"))
 	fm.reasonings = []string{"weighing the options"}
-	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), nil)
 	var reasoning, text []string
 	l.OnReasoning = func(s string) { reasoning = append(reasoning, s) }
 	l.OnText = func(s string) { text = append(text, s) }
@@ -365,7 +308,7 @@ func TestLoopStreamsReasoning(t *testing.T) {
 // model + tool round first.
 func TestLoopCancelledContextBails(t *testing.T) {
 	fm := newFakeModel(asstText("must not run"))
-	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, _, err := l.Run(ctx, "S", nil, TextMessage(RoleUser, "hi"))
@@ -380,7 +323,7 @@ func TestLoopCancelledContextBails(t *testing.T) {
 // 9b. A zero StepCap defaults to the built-in cap and still answers.
 func TestLoopDefaultStepCap(t *testing.T) {
 	fm := newFakeModel(asstText("ok"))
-	l := &Loop{Model: fm, Registry: NewRegistry(), Gate: NewGate(nil, nil, false), Skills: NewSkillSet()}
+	l := &Loop{Model: fm, Registry: NewRegistry(), Gate: NewGate(nil, nil, false)}
 	hist, _, err := l.Run(context.Background(), "S", nil, TextMessage(RoleUser, "hi"))
 	if err != nil || len(hist) == 0 {
 		t.Fatalf("zero StepCap must default and still answer, err=%v hist=%d", err, len(hist))
@@ -390,42 +333,10 @@ func TestLoopDefaultStepCap(t *testing.T) {
 // 10. A model error mid-turn propagates out of Run (the turn cannot continue).
 func TestLoopModelError(t *testing.T) {
 	fm := &fakeModel{errs: []error{errBackend()}}
-	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, NewRegistry(), NewGate(nil, nil, false), nil)
 	_, _, err := l.Run(context.Background(), "SYS", nil, TextMessage(RoleUser, "x"))
 	if err == nil || !strings.Contains(err.Error(), "backend down") {
 		t.Fatalf("a model error must propagate, got %v", err)
-	}
-}
-
-// 11. withBuiltins always exposes the builtins, deduping any already present.
-func TestWithBuiltinsDeduplicates(t *testing.T) {
-	got := withBuiltins([]string{"observe_cost", "remember"})
-	want := []string{"forget", "observe_cost", "remember", "use_skill"}
-	if len(got) != len(want) {
-		t.Fatalf("withBuiltins = %v want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("withBuiltins = %v want %v", got, want)
-		}
-	}
-}
-
-//  12. exposedTools advertises use_skill exactly once, even if a registry also
-//     exposes a tool by that name.
-func TestExposedToolsDedupesUseSkill(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register(&stubTool{name: "use_skill", tier: TierAuto})
-	l := &Loop{Registry: reg, Skills: NewSkillSet()}
-	schemas := l.exposedTools(nil)
-	count := 0
-	for _, s := range schemas {
-		if s.Name == "use_skill" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Fatalf("use_skill must be advertised exactly once, got %d", count)
 	}
 }
 
@@ -475,7 +386,7 @@ func TestLoopOnToolEndReportsResultsInOrder(t *testing.T) {
 		{Type: BlockToolUse, ID: "2", ToolName: "b", Input: json.RawMessage(`{}`)},
 	}}, StopReason: StopToolUse}
 	fm := newFakeModel(twoCalls, asstText("done"))
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 
 	type ev struct {
 		name, out string
@@ -518,7 +429,7 @@ func TestLoopRedactsToolOutput(t *testing.T) {
 		asstToolUse("u1", "observe_traffic_event", `{}`),
 		asstText("done"),
 	)
-	l := newLoop(fm, reg, NewGate(nil, nil, false), NewSkillSet(), nil)
+	l := newLoop(fm, reg, NewGate(nil, nil, false), nil)
 
 	var seen string
 	l.OnToolEnd = func(_ string, output json.RawMessage, _ bool) { seen = string(output) }
@@ -552,5 +463,40 @@ func TestLoopRedactsToolOutput(t *testing.T) {
 	}
 	if strings.Contains(convDump.String(), "alice@example.com") {
 		t.Fatalf("the conversation passed to the model still contains raw PII: %q", convDump.String())
+	}
+}
+
+// TestLoopSurvivesPoisonedEmptyMessage pins the V16 double guard: a historic
+// assistant message with NO blocks (an interrupted turn persisted one) is
+// dropped from the model REQUEST (providers 400 on empty content), and a
+// contentless model reply is never appended to the transcript in the first
+// place.
+func TestLoopSurvivesPoisonedEmptyMessage(t *testing.T) {
+	poisoned := []Message{
+		TextMessage(RoleUser, "first"),
+		{Role: RoleAssistant, Blocks: []Block{}},                              // the poison
+		{Role: RoleAssistant, Blocks: []Block{{Type: BlockText, Text: "  "}}}, // whitespace-only
+	}
+	sent := sendableMessages(append(poisoned, TextMessage(RoleUser, "继续")))
+	if len(sent) != 2 {
+		t.Fatalf("empty/whitespace messages must be dropped from the request, got %d: %+v", len(sent), sent)
+	}
+	for _, m := range sent {
+		if len(m.Blocks) == 0 {
+			t.Fatalf("no empty message may reach the provider: %+v", m)
+		}
+	}
+
+	// A model reply with zero blocks must not enter the produced transcript.
+	fm := newFakeModel(&ModelResponse{Message: Message{Role: RoleAssistant}})
+	l := &Loop{Model: fm, Registry: NewRegistry(), Gate: NewGate(nil, nil, false)}
+	produced, _, err := l.Run(context.Background(), "sys", nil, TextMessage(RoleUser, "go"))
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	for _, m := range produced {
+		if m.Role == RoleAssistant && len(m.Blocks) == 0 {
+			t.Fatalf("a contentless reply must not be persisted: %+v", produced)
+		}
 	}
 }

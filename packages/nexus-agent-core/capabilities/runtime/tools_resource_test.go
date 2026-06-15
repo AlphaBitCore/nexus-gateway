@@ -70,6 +70,45 @@ func TestResourceSearchTool(t *testing.T) {
 	}
 }
 
+// TestResourceSearchTool_BadInputTeachesSchema: a malformed or empty call
+// must come back as a schema-teaching error, never a silent search for ""
+// whose arbitrary ranking the model would trust.
+func TestResourceSearchTool_BadInputTeachesSchema(t *testing.T) {
+	gw := &fakeGateway{}
+	tool := findTool(resourceReadTools(gw), "resource_search")
+
+	// Wrong field name → empty query → the error names the required param.
+	res := runResourceTool(t, tool, map[string]any{"q": "virtual keys"})
+	if !res.IsError || !strings.Contains(res.Content, `non-empty "query"`) {
+		t.Fatalf("empty query must teach the schema: %+v", res)
+	}
+	// Whitespace-only query is the same mistake.
+	res = runResourceTool(t, tool, map[string]any{"query": "   "})
+	if !res.IsError || !strings.Contains(res.Content, `non-empty "query"`) {
+		t.Fatalf("blank query must teach the schema: %+v", res)
+	}
+	if len(gw.adminCalls) != 0 {
+		t.Fatal("rejected input must not hit the admin API")
+	}
+}
+
+// TestResourceSearchTool_ZeroHitsNamesRecovery: a query that matches nothing
+// must name the recovery paths (broaden / resource_describe) and the kind
+// space instead of returning a dead-end empty list.
+func TestResourceSearchTool_ZeroHitsNamesRecovery(t *testing.T) {
+	gw := &fakeGateway{}
+	res := runResourceTool(t, findTool(resourceReadTools(gw), "resource_search"),
+		map[string]any{"query": "zzqxqvwq"})
+	if !res.IsError {
+		t.Fatalf("zero hits should surface as guidance, got: %s", res.Content)
+	}
+	for _, want := range []string{"no operations matched", "resource_describe", "virtual-keys"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("zero-hit guidance missing %q:\n%s", want, res.Content)
+		}
+	}
+}
+
 // TestResourceSearchToolCardIsExecutable asserts the one-step contract end to
 // end: a write card returned by resource_search carries the body skeleton
 // (field names + required markers) the model needs to resource_invoke it in
@@ -248,6 +287,42 @@ func TestResourceTiers(t *testing.T) {
 	}
 }
 
+// TestResourceInvokeRequiresConfirmation is the F-0290 assertion at this layer:
+// the real agent permission Gate (non-yolo) routes a concrete resource_invoke
+// mutation to Ask (mandatory human authorization), and the resolved confirm
+// detail names the exact METHOD + path + operationId so the operator confirms
+// the specific mutation. Combined with the agent loop's fail-closed handling of
+// Ask (a nil/erroring/timed-out Confirm denies — see agent loop_confirm tests),
+// this proves no mutation routed through resource_invoke can execute without an
+// explicit confirmation.
+func TestResourceInvokeRequiresConfirmation(t *testing.T) {
+	gw := &fakeGateway{}
+	invoke := findTool(resourceWriteTools(gw), "resource_invoke")
+	if invoke == nil {
+		t.Fatal("resource_invoke tool not found")
+	}
+	// A real mutating operation (createVirtualKey is POST /virtual-keys).
+	in, _ := json.Marshal(map[string]any{
+		"kind":        "virtual-keys",
+		"operationId": "createVirtualKey",
+		"body":        map[string]any{"name": "k"},
+	})
+
+	gate := agent.NewGate(agent.NewCommandClassifier(), nil, false) // yolo=false (production web/CLI default)
+	decision, detail := gate.Decide(invoke, in)
+	if decision != agent.Ask {
+		t.Fatalf("resource_invoke mutation must require confirmation (Ask); got decision %v", decision)
+	}
+	// The confirm detail must resolve the concrete mutation, not a generic prompt.
+	if !strings.Contains(detail, "createVirtualKey") {
+		t.Fatalf("confirm detail must name the concrete operation; got %q", detail)
+	}
+	// The gate decision alone must not have executed the mutation.
+	if len(gw.adminCalls) != 0 {
+		t.Fatalf("deciding the gate must not execute the mutation; gateway saw %d call(s)", len(gw.adminCalls))
+	}
+}
+
 func TestResourceWriteToolsGatedByMitigate(t *testing.T) {
 	gw := &fakeGateway{}
 	names := func(includeMitigate bool) map[string]bool {
@@ -361,5 +436,45 @@ func TestResourceInvokeConfirmDetail(t *testing.T) {
 	bad, _ := json.Marshal(map[string]string{"kind": "nope", "operationId": "nope"})
 	if got := inv.ConfirmDetail(bad); got != "" {
 		t.Fatalf("an unresolvable op should yield an empty detail, got %q", got)
+	}
+}
+
+// TestResourceTools_RefuseAssistantSurface pins the self-reference guard: the
+// generic resource tools must refuse the assistant's own endpoints — most
+// critically the long-lived SSE stream, which the in-process self-call
+// transport cannot relay and which would supersede the human's live subscriber
+// and park the turn inside its own tool call.
+func TestResourceTools_RefuseAssistantSurface(t *testing.T) {
+	gw := &fakeGateway{}
+	tools := resourceReadTools(gw)
+	var read agent.Tool
+	for _, tl := range tools {
+		if tl.Name() == "resource_read" {
+			read = tl
+		}
+	}
+	res, err := read.Run(context.Background(), json.RawMessage(`{"kind":"assistant","operationId":"streamSession","params":{"id":"s1"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, "assistant's own chat surface") {
+		t.Fatalf("resource_read must refuse the assistant surface with a named error, got %+v", res)
+	}
+	if len(gw.adminCalls) != 0 {
+		t.Fatalf("the refused call must never reach the gateway, got %d admin calls", len(gw.adminCalls))
+	}
+
+	var invoke agent.Tool
+	for _, tl := range resourceWriteTools(gw) {
+		if tl.Name() == "resource_invoke" {
+			invoke = tl
+		}
+	}
+	res, err = invoke.Run(context.Background(), json.RawMessage(`{"kind":"assistant","operationId":"startChat","params":{"id":"s1"},"body":{"message":"hi"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, "assistant's own chat surface") {
+		t.Fatalf("resource_invoke must refuse the assistant surface, got %+v", res)
 	}
 }

@@ -41,14 +41,11 @@ func renderToolBlock(ln convLine, verbose bool, width int) string {
 }
 
 // toolActionLabel is the bright, input-forward summary of a call: the tool name plus
-// its most-meaningful argument(s). use_skill is special-cased to the friendly
-// "loading skill <name>"; the resource cascade leads with kind / operationId; the
-// rest fall back to a compacted, truncated input.
+// its most-meaningful argument(s). The resource cascade leads with kind /
+// operationId; the rest fall back to a compacted, truncated input.
 func toolActionLabel(name string, input []byte) string {
 	g := func(k string) string { return gjson.GetBytes(input, k).String() }
 	switch name {
-	case "use_skill":
-		return "loading skill " + g("name")
 	case "analyze_cost":
 		s := "analyze_cost"
 		if w := g("window"); w != "" {
@@ -108,9 +105,6 @@ func toolResultPeek(name string, output []byte, isError bool) string {
 	}
 	if isError {
 		return "⚠ " + truncate(firstLine(s), 80)
-	}
-	if name == "use_skill" {
-		return "playbook loaded"
 	}
 	// Collections read as "N rows / items" rather than dumping the array.
 	if d := gjson.GetBytes(output, "data"); d.IsArray() {

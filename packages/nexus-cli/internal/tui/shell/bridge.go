@@ -3,6 +3,8 @@ package shell
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -11,85 +13,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/kit"
 )
-
-// AgentRunner is the bridge's view of a built agent. *agent.Agent satisfies it;
-// tests inject a fake so the bridge plumbing runs without a model. It is exported
-// so the CLI's BuildAgent seam (cli/root.go) can name it as the return type.
-type AgentRunner interface {
-	Turn(ctx context.Context, userText, activeView string) (string, error)
-	// Compact summarizes the session's older transcript now (the manual /compact
-	// path). It reports the stat, whether it acted (false = nothing to compact), and
-	// any error.
-	Compact(ctx context.Context) (agent.CompactStat, bool, error)
-}
-
-// AgentBuildFunc is the seam the CLI implements to construct the gateway agent
-// the conversation drives. The TUI owns the bridge and hands the CLI the canvas
-// (view-driving), the blocking confirm gate, and the streaming callbacks; the CLI
-// supplies what only it knows (model / VK / env / on-disk memory + session paths)
-// and calls capabilities.BuildAgent. A nil seam disables the conversation.
-type AgentBuildFunc func(canvas capabilities.Canvas, confirm agent.ConfirmFunc, onText, onReasoning func(string), onToolStart func(name string, input []byte), onToolEnd func(name string, output []byte, isError bool), onContext func(stats agent.ContextStats, window int), onCompact func(agent.CompactStat)) (AgentRunner, error)
-
-// --- messages the bridge emits into the Bubble Tea loop ---
-
-// agentTextMsg is one streamed assistant text delta.
-type agentTextMsg struct{ delta string }
-
-// agentReasoningMsg is one streamed reasoning/thinking delta — display-only, shown
-// in a distinct dim style and never persisted to the agent transcript.
-type agentReasoningMsg struct{ delta string }
-
-// agentToolMsg announces a tool call starting (name + input args).
-type agentToolMsg struct {
-	name  string
-	input []byte
-}
-
-// agentToolResultMsg reports a tool call's result (raw output + error flag), for the
-// transcript's dim result peek + the expandable full I/O.
-type agentToolResultMsg struct {
-	name    string
-	output  []byte
-	isError bool
-}
-
-// agentNavMsg / agentShowMsg / agentHighlightMsg are canvas drives: the agent
-// asked to open a view / show an event / highlight a row. The root model applies
-// them so the cockpit follows the agent live.
-type agentNavMsg struct {
-	view   string
-	filter core.TrafficFilter
-}
-type agentShowMsg struct{ id string }
-type agentHighlightMsg struct{ ref string }
-
-// agentConfirmMsg asks the human to authorize a mitigation. The root model raises
-// the confirm gate; the reply rides back on the bridge's reply channel.
-type agentConfirmMsg struct {
-	tool   string
-	reason string
-}
-
-// contextStatsMsg carries the post-turn context-usage stats + the current model's
-// context window to the conversation pane's context indicator.
-type contextStatsMsg struct {
-	stats  agent.ContextStats
-	window int
-}
-
-// agentCompactMsg announces a compaction so the conversation can surface a visible
-// notice (like a tool call) and refresh the context indicator. acted=false carries
-// no stat — it is the manual /compact "nothing to compact" outcome.
-type agentCompactMsg struct {
-	stat  agent.CompactStat
-	acted bool
-}
-
-// agentDoneMsg is the terminal result of one Turn (or a manual /compact).
-type agentDoneMsg struct {
-	final string
-	err   error
-}
 
 // bridge runs one agent's turns on a background goroutine and pumps the agent's
 // streaming callbacks (text/tool/canvas/confirm/done) into the Bubble Tea loop as
@@ -108,6 +31,14 @@ type bridge struct {
 	turnCtx context.Context // the in-flight turn's context, read by confirm()
 	cancel  context.CancelFunc
 	running bool
+	// Idle-watchdog state: the turn cancels only when NO progress lands for
+	// kit.AgentTurnIdleTimeout. lastActivity is stamped by every bridge event;
+	// confirmWait pauses the clock while a confirm card waits on the human.
+	lastActivity atomic.Int64
+	confirmWait  atomic.Int32
+	// idleTimeout overrides kit.AgentTurnIdleTimeout (zero = the default);
+	// the watchdog tests inject a tiny window to run deterministically.
+	idleTimeout time.Duration
 }
 
 // newBridge wires an AgentRunner. evCh is buffered so canvas/text sends from the
@@ -136,6 +67,7 @@ var _ capabilities.Canvas = (*bridge)(nil)
 // momentarily full buffer drops the event rather than stalling the agent loop.
 // Confirm + done are sent with a guaranteed (buffered) send so they are never lost.
 func (b *bridge) sendEv(m tea.Msg) {
+	b.touch()
 	select {
 	case b.evCh <- m:
 	default:
@@ -155,6 +87,10 @@ func (b *bridge) confirmFunc(ctx context.Context) agent.ConfirmFunc {
 			return false, nil
 		}
 		b.evCh <- agentConfirmMsg{tool: tool.Name(), reason: reason}
+		// A confirm card waiting on the HUMAN is not a stuck turn: pause the
+		// idle watchdog for the wait and stamp fresh activity when it resolves.
+		b.confirmWait.Add(1)
+		defer func() { b.confirmWait.Add(-1); b.touch() }()
 		select {
 		case ok := <-b.replyCh:
 			// If the turn was torn down while the human's reply raced in, decline —
@@ -182,6 +118,49 @@ func (b *bridge) confirm(callCtx context.Context, tool agent.Tool, input json.Ra
 	return b.confirmFunc(ctx)(callCtx, tool, input, reason)
 }
 
+// touch stamps watchdog activity (any streamed delta, tool event, canvas drive,
+// or resolved confirm counts as progress).
+func (b *bridge) touch() { b.lastActivity.Store(time.Now().UnixNano()) }
+
+// watchIdle cancels the turn only when it makes NO progress for
+// kit.AgentTurnIdleTimeout — a turn that is actively streaming, running tools,
+// or waiting on a human confirm card is never killed, however long it runs.
+// This replaces the old fixed total cap, which severed legitimate long
+// multi-tool turns (slow models iterating draft→freeze) mid-stream.
+func (b *bridge) watchIdle(ctx context.Context, cancel context.CancelFunc) {
+	limit := b.idleTimeout
+	if limit <= 0 {
+		limit = kit.AgentTurnIdleTimeout
+	}
+	tick := limit / 60
+	if tick < time.Millisecond {
+		tick = time.Millisecond
+	}
+	if tick > 5*time.Second {
+		tick = 5 * time.Second
+	}
+	b.touch()
+	go func() {
+		t := time.NewTicker(tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if b.confirmWait.Load() > 0 {
+					continue
+				}
+				idle := time.Since(time.Unix(0, b.lastActivity.Load()))
+				if idle > limit {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+}
+
 // startTurn launches one Turn on a background goroutine and returns a Cmd that
 // blocks for the first event. Guards against a double-start (one turn at a time);
 // a rejected start returns nil.
@@ -190,8 +169,9 @@ func (b *bridge) startTurn(userText, activeView string) tea.Cmd {
 		return nil
 	}
 	b.running = true
-	ctx, cancel := context.WithTimeout(context.Background(), kit.AgentTurnTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	b.turnCtx, b.cancel = ctx, cancel
+	b.watchIdle(ctx, cancel)
 	go func() {
 		final, err := b.agent.Turn(ctx, userText, activeView)
 		cancel()
@@ -210,8 +190,9 @@ func (b *bridge) startCompact() tea.Cmd {
 		return nil
 	}
 	b.running = true
-	ctx, cancel := context.WithTimeout(context.Background(), kit.AgentTurnTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	b.turnCtx, b.cancel = ctx, cancel
+	b.watchIdle(ctx, cancel)
 	go func() {
 		_, acted, err := b.agent.Compact(ctx)
 		cancel()
@@ -245,7 +226,10 @@ func (b *bridge) reply(ok bool) tea.Cmd {
 	case b.replyCh <- ok:
 		return b.drain()
 	case <-ctx.Done():
-		return nil
+		// Delivery is refused (the dead turn's confirm already declined via
+		// ctx-cancel) but the pump must resume: the terminal agentDoneMsg is
+		// buffered with no outstanding drain to deliver it.
+		return b.drain()
 	}
 }
 

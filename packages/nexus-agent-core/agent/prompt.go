@@ -5,28 +5,25 @@ import (
 	"strings"
 )
 
-// PromptInput is everything the system-prompt assembler needs. SkillCatalog is
-// the progressive-disclosure list (names + one-line descriptions only).
-// DomainContext is the per-feature concept text the caller injects (empty when
-// none). It is assembled fresh each turn by the loop.
+// PromptInput is everything the system-prompt assembler needs. DomainContext is
+// the per-feature concept text the caller injects (empty when none). It is
+// assembled fresh each turn by the loop.
 type PromptInput struct {
 	Env    string
 	IsProd bool
-	// Surface is the face the agent runs behind: "web" for the E90 web assistant,
+	// Surface is the face the agent runs behind: "web" for the web assistant,
 	// "" (default) for the CLI/TUI operator toolkit. It only re-words the persona so
-	// the prompt matches the user's surface (FR-20) — the web face has no terminal
+	// the prompt matches the user's surface — the web face has no terminal
 	// "cockpit" and its memory is DB-backed per user, not file-backed — and keeps the
 	// prompt free of internal-only terms (drift) on the operator-facing web surface.
 	// It changes wording only, never the agent's capabilities or safety rules.
 	Surface       string
-	SkillCatalog  string
 	DomainContext string
 }
 
 // BuildSystemPrompt assembles the operator-agent system prompt. It is crafted to
 // Claude Code's standard: a crisp persona, explicit tool-use + safety guidance,
-// the user-facing terminology boundary, the skill catalog, and (optionally)
-// injected domain context.
+// the user-facing terminology boundary, and (optionally) injected domain context.
 func BuildSystemPrompt(in PromptInput) string {
 	var b strings.Builder
 	web := in.Surface == "web"
@@ -72,8 +69,7 @@ func BuildSystemPrompt(in PromptInput) string {
 	b.WriteString("Honor the time range in the question. The analytics tools (observe_health, analyze_*) and observe_traffic_list take a `window` (1h, 24h, today, 7d, 30d) and DEFAULT TO 7d. When the user says today / now / this hour / last 24h, pass the matching window — do not report the 7-day total as \"today\". Always state the window your answer covers.\n\n")
 
 	b.WriteString("## Tool use\n")
-	b.WriteString("- Read/observe/navigate/simulate tools are safe and run immediately. Use them freely; you may call independent read tools together (the harness runs them in parallel).\n")
-	b.WriteString("- Before starting a multi-step investigation, CHECK the Skills list at the bottom of this prompt: if one matches the task (an incident, a cost dig, a compliance audit, …), call use_skill(name) FIRST and follow its playbook — it encodes the proven steps. Loading a skill is cheap; skipping a matching one wastes effort.\n\n")
+	b.WriteString("- Read/observe/navigate/simulate tools are safe and run immediately. Use them freely; you may call independent read tools together (the harness runs them in parallel).\n\n")
 
 	b.WriteString("## Memory — get smarter over time\n")
 	// The CLI's memory is local files; the web assistant's is a per-user DB store, so
@@ -103,11 +99,6 @@ func BuildSystemPrompt(in PromptInput) string {
 	} else {
 		fmt.Fprintf(&b, "## Environment\nYou are connected to a non-prod environment (%s). Every mitigation still requires the human's authorization on the confirm gate before it fires.\n\n", in.Env)
 	}
-
-	b.WriteString("## Skills\n")
-	b.WriteString("These playbooks are available. Call use_skill(name) to load one when it matches the task:\n")
-	b.WriteString(in.SkillCatalog)
-	b.WriteString("\n")
 
 	if strings.TrimSpace(in.DomainContext) != "" {
 		b.WriteString("\n## Domain context\n")

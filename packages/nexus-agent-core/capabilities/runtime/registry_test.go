@@ -11,31 +11,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 )
 
-func TestNewMCPRegistryProfile(t *testing.T) {
-	reg := NewMCPRegistry(&fakeGateway{}, MCPOptions{EnableMitigate: false})
-	for _, want := range []string{"observe_health", "analyze_cost", "route_explain", "simulate_request"} {
-		if _, ok := reg.Get(want); !ok {
-			t.Fatalf("MCP registry must expose %q", want)
-		}
-	}
-	for _, banned := range []string{"navigate", "show_event", "highlight", "run_command", "read_file", "write_file", "mitigate_kill_switch"} {
-		if _, ok := reg.Get(banned); ok {
-			t.Fatalf("MCP registry must NOT expose %q (local/agent-only or mitigate-off)", banned)
-		}
-	}
-}
-
-func TestNewMCPRegistryMitigateOptIn(t *testing.T) {
-	reg := NewMCPRegistry(&fakeGateway{}, MCPOptions{EnableMitigate: true})
-	if _, ok := reg.Get("mitigate_kill_switch"); !ok {
-		t.Fatal("--enable-mitigate must add the mitigate tools")
-	}
-	// Even with mitigate on, no local-operator tools leak onto the remote surface.
-	if _, ok := reg.Get("run_command"); ok {
-		t.Fatal("run_command must never be exposed on the MCP surface")
-	}
-}
-
 func TestNewAgentRegistryIsSuperset(t *testing.T) {
 	reg := NewAgentRegistry(&fakeGateway{}, &fakeCanvas{}, AgentOptions{EnableMitigate: true, EnableCanvas: true, EnableSystem: true})
 	for _, want := range []string{"observe_health", "navigate", "show_event", "highlight", "run_command", "read_file", "write_file", "mitigate_kill_switch"} {
@@ -60,7 +35,7 @@ func TestBuildAgentRunsToolThenAnswers(t *testing.T) {
 	ag, err := BuildAgent(context.Background(), AgentDeps{
 		Streamer: sm, Gateway: gw, Canvas: canvas,
 		VKSecret: "vk", Model: "gpt-4o", Env: "local",
-		SkillDir: dir, MemoryDir: dir, SessionDir: dir,
+		MemoryDir: dir, SessionDir: dir,
 		Confirm:     func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return true, nil },
 		OnToolStart: func(name string, _ []byte) { toolStarts = append(toolStarts, name) },
 	})
@@ -86,6 +61,58 @@ func TestBuildAgentRunsToolThenAnswers(t *testing.T) {
 	}
 }
 
+// TestBuildAgentResumesInjectedSession pins the resume seam (the TUI's /sessions
+// pick): a non-nil AgentDeps.Session binds the built agent to that conversation,
+// so the next turn APPENDS to the same persisted session id instead of starting
+// a fresh one.
+func TestBuildAgentResumesInjectedSession(t *testing.T) {
+	dir := t.TempDir()
+	sessDir := filepath.Join(dir, "sessions")
+	past := agent.NewSession("local")
+	past.Messages = []agent.Message{
+		agent.TextMessage(agent.RoleUser, "what changed yesterday?"),
+		agent.TextMessage(agent.RoleAssistant, "two routing rules were toggled"),
+	}
+	if err := agent.OpenStoreAt(sessDir).Save(past); err != nil {
+		t.Fatal(err)
+	}
+
+	sm := &scriptedStreamer{steps: []*core.ChatResult{{Content: "still those two.", FinishReason: "stop"}}}
+	ag, err := BuildAgent(context.Background(), AgentDeps{
+		Streamer: sm, Gateway: &fakeGateway{}, Canvas: &fakeCanvas{},
+		VKSecret: "vk", Model: "m", Env: "local",
+		MemoryDir: dir, SessionDir: sessDir,
+		Session: past,
+		Confirm: func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return true, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ag.Session != past {
+		t.Fatal("BuildAgent must bind the injected session, not start a fresh one")
+	}
+	if _, err := ag.Turn(context.Background(), "and today?", ""); err != nil {
+		t.Fatal(err)
+	}
+	// The turn appended to the SAME persisted session: still one file, same id,
+	// history kept, the new exchange appended after it.
+	st := agent.OpenStoreAt(sessDir)
+	metas, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].ID != past.ID {
+		t.Fatalf("the resumed turn must persist under session %s, got %+v", past.ID, metas)
+	}
+	got, err := st.Load(past.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Messages) != 4 || got.Messages[2].Text() != "and today?" || got.Messages[3].Text() != "still those two." {
+		t.Fatalf("resumed session must keep its history and append the new turn, got %d messages: %+v", len(got.Messages), got.Messages)
+	}
+}
+
 func TestBuildAgentConfirmGatesMitigation(t *testing.T) {
 	// The model proposes a kill-switch engage; a declining Confirm must block the
 	// write and the model adapts (sees "user declined").
@@ -98,7 +125,7 @@ func TestBuildAgentConfirmGatesMitigation(t *testing.T) {
 	ag, err := BuildAgent(context.Background(), AgentDeps{
 		Streamer: &scriptedStreamer{steps: steps}, Gateway: gw, Canvas: &fakeCanvas{},
 		VKSecret: "vk", Model: "m", Env: "local", EnableMitigate: true,
-		SkillDir: dir, MemoryDir: dir, SessionDir: dir,
+		MemoryDir: dir, SessionDir: dir,
 		Confirm: func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return false, nil }, // decline
 	})
 	if err != nil {
@@ -109,19 +136,5 @@ func TestBuildAgentConfirmGatesMitigation(t *testing.T) {
 	}
 	if gw.killCalls != 0 {
 		t.Fatalf("a declined confirmation must NOT issue the write, got %d kill calls", gw.killCalls)
-	}
-}
-
-func TestBuildAgentBadSkillDirErrors(t *testing.T) {
-	// LoadSkills only errors on a built-in parse failure; a bad localDir is
-	// tolerated, so BuildAgent succeeds even with a nonexistent skill dir.
-	_, err := BuildAgent(context.Background(), AgentDeps{
-		Streamer: &scriptedStreamer{}, Gateway: &fakeGateway{}, Canvas: &fakeCanvas{},
-		Env: "local", SkillDir: filepath.Join(t.TempDir(), "nope"),
-		MemoryDir: t.TempDir(), SessionDir: t.TempDir(),
-		Confirm: func(context.Context, agent.Tool, json.RawMessage, string) (bool, error) { return true, nil },
-	})
-	if err != nil {
-		t.Fatalf("a nonexistent skill dir must be tolerated, got %v", err)
 	}
 }

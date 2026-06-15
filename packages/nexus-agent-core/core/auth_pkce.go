@@ -57,11 +57,15 @@ func generatePKCE() (verifier, challenge string, err error) {
 	return verifier, challenge, nil
 }
 
-// randState returns an unguessable CSRF state value.
-func randState() string {
+// randState returns an unguessable CSRF state value. A crypto/rand failure must
+// not be swallowed: an empty/predictable state would defeat the OAuth CSRF check,
+// so the error is surfaced (matching generatePKCE) and the login aborts.
+func randState() (string, error) {
 	buf := make([]byte, 16)
-	_, _ = rand.Read(buf)
-	return base64.RawURLEncoding.EncodeToString(buf)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate CSRF state: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // authorizeURL builds the /oauth/authorize URL for the given PKCE challenge,
@@ -87,7 +91,10 @@ func (a *Authenticator) LoginBrowser(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	state := randState()
+	state, err := randState()
+	if err != nil {
+		return err
+	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -159,7 +166,10 @@ func (a *Authenticator) LoginHeadless(ctx context.Context, email, password strin
 	if err != nil {
 		return err
 	}
-	state := randState()
+	state, err := randState()
+	if err != nil {
+		return err
+	}
 	redirectURI := a.env.OAuthRedirectURI
 
 	authctx, err := a.fetchAuthctx(ctx, challenge, state, redirectURI)

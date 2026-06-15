@@ -68,7 +68,6 @@ func agentWithOnContext(t *testing.T, model Model, reg *Registry, onCtx func(Con
 		Model:     model,
 		Registry:  reg,
 		Gate:      NewGate(NewCommandClassifier(), nil, false),
-		Skills:    NewSkillSet(),
 		Memory:    OpenMemoryStore(dir, "local"),
 		Store:     openStoreAt(dir),
 		Compactor: NewCompactor(model, 0),

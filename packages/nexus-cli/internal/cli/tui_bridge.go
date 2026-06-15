@@ -145,6 +145,17 @@ func (a *App) tuiDeps() tui.Deps {
 			return core.NewAuthenticator(a.Env, a.Store, a.HTTP).
 				WithBrowserOpener(a.BrowserOpener).LoginBrowser(ctx)
 		},
+		Logout: func() error {
+			// Clear every credential the active env may hold so the next request
+			// requires a fresh login. ErrSecretNotFound is the no-op success case
+			// (the key was never stored); surface anything else.
+			for _, key := range []string{core.SecretAccessToken, core.SecretRefreshToken, core.SecretAdminKey} {
+				if err := a.Store.Delete(a.Env.Name, key); err != nil && !errors.Is(err, core.ErrSecretNotFound) {
+					return err
+				}
+			}
+			return nil
+		},
 		SaveVKSecret: func(secret string) error {
 			return a.Store.Set(a.Env.Name, core.SecretVKSecret, secret)
 		},
@@ -161,7 +172,17 @@ func (a *App) tuiDeps() tui.Deps {
 			return vk.ID, vk.Name, vk.Key, nil
 		},
 		BuildAgent: a.buildConversationAgent,
-		Log:        a.Log,
+		// OpenSessions resolves the active env's on-disk session store for the
+		// /sessions picker (list + resume + delete past conversations), read at
+		// call time so a wizard env switch lists that env's history.
+		OpenSessions: func() (tui.SessionBrowser, error) {
+			dir, err := capabilities.DefaultSessionDir(a.Env.Name)
+			if err != nil {
+				return nil, err
+			}
+			return agent.OpenStoreAt(dir), nil
+		},
+		Log: a.Log,
 	}
 }
 
@@ -169,22 +190,20 @@ func (a *App) tuiDeps() tui.Deps {
 // sidebar uses to construct the gateway agent it drives. The TUI owns the bridge
 // and supplies the canvas (view-driving), the blocking Allow/Deny confirm gate, and the
 // streaming callbacks; this closure supplies what only the CLI knows — the live
-// env's model/VK and the on-disk memory/session/skill paths — and assembles the
+// env's model/VK and the on-disk memory/session paths — and assembles the
 // agent via capabilities.BuildAgent. It reads a.Env at call time (the conversation
 // builds the agent lazily on the first turn, so a wizard env switch is reflected).
 // Mitigation tools are enabled: every write the agent proposes is gated by the
 // confirm callback (the Allow/Deny gate, raised in every environment), so the agent
 // can act on the operator's behalf without bypassing the safety gate.
-func (a *App) buildConversationAgent(canvas capabilities.Canvas, confirm agent.ConfirmFunc, onText, onReasoning func(string), onToolStart func(name string, input []byte), onToolEnd func(name string, output []byte, isError bool), onContext func(stats agent.ContextStats, window int), onCompact func(agent.CompactStat)) (tui.AgentRunner, error) {
+// resume is the persisted session to continue (a /sessions pick); nil starts a
+// fresh one.
+func (a *App) buildConversationAgent(canvas capabilities.Canvas, confirm agent.ConfirmFunc, stream tui.AgentStream, resume *agent.Session) (tui.AgentRunner, error) {
 	memDir, err := capabilities.DefaultMemoryDir()
 	if err != nil {
 		return nil, err
 	}
 	sessionDir, err := capabilities.DefaultSessionDir(a.Env.Name)
-	if err != nil {
-		return nil, err
-	}
-	skillDir, err := a.skillDir()
 	if err != nil {
 		return nil, err
 	}
@@ -202,16 +221,16 @@ func (a *App) buildConversationAgent(canvas capabilities.Canvas, confirm agent.C
 		Env:            a.Env.Name,
 		IsProd:         a.Env.IsProd,
 		ContextWindow:  window,
-		SkillDir:       skillDir,
 		MemoryDir:      memDir,
 		SessionDir:     sessionDir,
+		Session:        resume,
 		EnableMitigate: true,
-		OnText:         onText,
-		OnReasoning:    onReasoning,
-		OnToolStart:    onToolStart,
-		OnToolEnd:      onToolEnd,
-		OnContext:      func(cs agent.ContextStats) { onContext(cs, window) },
-		OnCompact:      onCompact,
+		OnText:         stream.OnText,
+		OnReasoning:    stream.OnReasoning,
+		OnToolStart:    stream.OnToolStart,
+		OnToolEnd:      stream.OnToolEnd,
+		OnContext:      func(cs agent.ContextStats) { stream.OnContext(cs, window) },
+		OnCompact:      stream.OnCompact,
 	})
 	if err != nil {
 		return nil, err

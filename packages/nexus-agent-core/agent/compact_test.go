@@ -191,7 +191,7 @@ func TestLoopBoundsModelViewAcrossManyLargeToolReads(t *testing.T) {
 	comp := NewCompactor(fm, 0)
 	comp.trimBudget = 40000 // tokens
 	comp.keepRecent = 4
-	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(), StepCap: 40, Compactor: comp}
+	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), StepCap: 40, Compactor: comp}
 
 	produced, _, err := loop.Run(context.Background(), "sys", nil, TextMessage(RoleUser, "investigate every job"))
 	if err != nil {
@@ -255,7 +255,7 @@ func TestLoopStaysUnderActualWindowWithDenseContent(t *testing.T) {
 	}})
 	fm := &densityModel{density: 1.8, toolRounds: 25}
 	comp := NewCompactor(fm, 200000)
-	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(), StepCap: 40, Compactor: comp}
+	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), StepCap: 40, Compactor: comp}
 
 	if _, _, err := loop.Run(context.Background(), "sys", nil, TextMessage(RoleUser, "investigate every job")); err != nil {
 		t.Fatalf("loop: %v", err)
@@ -329,7 +329,7 @@ func TestLoopRecoversFromContextOverflow(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		hist = append(hist, toolRound("t"+strconv.Itoa(i), strings.Repeat("data ", 200))...)
 	}
-	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(), StepCap: 40, Compactor: comp}
+	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), StepCap: 40, Compactor: comp}
 
 	produced, _, err := loop.Run(context.Background(), "sys", hist, TextMessage(RoleUser, "go"))
 	if err != nil {
@@ -348,7 +348,7 @@ func TestLoopGivesUpAfterRepeatedOverflow(t *testing.T) {
 	reg := NewRegistry()
 	fm := &overflowModel{overflowTimes: 100, err: errors.New("prompt is too long: 999999 tokens > 200000 maximum")}
 	comp := NewCompactor(fm, 200000)
-	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), Skills: NewSkillSet(), StepCap: 40, Compactor: comp}
+	loop := &Loop{Model: fm, Registry: reg, Gate: NewGate(nil, nil, false), StepCap: 40, Compactor: comp}
 
 	_, _, err := loop.Run(context.Background(), "sys", altHistory(8), TextMessage(RoleUser, "go"))
 	if err == nil {

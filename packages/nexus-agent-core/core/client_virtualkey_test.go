@@ -119,9 +119,9 @@ func TestClient_RoutingRules(t *testing.T) {
 	}
 }
 
-// TestClient_Wave3WriteErrors asserts every Wave 3 write surfaces a non-2xx as
+// TestClient_VirtualKeyWriteErrors asserts every Wave 3 write surfaces a non-2xx as
 // an error rather than swallowing it.
-func TestClient_Wave3WriteErrors(t *testing.T) {
+func TestClient_VirtualKeyWriteErrors(t *testing.T) {
 	c, done := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)

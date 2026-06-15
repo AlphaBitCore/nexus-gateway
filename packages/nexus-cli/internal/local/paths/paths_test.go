@@ -69,3 +69,9 @@ func TestDefaultPaths_ConfigAndLogDiffer(t *testing.T) {
 		t.Errorf("config dir and log dir collapsed to %q; logs must be user-scoped state, not config", cfgDir)
 	}
 }
+
+var errStub = errStubT("no config dir")
+
+type errStubT string
+
+func (e errStubT) Error() string { return string(e) }

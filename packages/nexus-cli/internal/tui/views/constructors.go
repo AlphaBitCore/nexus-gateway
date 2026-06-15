@@ -5,7 +5,9 @@
 // Radar) are exported so the shell can type-assert and call their drive methods.
 package views
 
-import "github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/kit"
+import (
+	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/kit"
+)
 
 func NewCockpit(gw kit.Gateway) kit.ViewModel    { return newCockpit(gw) }
 func NewRadar(gw kit.Gateway) kit.ViewModel      { return newRadar(gw) }

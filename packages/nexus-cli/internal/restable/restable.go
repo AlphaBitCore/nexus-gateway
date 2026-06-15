@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 // Row is one collection item as a decoded JSON object.
@@ -103,6 +105,94 @@ func InferColumns(rows []Row, max int) []string {
 	return cols
 }
 
+// SanitizeTerminal strips terminal-control sequences and control characters from
+// a server-supplied string before it is printed to the operator's terminal. It
+// is the defense against terminal-injection: a malicious admin record (a node
+// name, an error body) could otherwise embed ANSI escapes to rewrite the title
+// bar, set the clipboard (OSC 52), move the cursor, or hide/forge text.
+//
+// It removes:
+//   - ESC-introduced sequences: CSI (ESC [ … final-byte), OSC (ESC ] … BEL or
+//     ESC \\ String Terminator), and any other ESC + single-char two-byte escape
+//     (so a lone ESC or a charset-select escape cannot leak through);
+//   - C0 control characters (0x00–0x1f) EXCEPT tab (\t) and newline (\n);
+//   - the DEL character (0x7f);
+//   - C1 control characters (0x80–0x9f), which some terminals treat as escapes.
+//
+// Tab and newline are preserved because they are legitimate layout characters in
+// rendered output. Ordinary printable runes (including non-control Unicode) pass
+// through unchanged.
+func SanitizeTerminal(s string) string {
+	if s == "" {
+		return s
+	}
+	rb := []byte(s)
+	var b strings.Builder
+	b.Grow(len(rb))
+	for i := 0; i < len(rb); {
+		c := rb[i]
+		if c == 0x1b { // ESC — start of an escape sequence
+			i++
+			if i >= len(rb) {
+				break // trailing lone ESC: drop it
+			}
+			switch rb[i] {
+			case '[': // CSI: ESC [ params/intermediates... final byte (0x40–0x7e)
+				i++
+				for i < len(rb) && !(rb[i] >= 0x40 && rb[i] <= 0x7e) {
+					i++
+				}
+				if i < len(rb) {
+					i++ // consume the final byte
+				}
+			case ']': // OSC: ESC ] ... terminated by BEL (0x07) or ST (ESC \)
+				i++
+				for i < len(rb) {
+					if rb[i] == 0x07 { // BEL terminator
+						i++
+						break
+					}
+					if rb[i] == 0x1b && i+1 < len(rb) && rb[i+1] == '\\' { // ST terminator
+						i += 2
+						break
+					}
+					i++
+				}
+			default:
+				// nF escapes (charset select etc.): ESC + intermediate bytes (0x20–0x2f)
+				// + a final byte (0x30–0x7e). Drop ESC, the intermediates, and the final.
+				// Any other byte after ESC is not part of a recognized sequence — drop
+				// only the ESC and let the byte be processed normally next iteration.
+				if rb[i] >= 0x20 && rb[i] <= 0x2f {
+					for i < len(rb) && rb[i] >= 0x20 && rb[i] <= 0x2f {
+						i++
+					}
+					if i < len(rb) {
+						i++ // consume the final byte
+					}
+				}
+			}
+			continue
+		}
+		// C0 controls except tab/newline, and DEL, are dropped.
+		if (c < 0x20 && c != '\t' && c != '\n') || c == 0x7f {
+			i++
+			continue
+		}
+		// C1 controls (0x80–0x9f) — when they appear as a raw byte (invalid UTF-8) the
+		// decoder yields RuneError with width 1; strip that single byte. Valid
+		// multi-byte UTF-8 runes decode normally and are written through.
+		r, size := utf8.DecodeRune(rb[i:])
+		if r == utf8.RuneError && size == 1 {
+			i++ // a stray byte (incl. raw C1 like 0x9b) — drop it
+			continue
+		}
+		b.Write(rb[i : i+size])
+		i += size
+	}
+	return b.String()
+}
+
 // CellString reduces one cell value to compact text: strings as-is, integers
 // without a decimal point, other numbers via %g, bools as true/false, and nested
 // objects/arrays as a short placeholder so a cell never explodes a row. A missing
@@ -112,7 +202,10 @@ func CellString(v any) string {
 	case nil:
 		return "—"
 	case string:
-		return t
+		// Server-supplied strings are sanitized so an embedded ANSI/OSC escape or
+		// control character cannot inject terminal commands when the cell prints.
+		// Numbers/bools below are machine-formatted and need no scrub.
+		return SanitizeTerminal(t)
 	case bool:
 		return strconv.FormatBool(t)
 	case float64:

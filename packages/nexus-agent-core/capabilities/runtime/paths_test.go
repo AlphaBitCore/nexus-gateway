@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-func TestDefaultSkillDir(t *testing.T) {
-	dir, err := DefaultSkillDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(filepath.ToSlash(dir), "nexus/skills") {
-		t.Fatalf("DefaultSkillDir must end with nexus/skills, got %q", dir)
-	}
-}
-
 func TestDefaultMemoryDir(t *testing.T) {
 	p, err := DefaultMemoryDir()
 	if err != nil {

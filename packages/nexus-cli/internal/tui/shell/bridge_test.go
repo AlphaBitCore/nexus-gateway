@@ -245,21 +245,27 @@ func TestBridgeReplyForwardsToLiveTurn(t *testing.T) {
 // TestBridgeReplyToDeadTurnDropped is the regression guard for the fail-open bug:
 // a reply that arrives after the turn ended (or with no turn) must be dropped, not
 // parked on the unread channel (which would both leak and leave an orphan value a
-// later turn's confirm would wrongly consume — an unauthorized auto-approve).
+// later turn's confirm would wrongly consume — an unauthorized auto-approve). The
+// dropped reply still re-issues the drain: the dying turn's buffered done message
+// has no other deliverer once a prompt held the loop at zero outstanding drains.
 func TestBridgeReplyToDeadTurnDropped(t *testing.T) {
 	b := newBridge(&fakeRunner{})
 	if b.reply(true) != nil {
-		t.Fatal("reply with no live turn should drop and return nil")
+		t.Fatal("reply with no turn ever started should be a no-op")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // the turn already ended
 	b.turnCtx = ctx
+	b.evCh <- agentDoneMsg{} // the dying turn's buffered terminal message
 	done := make(chan tea.Cmd, 1)
 	go func() { done <- b.reply(true) }()
 	select {
 	case cmd := <-done:
-		if cmd != nil {
-			t.Fatal("reply to a cancelled turn should drop and return nil, not drain")
+		if cmd == nil {
+			t.Fatal("the dead-turn reply must re-issue the drain (the buffered done has no other deliverer)")
+		}
+		if _, isDone := cmd().(agentDoneMsg); !isDone {
+			t.Fatal("the re-issued drain must deliver the buffered done so finish() runs")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("reply to a cancelled turn must not block on the unread reply channel")

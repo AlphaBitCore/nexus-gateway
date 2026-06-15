@@ -104,10 +104,11 @@ func TestGenerate_Fixture(t *testing.T) {
 	if got := strings.Join(rep.Kinds, ","); got != "extras,extras-sub,nested,widgets" {
 		t.Fatalf("kinds=%q", got)
 	}
-	// widgets 6 + nested 1 + extras 4 + extras-sub 1 = 12 (root "/" + dynamic
-	// path are unresolved and not counted).
-	if rep.Routes != 12 {
-		t.Errorf("routes=%d want 12", rep.Routes)
+	// widgets 7 (incl. the delegated-query-param events route) + nested 1 +
+	// extras 4 + extras-sub 1 = 13 (root "/" + dynamic path are unresolved and
+	// not counted).
+	if rep.Routes != 13 {
+		t.Errorf("routes=%d want 13", rep.Routes)
 	}
 	// Unresolved cases are reported, never silently dropped.
 	for _, want := range []string{"non-literal path", "no derivable resource kind", "could not be resolved"} {
@@ -191,6 +192,21 @@ func TestGenerate_Fixture(t *testing.T) {
 	}
 	if !qnames["scope"] || !qnames["status"] {
 		t.Errorf("query params=%v want scope+status", qnames)
+	}
+
+	// GET /widgets/{id}/events delegates its query-string parsing to a shared
+	// helper (widgetPaging); the generator must follow it so afterSeq + limit are
+	// still documented (the listWorkflowRunEvents/pageParams pattern).
+	evParams, ok := dig(t, doc, "paths", "/api/admin/widgets/{id}/events", "get").(map[string]any)["parameters"].([]any)
+	if !ok {
+		t.Fatalf("events endpoint has no parameters")
+	}
+	evNames := map[string]bool{}
+	for _, p := range evParams {
+		evNames[dig(t, p, "name").(string)] = true
+	}
+	if !evNames["afterSeq"] || !evNames["limit"] {
+		t.Errorf("delegated query params=%v want afterSeq+limit (helper must be followed)", evNames)
 	}
 
 	// DELETE /widgets/{id} uses c.NoContent -> a 204 response with no body.

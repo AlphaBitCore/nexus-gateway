@@ -51,9 +51,16 @@ func (c *conversation) Help() string {
 		return "scrolled back · ↓ newer · ↑ older · enter send (jumps to latest)"
 	}
 	if c.running {
-		return "agent working… · enter queues · esc interrupts · ↑ scroll · ctrl+c quit"
+		// "ctrl+c quit" lives in the top global strip; the running keybar is
+		// the longest variant, so it sheds the duplicate first.
+		return "agent working… · enter queues · esc interrupts · ctrl+t tools · ↑ scroll"
 	}
-	return "enter send · ↑/↓ scroll · /help · tab views · ctrl+c quit"
+	// "tab views" and "ctrl+c quit" live in the top crumb bar's global strip
+	// (kit.GlobalHints), so the bottom keybar spends its room on chat-local
+	// controls instead — the footer must stay short enough that the env/prod
+	// badge on the right (a safety surface) never gets dropped for lack of
+	// width.
+	return "enter send · ↑/↓ scroll · ctrl+t tools · /help"
 }
 
 // View renders the chat pane into the given box, filling the full height with the

@@ -55,76 +55,10 @@ type DistilledField struct {
 	Type     string `json:"type,omitempty"`
 	Required bool   `json:"required"`
 	Enum     []any  `json:"enum,omitempty"`
-}
-
-// --- minimal OpenAPI shapes (only the fields the distiller reads) ---
-
-type oapiDoc struct {
-	Paths      map[string]map[string]oapiOp `yaml:"paths"`
-	Components oapiComponents               `yaml:"components"`
-}
-
-type oapiComponents struct {
-	Schemas map[string]oapiSchema `yaml:"schemas"`
-}
-
-type oapiOp struct {
-	Summary     string       `yaml:"summary"`
-	Description string       `yaml:"description"`
-	Parameters  []oapiParam  `yaml:"parameters"`
-	RequestBody *oapiReqBody `yaml:"requestBody"`
-}
-
-type oapiParam struct {
-	Name        string     `yaml:"name"`
-	In          string     `yaml:"in"`
-	Required    bool       `yaml:"required"`
-	Description string     `yaml:"description"`
-	Schema      oapiSchema `yaml:"schema"`
-}
-
-type oapiReqBody struct {
-	Content map[string]struct {
-		Schema oapiSchema `yaml:"schema"`
-	} `yaml:"content"`
-}
-
-type oapiSchema struct {
-	Ref        string                `yaml:"$ref"` // same-document ref: #/components/schemas/<Name>
-	Type       any                   `yaml:"type"` // string, or []any for 3.1 unions ([string,null])
-	Enum       []any                 `yaml:"enum"`
-	Properties map[string]oapiSchema `yaml:"properties"`
-	Required   []string              `yaml:"required"`
-}
-
-// refMaxHops caps $ref chain following. The embedded corpus's deepest real
-// chain is 3 hops (the device-groups membership-query bodies), and every ref
-// is same-document (#/components/schemas/...) — measured 2026-06-05, guarded
-// by TestDistillRefBodiesNonEmpty. The cap is inclusive: a 3-hop chain resolves.
-const refMaxHops = 3
-
-// resolveSchema follows a schema's $ref chain through the document's
-// components/schemas, up to refMaxHops hops, with a visited set so a cyclic
-// ref terminates. An unresolvable ref (unknown name, non-local ref, cycle,
-// or a chain deeper than the cap) yields the zero schema — the body then
-// distills empty, exactly the pre-resolution behavior.
-func resolveSchema(s oapiSchema, doc *oapiDoc, seen map[string]bool) oapiSchema {
-	for hops := 0; s.Ref != "" && hops < refMaxHops; hops++ {
-		name, ok := strings.CutPrefix(s.Ref, "#/components/schemas/")
-		if !ok || seen[name] {
-			return oapiSchema{}
-		}
-		seen[name] = true
-		next, ok := doc.Components.Schemas[name]
-		if !ok {
-			return oapiSchema{}
-		}
-		s = next
-	}
-	if s.Ref != "" { // chain deeper than the cap
-		return oapiSchema{}
-	}
-	return s
+	// Nullable marks a field whose op contract allows null (a 3.1 type union
+	// ["x","null"] or 3.0 nullable:true) — accurate metadata for the model:
+	// such a field can come back null in real rows.
+	Nullable bool `json:"nullable,omitempty"`
 }
 
 // Distill returns the compact, model-facing schema for a kind by name — every
@@ -208,6 +142,16 @@ func distillBody(rb *oapiReqBody, doc *oapiDoc) []DistilledField {
 		return nil
 	}
 	schema := resolveSchema(media.Schema, doc, map[string]bool{})
+	// Body fields stay FLAT — the model-facing skeleton lists the top-level
+	// request fields only.
+	return fieldsOf(schema, doc)
+}
+
+// fieldsOf distills one resolved schema level into flat fields.
+func fieldsOf(schema oapiSchema, doc *oapiDoc) []DistilledField {
+	if len(schema.Properties) == 0 {
+		return nil
+	}
 	req := make(map[string]bool, len(schema.Required))
 	for _, r := range schema.Required {
 		req[r] = true
@@ -215,8 +159,10 @@ func distillBody(rb *oapiReqBody, doc *oapiDoc) []DistilledField {
 	fields := make([]DistilledField, 0, len(schema.Properties))
 	for name, prop := range schema.Properties {
 		prop = resolveSchema(prop, doc, map[string]bool{})
+		typ, nullable := typeInfo(prop.Type)
 		fields = append(fields, DistilledField{
-			Name: name, Type: typeStr(prop.Type), Required: req[name], Enum: prop.Enum,
+			Name: name, Type: typ, Required: req[name], Enum: prop.Enum,
+			Nullable: nullable || prop.Nullable,
 		})
 	}
 	sortFields(fields)
@@ -226,19 +172,31 @@ func distillBody(rb *oapiReqBody, doc *oapiDoc) []DistilledField {
 // typeStr normalizes an OpenAPI `type` (a string, or a 3.1 union like
 // [string,null]) to a compact string; the "null" member is dropped.
 func typeStr(t any) string {
+	s, _ := typeInfo(t)
+	return s
+}
+
+// typeInfo normalizes the type AND reports whether the union carried a "null"
+// member (the field's nullability bit).
+func typeInfo(t any) (string, bool) {
 	switch v := t.(type) {
 	case string:
-		return v
+		return v, false
 	case []any:
 		var parts []string
+		nullable := false
 		for _, e := range v {
-			if s, ok := e.(string); ok && s != "null" {
+			if s, ok := e.(string); ok {
+				if s == "null" {
+					nullable = true
+					continue
+				}
 				parts = append(parts, s)
 			}
 		}
-		return strings.Join(parts, "|")
+		return strings.Join(parts, "|"), nullable
 	default:
-		return ""
+		return "", false
 	}
 }
 

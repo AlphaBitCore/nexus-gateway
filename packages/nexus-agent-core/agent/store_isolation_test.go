@@ -63,7 +63,7 @@ func TestMemoryStoreSeamIsolatesUsers(t *testing.T) {
 	// recall/remember/... tools onto it.
 	reg := NewRegistry()
 	ag := New(Config{Memory: bob, Store: newUserScopedStore("bob", map[string]map[string]*Session{}),
-		Registry: reg, Gate: NewGate(NewCommandClassifier(), nil, false), Skills: NewSkillSet(),
+		Registry: reg, Gate: NewGate(NewCommandClassifier(), nil, false),
 		Session: NewSession("web")})
 	if ag == nil {
 		t.Fatal("New must accept a userScopedMemory as the MemoryStore seam")

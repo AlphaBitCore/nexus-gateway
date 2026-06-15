@@ -448,6 +448,81 @@ func TestSetup_RejectsUnreachableURL(t *testing.T) {
 	}
 }
 
+// TestTuiDeps_Logout_ClearsLoginCredentials covers the /logout wiring: it must
+// drop the env's login credentials (access + refresh token, admin key) so the
+// next request re-authenticates, while leaving the VK secret intact (that is
+// chat-traffic state, not a login credential).
+func TestTuiDeps_Logout_ClearsLoginCredentials(t *testing.T) {
+	store := fakeStore{m: map[string]string{
+		"local:" + core.SecretAccessToken:  "jwt",
+		"local:" + core.SecretRefreshToken: "rt",
+		"local:" + core.SecretAdminKey:     "nxk",
+		"local:" + core.SecretVKSecret:     "nvk_keep",
+	}}
+	a := &App{Store: store, ConfigPath: filepath.Join(t.TempDir(), "c.toml")}
+	if err := a.ensureEnv(); err != nil {
+		t.Fatalf("ensureEnv: %v", err)
+	}
+	if err := a.tuiDeps().Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	for _, k := range []string{core.SecretAccessToken, core.SecretRefreshToken, core.SecretAdminKey} {
+		if _, err := store.Get("local", k); err == nil {
+			t.Fatalf("Logout must clear the %s credential", k)
+		}
+	}
+	if got, _ := store.Get("local", core.SecretVKSecret); got != "nvk_keep" {
+		t.Fatal("Logout must NOT clear the VK secret (it is chat state, not a login credential)")
+	}
+}
+
+// TestTuiDeps_PersistenceClosures exercises the dashboard persistence seams
+// wired by tuiDeps: VK-secret storage, remembered-selection persistence, the
+// env-detail lookup, an env switch, and env deletion (which also clears that
+// env's secrets).
+func TestTuiDeps_PersistenceClosures(t *testing.T) {
+	store := fakeStore{m: map[string]string{}}
+	a := &App{Store: store, ConfigPath: filepath.Join(t.TempDir(), "c.toml")}
+	if err := a.ensureEnv(); err != nil {
+		t.Fatalf("ensureEnv: %v", err)
+	}
+	a.Cfg.SetEnv(core.Env{Name: "staging", CPBaseURL: "https://cp.example.com", AIGatewayBaseURL: "https://aigw.example.com", IsProd: true})
+	deps := a.tuiDeps()
+
+	if err := deps.SaveVKSecret("nvk_abc"); err != nil {
+		t.Fatalf("SaveVKSecret: %v", err)
+	}
+	if got, _ := store.Get("local", core.SecretVKSecret); got != "nvk_abc" {
+		t.Fatal("SaveVKSecret must persist the secret for the active env")
+	}
+
+	if err := deps.SaveSelection("gpt-4o", "vk1", "key-one"); err != nil {
+		t.Fatalf("SaveSelection: %v", err)
+	}
+	if a.Env.LastModel != "gpt-4o" || a.Env.LastVKID != "vk1" || a.Env.LastVKName != "key-one" {
+		t.Fatalf("SaveSelection must update the active env, got %+v", a.Env)
+	}
+
+	cp, aigw, prod, err := deps.EnvDetail("staging")
+	if err != nil || cp != "https://cp.example.com" || aigw != "https://aigw.example.com" || !prod {
+		t.Fatalf("EnvDetail(staging) = %q %q %v, err %v", cp, aigw, prod, err)
+	}
+	if _, _, _, err := deps.EnvDetail("nope"); err == nil {
+		t.Fatal("EnvDetail on an unknown env must error")
+	}
+
+	if _, _, loggedIn, err := deps.SwitchEnv("local"); err != nil {
+		t.Fatalf("SwitchEnv(local): %v (loggedIn=%v)", err, loggedIn)
+	}
+
+	if err := deps.DeleteEnv("staging"); err != nil {
+		t.Fatalf("DeleteEnv: %v", err)
+	}
+	if _, ok := a.Cfg.Envs["staging"]; ok {
+		t.Fatal("DeleteEnv must remove the env from the config")
+	}
+}
+
 func TestTuiDeps_CreateUpdateEnv_RejectUnreachableURL(t *testing.T) {
 	a := &App{Store: fakeStore{m: map[string]string{}}, ConfigPath: filepath.Join(t.TempDir(), "c.toml")}
 	if err := a.ensureEnv(); err != nil {

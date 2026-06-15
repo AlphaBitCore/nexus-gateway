@@ -141,3 +141,49 @@ func TestDistill(t *testing.T) {
 		t.Fatal("Distill on an unknown kind must report ok=false")
 	}
 }
+
+// The body distillation carries the nullability bit (3.1 unions AND 3.0
+// nullable:true) so the model knows which request fields a contract allows null.
+func TestDistillBodyNullability(t *testing.T) {
+	spec := []byte(`
+paths:
+  /api/admin/traffic:
+    post:
+      operationId: createTrafficNote
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string }
+                estimatedCostUsd: { type: [number, "null"] }
+                legacyNote: { type: string, nullable: true }
+`)
+	d, err := distillKind(resourceKind{
+		Kind: "traffic",
+		Operations: []resourceOp{
+			{Method: "POST", Path: "/api/admin/traffic", OperationID: "createTrafficNote", Tier: "write"},
+		},
+	}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Operations) != 1 {
+		t.Fatalf("ops = %+v", d.Operations)
+	}
+	byName := map[string]DistilledField{}
+	for _, f := range d.Operations[0].Body {
+		byName[f.Name] = f
+	}
+	if f := byName["id"]; f.Nullable || !f.Required || f.Type != "string" {
+		t.Fatalf("id = %+v", f)
+	}
+	if f := byName["estimatedCostUsd"]; !f.Nullable || f.Type != "number" {
+		t.Fatalf("3.1 union nullability must survive distillation: %+v", f)
+	}
+	if f := byName["legacyNote"]; !f.Nullable || f.Type != "string" {
+		t.Fatalf("3.0 nullable:true must survive distillation: %+v", f)
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,9 +57,24 @@ type Loop struct {
 	Model    Model
 	Registry *Registry
 	Gate     *Gate
-	Skills   *SkillSet
 	StepCap  int
 	Confirm  ConfirmFunc
+
+	// MaxToolCallsPerRound bounds how many auto-tier tools run CONCURRENTLY within a
+	// single round. The model can emit an arbitrary number of tool_use blocks in one
+	// response; without a cap each would spawn its own goroutine, so a single
+	// adversarial or runaway response could fan out to hundreds of simultaneous
+	// admin self-calls. A weighted semaphore caps in-flight execution; the rest queue
+	// and run as slots free, so throughput is preserved while peak concurrency is
+	// bounded. <= 0 falls back to DefaultMaxToolCallsPerRound.
+	MaxToolCallsPerRound int
+	// MaxToolCallsPerTurn bounds the CUMULATIVE number of tool calls executed across
+	// all rounds of one turn — a runaway-cost ceiling orthogonal to StepCap (which
+	// bounds rounds, not calls). Once the ceiling is reached the loop stops issuing
+	// more tool calls and returns a structured "tool call limit exceeded" result for
+	// the remaining blocks so the model adapts (rather than the turn silently
+	// truncating). <= 0 falls back to DefaultMaxToolCallsPerTurn.
+	MaxToolCallsPerTurn int
 
 	// Compactor bounds the model-facing conversation each round (deterministic, no
 	// model call) so a single tool-heavy turn can't overflow the window mid-turn.
@@ -77,7 +91,7 @@ type Loop struct {
 	// OnToolStart announces a tool call for progress display, e.g. "observe_cost" (optional).
 	OnToolStart func(name string, input json.RawMessage)
 	// OnToolEnd reports a tool call's result for progress display — the raw output
-	// (JSON for most tools, free text for use_skill) and whether it errored. Called
+	// and whether it errored. Called
 	// once per tool in block order on the loop goroutine (serial + ordered, like
 	// OnToolStart), so a stateful UI sink never sees a concurrent callback. Optional.
 	OnToolEnd func(name string, output json.RawMessage, isError bool)
@@ -89,6 +103,21 @@ type Loop struct {
 // ErrStepCap is returned when a turn exhausts StepCap tool rounds without a
 // final answer; the caller surfaces a "continue?" prompt.
 var ErrStepCap = fmt.Errorf("step cap reached")
+
+// DefaultMaxToolCallsPerRound bounds concurrent auto-tier tool execution within a
+// single round (see Loop.MaxToolCallsPerRound). 8 keeps a normal multi-resource
+// investigation fully parallel while capping the blast radius of a response that
+// emits a pathological number of tool_use blocks.
+const DefaultMaxToolCallsPerRound = 8
+
+// DefaultMaxToolCallsPerTurn bounds the cumulative tool calls across all rounds of
+// one turn (see Loop.MaxToolCallsPerTurn). 200 is far above any legitimate turn
+// (a 40-round turn at ~5 calls/round) yet stops a runaway loop's cost.
+const DefaultMaxToolCallsPerTurn = 200
+
+// toolLimitExceededMsg is the structured tool_result returned for blocks dropped
+// once the per-turn ceiling is hit, so the model sees a clear, adaptable signal.
+const toolLimitExceededMsg = "tool call limit exceeded for this turn; stop calling tools and summarize what you have"
 
 // Run executes one user turn. history is the prior transcript (not mutated). It
 // returns the NEW messages produced this turn (the user message + all assistant/tool
@@ -103,16 +132,13 @@ func (l *Loop) Run(ctx context.Context, system string, history []Message, user M
 	var announcedTrim bool
 	overflowRetries := 0
 
-	// activeAllowed narrows the exposed tools when a skill is active (nil = all).
-	var activeAllowed []string
-	useSkill := newUseSkillTool(l.Skills, func(_ string, allow []string) {
-		activeAllowed = withBuiltins(allow)
-	})
-
 	maxSteps := l.StepCap
 	if maxSteps <= 0 {
 		maxSteps = DefaultStepCap
 	}
+	// turnToolCalls accumulates across rounds so the per-turn ceiling spans the whole
+	// turn, not a single round. Passed by pointer into runToolUses.
+	turnToolCalls := 0
 	for round := 0; round < maxSteps; round++ {
 		// Bail promptly when the turn is cancelled (the TUI's esc-interrupt cancels
 		// the turn context). Without this the loop would start another round — a fresh
@@ -137,7 +163,7 @@ func (l *Loop) Run(ctx context.Context, system string, history []Message, user M
 			}
 		}
 
-		req := ModelRequest{System: system, Messages: conv, Tools: l.exposedTools(activeAllowed)}
+		req := ModelRequest{System: system, Messages: sendableMessages(conv), Tools: l.exposedTools()}
 		resp, err := l.Model.Generate(ctx, req, l.OnText, l.OnReasoning)
 		if err != nil {
 			// Reactive fallback: the model rejected the prompt as too long (calibration
@@ -164,7 +190,13 @@ func (l *Loop) Run(ctx context.Context, system string, history []Message, user M
 				l.Compactor.observe(resp.Usage.PromptTokens, conv)
 			}
 		}
-		produced = append(produced, resp.Message)
+		// A contentless reply (interrupt raced the stream, or the provider closed
+		// without emitting blocks) must not enter the transcript: providers reject
+		// empty content on replay, so one such message would poison every later
+		// turn of the session with a 400.
+		if len(resp.Message.Blocks) > 0 {
+			produced = append(produced, resp.Message)
+		}
 
 		uses := resp.Message.ToolUses()
 		if len(uses) == 0 {
@@ -176,47 +208,65 @@ func (l *Loop) Run(ctx context.Context, system string, history []Message, user M
 			return produced, usage, err
 		}
 
-		results := l.runToolUses(ctx, uses, useSkill)
+		results := l.runToolUses(ctx, uses, &turnToolCalls)
 		produced = append(produced, Message{Role: RoleUser, Blocks: results})
 	}
 	return produced, usage, ErrStepCap
 }
 
-// exposedTools renders the tool schemas for the model, honoring skill narrowing.
-// The use_skill builtin is always advertised so the model can load skills — but
-// only once, even if a registry also happens to expose it.
-func (l *Loop) exposedTools(allowed []string) []ToolSchema {
-	schemas := l.Registry.Schemas(allowed)
-	for _, s := range schemas {
-		if s.Name == "use_skill" {
-			return schemas
+// sendableMessages filters the model view down to what providers accept on
+// replay: empty text blocks are dropped from each message, and a message left
+// with no blocks at all is skipped. The persisted transcript is untouched —
+// this guards the REQUEST, so a historic empty message (older session files)
+// can never 400 the whole conversation again.
+func sendableMessages(conv []Message) []Message {
+	out := make([]Message, 0, len(conv))
+	for _, m := range conv {
+		blocks := make([]Block, 0, len(m.Blocks))
+		for _, b := range m.Blocks {
+			if b.Type == BlockText && strings.TrimSpace(b.Text) == "" {
+				continue
+			}
+			blocks = append(blocks, b)
 		}
+		if len(blocks) == 0 {
+			continue
+		}
+		m.Blocks = blocks
+		out = append(out, m)
 	}
-	return append(schemas, ToolSchema{
-		Name:        "use_skill",
-		Description: "Load a skill playbook by name to follow a proven procedure.",
-		Parameters:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`),
-	})
+	return out
 }
 
-// runToolUses executes the tool_use blocks: auto-tier reads run in parallel,
-// confirm-tier and declined calls are handled per-block; use_skill is handled
-// inline. Results are returned in the original block order.
-func (l *Loop) runToolUses(ctx context.Context, uses []Block, useSkill *useSkillTool) []Block {
+// exposedTools renders the tool schemas for the model.
+func (l *Loop) exposedTools() []ToolSchema {
+	return l.Registry.Schemas(nil)
+}
+
+// runToolUses executes the tool_use blocks: auto-tier reads run in parallel
+// (bounded by MaxToolCallsPerRound), confirm-tier and declined calls are handled
+// per-block. *turnToolCalls accumulates executed calls across rounds; once
+// MaxToolCallsPerTurn is reached the remaining blocks return a structured "tool
+// call limit exceeded" result instead of executing. Results are returned in the
+// original block order.
+func (l *Loop) runToolUses(ctx context.Context, uses []Block, turnToolCalls *int) []Block {
 	results := make([]Block, len(uses))
+	turnCap := l.MaxToolCallsPerTurn
+	if turnCap <= 0 {
+		turnCap = DefaultMaxToolCallsPerTurn
+	}
+
+	// limitHit reports whether the per-turn ceiling is already reached; bumpTurn
+	// charges one executed call against the ceiling. Both run only on this (the loop)
+	// goroutine, before any parallel fan-out, so no synchronization is needed.
+	limitHit := func() bool { return *turnToolCalls >= turnCap }
 
 	var parallel []int
 	for i, u := range uses {
-		// use_skill is loop-handled (it narrows tools via its activate seam). Announce
-		// it like any other tool so the operator SEES the skill load ("▸ use_skill")
-		// in the transcript — a silent load looked like nothing happened. This runs on
-		// the loop goroutine, so the OnToolStart contract stays serial + ordered.
-		if u.ToolName == "use_skill" {
-			if l.OnToolStart != nil {
-				l.OnToolStart(u.ToolName, u.Input)
-			}
-			res, _ := useSkill.Run(ctx, u.Input)
-			results[i] = ToolResult(u.ID, capToolResult(res.Content), res.IsError)
+		if limitHit() {
+			// Ceiling reached: drop the rest with a structured signal so the model stops
+			// calling tools and summarizes (IsError so it is unmistakable).
+			results[i] = ToolResult(u.ID, toolLimitExceededMsg, true)
 			continue
 		}
 		tool, ok := l.Registry.Get(u.ToolName)
@@ -237,11 +287,14 @@ func (l *Loop) runToolUses(ctx context.Context, uses []Block, useSkill *useSkill
 				continue
 			}
 			// Approved confirm-tier tools run sequentially (each gated by a human).
+			*turnToolCalls++
 			l.announce(tool, u)
 			results[i] = l.execute(ctx, tool, u)
 			continue
 		}
-		// Auto-allowed → eligible for parallel execution.
+		// Auto-allowed → eligible for parallel execution. Charge it against the per-turn
+		// ceiling now (on this goroutine) so the count is race-free.
+		*turnToolCalls++
 		parallel = append(parallel, i)
 	}
 
@@ -255,6 +308,14 @@ func (l *Loop) runToolUses(ctx context.Context, uses []Block, useSkill *useSkill
 		tool, _ := l.Registry.Get(u.ToolName)
 		l.announce(tool, u)
 	}
+	// Bound peak concurrency with a counting semaphore: the model can emit far more
+	// auto-tier blocks than we should run at once. Excess goroutines block on the
+	// channel until a slot frees, so all run but never more than roundCap at a time.
+	roundCap := l.MaxToolCallsPerRound
+	if roundCap <= 0 {
+		roundCap = DefaultMaxToolCallsPerRound
+	}
+	sem := make(chan struct{}, roundCap)
 	var wg sync.WaitGroup
 	for _, idx := range parallel {
 		idx := idx
@@ -263,6 +324,8 @@ func (l *Loop) runToolUses(ctx context.Context, uses []Block, useSkill *useSkill
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			sem <- struct{}{}        // acquire a slot (blocks past roundCap in flight)
+			defer func() { <-sem }() // release the slot
 			results[idx] = l.execute(ctx, tool, u)
 		}()
 	}
@@ -305,33 +368,23 @@ func (l *Loop) announce(tool Tool, u Block) {
 // execute runs one tool and maps its outcome to a tool_result block. It does not
 // announce (OnToolStart) — the caller announces in deterministic order off the
 // parallel goroutines so the callback contract stays serial.
-func (l *Loop) execute(ctx context.Context, tool Tool, u Block) Block {
+//
+// A panic barrier wraps tool.Run: a tool that panics must NOT crash the shared
+// process (the web assistant runs in-process inside the Control Plane, so a panic
+// would take down the CP). Any panic is recovered and converted into an IsError
+// tool_result carrying the panic message, so the model sees the failure and the
+// turn survives. This covers BOTH execution paths — the synchronous confirm-tier
+// call on the loop goroutine and the parallel auto-tier goroutines.
+func (l *Loop) execute(ctx context.Context, tool Tool, u Block) (out Block) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = ToolResult(u.ID, fmt.Sprintf("tool panicked: %v", r), true)
+		}
+	}()
 	res, err := tool.Run(ctx, u.Input)
 	if err != nil {
 		return ToolResult(u.ID, "tool error: "+err.Error(), true)
 	}
 	// Cap the body the model sees so one large resource read can't dominate the window.
 	return ToolResult(u.ID, capToolResult(res.Content), res.IsError)
-}
-
-// withBuiltins ensures the kernel builtins remain reachable even when a skill
-// narrows the toolset (so the agent can still load another skill / remember).
-func withBuiltins(allow []string) []string {
-	out := append([]string(nil), allow...)
-	for _, b := range []string{"use_skill", "remember", "forget"} {
-		if !contains(out, b) {
-			out = append(out, b)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }

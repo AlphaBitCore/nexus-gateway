@@ -44,8 +44,12 @@ type Deps struct {
 	// EnvDetail returns the CP + AI Gateway URLs + prod flag for the named env so
 	// the env picker can show what each row points at. Nil means the picker
 	// renders names only (older builds).
-	EnvDetail     func(name string) (cpURL, aigwURL string, prod bool, err error)
-	Login         func(context.Context) error
+	EnvDetail func(name string) (cpURL, aigwURL string, prod bool, err error)
+	Login     func(context.Context) error
+	// Logout clears the active environment's stored credentials (access + refresh
+	// token, admin key) so the next request requires a fresh login. Wired from the
+	// dashboard's /logout slash command. Nil disables logout (single-env / tests).
+	Logout        func() error
 	SaveVKSecret  func(secret string) error
 	SaveSelection func(model, vkID, vkName string) error
 	// CreateVK creates a personal Virtual Key the operator owns and returns its
@@ -56,6 +60,11 @@ type Deps struct {
 	// implements it over capabilities.BuildAgent; nil disables the conversation
 	// (the dashboard stays fully navigable). See AgentBuildFunc.
 	BuildAgent AgentBuildFunc
+	// OpenSessions resolves the ACTIVE env's local session store for the
+	// /sessions picker (list + resume + delete past conversations), read at call
+	// time so an env switch is reflected. Nil disables the picker (the command
+	// then reports history unavailable).
+	OpenSessions func() (SessionBrowser, error)
 	// Log is the CLI's diagnostic file logger. The conversation mirrors a
 	// user-visible turn failure into it (with env + view) so a hang the operator
 	// reports can be matched against the transport timings already logged. nil
@@ -86,7 +95,7 @@ type modelChoice struct {
 
 // wizard is the first-run entry flow: login → pick model → pick VK + secret.
 // It runs only when the stored selection is missing/invalid; otherwise the
-// shell goes straight to the dashboard (FR-13).
+// shell goes straight to the dashboard.
 type wizard struct {
 	deps    Deps
 	session Session

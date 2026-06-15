@@ -245,12 +245,36 @@ paths:
             operationId: fulfillDSAR
             summary: Fulfill a DSAR request
             description: |-
-                Executes the request's data operation against the subject's
-                traffic data and marks the request COMPLETED. For an ACCESS
-                request the response contains the data `export`; for an ERASURE
-                request it contains the anonymisation `outcome` (counts of
-                anonymised rows). The updated request record is returned under
-                `request`. Responds 404 when the request ID is unknown.
+                Executes the request's data operation against every personal-data
+                surface for the subject and marks the request COMPLETED.
+
+                The subjectId is first validated to resolve to a known user; a
+                subjectId that matches no user is rejected with 422 and the
+                request is marked REJECTED (never COMPLETED) so an empty
+                operation is not mistaken for a successful one.
+
+                For an ACCESS request the response contains the data `export`,
+                covering the user record, IAM group memberships, AI-gateway +
+                agent traffic, the inline request/response bodies (capped),
+                device-assignment history, and assistant sessions/memory/files.
+                The admin-audit row records only per-surface counts, never the
+                export contents.
+
+                For an ERASURE request the response contains the
+                `outcome`. Erasure is a full Art.17 account deletion by default,
+                performed in one atomic transaction: it anonymises the subject's
+                traffic rows, scrubs the captured payload/normalized bodies,
+                deletes the assistant data, scrubs prior-ACCESS exports, and then
+                deletes the account record itself — the subject's owned virtual
+                keys and admin API keys, federated-identity links, refresh tokens,
+                the SCIM tokens they created, and the `NexusUser` row. The
+                tamper-evident admin-audit hash chain is the one surface retained
+                (accountability exception). The `outcome` reports the per-stage
+                counts (anonymised rows, scrubbed bodies, deleted assistant rows,
+                scrubbed prior-ACCESS exports, deleted owned keys / identity links
+                / tokens, and whether the account row was deleted). The updated
+                request record is returned under `request`. Responds 404 when the
+                request ID is unknown.
             x-nexus-iam-action: iam.ResourceDSAR.Action(iam.VerbFulfill)
             x-nexus-tier: confirm
             parameters:
@@ -263,6 +287,16 @@ paths:
             responses:
                 "404":
                     description: Not Found
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "422":
+                    description: |-
+                        Unprocessable Entity — the subjectId does not resolve to a
+                        known user. The request is marked REJECTED and no data is
+                        changed. Error code: SUBJECT_NOT_FOUND.
                     content:
                         application/json:
                             schema:
@@ -293,6 +327,17 @@ paths:
                                     vkAnonymised: 42
                                     agentAnonymised: 8
                                     totalAnonymised: 50
+                                    payloadsScrubbed: 50
+                                    normalizedScrubbed: 50
+                                    spillRefsOrphaned: 3
+                                    assistantErased: 12
+                                    accessOutcomesScrubbed: 1
+                                    vkOwnedDeleted: 2
+                                    adminApiKeysDeleted: 1
+                                    federatedIdentitiesDeleted: 2
+                                    refreshTokensDeleted: 4
+                                    scimTokensDeleted: 0
+                                    accountDeleted: true
 components:
     schemas:
         dsarstore_DSARRequest:

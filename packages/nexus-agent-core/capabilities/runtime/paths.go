@@ -7,18 +7,7 @@ import (
 )
 
 // The default on-disk locations for the agent's per-operator state, all under
-// ~/.config/nexus. They live in the capabilities root (not the skills sub-package)
-// because the cli wires the memory + session dirs alongside the skill dir when it
-// builds an agent — one place to resolve every nexus config path.
-
-// DefaultSkillDir is ~/.config/nexus/skills.
-func DefaultSkillDir() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user config dir: %w", err)
-	}
-	return filepath.Join(dir, "nexus", "skills"), nil
-}
+// ~/.config/nexus — one place to resolve every nexus config path.
 
 // DefaultMemoryDir is ~/.config/nexus/memory — the base of the agent's learning
 // memory. The store splits it into global/ (operator preferences + procedures, which

@@ -62,7 +62,7 @@ func TestDefaultSlashCommandsCoverageAndKinds(t *testing.T) {
 	}
 	// The conversation wires exactly these agent controls; the palette advertises
 	// only what it can handle.
-	for _, a := range []string{"clear", "help"} {
+	for _, a := range []string{"clear", "help", "sessions"} {
 		c, ok := byName[a]
 		if !ok {
 			t.Errorf("missing agent command /%s", a)
@@ -74,7 +74,7 @@ func TestDefaultSlashCommandsCoverageAndKinds(t *testing.T) {
 	}
 	// Commands the conversation does not yet wire must NOT be advertised — the
 	// palette must never offer a command that replies "unknown command".
-	for _, gone := range []string{"raw", "sessions", "resume", "skill"} {
+	for _, gone := range []string{"raw", "skill"} {
 		if _, ok := byName[gone]; ok {
 			t.Errorf("/%s is advertised but not wired in the conversation — drop it from the palette", gone)
 		}

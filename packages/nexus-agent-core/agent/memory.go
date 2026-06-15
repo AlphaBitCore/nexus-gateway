@@ -140,6 +140,15 @@ func (m *Memory) list(global bool) []MemoryFact {
 	return facts
 }
 
+// List returns every stored fact across both scopes — the active env's facts
+// followed by the global facts, each with Global set and ordered by slug within a
+// scope. It is the full enumeration the sync layer needs to mirror memory across
+// devices (and what a `memory ls` would render); the per-turn context still loads
+// only the compact Index, not this.
+func (m *Memory) List() []MemoryFact {
+	return append(m.list(false), m.list(true)...)
+}
+
 // Recall reads one fact by name, checking the active env first then global. ok is
 // false when no such fact exists.
 func (m *Memory) Recall(name string) (MemoryFact, bool, error) {
@@ -286,11 +295,18 @@ func parseFact(raw []byte) (MemoryFact, bool) {
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
-// slugify turns a title into a filesystem-safe, stable handle.
-func slugify(s string) string {
+// Slugify turns a title into a filesystem-safe, stable handle. Exported
+// because the slug IS a memory fact's identity across the sync ledger: every
+// store that canonicalizes a fact name (device store, cloud write-through)
+// must use this exact function, or the same fact forks into two ledger
+// objects that never converge.
+func Slugify(s string) string {
 	out := slugRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(s)), "-")
 	return strings.Trim(out, "-")
 }
+
+// slugify is the package-internal spelling of Slugify.
+func slugify(s string) string { return Slugify(s) }
 
 // sanitizeEnv keeps the env subdirectory name to a safe slug (never empty so the
 // path is always well-formed).
@@ -302,8 +318,14 @@ func sanitizeEnv(env string) string {
 	return s
 }
 
-// oneLine collapses whitespace/newlines so a description is a single index line.
-func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+// OneLine collapses whitespace/newlines so a description is a single index
+// line. Exported for the same reason as Slugify: it is the canonical payload
+// normalization for a memory fact's description/body, and every writer
+// (device or cloud) must produce byte-identical output for sync convergence.
+func OneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// oneLine is the package-internal spelling of OneLine.
+func oneLine(s string) string { return OneLine(s) }
 
 // secretMarkers are conservative credential signals — refusing on these keeps an
 // accidental key out of memory without false-positiving on UUIDs / ordinary facts.

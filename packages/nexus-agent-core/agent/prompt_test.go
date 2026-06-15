@@ -9,7 +9,6 @@ func TestBuildSystemPrompt(t *testing.T) {
 	p := BuildSystemPrompt(PromptInput{
 		Env:           "prod",
 		IsProd:        true,
-		SkillCatalog:  "- incident-triage: walk a firing alert",
 		DomainContext: "Cost model: per-1k-token pricing by provider.",
 	})
 	// Persona + role.
@@ -39,10 +38,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 			t.Fatalf("prompt must NOT leak internal IoT term %q", banned)
 		}
 	}
-	// Skill catalog + domain context injected.
-	if !strings.Contains(p, "incident-triage") {
-		t.Fatal("prompt must include the skill catalog")
-	}
+	// Domain context injected.
 	if !strings.Contains(p, "Cost model") {
 		t.Fatal("prompt must include injected domain context")
 	}
@@ -79,7 +75,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 }
 
 func TestBuildSystemPromptNonProdAndNoDomain(t *testing.T) {
-	p := BuildSystemPrompt(PromptInput{Env: "local", IsProd: false, SkillCatalog: "(no skills available)"})
+	p := BuildSystemPrompt(PromptInput{Env: "local", IsProd: false})
 	if strings.Contains(strings.ToUpper(p), "PRODUCTION ENVIRONMENT") {
 		t.Fatal("local prompt must not claim production")
 	}
@@ -97,7 +93,7 @@ func TestBuildSystemPromptNonProdAndNoDomain(t *testing.T) {
 // capabilities, safety, and operator vocabulary. The CLI default keeps the terser
 // engineering wording (verified below) so this is a surface re-word, not a rewrite.
 func TestBuildSystemPromptWebSurface(t *testing.T) {
-	web := BuildSystemPrompt(PromptInput{Env: "web", IsProd: true, Surface: "web", SkillCatalog: "- x: y"})
+	web := BuildSystemPrompt(PromptInput{Env: "web", IsProd: true, Surface: "web"})
 	for _, banned := range []string{"cockpit", "file-backed", "drift", "shadow", "Thing", "desired state", "reported state"} {
 		if strings.Contains(web, banned) {
 			t.Errorf("web prompt (FR-20/AC-3) must not contain %q", banned)
@@ -112,7 +108,7 @@ func TestBuildSystemPromptWebSurface(t *testing.T) {
 
 	// The CLI/TUI default (no Surface) keeps the terser engineering wording — proves
 	// the change is surface-scoped, not a global edit that also altered the CLI face.
-	cli := BuildSystemPrompt(PromptInput{Env: "local", IsProd: false, SkillCatalog: "- x: y"})
+	cli := BuildSystemPrompt(PromptInput{Env: "local", IsProd: false})
 	for _, kept := range []string{"cockpit", "file-backed", "drift"} {
 		if !strings.Contains(cli, kept) {
 			t.Errorf("CLI default prompt should still use %q (web re-word must not leak to CLI)", kept)

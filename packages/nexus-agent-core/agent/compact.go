@@ -10,8 +10,10 @@ import (
 // only by the explicit /compact path (ForceCompact).
 const compactInstruction = `Summarize the conversation so far into a compact briefing that preserves: (1) findings and the data behind them, (2) decisions made, (3) open threads still to resolve. Write it as notes the assistant can rely on to continue. Do not invent anything not present above.`
 
-// summaryPrefix tags the synthesised summary message so it reads as prior context.
-const summaryPrefix = "[earlier conversation summary]\n"
+// SummaryPrefix tags the synthesised summary message so it reads as prior
+// context; hosts use it to render the condensed briefing as a system notice
+// instead of a user bubble when a transcript is reloaded.
+const SummaryPrefix = "[earlier conversation summary]\n"
 
 // elidedPlaceholder replaces an old block body when the deterministic trimmer frees
 // space. The block (and its tool_use/tool_result id) is kept so message structure and
@@ -58,6 +60,23 @@ type Compactor struct {
 	calibration float64 // learned actual/estimate token ratio (see observe)
 	trimBudget  int     // FitToWindow ceiling in ESTIMATE tokens; derived from window/calibration
 	keepTarget  int     // ForceCompact: keep the recent tail within this estimated-token budget
+}
+
+// autoCompactFraction is the share of the model window at which a FINISHED turn
+// triggers a durable session compaction automatically — the same summarize-and-
+// rewrite the manual /compact runs, fired by the kernel instead of waiting for a
+// human. Without it the deterministic trimmer re-elides the same overgrown
+// transcript every single turn ("context trimmed" spam) and the persisted
+// session never shrinks. 0.70 leaves enough headroom that the post-compact
+// session (summary + the summaryKeepFraction tail) sits well below the trigger,
+// so consecutive turns do not re-fire it.
+const autoCompactFraction = 0.70
+
+// ShouldAutoCompact reports whether a turn that ACTUALLY consumed promptTokens
+// (the gateway-billed figure, not an estimate) has crossed the auto-compaction
+// threshold. Nil-safe: an agent without a compactor never auto-compacts.
+func (c *Compactor) ShouldAutoCompact(promptTokens int) bool {
+	return c != nil && promptTokens > 0 && promptTokens >= int(float64(c.window)*autoCompactFraction)
 }
 
 // NewCompactor sizes the budgets to the model's context window (the catalog's
@@ -142,7 +161,7 @@ func capToolResult(s string) string {
 	if len(s) <= maxToolResultChars {
 		return s
 	}
-	return s[:maxToolResultChars] + "\n…[output truncated to fit the context window]"
+	return CutText(s, maxToolResultChars) + "\n…[output truncated to fit the context window]"
 }
 
 // FitToWindow returns a model-facing copy of msgs bounded to the trim budget,
@@ -258,7 +277,7 @@ func (c *Compactor) ForceCompact(ctx context.Context, history []Message) ([]Mess
 		return history, nil, err
 	}
 	summary := strings.TrimSpace(resp.Message.Text())
-	summaryMsg := TextMessage(RoleUser, summaryPrefix+summary)
+	summaryMsg := TextMessage(RoleUser, SummaryPrefix+summary)
 
 	out := make([]Message, 0, 1+len(recent))
 	out = append(out, summaryMsg)

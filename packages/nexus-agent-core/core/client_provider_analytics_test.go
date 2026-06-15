@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestClient_Wave2Methods(t *testing.T) {
+func TestClient_ProviderAnalyticsMethods(t *testing.T) {
 	c, done := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/admin/analytics/by-provider":
@@ -94,7 +94,7 @@ func TestClient_MitigationWriteErrors(t *testing.T) {
 	}
 }
 
-func TestClient_Wave2ErrorPaths(t *testing.T) {
+func TestClient_ProviderAnalyticsErrorPaths(t *testing.T) {
 	c, done := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)

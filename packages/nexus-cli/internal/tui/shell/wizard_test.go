@@ -18,6 +18,8 @@ import (
 type recordingDeps struct {
 	deps        Deps
 	loginCalls  int
+	logoutCalls int
+	logoutErr   error
 	savedSecret string
 	savedModel  string
 	savedVKID   string
@@ -72,6 +74,10 @@ func newRecordingDeps(gw Gateway) *recordingDeps {
 		Login: func(context.Context) error {
 			r.loginCalls++
 			return r.loginErr
+		},
+		Logout: func() error {
+			r.logoutCalls++
+			return r.logoutErr
 		},
 		SaveVKSecret: func(s string) error {
 			if r.saveSecErr != nil {

@@ -27,6 +27,13 @@ type Model struct {
 	slashOpen bool
 	slash     slashPalette
 
+	// /sessions picker overlay state. openSessions resolves the active env's
+	// local session store (wired from Deps.OpenSessions); nil disables the
+	// picker with a named notice.
+	sessionsOpen bool
+	sessionPick  sessionPicker
+	openSessions func() (SessionBrowser, error)
+
 	conv      *conversation
 	focus     paneFocus // which pane owns the keyboard; zero value = focusChat
 	easeFrame int       // split-resize ease progress; easeFrames = settled
@@ -138,6 +145,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case slashSelectedMsg:
 		m.slashOpen = false
 		return m.handleSlash(msg)
+	case openSessionsMsg:
+		return m.openSessionPicker()
+	case sessionResumeMsg:
+		return m.resumeSession(msg.id)
+	case sessionsCloseMsg:
+		m.sessionsOpen = false
+		return m, nil
 	case kit.SetModelMsg:
 		return m.setChatModel(msg.Code), nil
 	case kit.OpenEventMsg:
@@ -202,6 +216,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.slashOpen {
 		var cmd tea.Cmd
 		m.slash, cmd = m.slash.Update(msg)
+		return m, cmd
+	}
+	if m.sessionsOpen {
+		var cmd tea.Cmd
+		m.sessionPick, cmd = m.sessionPick.Update(msg)
 		return m, cmd
 	}
 	// tab toggles which pane owns the keyboard. Suppressed only while the confirm
@@ -330,6 +349,49 @@ func (m Model) setChatModel(code string) Model {
 	return m
 }
 
+// openSessionPicker resolves the local session store and raises the /sessions
+// overlay. Every failure mode lands as a named conversation notice instead of a
+// blank overlay; an empty store still opens (the picker names the empty state).
+func (m Model) openSessionPicker() (tea.Model, tea.Cmd) {
+	if m.openSessions == nil {
+		m.conv.notice = "session history isn't available in this build"
+		return m, nil
+	}
+	br, err := m.openSessions()
+	if err != nil {
+		m.conv.notice = "couldn't open session history: " + err.Error()
+		return m, nil
+	}
+	metas, err := br.List()
+	if err != nil {
+		m.conv.notice = "couldn't list sessions: " + err.Error()
+		return m, nil
+	}
+	m.sessionsOpen = true
+	m.sessionPick = newSessionPicker(br, metas)
+	return m, nil
+}
+
+// resumeSession loads the picked session and hands it to the conversation, which
+// re-renders the saved transcript and binds the next agent build to it — so the
+// next turn appends to the SAME persisted session id. A load failure keeps the
+// picker open with the error named.
+func (m Model) resumeSession(id string) (tea.Model, tea.Cmd) {
+	if m.sessionPick.br == nil { // a stray resume with no picker open — nothing to load from
+		return m, nil
+	}
+	sess, err := m.sessionPick.br.Load(id)
+	if err != nil {
+		m.sessionPick.err = "couldn't load: " + err.Error()
+		return m, nil
+	}
+	m.sessionsOpen = false
+	m.conv.resumeSession(sess)
+	m.focus = focusChat
+	m.easeFrame = easeFrames // snap so the restored transcript is immediately full-size
+	return m, m.conv.focus()
+}
+
 // handleSlash dispatches a selected slash command: a view command resolves to a
 // top-level view (with any trailing arg, e.g. an event id); an agent command runs
 // its control in the resident chat (focusing it).
@@ -341,11 +403,19 @@ func (m Model) handleSlash(msg slashSelectedMsg) (tea.Model, tea.Cmd) {
 		ccmd := m.conv.agentCommand("/" + msg.cmd.name)
 		return m, tea.Batch(m.conv.focus(), ccmd)
 	}
-	// /env hands the dashboard back to the entry wizard at the env picker so
-	// the operator can switch/edit/delete environments without quitting +
-	// relaunching. Shell intercepts wantEnvSwitchMsg.
-	if msg.cmd.kind == slashShell && msg.cmd.name == "env" {
-		return m, func() tea.Msg { return wantEnvSwitchMsg{} }
+	// Shell actions are handled above the dashboard by the Shell model: /env
+	// reopens the wizard's env picker; /login re-runs the browser OAuth flow in
+	// place (recovering an expired session without losing the current view);
+	// /logout clears the stored credentials and drops back to the wizard.
+	if msg.cmd.kind == slashShell {
+		switch msg.cmd.name {
+		case "env":
+			return m, func() tea.Msg { return wantEnvSwitchMsg{} }
+		case "login":
+			return m, func() tea.Msg { return wantLoginMsg{} }
+		case "logout":
+			return m, func() tea.Msg { return wantLogoutMsg{} }
+		}
 	}
 	// /model switches the chat model: with an arg, directly (focus stays put — no
 	// canvas to land on); without, opens the Models view in pick mode and focuses it.
@@ -373,114 +443,6 @@ func (m Model) handleSlash(msg slashSelectedMsg) (tea.Model, tea.Cmd) {
 	// immediately navigate the result.
 	m = m.focusCanvasForView()
 	return m.jumpTop(idx)
-}
-
-// focusCanvasForView moves keyboard focus to the canvas (snapping the split) when a
-// slash command drives a view, so the operator lands ready to navigate it.
-func (m Model) focusCanvasForView() Model {
-	m.focus = focusCanvas
-	m.conv.blur()
-	m.easeFrame = easeFrames
-	return m
-}
-
-// jumpTop switches to a top-level view, resetting the drill path (a lateral jump
-// starts a fresh breadcrumb rather than deepening the current trail). Leaving a
-// streaming view tears its background stream down first.
-func (m Model) jumpTop(i int) (tea.Model, tea.Cmd) {
-	if i < 0 || i >= len(m.views) {
-		return m, nil
-	}
-	m.leaveActive(i)
-	m.nav.reset()
-	m.active = i
-	return m, m.views[i].Init()
-}
-
-// drillEvent pushes the current view onto the nav stack and opens the Event view
-// on the given id (esc later pops back to where the operator drilled from).
-func (m Model) drillEvent(msg kit.OpenEventMsg) (tea.Model, tea.Cmd) {
-	idx := m.indexOf("Event")
-	m = m.drillTo(idx)
-	ev := m.views[m.active].(*viewpkg.EventView)
-	if msg.Explain {
-		ev.SetIDExplain(msg.ID)
-	} else {
-		ev.SetID(msg.ID)
-	}
-	return m, ev.Init()
-}
-
-// applyAgentNav is the agent's navigate canvas drive: open the named view
-// (drilling so esc returns), applying a radar filter when one rode along, and
-// keep pumping the bridge.
-func (m Model) applyAgentNav(msg agentNavMsg) (tea.Model, tea.Cmd) {
-	idx := resolveViewIndex(m.entries, msg.view)
-	if idx < 0 {
-		return m, m.conv.drainCmd()
-	}
-	m = m.drillTo(idx)
-	if r, ok := m.views[m.active].(*viewpkg.Radar); ok {
-		r.ApplyFilter(msg.filter)
-	}
-	return m, tea.Batch(m.views[m.active].Init(), m.conv.drainCmd())
-}
-
-// applyAgentShow is the agent's show_event canvas drive.
-func (m Model) applyAgentShow(msg agentShowMsg) (tea.Model, tea.Cmd) {
-	idx := m.indexOf("Event")
-	m = m.drillTo(idx)
-	ev := m.views[m.active].(*viewpkg.EventView)
-	ev.SetID(msg.id)
-	return m, tea.Batch(ev.Init(), m.conv.drainCmd())
-}
-
-// drillTo pushes the current view onto the nav stack and switches to i (a drill
-// deepens the trail). It returns the updated model: the receiver is by value, so
-// callers MUST use the result (m = m.drillTo(i)) — otherwise the active/nav
-// mutations are lost on the copy.
-func (m Model) drillTo(i int) Model {
-	if i < 0 || i >= len(m.views) || i == m.active {
-		return m
-	}
-	m.leaveActive(i)
-	m.nav.push(m.active)
-	m.active = i
-	return m
-}
-
-// popNav walks one step back up the drill path; past the root it lands on the
-// cockpit (index 0). A no-op when already at the cockpit with an empty stack.
-func (m Model) popNav() (tea.Model, tea.Cmd) {
-	idx, ok := m.nav.pop()
-	if !ok && m.active == 0 {
-		return m, nil
-	}
-	m.leaveActive(idx)
-	m.active = idx
-	return m, m.views[idx].Init()
-}
-
-// leaveActive tears down the active view's background stream when navigating to a
-// different view, so a mid-stream switch never leaks the goroutine + connection.
-func (m Model) leaveActive(next int) {
-	if next == m.active {
-		return
-	}
-	if l, ok := m.views[m.active].(leaver); ok {
-		l.Leave()
-	}
-}
-
-// indexOf resolves a registry entry name to its view index (0 if absent — the
-// registry always carries the named core views, so this is a safe default).
-func (m Model) indexOf(name string) int {
-	for i, e := range m.entries {
-		if e.name == name {
-			return i
-		}
-	}
-	return 0
 }
 
 // View composes the (prod-only) banner, breadcrumb, the vertical split (top canvas

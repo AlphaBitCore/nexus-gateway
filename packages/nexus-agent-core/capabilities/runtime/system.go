@@ -31,6 +31,15 @@ type osRunner struct{}
 func newOSRunner() *osRunner { return &osRunner{} }
 
 func (osRunner) Run(ctx context.Context, command string) (runResult, error) {
+	// The child inherits the full parent environment (cmd.Env left nil). This
+	// is deliberate: run_command is a general local shell tool, gated behind
+	// EnableSystem (true only for the local TUI/CLI host — the web assistant
+	// builds with EnableSystem=false and never mounts this tool, locked by
+	// TestPrivilegeBoundary on the control-plane side). A local shell tool
+	// that scrubbed PATH/HOME/tool-config out of its env would break the
+	// everyday commands it exists to run; the safety boundary is host
+	// privilege (local-only) plus the kernel Gate's CommandClassifier
+	// (dangerous commands escalate to a confirm), not env minimization.
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
