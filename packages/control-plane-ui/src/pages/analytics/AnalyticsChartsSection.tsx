@@ -27,7 +27,7 @@ export function AnalyticsChartsSection({
   const { t } = useTranslation();
 
   return (
-    <>
+    <div className={styles.costUsageSection}>
       <div className={styles.sectionHeader}>
         <h2 className={styles.sectionTitle}>{t('pages:traffic.sectionCostUsage')}</h2>
         <p className={styles.sectionSubtitle}>{t('pages:traffic.sectionCostUsageSubtitle', { groupBy })}</p>
@@ -132,6 +132,6 @@ export function AnalyticsChartsSection({
           )}
         </Card>
       </div>
-    </>
+    </div>
   );
 }

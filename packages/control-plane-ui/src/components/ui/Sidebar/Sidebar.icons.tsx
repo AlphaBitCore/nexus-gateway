@@ -101,32 +101,62 @@ export function MenuIcon({ name }: { name: string }) {
 
 type NavIconName =
   | 'activity'
+  | 'alert-triangle'
+  | 'archive'
+  | 'bell'
+  | 'bot'
   | 'bookmark'
   | 'bolt'
+  | 'box'
+  | 'broadcast'
+  | 'bug'
   | 'building'
   | 'chart'
   | 'circle-check'
+  | 'clipboard'
   | 'clock'
   | 'cog'
   | 'cube'
+  | 'database'
   | 'deviceSquare'
+  | 'domain'
   | 'dot'
   | 'file'
   | 'fileCheck'
+  | 'fileMinus'
+  | 'fileSearch'
   | 'folder'
+  | 'folderUsers'
+  | 'gauge'
   | 'globe'
   | 'grid'
+  | 'hard-drive'
+  | 'hourglass'
+  | 'id-card'
   | 'key'
   | 'key-2'
   | 'layers'
+  | 'list-check'
   | 'link'
+  | 'lock-keyhole'
   | 'monitor'
+  | 'network'
+  | 'radio'
   | 'pencil'
   | 'play'
   | 'power'
+  | 'radar'
   | 'refresh'
   | 'route'
   | 'server'
+  | 'terminal'
+  | 'timer'
+  | 'upload-cloud'
+  | 'wrench'
+  | 'wand'
+  | 'sliders'
+  | 'scan'
+  | 'shield'
   | 'shield-check'
   | 'users';
 
@@ -145,6 +175,65 @@ function SidebarIconGlyph({ name }: { name: NavIconName }) {
       return (
         <Icon>
           <path d="M3 12l4-4 4 6 4-2 6 4" />
+        </Icon>
+      );
+    case 'bell':
+      return (
+        <Icon>
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </Icon>
+      );
+    case 'bot':
+      return (
+        <Icon>
+          <rect x="5" y="7" width="14" height="12" rx="2" />
+          <path d="M12 7V3" />
+          <path d="M8 3h8" />
+          <path d="M9 12h.01M15 12h.01" />
+          <path d="M9 16h6" />
+        </Icon>
+      );
+    case 'alert-triangle':
+      return (
+        <Icon>
+          <path d="M10.3 3.7 2.4 18a2 2 0 0 0 1.8 3h15.6a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0Z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </Icon>
+      );
+    case 'archive':
+      return (
+        <Icon>
+          <rect x="3" y="4" width="18" height="4" rx="1" />
+          <path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+          <path d="M10 12h4" />
+        </Icon>
+      );
+    case 'box':
+      return (
+        <Icon>
+          <path d="M21 8 12 3 3 8l9 5 9-5Z" />
+          <path d="M3 8v8l9 5 9-5V8" />
+          <path d="M12 13v8" />
+        </Icon>
+      );
+    case 'broadcast':
+      return (
+        <Icon>
+          <path d="M4.5 16.5a7 7 0 0 1 0-9" />
+          <path d="M19.5 7.5a7 7 0 0 1 0 9" />
+          <path d="M8 13a3 3 0 0 1 0-2" />
+          <path d="M16 11a3 3 0 0 1 0 2" />
+          <circle cx="12" cy="12" r="1" />
+        </Icon>
+      );
+    case 'bug':
+      return (
+        <Icon>
+          <path d="M8 2l1.88 1.88M16 2l-1.88 1.88" />
+          <rect x="7" y="5" width="10" height="14" rx="5" />
+          <path d="M3 13h4M17 13h4M4 19l3-3M20 19l-3-3M4 7l3 3M20 7l-3 3" />
         </Icon>
       );
     case 'chart':
@@ -215,6 +304,56 @@ function SidebarIconGlyph({ name }: { name: NavIconName }) {
           <path d="M9 12l2 2 4-4" />
         </Icon>
       );
+    case 'clipboard':
+      return (
+        <Icon>
+          <rect x="8" y="2" width="8" height="4" rx="1" />
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+          <path d="M8 12h8M8 16h5" />
+        </Icon>
+      );
+    case 'domain':
+      return (
+        <Icon>
+          <rect x="3" y="8" width="18" height="12" rx="2" />
+          <path d="M7 8V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v3" />
+          <path d="M7 13h2M11 13h2M15 13h2M7 17h2M11 17h2M15 17h2" />
+        </Icon>
+      );
+    case 'fileSearch':
+      return (
+        <Icon>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6" />
+          <polyline points="14 2 14 8 20 8" />
+          <circle cx="16" cy="16" r="3" />
+          <path d="m18.5 18.5 2.5 2.5" />
+        </Icon>
+      );
+    case 'fileMinus':
+      return (
+        <Icon>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <path d="M8 15h8" />
+        </Icon>
+      );
+    case 'folderUsers':
+      return (
+        <Icon>
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+          <circle cx="10" cy="12" r="2" />
+          <path d="M6.5 17a3.5 3.5 0 0 1 7 0" />
+          <path d="M15 11.5a2 2 0 0 1 2 2" />
+        </Icon>
+      );
+    case 'gauge':
+      return (
+        <Icon>
+          <path d="M21 12a9 9 0 1 0-18 0" />
+          <path d="M12 12l4-4" />
+          <path d="M7 14h10" />
+        </Icon>
+      );
     case 'bookmark':
       return (
         <Icon>
@@ -268,6 +407,64 @@ function SidebarIconGlyph({ name }: { name: NavIconName }) {
         <Icon>
           <rect x="3" y="3" width="18" height="18" rx="2" />
           <rect x="8" y="8" width="8" height="8" rx="1" />
+        </Icon>
+      );
+    case 'database':
+      return (
+        <Icon>
+          <ellipse cx="12" cy="5" rx="8" ry="3" />
+          <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+          <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+        </Icon>
+      );
+    case 'hard-drive':
+      return (
+        <Icon>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="M7 15h.01M11 15h6" />
+          <path d="M7 9h10" />
+        </Icon>
+      );
+    case 'id-card':
+      return (
+        <Icon>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <circle cx="9" cy="12" r="2" />
+          <path d="M13 10h5M13 14h4M6 17a3 3 0 0 1 6 0" />
+        </Icon>
+      );
+    case 'hourglass':
+      return (
+        <Icon>
+          <path d="M6 2h12" />
+          <path d="M6 22h12" />
+          <path d="M8 2v5a4 4 0 0 0 2 3.46L12 12l2-1.54A4 4 0 0 0 16 7V2" />
+          <path d="M8 22v-5a4 4 0 0 1 2-3.46L12 12l2 1.54A4 4 0 0 1 16 17v5" />
+        </Icon>
+      );
+    case 'list-check':
+      return (
+        <Icon>
+          <path d="M9 6h11M9 12h11M9 18h11" />
+          <path d="m3 6 1 1 2-2M3 12l1 1 2-2M3 18l1 1 2-2" />
+        </Icon>
+      );
+    case 'lock-keyhole':
+      return (
+        <Icon>
+          <rect x="4" y="11" width="16" height="10" rx="2" />
+          <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          <circle cx="12" cy="16" r="1" />
+          <path d="M12 17v2" />
+        </Icon>
+      );
+    case 'network':
+      return (
+        <Icon>
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="14" width="7" height="7" rx="1" />
+          <path d="M10 6h4a4 4 0 0 1 4 4v4" />
+          <path d="M6.5 10v4a4 4 0 0 0 4 4H14" />
         </Icon>
       );
     case 'server':
@@ -346,6 +543,85 @@ function SidebarIconGlyph({ name }: { name: NavIconName }) {
           <line x1="12" y1="17" x2="12" y2="21" />
         </Icon>
       );
+    case 'radio':
+      return (
+        <Icon>
+          <path d="M4.9 19.1a10 10 0 0 1 0-14.2" />
+          <path d="M7.8 16.2a6 6 0 0 1 0-8.4" />
+          <circle cx="12" cy="12" r="2" />
+          <path d="M16.2 7.8a6 6 0 0 1 0 8.4" />
+          <path d="M19.1 4.9a10 10 0 0 1 0 14.2" />
+        </Icon>
+      );
+    case 'radar':
+      return (
+        <Icon>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 12l6-6" />
+          <path d="M7.8 16.2a6 6 0 0 0 8.4 0" />
+          <path d="M9.9 14.1a3 3 0 0 0 4.2 0" />
+        </Icon>
+      );
+    case 'scan':
+      return (
+        <Icon>
+          <path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" />
+          <path d="M8 12h8" />
+          <path d="M12 8v8" />
+        </Icon>
+      );
+    case 'shield':
+      return (
+        <Icon>
+          <path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6z" />
+        </Icon>
+      );
+    case 'sliders':
+      return (
+        <Icon>
+          <path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0" />
+          <circle cx="16" cy="6" r="2" />
+          <circle cx="8" cy="12" r="2" />
+          <circle cx="18" cy="18" r="2" />
+        </Icon>
+      );
+    case 'terminal':
+      return (
+        <Icon>
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="m8 9 3 3-3 3" />
+          <path d="M13 15h4" />
+        </Icon>
+      );
+    case 'timer':
+      return (
+        <Icon>
+          <path d="M10 2h4" />
+          <path d="M12 14l3-3" />
+          <circle cx="12" cy="14" r="8" />
+        </Icon>
+      );
+    case 'upload-cloud':
+      return (
+        <Icon>
+          <path d="M16 16l-4-4-4 4" />
+          <path d="M12 12v9" />
+          <path d="M20.4 18.4A5 5 0 0 0 18 9h-1.3A8 8 0 1 0 4 16.3" />
+        </Icon>
+      );
+    case 'wrench':
+      return (
+        <Icon>
+          <path d="M14.7 6.3a4 4 0 0 0-5 5L3 18l3 3 6.7-6.7a4 4 0 0 0 5-5l-2.4 2.4-3-3 2.4-2.4Z" />
+        </Icon>
+      );
+    case 'wand':
+      return (
+        <Icon>
+          <path d="M15 4V2M15 8v-2M11 6h2M17 6h2" />
+          <path d="M5 21l14-14-2-2L3 19l2 2Z" />
+        </Icon>
+      );
   }
   return null;
 }
@@ -355,22 +631,24 @@ function navIconNameForPath(path: string): NavIconName {
     case '/':
       return 'grid';
     case '/traffic':
-    case '/status':
       return 'activity';
+    case '/status':
+      return 'gauge';
     case '/analytics':
       return 'chart';
     case '/quota-usage':
-    case '/infrastructure/jobs':
       return 'clock';
+    case '/infrastructure/jobs':
+      return 'timer';
     case '/cache-roi':
-    case '/iam/roles':
       return 'layers';
+    case '/iam/roles':
+      return 'id-card';
     case '/ai-gateway/providers':
       return 'cog';
     case '/ai-gateway/credentials':
       return 'key';
     case '/ai-gateway/credential-reliability':
-    case '/compliance/exemptions':
       return 'shield-check';
     case '/ai-gateway/routing':
       return 'route';
@@ -388,15 +666,38 @@ function navIconNameForPath(path: string): NavIconName {
       return 'cube';
     case '/ai-gateway/passthrough':
       return 'bolt';
+    case '/compliance/overview':
+      return 'shield';
     case '/compliance/hooks':
       return 'link';
     case '/compliance/rule-packs':
-      return 'cube';
+      return 'box';
+    case '/compliance/interception-domains':
+      return 'domain';
+    case '/compliance/exemptions':
+      return 'fileMinus';
+    case '/compliance/ai-guard':
+      return 'scan';
+    case '/compliance/streaming':
+      return 'radio';
+    case '/compliance/payload-capture':
+      return 'archive';
+    case '/compliance/audit-logs':
+      return 'clipboard';
+    case '/compliance/dsar':
+      return 'fileSearch';
+    case '/alerts':
+      return 'bell';
+    case '/alerts/rules':
+      return 'list-check';
+    case '/alerts/channels':
+      return 'broadcast';
     case '/devices':
       return 'monitor';
     case '/devices/groups':
-    case '/iam/users':
-      return 'users';
+      return 'folderUsers';
+    case '/devices/device-auth':
+      return 'lock-keyhole';
     case '/devices/device-defaults':
       return 'deviceSquare';
     case '/infrastructure/nodes':
@@ -405,19 +706,44 @@ function navIconNameForPath(path: string): NavIconName {
       return 'refresh';
     case '/infrastructure/overrides':
       return 'pencil';
+    case '/infrastructure/errors':
+      return 'alert-triangle';
+    case '/infrastructure/dlq':
+      return 'database';
+    case '/infrastructure/crashes':
+      return 'bug';
+    case '/infrastructure/diag-mode':
+      return 'wrench';
     case '/infrastructure/observability-config':
+      return 'sliders';
+    case '/infrastructure/observability-retention':
+      return 'hourglass';
+    case '/infrastructure/siem':
+      return 'radar';
+    case '/infrastructure/proxy-rollout':
+      return 'network';
+    case '/infrastructure/agent-setup':
+      return 'hard-drive';
+    case '/infrastructure/cli-setup':
+      return 'terminal';
     case '/infrastructure/kill-switch':
       return 'power';
     case '/iam/organizations':
       return 'building';
     case '/iam/projects':
       return 'folder';
+    case '/iam/users':
+      return 'users';
     case '/iam/simulator':
       return 'play';
     case '/iam/identity-providers':
       return 'globe';
+    case '/tools/ai-gateway-simulator':
+      return 'bot';
+    case '/setup':
+      return 'wand';
     default:
-      return 'dot';
+      return 'file';
   }
 }
 

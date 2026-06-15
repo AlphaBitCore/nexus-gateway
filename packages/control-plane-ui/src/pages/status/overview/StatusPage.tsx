@@ -8,9 +8,8 @@ import {
   Tooltip,
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '@/components/ui';
-import type { SystemSettings, CacheStats, Provider, ProviderHealth } from '../../../api/types';
+import type { SystemSettings, Provider, ProviderHealth } from '../../../api/types';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '../../../constants/admin-api';
-import { useToast } from '../../../context/ToastContext';
 import { usePermission } from '../../../hooks/usePermission';
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
@@ -47,19 +46,13 @@ function providerDotColor(status: string): string {
 
 export function StatusPage() {
   const { t } = useTranslation();
-  const { addToast } = useToast();
   const [activeTab, setActiveTab] = useState('overview');
-  const [refreshing, setRefreshing] = useState(false);
   const canReadSettings = usePermission('settings:read');
 
   const { data: settings, loading: settingsLoading, error: settingsError, refetch: refetchSettings } = useApi<SystemSettings>(
     () => systemApi.getSettings(),
     ['admin', 'system', 'settings'],
     { skip: !canReadSettings },
-  );
-  const { data: cacheStats } = useApi<CacheStats>(
-    () => systemApi.getCacheStats(),
-    ['admin', 'system', 'cache-stats'],
   );
   const { data: health } = useApi<ReadinessResponse>(
     () => systemApi.checkReady(),
@@ -132,7 +125,6 @@ export function StatusPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="overview">{t('pages:status.tabOverview')}</TabsTrigger>
-          <TabsTrigger value="cache">{t('pages:status.tabCache')}</TabsTrigger>
           <TabsTrigger value="providers">{t('pages:status.tabProviders', { count: providers.length })}</TabsTrigger>
           <TabsTrigger value="jobs">{t('pages:status.tabJobs')}</TabsTrigger>
         </TabsList>
@@ -236,65 +228,6 @@ export function StatusPage() {
                 view (T36). The widget self-renders the empty state on
                 permission errors. */}
             <RecentErrorsWidget />
-          </Stack>
-        </TabsContent>
-
-        {/* Cache Tab — only CP-owned caches. The ai-gateway response
-            cache is a data-plane concern; per the page-scope decision in
-            #19, view it on the matching service detail page rather than
-            duplicate the surface here. */}
-        <TabsContent value="cache">
-          <Stack gap="lg">
-            <Card>
-              <Stack direction="horizontal" gap="sm" align="center" className={styles.cacheHeaderRow}>
-                <div className={styles.cacheTitle}>{t('pages:status.iamPolicyCache')}</div>
-              </Stack>
-              <div className={styles.statsGrid}>
-                <div className={styles.statCard}>
-                  <div className={styles.statValue}>
-                    {(cacheStats?.iamPolicyCacheEntries ?? 0).toLocaleString()}
-                  </div>
-                  <div className={styles.statLabel}>{t('pages:status.iamPolicyCacheEntries')}</div>
-                </div>
-              </div>
-              <p className={styles.iamCacheNote}>
-                {t('pages:status.iamPolicyCacheNote')}
-              </p>
-            </Card>
-
-            <Card>
-              <div className={styles.runtimeTitle}>{t('pages:status.responseCache')}</div>
-              <p className={styles.runtimeDesc}>
-                {t('pages:status.responseCacheRedirectNote')}{' '}
-                <Link to="/infrastructure/nodes" className={styles.scopeLink}>
-                  {t('pages:status.responseCacheRedirectLink')}
-                </Link>
-              </p>
-            </Card>
-
-            <Card>
-              <div className={styles.runtimeTitle}>{t('pages:status.runtimeConfigCache')}</div>
-              <p className={styles.runtimeDesc}>
-                {t('pages:status.runtimeConfigDesc')}
-              </p>
-              <Button
-                loading={refreshing}
-                onClick={async () => {
-                  setRefreshing(true);
-                  try {
-                    const res = await systemApi.refreshRuntimeCache({ targets: ['all'] });
-                    const refreshed = (res as { refreshed?: string[] }).refreshed ?? [];
-                    addToast(t('pages:status.runtimeCacheRefreshed', { targets: refreshed.join(', ') }), 'success');
-                  } catch (e) {
-                    addToast(e instanceof Error ? e.message : t('pages:status.refreshFailed'), 'error');
-                  } finally {
-                    setRefreshing(false);
-                  }
-                }}
-              >
-                {t('pages:status.refreshRuntimeCaches')}
-              </Button>
-            </Card>
           </Stack>
         </TabsContent>
 

@@ -332,7 +332,7 @@ export function MetricsTab({ thingId, thingType }: MetricsTabProps) {
           </div>
         </div>
         {retentionError ? (
-          <ErrorBanner message={retentionError.message} />
+          <ErrorBanner error={retentionError} />
         ) : null}
       </Card>
 

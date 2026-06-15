@@ -1,5 +1,134 @@
 /* LiveTrafficFilterPanel styles */
 
+.filterShell {
+  position: relative;
+  z-index: 5;
+  margin-bottom: var(--g-space-4);
+}
+
+.searchBar {
+  display: flex;
+  align-items: center;
+  width: min(100%, 420px);
+  height: 38px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.searchBar:focus-within {
+  border-color: var(--color-link);
+}
+
+.searchIcon {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  margin: 0 8px 0 17px;
+  flex: 0 0 15px;
+  border: 1.8px solid var(--color-text-muted);
+  border-radius: 50%;
+}
+
+.searchIcon::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  width: 7px;
+  height: 1.8px;
+  border-radius: 2px;
+  background: var(--color-text-muted);
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+
+.searchInput {
+  height: 36px;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
+.searchInput:focus,
+.searchInput:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.advancedFilterButton {
+  appearance: none;
+  align-self: stretch;
+  flex: 0 0 auto;
+  padding: 0 var(--g-space-4) 0 var(--g-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--color-link);
+  cursor: pointer;
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  white-space: nowrap;
+}
+
+.advancedFilterButton::after {
+  display: none !important;
+  content: none !important;
+}
+
+.advancedFilterButton:hover {
+  color: color-mix(in srgb, var(--color-link) 85%, var(--color-text-primary));
+  background: transparent !important;
+}
+
+.advancedFilterButton:focus,
+.advancedFilterButton:focus-visible,
+.advancedFilterButton:active {
+  background: transparent !important;
+}
+
+.advancedDropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(100vw - 64px, 760px);
+  padding: var(--g-space-5);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-surface);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+}
+
+.advancedDropdown :global(button[data-design-system-escape="primitive-internal"]:not([role="option"])) {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.advancedDropdown :global(button[data-design-system-escape="primitive-internal"]:not([role="option"]):hover) {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.collapsedActions {
+  display: none;
+}
+
 .panelCard {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -36,6 +165,12 @@
   margin-top: var(--g-space-3);
 }
 
+.fullWidthFilterRow {
+  display: grid;
+  grid-template-columns: 1fr;
+  margin-top: var(--g-space-3);
+}
+
 .primaryGrid4 {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -46,13 +181,67 @@
 }
 
 .timeRow {
-  margin-top: var(--g-space-4);
-  padding-top: var(--g-space-4);
-  border-top: 1px solid var(--color-border-light);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
   display: grid;
-  grid-template-columns: auto 1fr 1fr;
+  grid-template-columns: auto minmax(320px, 1fr);
   gap: var(--g-space-4);
-  align-items: start;
+  align-items: end;
+}
+
+.timeRangeBox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.timePresetGroup :global(button) {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--g-radius-md);
+  font-size: 13px;
+  line-height: 30px;
+}
+
+.timeRangeBox:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.timeRangeInput {
+  height: 30px;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  font-size: 13px;
+}
+
+.timeRangeInputEmpty {
+  color: var(--color-text-placeholder);
+}
+
+.timeRangeInput:hover,
+.timeRangeInput:focus,
+.timeRangeInput:focus-visible {
+  border: 0;
+  box-shadow: none;
+  outline: none;
+}
+
+.timeRangeDivider {
+  width: 1px;
+  height: 18px;
+  background: var(--color-border-light);
 }
 
 .presetBtn {
@@ -104,6 +293,14 @@
   box-sizing: border-box;
 }
 
+.dtInput::placeholder,
+.dtInputMono::placeholder,
+.timeRangeInput::placeholder,
+.filterShell :global(input::placeholder) {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
 .dtInputMono {
   composes: dtInput;
   font-family: var(--g-font-mono);
@@ -123,6 +320,14 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
+}
+
+.nativeSelect:has(option[value='']:checked) {
+  color: var(--color-text-placeholder);
+}
+
+.filterShell :global([class*='placeholder']) {
+  color: var(--color-text-placeholder);
 }
 
 .nativeSelectDisabled {
@@ -189,10 +394,53 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--g-space-2);
+  justify-content: flex-end;
+  gap: 10px;
   margin-top: var(--g-space-4);
-  padding-top: var(--g-space-3);
+  margin-right: calc(-1 * var(--g-space-5));
+  margin-bottom: calc(-1 * var(--g-space-5));
+  margin-left: calc(-1 * var(--g-space-5));
+  padding: 10px 20px;
   border-top: 1px solid var(--color-border-light);
+  border-radius: 0 0 10px 10px;
+  background: var(--color-surface);
+}
+
+.resetButton {
+  height: 32px;
+  padding: 4px 16px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.confirmButton {
+  height: 32px;
+  min-width: 158px;
+  padding: 5px 16px;
+  border-radius: 8px;
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.confirmButton.confirmButton:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 90%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--color-primary) 90%, var(--color-text-primary));
+  color: var(--color-primary-foreground);
+}
+
+.confirmButton.confirmButton:active {
+  border-color: color-mix(in srgb, var(--color-primary) 82%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--color-primary) 82%, var(--color-text-primary));
+  color: var(--color-primary-foreground);
 }
 
 /* Field compact */

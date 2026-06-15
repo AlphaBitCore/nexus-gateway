@@ -26,9 +26,14 @@ export function RoutingFlowCard({
   const hasRouted = e.routedProviderName || e.routedModelName;
   if (!hasRequested && !hasRouted) return null;
 
+  // Only flag "changed/rerouted" when the client actually pinned a requested
+  // provider/model that differs from what served. For `model="auto"` (and
+  // OpenAI-style requests that don't pin a provider) the requested side is
+  // empty — the gateway selecting a target is not a "reroute", so the card
+  // stays neutral rather than always lighting up.
   const changed =
-    (e.routedProviderName && e.routedProviderName !== e.providerName) ||
-    (e.routedModelName && e.routedModelName !== e.modelName);
+    (!!e.providerName && !!e.routedProviderName && e.routedProviderName !== e.providerName) ||
+    (!!e.modelName && !!e.routedModelName && e.routedModelName !== e.modelName);
 
   const rightCardClass = changed ? css.routingFlowCardChanged : css.routingFlowCard;
 

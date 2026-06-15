@@ -31,6 +31,13 @@ export function HeroSection({
   windowLabel,
 }: HeroSectionProps) {
   const { t } = useTranslation();
+  const renderStatMeta = (label: string, detail: string) => (
+    <span className={styles.heroStatMeta}>
+      <span>{label}</span>
+      <span className={styles.heroStatDivider}>|</span>
+      <span>{detail}</span>
+    </span>
+  );
 
   return (
     <section className={styles.hero}>
@@ -54,30 +61,25 @@ export function HeroSection({
       </div>
       <div className={styles.heroStats}>
         <div className={styles.heroStat}>
-          <span className={styles.heroStatLabel}>{t('pages:dashboard.combinedRequests')}</span>
           <span className={styles.heroStatValue}>{animRequests.toLocaleString()}</span>
-          <span className={styles.heroStatSub}>
-            {t('pages:dashboard.splitBarSubtitle', { vk: vkRequests.toLocaleString(), proxy: proxyTotalRequests.toLocaleString() })}
-          </span>
+          {renderStatMeta(
+            t('pages:dashboard.combinedRequests'),
+            t('pages:dashboard.splitBarSubtitle', { vk: vkRequests.toLocaleString(), proxy: proxyTotalRequests.toLocaleString() }),
+          )}
         </div>
         <div className={styles.heroStat}>
-          <span className={styles.heroStatLabel}>{t('pages:dashboard.totalCostLabel')}</span>
           <span className={styles.heroStatValue}>${(animCost100x / 100).toFixed(2)}</span>
-          <span className={styles.heroStatSub}>{t('pages:dashboard.estimated')}</span>
+          {renderStatMeta(t('pages:dashboard.totalCostLabel'), t('pages:dashboard.estimated'))}
         </div>
         <div className={styles.heroStat}>
-          <span className={styles.heroStatLabel}>{t('pages:dashboard.totalTokensLabel')}</span>
           <span className={styles.heroStatValue}>{formatTokens(animTokens)}</span>
-          <span className={styles.heroStatSub}>{t('pages:dashboard.promptPlusCompletion')}</span>
+          {renderStatMeta(t('pages:dashboard.totalTokensLabel'), t('pages:dashboard.promptPlusCompletion'))}
         </div>
         <div className={styles.heroStat}>
-          <span className={styles.heroStatLabel}>{t('pages:dashboard.complianceCoverage')}</span>
           <span className={styles.heroStatValue}>
             {proxyReachable === false ? '—' : <AnimatedNumber value={proxyCoveragePercent} precision={1} format={(n) => `${n.toFixed(1)}%`} />}
           </span>
-          <span className={styles.heroStatSub}>
-            {proxyReachable === false ? t('pages:dashboard.proxyNotReachable') : windowLabel}
-          </span>
+          {renderStatMeta(t('pages:dashboard.complianceCoverage'), proxyReachable === false ? t('pages:dashboard.proxyNotReachable') : windowLabel)}
         </div>
       </div>
     </section>

@@ -2,6 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Document base for relative asset URLs. vite emits relative ./assets/…
+         paths; this tag makes them resolve from the deployment root at ANY
+         route depth (e.g. /auth/callback) instead of against the current URL.
+         For sub-path deployments nginx rewrites href to the mount prefix
+         (e.g. /nexus/); App.tsx reads the same href for the router basename. -->
+    <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AlphaBitCore</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

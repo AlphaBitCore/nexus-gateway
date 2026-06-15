@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { api } from '@/api/client';
+import { devicesApi } from '@/api/services';
 import { DataTable, ErrorBanner, Skeleton } from '@/components/ui';
 import type { TrafficEvent } from '@/api/types';
 import { getColumnsForSource, type TrafficSourceFilter } from '@/pages/traffic/list/TrafficTab';
@@ -113,16 +114,46 @@ export function NodeTrafficTab({ nodeId, nodeType, nodeName }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedEntry, closeDrawer]);
 
+  // Compliance visibility: bypassBundles is a fleet-wide agent_settings
+  // default, so the exemption count is the same for every agent node. Surface
+  // it here — the place an auditor reviews a node's traffic — so a "this app
+  // is not inspected" carve-out can never be silently in effect. Only agent
+  // nodes have a bypass list; the GET is shared (same queryKey) with the
+  // Device Defaults settings page, so it costs no extra round-trip there.
+  const { data: agentSettings } = useApi(
+    () => devicesApi.getAgentSettings().catch(() => null),
+    ['admin', 'settings', 'device-defaults'],
+  );
+  const exemptCount = source === 'agent' ? (agentSettings?.bypassBundles?.length ?? 0) : 0;
+
   const columns = getColumnsForSource(source, t);
 
   if (loading) return <Skeleton.ListPageSkeleton />;
-  if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
+  if (error) return <ErrorBanner error={error} onRetry={refetch} />;
 
   return (
     <div>
       <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--g-font-size-sm)', margin: '0 0 var(--g-space-3) 0' }}>
         {t(subtitleKey)}
       </p>
+      {exemptCount > 0 && (
+        <p
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--g-space-2)',
+            color: 'var(--color-warning-text)',
+            background: 'var(--color-warning-bg)',
+            border: '1px solid var(--color-warning-border)',
+            borderRadius: 'var(--g-radius-md)',
+            padding: 'var(--g-space-1) var(--g-space-3)',
+            fontSize: 'var(--g-font-size-sm)',
+            margin: '0 0 var(--g-space-3) 0',
+          }}
+        >
+          {t('pages:nodeDetail.traffic.exemptBadge', { count: exemptCount })}
+        </p>
+      )}
       <DataTable
         hideSearch
         columns={columns}

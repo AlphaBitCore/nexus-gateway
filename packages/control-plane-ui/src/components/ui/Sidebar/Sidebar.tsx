@@ -219,7 +219,7 @@ export function Sidebar({ collapsed = false, onToggle, onNavigate }: SidebarProp
               {section.collapsible ? (
                 <button data-design-system-escape="primitive-internal"
                   type="button"
-                  className={styles.sectionToggle}
+                  className={clsx(styles.sectionToggle, open && styles.sectionToggleOpen)}
                   onClick={() => toggleSection(section.titleKey)}
                   aria-expanded={open}
                 >

@@ -1,17 +1,30 @@
 /* ── ExtractCacheCard — design-token strict ───────────────────────────────── */
 
+.cardSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .cardHeading {
-  margin: 0 0 var(--g-space-1);
-  font-size: 1rem;
+  margin: 0;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 24px;
   color: var(--color-text-primary);
 }
 
 .cardSubtitle {
-  margin: 0 0 var(--g-space-3);
-  font-size: 0.875rem;
+  margin: 0;
+  font-size: 14px;
   color: var(--color-text-secondary);
-  line-height: 1.5;
+  line-height: 20px;
 }
 
 /* Settings grid — matches the CachePage four-column pattern so Extract /
@@ -19,28 +32,38 @@
    wide viewports, collapses to one pair per row below 1024px. */
 .settingsGrid {
   display: grid;
-  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr) minmax(140px, max-content) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: var(--g-space-4);
   row-gap: var(--g-space-3);
-  align-items: center;
+  align-items: start;
 }
 
 @media (max-width: 1024px) {
   .settingsGrid {
-    grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
+}
+
+.settingField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
 }
 
 .settingLabel {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-text-primary);
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--g-space-1);
+  width: 100%;
+  min-height: 0;
 }
 
 .settingControl {
@@ -49,19 +72,28 @@
   align-items: center;
   gap: var(--g-space-2);
   min-width: 0;
+  min-height: 38px;
+  width: 100%;
 }
 
 .ttlInput {
-  width: 8rem;
+  width: 180px;
+  min-height: 38px;
 }
 
 .settingsActions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--g-space-2);
   margin-top: var(--g-space-4);
   padding-top: var(--g-space-3);
   border-top: 1px solid var(--color-border-subtle);
+}
+
+.settingsActions :global(button) {
+  height: 38px !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
 }
 
 .helpIcon {

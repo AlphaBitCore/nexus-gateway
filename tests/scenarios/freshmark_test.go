@@ -278,7 +278,7 @@ func TestS081_FreshnessRuleSkipsCache(t *testing.T) {
 		// a keyword that collides with our sparse phrasing, or (b) the
 		// detector's iteration order is broken. Both are regressions
 		// worth surfacing — not skip-able.
-		t.Fatalf("/test matchedRuleId=%q want %q — a seeded freshness rule beat our marker-only prompt (%d pre-existing rules). Check tools/db-migrate/seed/data/time-sensitive-rules.json for a newly-added keyword that collides with the Arm 3a prompt template.",
+		t.Fatalf("/test matchedRuleId=%q want %q — a seeded freshness rule beat our marker-only prompt (%d pre-existing rules). Check tools/db-migrate/seed/fixtures/semantic_cache_config.json (time_sensitive_overrides) for a newly-added keyword that collides with the Arm 3a prompt template.",
 			got, ruleID, len(listResp.Patterns))
 	}
 

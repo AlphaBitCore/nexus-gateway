@@ -6,7 +6,6 @@ import type {
   AdminAuditEntry,
   AdminAuditExportResponse,
   AdminModelsByProvider,
-  CacheStats,
   Model,
   ProviderHealth,
   SystemSettings,
@@ -307,10 +306,6 @@ export const systemApi = {
   listProviderHealth: () =>
     api.get<{ data: ProviderHealth[] }>('/api/admin/provider-health'),
 
-  // Cache
-  getCacheStats: () =>
-    api.get<CacheStats>('/api/admin/cache/stats'),
-
   // Settings
   getSettings: () =>
     api.get<SystemSettings>('/api/admin/settings'),
@@ -361,10 +356,6 @@ export const systemApi = {
     if (!res.ok) return { status: 'unknown' };
     return { status: body.status ?? 'unknown', checks: body.checks };
   },
-
-  // Runtime cache
-  refreshRuntimeCache: (data: { targets: string[] }) =>
-    api.post<Record<string, unknown>>('/api/admin/runtime-cache/refresh', data),
 
   // Current principal (admin_user or api_key) — the OAuth-era replacement for
   // the old /api/admin/whoami endpoint. Response shape is identical to WhoAmI.

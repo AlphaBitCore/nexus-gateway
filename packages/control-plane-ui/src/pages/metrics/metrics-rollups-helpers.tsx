@@ -54,15 +54,12 @@ export function ChartPanel({
   return (
     <ExpandableWrapper>
       <Card className={styles.chartPanel}>
-        <h2
-          className={styles.chartPanelTitle}
-          style={{ marginBottom: subtitle ? 'var(--g-space-xs)' : 'var(--g-space-md)' }}
-        >
-          {title}
-        </h2>
-        {subtitle ? (
-          <p className={styles.chartPanelSubtitle}>{subtitle}</p>
-        ) : null}
+        <div className={styles.chartPanelHeader}>
+          <h2 className={styles.chartPanelTitle}>{title}</h2>
+          {subtitle ? (
+            <p className={styles.chartPanelSubtitle}>{subtitle}</p>
+          ) : null}
+        </div>
         {empty ? <p className={styles.chartPanelEmpty}>{emptyText}</p> : children}
       </Card>
     </ExpandableWrapper>

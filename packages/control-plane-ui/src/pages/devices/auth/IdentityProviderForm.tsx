@@ -21,6 +21,7 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { withPrefix } from '@/lib/deploymentPrefix';
 import { useMutation } from '@/hooks/useMutation';
 import { useApi } from '@/hooks/useApi';
 import { iamApi } from '@/api/services';
@@ -77,7 +78,7 @@ interface SAMLDraft {
 
 function defaultRedirectUri(): string {
   if (typeof window !== 'undefined') {
-    return `${window.location.origin}/authserver/oidc/callback`;
+    return `${window.location.origin}${withPrefix('/authserver/oidc/callback')}`;
   }
   return 'https://YOUR_NEXUS_HOST/authserver/oidc/callback';
 }

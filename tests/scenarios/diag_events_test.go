@@ -31,10 +31,10 @@ import (
 // thing_diag_event (the same table the production write-path lands
 // in), then exercise the three CP read endpoints end-to-end:
 //
-//	1. /diag-events?nodeId=&q= → row appears in newest-first list
-//	2. /diag-events/groups?from=&to= → message_hash bucket counted
-//	3. /diag-events/crash-cohorts?from=&to= → (agent_version, os,
-//	   os_version) tuple aggregated for our FATAL crash row
+//  1. /diag-events?nodeId=&q= → row appears in newest-first list
+//  2. /diag-events/groups?from=&to= → message_hash bucket counted
+//  3. /diag-events/crash-cohorts?from=&to= → (agent_version, os,
+//     os_version) tuple aggregated for our FATAL crash row
 //
 // Cross-service: pure CP-read. No Hub config push needed — this is the
 // read-only consumer side of the diag pipeline. The write-path itself
@@ -44,18 +44,29 @@ import (
 // page actually surface it via the cohort grouping query?
 //
 // Assertions:
-//   1. INSERT 2 rows (one event_type='crash' level='fatal' with
-//      agent_version + os_info; one 'generic_error' level='error') —
-//      both under a synthetic thing_id prefixed s141-<nanos>.
-//   2. List endpoint returns both rows (nodeId filter is precise).
-//   3. Groups endpoint contains the message_hash bucket with
-//      occurrenceCount == 1 (each row is its own hash).
-//   4. Crash-cohorts endpoint contains the (agent_version, os,
-//      os_version) tuple with crashCount >= 1 and affectedThings >= 1.
-//   5. Cleanup deletes both rows to keep parallel sessions hermetic.
+//  1. INSERT 2 rows (one event_type='crash' level='fatal' with
+//     agent_version + os_info; one 'generic_error' level='error') —
+//     both under a synthetic thing_id prefixed s141-<nanos>.
+//  2. List endpoint returns both rows (nodeId filter is precise).
+//  3. Groups endpoint contains the message_hash bucket with
+//     occurrenceCount == 1 (each row is its own hash).
+//  4. Crash-cohorts endpoint contains the (agent_version, os,
+//     os_version) tuple with crashCount >= 1 and affectedThings >= 1.
+//  5. Cleanup deletes both rows to keep parallel sessions hermetic.
 func TestS141_DiagEventsListGroupsCohorts(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
+
+	// This scenario seeds a synthetic Thing + thing_diag_event rows by writing
+	// the shared `thing` fleet table directly via sc.DB — that bypasses the
+	// prod-safe-e2e API guard (which only covers CP HTTP calls) and would
+	// mutate live fleet state. There is no API-only way to express the seed,
+	// so the read-side assertions can't run safely on prod. Skip with reason;
+	// the CP read-path stays covered locally and the write-path has its own
+	// Hub e2e coverage.
+	if helpers.IsProdSafeE2E() {
+		t.Skip("prod-safe-e2e: S-141 seeds the shared thing/thing_diag_event tables via direct DB (bypasses the API guard); not safe to run against prod")
+	}
 
 	token, err := helpers.CPLogin(ctx, sc.Env)
 	if err != nil {

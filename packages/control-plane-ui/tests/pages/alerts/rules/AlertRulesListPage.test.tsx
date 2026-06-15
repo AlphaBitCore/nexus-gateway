@@ -9,7 +9,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import '@testing-library/jest-dom/vitest';
 
 import { renderWithRouter } from '@/test/test-utils';
 import { alertsApi } from '@/api/services/alerts/alerts';

@@ -28,24 +28,5 @@
     "1": "Enrolled",
     "2": "Linked",
     "3": "Compliant"
-  },
-  "inputStaging": {
-    "label": "Input Staging Strategy",
-    "recommendedBadge": "Recommended",
-    "help": "Controls how the conversation is truncated before embedding when it exceeds the model context limit.",
-    "strategies": {
-      "last_user": "Last User Message",
-      "system_plus_last_user": "System + Last User",
-      "recent_turns": "Recent Turns",
-      "head_plus_tail": "Head + Tail",
-      "full_truncated": "Full (Truncated)"
-    },
-    "tooltips": {
-      "last_user": "Only the final user message is sent for cache lookup. Smallest, fastest.",
-      "system_plus_last_user": "System prompt + final user message. Balances persona context with query specificity.",
-      "recent_turns": "Most recent conversation turns that fit. Best for multi-turn flows.",
-      "head_plus_tail": "First and last portions of the conversation. Useful when both opening setup and recent context matter.",
-      "full_truncated": "Full conversation, hard-truncated from the head if needed. Legacy mode."
-    }
   }
 }

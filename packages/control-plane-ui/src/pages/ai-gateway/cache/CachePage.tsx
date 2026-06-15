@@ -53,6 +53,7 @@ import { SemanticCacheCard } from './sections/SemanticCacheCard';
 import { PrewarmModal } from './sections/PrewarmModal';
 import { type Draft, configToDraft, isDraftChanged, isModelChanged } from './sections/semanticCacheDraft';
 import styles from './CachePage.module.css';
+import trafficTabStyles from '../../traffic/analytics/TrafficAnalyticsPage.module.css';
 
 const EMPTY_PROVIDER_GROUPS: AdminModelsByProvider[] = [];
 
@@ -213,7 +214,7 @@ export function CachePage() {
   // ── Tab renderers ────────────────────────────────────────────────────────
 
   const renderGatewayTab = () => (
-    <Stack gap="md">
+    <Stack gap="lg">
       {/* Card: Extract cache (L1 exact-match) — placed first because it's
           the most-fundamental cache layer, queried before semantic. */}
       <ExtractCacheCard />
@@ -257,15 +258,15 @@ export function CachePage() {
       />
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'gateway' | 'provider')}>
-        <TabsList>
+        <TabsList className={trafficTabStyles.sourceTabsList}>
           {canReadSemantic && (
-            <TabsTrigger value="gateway">
+            <TabsTrigger value="gateway" className={trafficTabStyles.sourceTabsTrigger}>
               <span>{t('pages:aiGateway.cache.sectionGateway.title')}</span>
               {dirty && <span className={styles.dirtyDot} aria-label="unsaved changes" />}
             </TabsTrigger>
           )}
           {canReadPromptCache && (
-            <TabsTrigger value="provider">
+            <TabsTrigger value="provider" className={trafficTabStyles.sourceTabsTrigger}>
               {t('pages:aiGateway.cache.sectionProvider.title')}
             </TabsTrigger>
           )}

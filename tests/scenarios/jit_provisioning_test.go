@@ -67,9 +67,9 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/tests/scenarios/helpers"
 )
 
-// Seeded IamGroup IDs from tools/db-migrate/seed/data/seed-baseline.sql.
+// Seeded IamGroup IDs from tools/db-migrate/seed/fixtures/IamGroup.json.
 // resolveSeededIamGroupID queries the "IamGroup" table by name. Avoids
-// hardcoding UUIDs that would break on any reseed of seed-baseline.sql.
+// hardcoding UUIDs that would break on any reseed of the IamGroup fixtures.
 func resolveSeededIamGroupID(t *testing.T, sc *scenarioCtx, name string) string {
 	t.Helper()
 	var id string

@@ -36,8 +36,10 @@ export function SystemOverviewCharts({
 
   return (
     <>
-      <div className={styles.sectionHeading}>{t('pages:metrics.systemOverview', 'System Overview')}</div>
-      <p className={styles.sectionSubtitle}>{t('pages:metrics.systemOverviewSubtitle', 'Overall traffic patterns across all providers')}</p>
+      <div className={styles.sectionHeaderBlock}>
+        <div className={styles.sectionHeading}>{t('pages:metrics.systemOverview', 'System Overview')}</div>
+        <p className={styles.sectionSubtitle}>{t('pages:metrics.systemOverviewSubtitle', 'Overall traffic patterns across all providers')}</p>
+      </div>
 
       {/* Requests — full width, hero chart */}
       <div className={styles.chartFull}>

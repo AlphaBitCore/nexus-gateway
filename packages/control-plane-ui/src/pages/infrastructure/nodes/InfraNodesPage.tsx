@@ -219,7 +219,7 @@ export default function InfraNodesPage() {
         }
       />
 
-      {error && <ErrorBanner message={error.message} onRetry={refetch} />}
+      {error && <ErrorBanner error={error} onRetry={refetch} />}
 
       <ListFilterToolbar
         searchPlaceholder={t('pages:infrastructure.searchNodesPlaceholder')}

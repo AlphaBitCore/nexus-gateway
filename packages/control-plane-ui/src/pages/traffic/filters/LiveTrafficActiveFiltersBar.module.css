@@ -1,35 +1,71 @@
 /* LiveTrafficActiveFiltersBar styles */
 
 .wrapper {
-  margin-bottom: var(--g-space-4);
-}
-
-.heading {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  margin-bottom: var(--g-space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 var(--g-space-4);
 }
 
 .chipList {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--g-space-2);
+  gap: 8px;
   align-items: center;
+}
+
+.clearAll {
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--color-link);
+  cursor: pointer;
+  font-family: var(--g-font-sans);
+  font-size: 14px;
+  font-weight: var(--g-font-weight-normal);
+  line-height: 24px;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 4px 10px;
-  border-radius: var(--g-radius-full);
-  background: var(--color-muted);
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px 0 10px;
+  border-radius: 4px;
+  background: var(--color-border-light);
   color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-light);
+  border: 0;
+  font-size: 12px;
+  font-weight: var(--g-font-weight-normal);
   max-width: 100%;
-  line-height: 1.35;
+  line-height: 20px;
+}
+
+.removeChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.removeChip:hover {
+  background: transparent !important;
+  color: var(--color-link);
+}
+
+.removeChip:focus,
+.removeChip:focus-visible,
+.removeChip:active {
+  background: transparent !important;
 }

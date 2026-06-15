@@ -5,11 +5,14 @@
  * Configuration tab, which now renders the merged template/override/applied
  * view fed by GET /api/admin/nodes/:id/applied-config.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { Routes, Route } from 'react-router-dom';
+
+// Grant the per-tab IAM gates so the full node-detail IA renders; the gating
+// logic itself is covered by the usePermission unit tests.
+vi.mock('@/hooks/usePermission', () => ({ usePermission: () => true }));
 
 import { renderWithRouter, server, http, HttpResponse } from '@/test/test-utils';
 import { mockNode } from '@/test/msw-handlers';

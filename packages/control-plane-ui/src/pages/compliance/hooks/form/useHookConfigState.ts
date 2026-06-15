@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { HookConfig, HookImplementationSummary } from '@/api/types';
 import { buildDefaultsFromSchema } from '@/components/config/JsonSchemaHookConfigForm';
 import { validateDataAgainstJsonSchema } from '@/lib/validate-json-schema';
@@ -25,6 +26,7 @@ export function useHookConfigState({
   stage,
   addToast,
 }: UseHookConfigStateArgs) {
+  const { t } = useTranslation();
   const existingCfg = asConfigRecord(hook?.config);
 
   const [selectedImplementationId, setSelectedImplementationId] = useState(hook?.implementationId ?? '');
@@ -82,7 +84,7 @@ export function useHookConfigState({
     if (schema && !useManualConfigEditor) {
       const err = validateDataAgainstJsonSchema(schema, configObject);
       if (err) {
-        addToast(`Config does not match schema: ${err}`, 'error');
+        addToast(t('common:validation.configSchemaMismatch', { error: err }), 'error');
         return null;
       }
       return { ...configObject };
@@ -90,19 +92,19 @@ export function useHookConfigState({
     try {
       const parsed = JSON.parse(manualConfigJson) as Record<string, unknown>;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        addToast('Config must be a JSON object', 'error');
+        addToast(t('common:validation.configMustBeObject'), 'error');
         return null;
       }
       if (schema) {
         const err = validateDataAgainstJsonSchema(schema, parsed);
         if (err) {
-          addToast(`Config does not match schema: ${err}`, 'error');
+          addToast(t('common:validation.configSchemaMismatch', { error: err }), 'error');
           return null;
         }
       }
       return parsed;
     } catch {
-      addToast('Invalid config JSON', 'error');
+      addToast(t('common:validation.invalidConfigJson'), 'error');
       return null;
     }
   };

@@ -243,7 +243,6 @@ export type {
 export type {
   ProxyStatus,
   ProxyConnection,
-  RejectConfig,
   ComplianceCoverage,
 } from './infrastructure/misc/proxy';
 

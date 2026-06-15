@@ -38,7 +38,21 @@
     "modelNoMatch": "No matching models",
     "maximize": "Maximize",
     "restore": "Restore size",
-    "toolDetails": "Show details for {{name}}"
+    "toolDetails": "Show what {{name}} ran",
+    "slash": {
+      "help": "Commands: /help — this list · /clear or /new — start a fresh conversation"
+    },
+    "toolResponse": "Response",
+    "compacted": "Older turns in this conversation were condensed to fit the context window.",
+    "compactedTitle": "Conversation condensed",
+    "filterSessions": "Filter conversations…",
+    "noSessionsMatch": "No conversations match \"{{filter}}\".",
+    "timeJustNow": "just now",
+    "timeMinAgo": "{{n}}m ago",
+    "timeHourAgo": "{{n}}h ago",
+    "timeDayAgo": "{{n}}d ago",
+    "fileExpired": "This file is no longer available (it may have expired).",
+    "integrityWarning": "This conversation's integrity check did not pass — its stored history may have been altered."
   },
   "copy": "Copy",
   "copied": "Copied!",
@@ -157,6 +171,8 @@
   "next": "Next",
   "accessDenied": "Access Denied",
   "accessDeniedMessage": "You don't have permission to access this page.",
+  "forbiddenSection": "You don't have permission to view this.",
+  "forbiddenRequires": "Requires permission: {{action}}",
   "pageNotFound": "The page you are looking for does not exist.",
   "goToDashboard": "Go to Dashboard",
   "sessionExpiringSoon": "You'll be signed out soon due to inactivity. Interact with the page to stay signed in.",
@@ -192,5 +208,14 @@
   },
   "hookConfig": {
     "redactExamplePlaceholder": "[REDACTED_<RULE_ID>]"
+  },
+  "validation": {
+    "configSchemaMismatch": "Config does not match schema: {{error}}",
+    "configMustBeObject": "Config must be a JSON object",
+    "invalidConfigJson": "Invalid config JSON",
+    "usernameRequired": "Username is required",
+    "passwordsDoNotMatch": "New passwords do not match",
+    "passwordTooShort": "New password must be at least {{count}} characters",
+    "currentPasswordRequired": "Current password is required"
   }
 }

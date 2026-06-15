@@ -828,14 +828,6 @@ export interface SystemSettings {
   logLevel: string;
 }
 
-// CacheStats describes the Control Plane's own caches as returned by
-// /api/admin/cache/stats. Today the only one is the IAM policy cache
-// (the response cache lives on ai-gateway and is reported via service
-// detail under /infrastructure/nodes, not via CP).
-export interface CacheStats {
-  iamPolicyCacheEntries: number;
-  configCategories: string[];
-}
 
 export interface ProviderHealth {
   providerId: string;
@@ -1015,11 +1007,6 @@ export interface MetricAggregatePoint {
 
 export interface MetricAggregatesResponse {
   data: MetricAggregatePoint[];
-}
-
-/** POST /api/admin/runtime-cache/refresh */
-export interface RuntimeCacheRefreshResponse {
-  refreshed: string[];
 }
 
 
@@ -1454,6 +1441,7 @@ export type NormalizedKind =
   | 'http-form'
   | 'http-multipart'
   | 'http-binary'
+  | 'http-sse'
   | 'unsupported';
 
 export interface BinaryRef {
@@ -1490,11 +1478,25 @@ export interface NormalizedMessage {
   finishReason?: string;
 }
 
+/** One server-sent event captured by the generic-http SSE projection.
+ *  At most one of `data` (frame data parsed as JSON) or `dataText`
+ *  (verbatim non-JSON data) is set; a frame whose data line was empty
+ *  carries neither. */
+export interface SSEFrame {
+  event?: string;
+  data?: unknown;
+  dataText?: string;
+}
+
 export interface HTTPBodyView {
   text?: string;
   json?: unknown;
   form?: Record<string, string>;
   binaryRef?: BinaryRef;
+  /** kind=http-sse: decoded event frames in stream order. */
+  sseFrames?: SSEFrame[];
+  /** kind=http-sse: true when the capture limit cut the frame list short. */
+  sseTruncated?: boolean;
 }
 
 export interface HTTPPayload {
@@ -1510,6 +1512,7 @@ export interface NormalizedUsage {
   totalTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  reasoningTokens?: number | null;
 }
 
 export interface NormalizedPayload {
@@ -1526,6 +1529,19 @@ export interface NormalizedPayload {
   http?: HTTPPayload;
   /** drop-content placeholder marker — when true the payload is metadata-only. */
   redacted?: boolean;
+  /** Why the content was dropped: the operator chose drop-content, or a
+   *  redact storage policy could not be applied precisely and degraded.
+   *  Absent on rows written before the reason was stamped — the UI then
+   *  renders a neutral notice asserting neither story. */
+  redactedReason?: 'operator-drop' | 'redact-degraded';
+  /** Degradation diagnosis when redactedReason === 'redact-degraded'.
+   *  failedAddresses lists content addresses only — never content.
+   *  cause is an open vocabulary: the listed tokens render as localized
+   *  phrases, unknown future tokens render verbatim. */
+  redactedDetail?: {
+    cause: 'no-spans' | 'payload-unmarshal' | 'spans-unresolved' | 'marshal-failed' | (string & {});
+    failedAddresses?: string[];
+  };
   /** rule IDs that triggered the drop-content storage policy. */
   ruleIds?: string[];
   /** Normalizer-reported confidence in [0,1]. Absent/0 on
@@ -1534,8 +1550,19 @@ export interface NormalizedPayload {
   /** Which spec the normalizer matched. Examples:
    *  "openai-chat" (Tier 1 AI builtin), "chatgpt-web" (Tier 1
    *  per-host adapter), "pattern:chatgpt-web" (Tier 2 multi-spec
-   *  pattern probe). Empty on Tier 3 verbatim. */
+   *  pattern probe), "generic-http" (structural fallback projection
+   *  of the raw HTTP body, confidence 1.0 = confidence in the
+   *  projection only, no AI-semantics claim). Empty on legacy
+   *  verbatim rows. */
   detectedSpec?: string;
+  /** "host" when the normalizer was selected by interception-domain
+   *  host match (a per-host adapter) rather than by decode coverage —
+   *  the confidence is then the honest coverage of a known-adapter
+   *  body (a single-prompt spec caps near 0.6 by design), NOT a trust
+   *  score comparable to a Tier-1 sniffed decode. The badge renders a
+   *  "host-matched" label in place of the numeral. Absent for keyed /
+   *  sniffed / pattern / fallback rows. */
+  selectionEvidence?: 'host';
   /** Text input strings for kind=ai-embedding requests.
    *  Nil/absent when the input was a binary token array (not stored)
    *  or when this is a response payload (embedding vectors are never
@@ -1556,6 +1583,18 @@ export interface TransformSpan {
 }
 
 export type NormalizeStatus = 'ok' | 'partial' | 'failed';
+
+/** One transform span emitted by a hook / aiguard / cache normaliser. */
+export interface TransformSpan {
+  source: 'hook' | 'aiguard' | 'cache-normaliser' | 'cache-control-inject' | 'cache-key-strip';
+  sourceId?: string;
+  action: 'redact' | 'strip' | 'inject' | 'replace';
+  contentAddress: string;
+  start: number;
+  end: number;
+  replacement?: string;
+  reason?: string;
+}
 
 /**
  * Sidecar row for traffic_event_normalized. The Admin API

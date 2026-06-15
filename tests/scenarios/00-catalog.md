@@ -158,7 +158,7 @@ Per program plan §3 these admin probes call into AI GW logic but are exposed vi
 |---|---|---|
 | **Compliance** | `/compliance/{audit,exemption-grants,exemptions,killswitch,overview,report,trinity}`, `/compliance/exemption-grants/:id`, `/compliance/exemptions/:id/{approve,reject}`, `/compliance/killswitch/history`, `/compliance/overview/export` | S-030 (S-031 – S-034 deferred) |
 | **Passthrough (E48)** | `/passthrough/{global,snapshot}`, `/passthrough/adapter/:adapter_type`, `/passthrough/effective/:provider_id`, `/passthrough/provider/:provider_id` | S-030 (S-031 – S-034 deferred) |
-| **Proxy admin** | `/proxy/{audit,compliance/coverage,compliance/export,compliance/hook-health,compliance/reject-stats,connections,health,metrics,reject-config}` | S-081 – S-084 daemon-bound (CONNECT pipeline); see §10 |
+| **Proxy admin** | `/proxy/{audit,compliance/coverage,compliance/export,compliance/hook-health,compliance/reject-stats,connections,health,metrics}` | S-081 – S-084 daemon-bound (CONNECT pipeline); see §10 |
 | **Interception domains** | `/interception-domains`, `/interception-domains/:id`, `/interception-domains/:id/paths`, `.../:pathId` | S-085 (interception domain push to compliance-proxy → hot-reload signal) |
 
 ### 5.9 Fleet (Agent devices / users / groups)
@@ -315,7 +315,7 @@ The 13 families from program plan §4, with current scenario count and gap count
 | Quota / cost | S-040, S-045, S-078 (org cascade) [CLOSED 2026-05-21], S-079 (Anthropic cache double-count) [CLOSED 2026-05-21] | S-041 – S-044 deferred | 4 |
 | Credentials | S-050 | S-051 – S-053 deferred | 1 |
 | Cache | S-060 (L1), S-064 (L2 semantic) [CLOSED 2026-05-21], S-066 (negative feedback) [CLOSED 2026-05-21], S-067 (prewarm) [CLOSED 2026-05-21], S-081 (freshness skip) [CLOSED 2026-05-21], S-082 (embedding provider config) [CLOSED 2026-05-21] | S-061 unused slot; cross-ingress cache parity covered by smoke-gateway --all-ingress | 6 |
-| Agent lifecycle | S-071 (device groups) [CLOSED 2026-05-21], S-072 (fleet analytics) [CLOSED 2026-05-21], S-073 (diag mode) [CLOSED 2026-05-21], S-074 (agent users), S-076 (heartbeat freshness) [CLOSED 2026-05-21], S-077 (node overrides) | S-070..S-079 daemon-bound (pinned) | 6 |
+| Agent lifecycle | S-071 (device groups) [CLOSED 2026-05-21], S-072 (fleet analytics) [CLOSED 2026-05-21], S-073 (diag mode) [CLOSED 2026-05-21], S-074 (agent users), S-076 (heartbeat freshness) [CLOSED 2026-05-21], S-077 (node overrides), S-084 (containerized enroll) daemon-bound, S-155 (containerized transparent interception + fail-open) daemon-bound | S-070..S-079 daemon-bound (pinned) | 6 |
 | Compliance proxy | S-085 (interception domains) | S-080 – S-084 daemon-bound | 1 |
 | Alerts | S-091, S-092, S-093, S-094, S-095 | — | 5 |
 | Audit | S-101, S-103 | S-100, S-102 implicit | 2 |

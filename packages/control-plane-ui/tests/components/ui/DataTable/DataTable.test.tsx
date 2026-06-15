@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
-import '@testing-library/jest-dom/vitest';
 import { renderWithProviders } from '@/test/test-utils';
 import { DataTable, type DataTableColumn } from '../../../../src/components/ui/DataTable/DataTable';
 

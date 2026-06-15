@@ -69,9 +69,9 @@ export function QuotaOverrideListPage() {
 
   const [deleting, setDeleting] = useState<QuotaOverride | null>(null);
 
-  const canCreate = usePermission('quotaPolicy:create');
-  const canUpdate = usePermission('quotaPolicy:update');
-  const canDelete = usePermission('quotaPolicy:delete');
+  const canCreate = usePermission('quota:create');
+  const canUpdate = usePermission('quota:update');
+  const canDelete = usePermission('quota:delete');
 
   const { mutate: deleteOverride } = useMutation(
     (id: string) => quotaOverrideApi.delete(id),
@@ -177,10 +177,9 @@ export function QuotaOverrideListPage() {
       />
 
       {/* Filters: Type select + Target searchable select */}
-      <Card>
-        <Stack direction="horizontal" gap="md" style={{ alignItems: 'flex-end' }}>
-          <div style={{ minWidth: 180 }}>
-            <label className={styles.filterLabel}>{t('pages:quotaOverrides.targetType')}</label>
+      <div className={styles.filterToolbar}>
+        <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
+          <div className={styles.filterControl}>
             <select
               aria-label={t('pages:quotaOverrides.filterByTargetType')}
               value={targetTypeFilter}
@@ -195,11 +194,11 @@ export function QuotaOverrideListPage() {
             </select>
           </div>
           {showTargetSearch && (
-            <div style={{ flex: 1 }}>
-              <label className={styles.filterLabel}>{t('pages:quotaOverrides.target')}</label>
+            <div className={styles.targetSearchControl}>
               <SearchableCombobox
                 ariaLabel={t('pages:quotaOverrides.target')}
                 placeholder={t('pages:quotaOverrides.searchTarget')}
+                className={styles.targetCombobox}
                 valueId={targetIdFilter}
                 valueLabel={targetLabel}
                 allowEmptyQueryFetch
@@ -214,7 +213,7 @@ export function QuotaOverrideListPage() {
           )}
           {/* total count hidden per user request */}
         </Stack>
-      </Card>
+      </div>
 
       <Card padding="none">
         <DataTable
@@ -228,7 +227,7 @@ export function QuotaOverrideListPage() {
         />
       </Card>
 
-      <ListPagination offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
+      <ListPagination variant="plain" offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
 
       <AlertDialog
         open={!!deleting}

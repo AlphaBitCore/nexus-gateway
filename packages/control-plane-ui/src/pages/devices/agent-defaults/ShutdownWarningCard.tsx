@@ -37,7 +37,7 @@ export function ShutdownWarningCard({
         <p className={styles.helpTextSecondary}>
           {quitAllowed
             ? t('pages:settings.agentShutdownWarningDesc')
-            : t('pages:settings.shutdownWarningDisabledHint', 'This text only appears when "Allow users to quit the agent" is turned on. Edit it now so the message is ready when quit is enabled.')}
+            : t('pages:settings.shutdownWarningDisabledHint', 'This text only appears when "Allow users to turn off the agent" is turned on. Edit it now so the message is ready.')}
         </p>
 
         {/* shutdownWarningEnabled gate. Admin can prepare the

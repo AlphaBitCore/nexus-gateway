@@ -43,9 +43,18 @@ func WaitForServices(env *intg.Env) {
 		// Public OAuth discovery is unauthenticated; any structured
 		// response means the CP HTTP server is accepting.
 		{Name: "CP", URL: env.CPURL + "/.well-known/openid-configuration"},
+	}
+	// The compliance proxy is a TLS-CONNECT intercept reached directly by
+	// org-managed devices; in a real deployment its listener is NOT exposed
+	// on the public edge (no nginx server_name, security-group closed to the
+	// internet). The prod safe-e2e subset is admin-read-only and never routes
+	// through the proxy, so probing it would block WaitForServices forever
+	// against prod. Gate the proxy probe to non-prod-safe runs (local/dev,
+	// where the proxy is loopback-reachable and some scenarios do use it).
+	if os.Getenv("NEXUS_PROD_SAFE_E2E") != "1" {
 		// Compliance proxy on :3040 is a transparent forward proxy; a
 		// root GET returns a non-2xx body but the listener is bound.
-		{Name: "Proxy", URL: env.ProxyURL + "/"},
+		probes = append(probes, servicProbe{Name: "Proxy", URL: env.ProxyURL + "/"})
 	}
 
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -116,18 +125,18 @@ func joinComma(parts []string) string {
 // pre-change baseline snapshot.
 var ConfigKeyServices = map[string][]string{
 	// ai-gateway-only keys
-	"routing_rules":            {"ai-gateway"},
-	"virtual_keys":             {"ai-gateway"},
-	"providers":                {"ai-gateway"},
-	"models":                   {"ai-gateway"},
-	"credentials":              {"ai-gateway"},
-	"credential_reliability":   {"ai-gateway"},
-	"ai_guard":                 {"ai-gateway"},
-	"cache":                    {"ai-gateway"},
-	"gateway_passthrough":      {"ai-gateway"},
-	"organizations":            {"ai-gateway"},
-	"quota_overrides":          {"ai-gateway"},
-	"quota_policies":           {"ai-gateway"},
+	"routing_rules":          {"ai-gateway"},
+	"virtual_keys":           {"ai-gateway"},
+	"providers":              {"ai-gateway"},
+	"models":                 {"ai-gateway"},
+	"credentials":            {"ai-gateway"},
+	"credential_reliability": {"ai-gateway"},
+	"ai_guard":               {"ai-gateway"},
+	"cache":                  {"ai-gateway"},
+	"gateway_passthrough":    {"ai-gateway"},
+	"organizations":          {"ai-gateway"},
+	"quota_overrides":        {"ai-gateway"},
+	"quota_policies":         {"ai-gateway"},
 	// shared by multiple
 	"hooks":                {"ai-gateway", "compliance-proxy", "agent"},
 	"streaming_compliance": {"ai-gateway", "compliance-proxy", "agent"},
@@ -142,11 +151,11 @@ var ConfigKeyServices = map[string][]string{
 	"domain_allowlist":     {"compliance-proxy"},
 	"onboarding":           {"compliance-proxy"},
 	// agent only
-	"agent_settings":  {"agent"},
-	"auth":            {"agent"},
-	"diag_mode":       {"agent"},
-	"policy_rules":    {"agent"},
-	"rgc-key":         {"agent"},
+	"agent_settings":   {"agent"},
+	"auth":             {"agent"},
+	"diag_mode":        {"agent"},
+	"policy_rules":     {"agent"},
+	"rgc-key":          {"agent"},
 	"timing_intervals": {"agent"},
 }
 

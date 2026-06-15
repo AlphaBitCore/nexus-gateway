@@ -9,6 +9,7 @@ import { QuitPolicyCard } from './QuitPolicyCard';
 import { ShutdownWarningCard } from './ShutdownWarningCard';
 import { RuntimeDefaultsCard } from './RuntimeDefaultsCard';
 import { QuicBundlesCard } from './QuicBundlesCard';
+import { BypassBundlesCard } from './BypassBundlesCard';
 
 const LOCALES = [
   { key: 'en', label: 'English' },
@@ -38,6 +39,7 @@ interface AgentSettingsData {
   trafficUploadLevel?: string;
   themeId?: string;
   forceQUICFallbackBundles?: string[];
+  bypassBundles?: string[];
   attestationEnabled?: boolean;
 }
 
@@ -103,6 +105,12 @@ export function SettingsAgentTab() {
   // every chip) propagates as []; agent disables QUIC blocking entirely.
   const [quicBundles, setQuicBundles] = useState<string[]>([]);
   const [quicInputDraft, setQuicInputDraft] = useState<string>('');
+  // bypassBundles = SOURCE-app exemption list. Apps here are passed through
+  // by the macOS NE WITHOUT inspection — a deliberate compliance carve-out
+  // for trusted tools whose pinned TLS breaks under bump. Empty = exempt
+  // nothing (inspect everything); ships empty.
+  const [bypassBundles, setBypassBundles] = useState<string[]>([]);
+  const [bypassInputDraft, setBypassInputDraft] = useState<string>('');
   // Fleet-wide opt-in for agent attestation (cluster default; per-agent
   // overrides are not yet supported). Defaults false so the perf optimization
   // stays gated until a security engineer explicitly enables it.
@@ -132,6 +140,8 @@ export function SettingsAgentTab() {
       setThemeId(data.themeId || '');
       setQuicBundles(Array.isArray(data.forceQUICFallbackBundles) ? data.forceQUICFallbackBundles : []);
       setQuicInputDraft('');
+      setBypassBundles(Array.isArray(data.bypassBundles) ? data.bypassBundles : []);
+      setBypassInputDraft('');
       setAttestationEnabled(data.attestationEnabled ?? false);
       setDirty(false);
     }
@@ -161,6 +171,7 @@ export function SettingsAgentTab() {
       trafficUploadLevel,
       themeId,
       forceQUICFallbackBundles: quicBundles,
+      bypassBundles,
       attestationEnabled,
     }),
     {
@@ -286,6 +297,20 @@ export function SettingsAgentTab() {
         setQuicBundles={setQuicBundles}
         quicInputDraft={quicInputDraft}
         setQuicInputDraft={setQuicInputDraft}
+        setDirty={setDirty}
+      />
+
+      {/* Bypass bundles — SOURCE-app exemption list. Apps named here are
+          passed through by the macOS NE WITHOUT inspection (no TLS bump, no
+          audit). This is a deliberate compliance carve-out for trusted tools
+          whose pinned TLS breaks under bump (e.g. a developer CLI). Matching
+          is by source bundle, never by host, so the same destination stays
+          inspected from other apps. Empty = exempt nothing; ships empty. */}
+      <BypassBundlesCard
+        bypassBundles={bypassBundles}
+        setBypassBundles={setBypassBundles}
+        bypassInputDraft={bypassInputDraft}
+        setBypassInputDraft={setBypassInputDraft}
         setDirty={setDirty}
       />
 

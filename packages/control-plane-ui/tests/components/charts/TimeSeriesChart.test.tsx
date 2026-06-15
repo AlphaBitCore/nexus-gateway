@@ -10,7 +10,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
-import '@testing-library/jest-dom/vitest';
 
 import i18n from '@/i18n';
 import {

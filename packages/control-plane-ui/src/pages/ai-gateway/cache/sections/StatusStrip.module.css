@@ -2,9 +2,6 @@
 /* Design-token strict — no hex/rgba/hsla literals.                            */
 
 .strip {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: flex;
   align-items: center;
   gap: var(--g-space-5);

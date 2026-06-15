@@ -194,8 +194,27 @@
 }
 
 .sectionToggle:hover {
-  background: var(--sidebar-hover);
-  color: var(--sidebar-text-active);
+  background: var(--sidebar-active-bg) !important;
+  background-color: var(--sidebar-active-bg) !important;
+  color: var(--sidebar-text-active) !important;
+  font-weight: var(--g-font-weight-medium);
+  box-shadow: var(--g-effect-glow-active);
+}
+
+.sectionToggle:active,
+.sectionToggleOpen {
+  background: var(--sidebar-active-bg) !important;
+  background-color: var(--sidebar-active-bg) !important;
+  color: var(--sidebar-text-active) !important;
+  font-weight: var(--g-font-weight-medium);
+  box-shadow: var(--g-effect-glow-active);
+  text-decoration: none;
+}
+
+.sectionToggleOpen:hover {
+  background: var(--sidebar-active-bg) !important;
+  background-color: var(--sidebar-active-bg) !important;
+  color: var(--sidebar-text-active) !important;
 }
 
 .sectionToggle:focus-visible {
@@ -339,14 +358,19 @@
 }
 
 .userBlockTrigger:hover,
+.userBlockTrigger:active,
 .userBlockTrigger[data-state="open"] {
-  background: var(--sidebar-active-bg);
+  background: var(--sidebar-hover) !important;
+  background-color: var(--sidebar-hover) !important;
   color: var(--sidebar-text-active);
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
 }
 
 .userBlockTrigger:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--sidebar-bg), 0 0 0 4px var(--color-ring);
+  box-shadow: none;
 }
 
 .userAvatar {
@@ -355,7 +379,7 @@
   border-radius: var(--g-radius-full);
   display: grid;
   place-items: center;
-  background: var(--color-control-gradient);
+  background: var(--color-link);
   color: var(--color-primary-foreground);
   font-size: var(--g-font-size-sm);
   font-weight: var(--g-font-weight-bold);
@@ -372,8 +396,8 @@
   height: 9px;
   border-radius: var(--g-radius-full);
   background: var(--color-danger);
-  border: 2px solid var(--sidebar-bg);
-  box-shadow: 0 0 0 1px var(--color-danger);
+  border: 0;
+  box-shadow: none;
 }
 
 .userNameBlock {
@@ -409,9 +433,26 @@
   transition: transform var(--g-transition-fast), color var(--g-transition-fast);
 }
 
+.userBlockTrigger:hover .userChevron,
+.userBlockTrigger:active .userChevron,
 .userBlockTrigger[data-state="open"] .userChevron {
   color: var(--sidebar-text-active);
-  transform: rotate(180deg);
+  transform: rotate(-90deg);
+}
+
+.userBlockTrigger:hover .userNameMain,
+.userBlockTrigger:active .userNameMain,
+.userBlockTrigger[data-state="open"] .userNameMain,
+.userBlockTrigger:hover .userChevron,
+.userBlockTrigger:active .userChevron,
+.userBlockTrigger[data-state="open"] .userChevron {
+  color: var(--sidebar-text-active);
+}
+
+.userBlockTrigger:hover .userNameSub,
+.userBlockTrigger:active .userNameSub,
+.userBlockTrigger[data-state="open"] .userNameSub {
+  color: var(--sidebar-text);
 }
 
 .userMenuContent {
@@ -422,10 +463,11 @@
   background: var(--sidebar-bg);
   color: var(--sidebar-text-active);
   box-shadow: var(--shadow-xl);
+  z-index: var(--g-z-tooltip);
 }
 
 .userMenuContent[data-side="right"] {
-  width: 248px;
+  width: min(320px, calc(100vw - var(--sidebar-width) - var(--g-space-8)));
 }
 
 .userMenuItem {
@@ -440,8 +482,10 @@
 }
 
 .userMenuItem[data-highlighted],
-.userMenuItem:hover {
-  background: var(--sidebar-hover);
+.userMenuItem:hover,
+.userMenuItem:active {
+  background: var(--sidebar-hover) !important;
+  background-color: var(--sidebar-hover) !important;
   color: var(--sidebar-text-active);
 }
 
@@ -481,8 +525,10 @@
 }
 
 .menuSectionTrigger:hover,
+.menuSectionTrigger:active,
 .menuAccordionSectionOpen > .menuSectionTrigger {
-  background: var(--sidebar-active-bg);
+  background: var(--sidebar-hover) !important;
+  background-color: var(--sidebar-hover) !important;
   color: var(--sidebar-text-active);
 }
 
@@ -544,8 +590,10 @@
   text-align: left;
 }
 
-.menuOptionItem:hover {
-  background: var(--sidebar-hover);
+.menuOptionItem:hover,
+.menuOptionItem:active {
+  background: var(--sidebar-hover) !important;
+  background-color: var(--sidebar-hover) !important;
 }
 
 .menuItemLabel {
@@ -583,10 +631,22 @@
 }
 
 .logoutItem {
-  color: var(--color-danger);
+  color: var(--sidebar-text-active);
 }
 
 .logoutItem .menuIcon {
+  color: var(--sidebar-text);
+}
+
+.logoutItem[data-highlighted],
+.logoutItem:hover,
+.logoutItem:active {
+  color: var(--color-danger);
+}
+
+.logoutItem[data-highlighted] .menuIcon,
+.logoutItem:hover .menuIcon,
+.logoutItem:active .menuIcon {
   color: var(--color-danger);
 }
 

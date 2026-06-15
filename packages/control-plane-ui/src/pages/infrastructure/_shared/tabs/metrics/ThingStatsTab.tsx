@@ -194,7 +194,7 @@ export function ThingStatsTab({ thingId, thingType }: Props) {
   const catalog = catalogFor(thingType);
 
   if (loading && !data) return <Skeleton.ListPageSkeleton />;
-  if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
+  if (error) return <ErrorBanner error={error} onRetry={refetch} />;
   if (!data) return null;
 
   // Some Thing types aren't covered by per-Thing rollup at all (control-plane,
@@ -363,7 +363,7 @@ function BreakdownPane({ thingId, startISO, endISO, spec }: BreakdownPaneProps) 
   );
 
   if (loading && !data) return <Skeleton.Table rows={5} cols={2} />;
-  if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
+  if (error) return <ErrorBanner error={error} onRetry={refetch} />;
   if (!data) return null;
 
   const rows = breakdownRows(data.rows, spec, 20);

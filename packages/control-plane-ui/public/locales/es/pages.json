@@ -70,7 +70,7 @@
     "viewAll": "Ver todo →",
     "splitBarVk": "Virtual Key: {{count}}",
     "splitBarProxy": "Proxy: {{count}}",
-    "splitBarSubtitle": "{{vk}} Virtual Key · {{proxy}} Proxy",
+    "splitBarSubtitle": "{{vk}} Virtual Key | {{proxy}} Proxy",
     "win1h": "Última 1h",
     "win1d": "Últimas 24h",
     "win7d": "Últimos 7d",
@@ -110,7 +110,7 @@
     "cacheSaveError": "Error al guardar la configuración de caché del proveedor.",
     "cacheAnthropicSubtitle": "El AI Gateway inyecta marcadores nativos cache_control de Anthropic en las solicitudes para habilitar el caché de prompts del lado del servidor en los límites del prompt del sistema y el historial de conversación.",
     "cacheGeminiTitle": "Caché de Prompts de Gemini",
-    "cacheGeminiInfo": "Este proveedor utiliza la API nativa cachedContent de Gemini. El AI Gateway crea y gestiona automáticamente recursos de contenido en caché basados en los umbrales de tokens de solicitud. La configuración de caché (TTL, habilitación) se gestiona a nivel de gateway a través de la configuración del device shadow del Hub.",
+    "cacheGeminiInfo": "Este proveedor utiliza la API nativa cachedContent de Gemini. El AI Gateway crea y gestiona automáticamente recursos de contenido en caché basados en los umbrales de tokens de solicitud. La configuración de caché (TTL, habilitación) se gestiona a nivel de gateway a través de la configuración del nodo del Hub.",
     "cacheGeminiEnabled": "Habilitar Caché de Prompts de Gemini",
     "cacheGeminiEnabledHint": "Cuando está habilitado, el gateway crea y reutiliza recursos cachedContent de Gemini para solicitudes con instrucciones de sistema grandes.",
     "cacheGeminiMinSystemChars": "Tamaño mínimo de instrucción de sistema (bytes)",
@@ -1669,11 +1669,11 @@
     "agentShutdownWarningPlaceholder": "Ingrese el mensaje de advertencia para este idioma...",
     "agentWarningUsingDefault": "Usando el mensaje de advertencia predeterminado. Personalícelo arriba.",
     "quitPolicyTitle": "Política de salida del Agent",
-    "quitPolicyDesc": "Controla si la barra de menús del Agent expone los elementos Reiniciar Agent y Salir de Nexus Agent. Desactívelo para despliegues de cumplimiento always-on — los usuarios no podrán salir del proceso del Agent.",
-    "quitAllowedLabel": "Permitir que los usuarios salgan del Agent",
-    "quitAllowedOnHint": "Los elementos Reiniciar Agent y Salir de Nexus Agent están visibles.",
-    "quitAllowedOffHint": "Los elementos Reiniciar Agent y Salir de Nexus Agent están ocultos — solo Reiniciar App está disponible.",
-    "shutdownWarningDisabledHint": "Este texto solo aparece cuando \"Permitir que los usuarios salgan del Agent\" está activado. Edítelo ahora para que el mensaje esté listo cuando se habilite la salida.",
+    "quitPolicyDesc": "Controla si los empleados pueden desactivar la protección en su dispositivo. Desactívelo para despliegues de cumplimiento always-on: el usuario no puede salir, pausar ni cerrar sesión en el Agent, por lo que no se puede desactivar la supervisión. Iniciar sesión siempre funciona.",
+    "quitAllowedLabel": "Permitir que los usuarios desactiven el Agent",
+    "quitAllowedOnHint": "El usuario dispone de Salir, Pausar y Cerrar sesión.",
+    "quitAllowedOffHint": "Always-on: Salir, Pausar y Cerrar sesión están ocultos — el usuario no puede desactivar la protección. Iniciar sesión sigue funcionando.",
+    "shutdownWarningDisabledHint": "Este texto solo aparece cuando \"Permitir que los usuarios desactiven el Agent\" está activado. Edítelo ahora para que el mensaje esté listo.",
     "shutdownWarningEnabledLabel": "Mostrar esta advertencia cuando el usuario haga clic en Salir",
     "attestation": {
       "title": "Atestación del Agent",
@@ -1713,6 +1713,16 @@
       "add": "Añadir",
       "remove": "Quitar",
       "empty": "Sin bundles configurados — el agente no cerrará ningún flujo UDP.",
+      "howToFind": "Encuentra el bundle ID de una app Mac con: defaults read /Applications/SomeApp.app/Contents/Info.plist CFBundleIdentifier"
+    },
+    "bypassBundles": {
+      "title": "Bundles exentos (macOS)",
+      "desc": "IDs de bundle de aplicaciones macOS que el agente dejará pasar SIN inspección. Úsalo solo para una herramienta de confianza cuyo TLS con certificado fijado (pinning) se rompe realmente bajo inspección (p. ej. una CLI de desarrollador). La coincidencia es por aplicación de origen, nunca por destino — así el mismo host sigue inspeccionado desde cualquier otra app. Déjalo vacío salvo que tengas una razón concreta y revisada.",
+      "warning": "⚠ Las aplicaciones listadas aquí NO se inspeccionan para cumplimiento. Su tráfico de IA no produce registros de auditoría y es invisible para las políticas. Cada entrada es una exención de cumplimiento deliberada y revisada — mantén esta lista lo más corta posible y quita las entradas cuando ya no se necesiten.",
+      "placeholder": "com.example.MiHerramienta — pulsa Enter para añadir",
+      "add": "Añadir",
+      "remove": "Quitar",
+      "empty": "Ninguna app exenta — todo se inspecciona (recomendado).",
       "howToFind": "Encuentra el bundle ID de una app Mac con: defaults read /Applications/SomeApp.app/Contents/Info.plist CFBundleIdentifier"
     },
     "authenticationTab": "Autenticacion",
@@ -2330,6 +2340,31 @@
     "applyFilters": "Aplicar filtros",
     "clearFilters": "Limpiar filtros",
     "activeFilters": "Filtros activos ({{count}})",
+    "activeFilterLabels": {
+      "provider": "Proveedor",
+      "virtualKey": "Clave virtual",
+      "user": "Usuario",
+      "organization": "Organización",
+      "project": "Proyecto",
+      "model": "Modelo",
+      "requestId": "ID de solicitud",
+      "requestHook": "Hook de solicitud",
+      "responseHook": "Hook de respuesta",
+      "http": "HTTP",
+      "cache": "Caché",
+      "time": "Tiempo",
+      "any": "Cualquiera",
+      "target": "Destino",
+      "path": "Ruta",
+      "device": "Dispositivo",
+      "node": "Nodo",
+      "process": "Proceso",
+      "bumpStatus": "Estado de bump",
+      "complianceTag": "Etiqueta de cumplimiento",
+      "range2xx": "2xx correcto",
+      "range4xx": "4xx error de cliente",
+      "range5xx": "5xx error de servidor"
+    },
     "filterPanelDescription": "Filtre por <strong>proyecto</strong>, <strong>clave virtual</strong>, <strong>proveedor</strong> y <strong>modelo</strong> (elija un proveedor primero para seleccionar un modelo). Use los botones a continuación para aplicar o abrir más criterios.",
     "labelProvider": "Proveedor",
     "tipProvider": "Busque y seleccione un proveedor. Requerido antes de elegir un modelo.",
@@ -2344,6 +2379,7 @@
     "tipVirtualKeyDefault": "Buscar por nombre. Abra Avanzado para filtrar por organización → proyecto primero.",
     "placeholderVirtualKey": "Buscar por nombre…",
     "labelQuickRange": "Rango rápido",
+    "timeSelect": "Selección de tiempo",
     "tipQuickRange": "Ventanas preestablecidas en hora local. Aplicar aún se ejecuta cuando hace clic en Aplicar filtros.",
     "clearTime": "Limpiar hora",
     "labelFrom": "Desde",
@@ -2357,10 +2393,10 @@
     "tipTargetHost": "Filtrar por nombre de host de destino (coincidencia de subcadena).",
     "placeholderTargetHost": "ej. api.openai.com",
     "labelNode": "Nodo",
-    "tipNode": "Filtrar por el Thing (nodo) que emitió el evento — dispositivo agent, AI Gateway o compliance proxy. El menú lista solo nodos del tipo correspondiente al source tab activo.",
+    "tipNode": "Filtrar por el nodo que emitió el evento — dispositivo agent, AI Gateway o compliance proxy. El menú lista solo nodos del tipo correspondiente al source tab activo.",
     "placeholderNode": "Seleccionar un nodo…",
-    "advancedExpand": "Avanzado ▼",
-    "advancedCollapse": "Avanzado ▲",
+    "advancedExpand": "Filtro avanzado",
+    "advancedCollapse": "Filtro avanzado",
     "scopeTitle": "Alcance",
     "scopeDescription": "Elija organización primero, luego proyecto. Elegir alcance aquí limpia la clave virtual directa en la fila superior (y viceversa).",
     "stepOrganization": "1 · Organización",
@@ -2448,6 +2484,8 @@
     "colHook": "Hook",
     "colCache": "Cache",
     "emptyTraffic": "Aún no se ha registrado tráfico",
+    "noFilteredDataTitle": "Sin tráfico coincidente",
+    "noFilteredDataDescription": "Ningún dato coincide con los filtros actuales. Ajústalos o bórralos y actualiza.",
     "copiedTooltip": "¡Copiado!",
     "clickToCopy": "Clic para copiar: {{id}}",
     "closeDetailPanel": "Cerrar panel de detalle",
@@ -2610,7 +2648,19 @@
           "disabled": "Omitido — caché desactivada",
           "no_cache": "Omitido — el cliente optó por no usar caché",
           "passthrough": "Omitido — passthrough de emergencia",
-          "not_cacheable": "Omitido — la respuesta no es cacheable"
+          "not_cacheable": "Omitido — la respuesta no es cacheable",
+          "time_sensitive": "Omitido — solicitud sensible al tiempo",
+          "oversize_for_embedding": "Omitido — demasiado grande para incrustar",
+          "valkey_unavailable": "Omitido — almacén de caché no disponible",
+          "embedding_timeout": "Omitido — incrustación agotó el tiempo",
+          "embedding_provider_error": "Omitido — error del proveedor de incrustación",
+          "embedding_dim_mismatch": "Omitido — dimensión de incrustación no coincide",
+          "semantic_search_error": "Omitido — error de búsqueda semántica",
+          "semantic_search_timeout": "Omitido — búsqueda semántica agotó el tiempo",
+          "semantic_reindex_in_progress": "Omitido — índice semántico reconstruyéndose",
+          "semantic_unavailable": "Omitido — caché semántica no disponible",
+          "embedding_circuit_open": "Omitido — circuito de incrustación abierto",
+          "poisoned": "Omitido — entrada de caché en cuarentena"
         },
         "provider": {
           "hit": "HIT — {{tokens}} tokens en caché",
@@ -2748,9 +2798,17 @@
         "tier": {
           "tier1": "Tier 1",
           "tier2": "Tier 2",
-          "hint": "Qué normalizador procesó esta fila: Tier 1 = análisis preciso por host; Tier 2 = sondeo de patrones multi-spec; sin distintivo = Tier 3 textual."
+          "structural": "Estructural",
+          "hostMatched": "por host",
+          "hint": "Qué decodificador procesó esta fila: Tier 1 = decodificador exacto del protocolo (resuelto por clave, host o inspección del contenido); Tier 2 = sondeo de patrones para superficies web de consumo; Estructural = proyección tipada del cuerpo HTTP sin decodificación de protocolo; sin distintivo = fila textual heredada sin procesar. \"por host\" reemplaza el número de confianza cuando el adaptador se eligió por host: su cobertura es honesta pero no es una puntuación de confianza comparable a una decodificación por inspección."
         },
         "modelLabel": "Modelo",
+        "redaction": {
+          "rule": "regla",
+          "source": "origen",
+          "action": "acción",
+          "reason": "motivo"
+        },
         "finishReason": "Razón de cierre",
         "role": {
           "system": "Sistema",
@@ -2763,7 +2821,8 @@
           "completion": "Compleción",
           "total": "Total",
           "cacheRead": "Lectura caché",
-          "cacheCreate": "Escritura caché"
+          "cacheCreate": "Escritura caché",
+          "reasoning": "Razonamiento"
         },
         "banner": {
           "failedTitle": "Falló la normalización para esta dirección.",
@@ -2775,7 +2834,17 @@
         "dropped": {
           "title": "Contenido descartado según la política de almacenamiento.",
           "hint": "El operador configuró storageAction=drop-content para el hook que coincidió. El registro de auditoría conserva solo la decisión y los metadatos.",
-          "ruleIds": "Reglas que dispararon"
+          "ruleIds": "Reglas que dispararon",
+          "degradedTitle": "Contenido descartado: la política de redacción no pudo aplicarse de forma segura a la copia almacenada.",
+          "degradedHint": "La política de almacenamiento del hook era redact; la copia almacenada se descartó porque la redacción no pudo aplicarse de forma segura a ella. Causa: {{cause}}.",
+          "degradedAddresses": "Direcciones de contenido sin resolver",
+          "neutralHint": "Contenido no almacenado según la política de almacenamiento. Esta fila no registra si el descarte fue la acción configurada o un recurso alternativo de la redacción.",
+          "cause": {
+            "no-spans": "la política no produjo posiciones de redacción (no-spans)",
+            "payload-unmarshal": "la copia almacenada no pudo analizarse (payload-unmarshal)",
+            "spans-unresolved": "las posiciones de redacción no pudieron resolverse en la copia almacenada (spans-unresolved)",
+            "marshal-failed": "la copia redactada no pudo volver a serializarse (marshal-failed)"
+          }
         },
         "binary": {
           "title": "Contenido binario",
@@ -2788,6 +2857,13 @@
           "binaryInputNotStored": "Entrada de array de tokens binarios — no almacenada según la política de auditoría.",
           "vectorsNotStored": "Los vectores de embedding no se almacenan según la política de auditoría.",
           "noInputs": "No se capturaron entradas."
+        },
+        "emptyBody": "Cuerpo vacío.",
+        "sse": {
+          "framesTitle": "Tramas SSE",
+          "eventFallbackLabel": "message",
+          "showAllFrames": "Mostrar las {{count}} tramas",
+          "truncatedNote": "Vista de tramas truncada — el flujo completo se capturó y está disponible en la pestaña Sin procesar."
         }
       },
       "reasonCodes": {
@@ -2804,6 +2880,11 @@
     "colPath": "Ruta de solicitud"
   },
   "analytics": {
+    "subtitle": "Supervisa costos de tráfico, uso de tokens, latencia y desgloses por origen en el periodo seleccionado.",
+    "customRangeStart": "Inicio del rango personalizado",
+    "customRangeEnd": "Fin del rango personalizado",
+    "labelTimeRange": "Rango de tiempo",
+    "labelGroupBy": "Agrupar por",
     "sourceFilter": "Origen",
     "sourceAll": "Todo el tráfico",
     "sourceVK": "AI Gateway",
@@ -2915,7 +2996,7 @@
     "trendsHeading": "Tendencias",
     "breakdownsHeading": "Desgloses",
     "breakdownEmpty": "Sin datos para este desglose en la ventana seleccionada.",
-    "notSupportedType": "No se recopilan estadísticas por Thing para este tipo ({{type}}).",
+    "notSupportedType": "No se recopilan estadísticas por nodo para este tipo ({{type}}).",
     "disabledFallback": "El rollup por agente no está habilitado en el Hub. Vea las métricas detalladas en la UI local del agente.",
     "kpi": {
       "requests": "Solicitudes",
@@ -2987,6 +3068,8 @@
       "compliance": "Cumplimiento",
       "pass": "Aprobado",
       "noTraffic": "Sin tráfico para este nodo",
+      "exemptBadge_one": "⚠ {{count}} app exenta de inspección (en toda la flota) — su tráfico de IA no se audita",
+      "exemptBadge_other": "⚠ {{count}} apps exentas de inspección (en toda la flota) — su tráfico de IA no se audita",
       "subtitleAgent": "Solicitudes IA originadas por este dispositivo recientemente (últimas 50).",
       "subtitleGateway": "Solicitudes IA procesadas por esta instancia de gateway (últimas 50).",
       "subtitleProxy": "Solicitudes IA procesadas por esta instancia de proxy (últimas 50).",
@@ -3224,7 +3307,7 @@
     "saving": "Guardando..."
   },
   "metrics": {
-    "rollupsDescription": "Descripción de resúmenes",
+    "rollupsDescription": "Resúmenes de métricas agregadas del período seleccionado.",
     "range": "Rango",
     "last6Hours": "Últimas 6 horas",
     "last24Hours": "Últimas 24 horas",
@@ -3364,26 +3447,6 @@
       "latencyMs": "Latencia (ms)",
       "backfilledAt": "Rellenado en"
     },
-    "rejectConfig": {
-      "title": "Configuración de respuesta de rechazo",
-      "subtitle": "Controla cómo se muestran las solicitudes bloqueadas a los clientes",
-      "defaultLevel": "Nivel de detalle predeterminado",
-      "levelLabel": "Nivel {{level}}",
-      "level0Desc": "403 genérico con detalle mínimo (modo discreto).",
-      "level1Desc": "Mensaje de bloqueo con contacto e ID de transacción.",
-      "level2Desc": "Motivo detallado y contexto de política para administradores.",
-      "contactInfoLabel": "Contacto de TI",
-      "contactInfoPlaceholder": "p. ej. security@company.com o enlace interno",
-      "contactInfoHint": "Se muestra en páginas de rechazo nivel 1 y 2 si está configurado.",
-      "lastUpdated": "Última actualización {{date}} por {{user}}",
-      "save": "Guardar configuración",
-      "saved": "Configuración guardada",
-      "saveFailed": "Error al guardar la configuración",
-      "confirmTitle": "¿Guardar la configuración de rechazo?",
-      "confirmDesc": "El nivel predeterminado será {{level}} para nuevas respuestas de rechazo.",
-      "cancel": "Cancelar",
-      "confirmSave": "Guardar"
-    },
     "alertHistory": {
       "title": "Alertas del proxy",
       "subtitle": "Alertas activas e historial reciente del evaluador de alertas del proxy de reenvío",
@@ -3491,7 +3554,7 @@
       "hostname": "Nombre de host",
       "boundUser": "Usuario vinculado",
       "physicalId": "ID físico",
-      "thingId": "Thing ID",
+      "thingId": "Node ID",
       "ip": "IP"
     },
     "forceRefresh": "Forzar sincronización",
@@ -4342,7 +4405,7 @@
     "backToNodes": "Volver a Nodos",
     "nodeInfo": "Información del Nodo",
     "nodeId": "ID del Nodo",
-    "thingId": "Thing ID",
+    "thingId": "Node ID",
     "hostname": "Nombre de host",
     "physicalIdFull": "ID físico",
     "primaryIp": "IP primaria",
@@ -4975,12 +5038,12 @@
       "downloadHint": "Elige la versión para tu plataforma. Cada una es un único ejecutable estático, sin instalador.",
       "downloadButton": "Descargar ({{arch}})",
       "installTitle": "Instalar",
-      "installMacOSStep1": "# Se muestra Apple Silicon; para Intel cambia arm64 → amd64\ncurl -fL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest -o nexus",
+      "installMacOSStep1": "# Se muestra Apple Silicon; para Intel cambia arm64 → amd64\ncurl -fL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest -o nexus\n# Verifica la descarga con la suma de comprobación publicada antes de ejecutarla\necho \"$(curl -fsSL {{downloadBase}}/downloads/nexus-cli-darwin-arm64-latest.sha256)  nexus\" | shasum -a 256 -c -",
       "installMacOSStep2": "# El binario no está notarizado: borra la marca de cuarentena de Gatekeeper y hazlo ejecutable\nxattr -d com.apple.quarantine ./nexus 2>/dev/null; chmod +x ./nexus",
       "installMacOSStep3": "# Muévelo a tu PATH\nsudo mv ./nexus /usr/local/bin/nexus",
-      "installLinuxStep1": "curl -fL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest -o nexus && chmod +x ./nexus",
+      "installLinuxStep1": "curl -fL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest -o nexus\n# Verifica la descarga con la suma de comprobación publicada antes de ejecutarla\necho \"$(curl -fsSL {{downloadBase}}/downloads/nexus-cli-linux-amd64-latest.sha256)  nexus\" | sha256sum -c -\nchmod +x ./nexus",
       "installLinuxStep2": "sudo mv ./nexus /usr/local/bin/nexus",
-      "installWindowsStep1": "# PowerShell — descarga en la carpeta actual\nInvoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe -OutFile nexus.exe",
+      "installWindowsStep1": "# PowerShell — descarga en la carpeta actual\nInvoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe -OutFile nexus.exe\n# Verifica la descarga con la suma de comprobación publicada antes de ejecutarla\n$expected = (Invoke-WebRequest {{downloadBase}}/downloads/nexus-cli-windows-amd64-latest.exe.sha256 -UseBasicParsing).Content.Trim()\nif ((Get-FileHash nexus.exe -Algorithm SHA256).Hash -ine $expected) { throw 'La suma de comprobación de nexus.exe no coincide — no lo ejecutes' }",
       "installWindowsStep2": "# Mueve nexus.exe a una carpeta de tu PATH (p. ej. %LOCALAPPDATA%\\Programs) y reabre la terminal",
       "quickstartTitle": "Inicio rápido",
       "quickstartHint": "El primer arranque ejecuta un breve asistente: elige un entorno → inicia sesión → elige un modelo → elige o crea una Virtual Key.",
@@ -5005,9 +5068,7 @@
         "simulate": "Ejecuta una solicitud construida a través del pipeline del gateway (laboratorio de solicitudes)",
         "resource": "Explora y opera cualquier recurso de administración del Control Plane (basado en OpenAPI)",
         "killswitch": "Muestra o conmuta el kill switch global",
-        "passthrough": "Muestra o conmuta el passthrough de emergencia (omite los hooks de cumplimiento)",
-        "skill": "Lista e instala skills de agente (playbooks de divulgación progresiva)",
-        "mcp": "Ejecuta el servidor Model Context Protocol para agentes y plataformas asociadas"
+        "passthrough": "Muestra o conmuta el passthrough de emergencia (omite los hooks de cumplimiento)"
       }
     },
     "agentSetup": {
@@ -5975,6 +6036,7 @@
       "expiresAt": "Expira en",
       "expiresAtHint": "Máximo {{hours}}h desde ahora. El job de reconciliación del Hub establece enabled=false automáticamente al llegar, no se requiere limpieza manual.",
       "reason": "Razón (≥ {{count}} caracteres)",
+      "reasonPlaceholder": "Describe por qué se necesita passthrough de emergencia",
       "reasonHint": "{{count}} de {{min}} caracteres. Requerido para auditoría; aparece en cada fila traffic_event que fue omitida por este nivel."
     },
     "validation": {

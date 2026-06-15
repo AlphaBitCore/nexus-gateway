@@ -40,6 +40,9 @@ vi.mock('./streamChat', () => ({
     while ((m = re.exec(text)) !== null) ids.push(m[1]);
     return ids;
   },
+  runIdsIn: () => [],
+  reviewVersionIdsIn: () => [],
+  workflowVersionIdsIn: () => [],
 }));
 
 describe('ChatWithNexus', () => {
@@ -275,7 +278,6 @@ describe('ChatWithNexus', () => {
     // The past transcript re-renders both turns.
     await waitFor(() => expect(screen.getByText('earlier q')).toBeTruthy());
     expect(screen.getByText('earlier a')).toBeTruthy();
-
     // New chat clears the conversation.
     fireEvent.click(screen.getByRole('button', { name: 'common:assistant.newChat' }));
     expect(screen.queryByText('earlier q')).toBeNull();
@@ -375,10 +377,10 @@ describe('ChatWithNexus', () => {
     expect(within(list).getByText('Model Two')).toBeTruthy();
   });
 
-  it('expands a tool chip to reveal the tool input', async () => {
+  it('expands a tool chip to reveal the tool input AND its response', async () => {
     vi.mocked(runChat).mockImplementationOnce(async (_sid: string, _m: string, cb: StreamCallbacks) => {
       cb.onToolStart?.('resource_search', { query: 'routing rules' });
-      cb.onToolEnd?.('resource_search', false);
+      cb.onToolEnd?.('resource_search', false, '{"cards":[{"operationId":"rulesList"}]}');
       cb.onText?.('done');
       cb.onDone?.('sid');
     });
@@ -389,10 +391,32 @@ describe('ChatWithNexus', () => {
     fireEvent.submit(input.closest('form') as HTMLFormElement);
 
     const chip = await screen.findByRole('button', { name: /assistant.toolDetails/ });
-    // Collapsed by default; the input only appears after a click.
+    // Collapsed by default; neither request nor response appears before a click.
     expect(screen.queryByText(/routing rules/)).toBeNull();
+    expect(screen.queryByText(/rulesList/)).toBeNull();
     fireEvent.click(chip);
     await waitFor(() => expect(screen.getByText(/routing rules/)).toBeTruthy());
+    // The tool's result is visible below the request, under the response label.
+    expect(screen.getByText(/rulesList/)).toBeTruthy();
+    expect(screen.getByText('common:assistant.toolResponse')).toBeTruthy();
+  });
+
+  it('a tool with a response but no input is still expandable', async () => {
+    vi.mocked(runChat).mockImplementationOnce(async (_sid: string, _m: string, cb: StreamCallbacks) => {
+      cb.onToolStart?.('workflow_list', {});
+      cb.onToolEnd?.('workflow_list', false, '- sweep (id wf1, user): audits keys');
+      cb.onText?.('done');
+      cb.onDone?.('sid');
+    });
+    render(<ChatWithNexus />);
+    fireEvent.click(screen.getByRole('button', { name: 'common:assistant.open' }));
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'list' } });
+    fireEvent.submit(input.closest('form') as HTMLFormElement);
+
+    const chip = await screen.findByRole('button', { name: /assistant.toolDetails/ });
+    fireEvent.click(chip);
+    await waitFor(() => expect(screen.getByText(/audits keys/)).toBeTruthy());
   });
 
   it('toggles maximize/restore, enlarging the panel', () => {

@@ -36,7 +36,7 @@ export function VirtualKeyAccessLogTab({ auditLogs }: VirtualKeyAccessLogTabProp
                 />
               ),
             },
-            { key: 'modelName', label: t('pages:virtualKeys.colModel'), render: r => r.modelName ?? '--' },
+            { key: 'modelName', label: t('pages:virtualKeys.colModel'), render: r => r.routedModelName ?? r.modelName ?? '--' },
           ]}
           data={auditLogs}
           emptyMessage={t('pages:virtualKeys.noRecentAccessLogs')}

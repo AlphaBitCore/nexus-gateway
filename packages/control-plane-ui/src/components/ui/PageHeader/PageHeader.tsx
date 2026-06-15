@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import styles from './PageHeader.module.css';
 
 export interface PageHeaderProps {
   title: string;
@@ -37,7 +38,7 @@ export function PageHeader({ title, subtitle, action }: PageHeaderProps) {
         ) : null}
       </div>
       {action ? (
-        <div className="flex shrink-0 items-center gap-2">
+        <div className={cn('flex shrink-0 items-center gap-2', styles.action)}>
           {action}
         </div>
       ) : null}

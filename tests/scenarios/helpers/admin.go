@@ -284,10 +284,10 @@ func CPDoWithKey(ctx context.Context, env *intg.Env, rawKey, method, path string
 // plain key back exactly once; we keep it on this struct so tests can
 // use it directly and the t.Cleanup hook can delete by ID later.
 type CreatedVK struct {
-	ID      string
-	Name    string
-	RawKey  string
-	Prefix  string
+	ID     string
+	Name   string
+	RawKey string
+	Prefix string
 }
 
 // CreateMyVK creates a personal virtual key owned by the authenticated

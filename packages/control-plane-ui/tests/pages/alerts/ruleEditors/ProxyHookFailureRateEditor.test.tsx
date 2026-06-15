@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import '@testing-library/jest-dom/vitest';
 
 import { renderWithProviders } from '@/test/test-utils';
 import { ProxyHookFailureRateEditor } from '../../../../src/pages/alerts/ruleEditors/ProxyHookFailureRateEditor';

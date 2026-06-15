@@ -218,8 +218,10 @@ if [[ "$run_full_layers" -eq 1 ]]; then
 fi
 
 # Phase 5b: build the daemon container image so the daemon-bound scenarios
-# (S-084 containerized agent enrollment) RUN instead of SKIPping. Nightly /
-# full only, gated on docker + the Dockerfile being present; the proxy CONNECT
+# (S-084 containerized agent enrollment, S-155 containerized agent transparent
+# interception) RUN instead of SKIPping. Nightly / full only, gated on docker +
+# the Dockerfile being present; S-155 additionally needs a host that can grant
+# NET_ADMIN/--privileged for the iptables chain (see its SKIP). The proxy CONNECT
 # scenario (S-083) additionally needs provider-key/CA secrets (see its SKIP).
 if [[ "$run_full_layers" -eq 1 ]] && command -v docker >/dev/null 2>&1 && [[ -f "$_dir/../packages/agent/Dockerfile" ]]; then
   _run_phase daemon-image "Phase 5b: build agent daemon image" \
@@ -251,7 +253,7 @@ if compgen -G "$_dir/scenarios/*_test.go" >/dev/null; then
     # mutating call to a shared/global surface at the CPDoJSON choke point. These
     # scenarios are GET-only admin reads — no /v1/* gateway traffic.
     _run_phase scenarios-prod-safe "Phase 6: scenarios (prod safe-e2e read-only subset)" \
-      "cd $_dir/scenarios && NEXUS_TEST_TARGET=prod NEXUS_PROD_SAFE_E2E=1 GOWORK=off go test -count=1 -run '^(${prod_safe_scenarios})\$' ." \
+      "cd $_dir/scenarios && NEXUS_TEST_TARGET=prod NEXUS_PROD_SAFE_E2E=1 GOWORK=off go test -count=1 -run '^(${prod_safe_scenarios})' ." \
       || overall_status=1
   else
   case "$scenario_set" in

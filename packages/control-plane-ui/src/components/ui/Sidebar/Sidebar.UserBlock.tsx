@@ -95,9 +95,9 @@ export function SidebarUserBlock({ collapsed }: { collapsed: boolean }) {
         </DropdownMenuTrigger>
         <DropdownMenuContent
           className={styles.userMenuContent}
-          side={collapsed ? 'right' : 'top'}
-          align={collapsed ? 'end' : 'start'}
-          sideOffset={collapsed ? 8 : 6}
+          side="right"
+          align="end"
+          sideOffset={12}
         >
           <SidebarAlertMenuItem />
           <DropdownMenuSeparator className={styles.userMenuSeparator} />

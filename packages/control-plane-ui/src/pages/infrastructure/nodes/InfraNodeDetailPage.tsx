@@ -70,7 +70,7 @@ export default function InfraNodeDetailPage() {
   );
 
   if (nodeLoading && !node) return <Skeleton.DetailPageSkeleton />;
-  if (nodeError) return <ErrorBanner message={nodeError.message} onRetry={refetchNode} />;
+  if (nodeError) return <ErrorBanner error={nodeError} onRetry={refetchNode} />;
   if (!node) return null;
 
   return (

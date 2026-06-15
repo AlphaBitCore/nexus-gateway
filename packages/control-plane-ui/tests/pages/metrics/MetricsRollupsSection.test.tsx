@@ -63,10 +63,12 @@ describe('MetricsRollupsSection', () => {
     expect((select as HTMLSelectElement).value).toBe('168');
   });
 
-  it('hides the range selector and shows the embedded description when external window + embedded are set', () => {
+  it('hides the range selector when external window + embedded are set (description now lives in the parent filter bar)', () => {
     wrap({ embedded: true, externalStart: '2026-05-27T00:00:00Z', externalEnd: '2026-05-28T00:00:00Z' });
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
-    expect(screen.getByText(i18n.t('pages:metrics.rollupsDescription'))).toBeInTheDocument();
+    // The embedded description was lifted to the AnalyticsPage filter bar; the
+    // section itself no longer renders it.
+    expect(screen.queryByText(i18n.t('pages:metrics.rollupsDescription'))).not.toBeInTheDocument();
   });
 
   it('hides the VK-only token/cost pair when source is not vk', () => {

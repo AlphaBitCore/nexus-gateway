@@ -1,0 +1,16 @@
+.action :global(button) {
+  font-size: 14px !important;
+  font-weight: 400 !important;
+}
+
+.action :global(button[class*="primary"]:hover) {
+  background: color-mix(in srgb, var(--color-primary) 88%, var(--color-text-primary)) !important;
+  border-color: color-mix(in srgb, var(--color-primary) 88%, var(--color-text-primary)) !important;
+  color: var(--color-primary-foreground) !important;
+}
+
+.action :global(button[class*="primary"]:active) {
+  background: color-mix(in srgb, var(--color-primary) 80%, var(--color-text-primary)) !important;
+  border-color: color-mix(in srgb, var(--color-primary) 80%, var(--color-text-primary)) !important;
+  color: var(--color-primary-foreground) !important;
+}

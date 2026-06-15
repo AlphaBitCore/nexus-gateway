@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import '@testing-library/jest-dom/vitest';
 import { FormField } from '../../../../src/components/ui/FormField/FormField';
 
 describe('FormField', () => {

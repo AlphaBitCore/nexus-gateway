@@ -30,15 +30,15 @@ import (
 // once. Cross-service: just CP — no DB / Hub / MQ touched.
 //
 // Assertions:
-//   1. GET returns 200 + JSON-decodable body.
-//   2. issuer matches our local CP base URL.
-//   3. authorization_endpoint / token_endpoint / introspection_endpoint
-//      / revocation_endpoint / jwks_uri all present and same-origin.
-//   4. response_types_supported includes "code", grant_types includes
-//      "authorization_code" and "refresh_token".
-//   5. code_challenge_methods_supported includes "S256" (PKCE binding
-//      uses SHA-256 in CPLogin).
-//   6. The jwks_uri returns 200 and contains a non-empty keys array.
+//  1. GET returns 200 + JSON-decodable body.
+//  2. issuer matches our local CP base URL.
+//  3. authorization_endpoint / token_endpoint / introspection_endpoint
+//     / revocation_endpoint / jwks_uri all present and same-origin.
+//  4. response_types_supported includes "code", grant_types includes
+//     "authorization_code" and "refresh_token".
+//  5. code_challenge_methods_supported includes "S256" (PKCE binding
+//     uses SHA-256 in CPLogin).
+//  6. The jwks_uri returns 200 and contains a non-empty keys array.
 //
 // BRAINSTORM (post — see end-of-test t.Logf).
 func TestS120_OAuthDiscovery(t *testing.T) {
@@ -46,6 +46,19 @@ func TestS120_OAuthDiscovery(t *testing.T) {
 	ctx := context.Background()
 
 	client := intg.LocalHTTPClient()
+
+	// Discovery endpoints are loopback aliases locally, but under the real CP
+	// origin (https + the CP host) in prod-safe-e2e. Relax the loopback check
+	// to "https under the CP origin" on prod; keep strict loopback locally.
+	endpointOK := isLoopbackURL
+	if helpers.IsProdSafeE2E() {
+		cpu, _ := url.Parse(sc.Env.CPURL)
+		cpHost := cpu.Hostname()
+		endpointOK = func(raw string) bool {
+			u, err := url.Parse(raw)
+			return err == nil && u.Scheme == "https" && u.Hostname() == cpHost
+		}
+	}
 
 	// 1) Discovery.
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
@@ -70,8 +83,8 @@ func TestS120_OAuthDiscovery(t *testing.T) {
 	issuer, _ := doc["issuer"].(string)
 	if issuer == "" {
 		t.Errorf("discovery.issuer is empty")
-	} else if !isLoopbackURL(issuer) {
-		t.Errorf("discovery.issuer=%q is not a loopback URL", issuer)
+	} else if !endpointOK(issuer) {
+		t.Errorf("discovery.issuer=%q failed the origin check (loopback locally / https-under-CP-origin on prod)", issuer)
 	}
 
 	// 3) Required endpoints present + same-origin (loopback aliases OK).
@@ -88,8 +101,8 @@ func TestS120_OAuthDiscovery(t *testing.T) {
 			t.Errorf("discovery missing required key %q", key)
 			continue
 		}
-		if !isLoopbackURL(raw) {
-			t.Errorf("discovery.%s=%q is not a loopback URL (cross-origin endpoint)", key, raw)
+		if !endpointOK(raw) {
+			t.Errorf("discovery.%s=%q failed the origin check (loopback locally / https-under-CP-origin on prod)", key, raw)
 		}
 	}
 
@@ -143,18 +156,18 @@ func TestS120_OAuthDiscovery(t *testing.T) {
 // active=false. Cross-service: CP authn middleware only.
 //
 // Assertions:
-//   1. Obtain token via the standard CPLogin path. (Cached from a
-//      previous scenario is fine — we DO NOT want to drive a fresh
-//      login flow because that would burn through /authserver/password
-//      rate limit. We use the cached token then explicitly revoke it.)
-//   2. POST /oauth/introspect with the token → active=true,
-//      client_id=cp-ui.
-//   3. POST /oauth/revoke with the token → 200.
-//   4. POST /oauth/introspect again → active=false.
-//   5. After revoke, the cached token in helpers.CPLogin becomes
-//      invalid for THIS process — but a follow-up CPLogin call must
-//      re-login transparently. We test that by hitting an admin
-//      endpoint with a fresh CPLogin call.
+//  1. Obtain token via the standard CPLogin path. (Cached from a
+//     previous scenario is fine — we DO NOT want to drive a fresh
+//     login flow because that would burn through /authserver/password
+//     rate limit. We use the cached token then explicitly revoke it.)
+//  2. POST /oauth/introspect with the token → active=true,
+//     client_id=cp-ui.
+//  3. POST /oauth/revoke with the token → 200.
+//  4. POST /oauth/introspect again → active=false.
+//  5. After revoke, the cached token in helpers.CPLogin becomes
+//     invalid for THIS process — but a follow-up CPLogin call must
+//     re-login transparently. We test that by hitting an admin
+//     endpoint with a fresh CPLogin call.
 //
 // NOTE: revoking the cached token has a global side-effect on the
 // scenario process. We reset the helper's cache so subsequent
@@ -268,12 +281,12 @@ func TestS121_OAuthTokenIntrospectRevoke(t *testing.T) {
 // service. No Hub / AI Gw touch.
 //
 // Assertions:
-//   1. /oauth/authorize → /authserver/password → /oauth/token yields
-//      access_token + refresh_token.
-//   2. /oauth/token grant_type=refresh_token with the issued refresh
-//      returns 200 + a NEW refresh_token (different bytes).
-//   3. Re-exchanging the OLD refresh returns 400 with
-//      error=invalid_grant.
+//  1. /oauth/authorize → /authserver/password → /oauth/token yields
+//     access_token + refresh_token.
+//  2. /oauth/token grant_type=refresh_token with the issued refresh
+//     returns 200 + a NEW refresh_token (different bytes).
+//  3. Re-exchanging the OLD refresh returns 400 with
+//     error=invalid_grant.
 func TestS122_OAuthRefreshTokenRotation(t *testing.T) {
 	sc := setupScenarioNoVK(t)
 	ctx := context.Background()
@@ -319,7 +332,9 @@ func TestS122_OAuthRefreshTokenRotation(t *testing.T) {
 		t.Fatalf("/authserver/password: %v", err)
 	}
 	defer pwResp.Body.Close()
-	var pwOut struct{ RedirectURI string `json:"redirectUri"` }
+	var pwOut struct {
+		RedirectURI string `json:"redirectUri"`
+	}
 	_ = json.NewDecoder(pwResp.Body).Decode(&pwOut)
 	redir, _ := url.Parse(pwOut.RedirectURI)
 	code := redir.Query().Get("code")
@@ -386,7 +401,9 @@ func TestS122_OAuthRefreshTokenRotation(t *testing.T) {
 		t.Errorf("OLD refresh token still accepted after rotation — replay protection broken (body=%q)",
 			truncate(replayBody, 200))
 	}
-	var replay struct{ Error string `json:"error"` }
+	var replay struct {
+		Error string `json:"error"`
+	}
 	_ = json.Unmarshal(replayBody, &replay)
 	if replay.Error != "invalid_grant" {
 		t.Logf("note: old-refresh replay error=%q (RFC 6749 §5.2 expects invalid_grant)", replay.Error)

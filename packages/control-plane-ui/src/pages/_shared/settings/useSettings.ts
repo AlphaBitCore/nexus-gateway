@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../../auth/context/AuthContext';
 import { useApi } from '../../../hooks/useApi';
 import { systemApi, iamApi } from '@/api/services';
@@ -56,6 +57,7 @@ export type ApiKeyEditValues = z.infer<typeof apiKeyEditSchema>;
 export function useSettings() {
   const { keyName, roles, refreshSession } = useAuth();
   const { addToast } = useToast();
+  const { t } = useTranslation();
 
   // ── Tab state ──────────────────────────────────────────────────────
   const [mainTab, setMainTab] = useState('general');
@@ -204,7 +206,7 @@ export function useSettings() {
     const v = profileForm.getValues();
     const u = v.profileUsername.trim();
     if (!u) {
-      addToast('Username is required', 'error');
+      addToast(t('common:validation.usernameRequired'), 'error');
       return;
     }
     const em = v.profileEmail.trim();
@@ -215,15 +217,15 @@ export function useSettings() {
     if (!canEditProfile) return;
     const v = passwordForm.getValues();
     if (v.newPassword !== v.confirmPassword) {
-      addToast('New passwords do not match', 'error');
+      addToast(t('common:validation.passwordsDoNotMatch'), 'error');
       return;
     }
     if (v.newPassword.length < MIN_PASSWORD_LEN) {
-      addToast(`New password must be at least ${MIN_PASSWORD_LEN} characters`, 'error');
+      addToast(t('common:validation.passwordTooShort', { count: MIN_PASSWORD_LEN }), 'error');
       return;
     }
     if (!v.currentPassword) {
-      addToast('Current password is required', 'error');
+      addToast(t('common:validation.currentPasswordRequired'), 'error');
       return;
     }
     try {

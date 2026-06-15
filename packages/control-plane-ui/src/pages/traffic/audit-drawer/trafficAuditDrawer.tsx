@@ -486,7 +486,9 @@ export function TrafficEventDrawer({
                   gatewayLabel = t('pages:traffic.detail.cache.gateway.miss');
                 } else if (gw === 'skipped') {
                   const reason = e.gatewayCacheSkipReason ?? 'disabled';
-                  gatewayLabel = t(`pages:traffic.detail.cache.gatewaySkip.${reason}`);
+                  // An enum value without a translation shows the raw reason,
+                  // never a bare i18n key.
+                  gatewayLabel = t(`pages:traffic.detail.cache.gatewaySkip.${reason}`, { defaultValue: reason });
                 } else {
                   gatewayLabel = '-';
                 }

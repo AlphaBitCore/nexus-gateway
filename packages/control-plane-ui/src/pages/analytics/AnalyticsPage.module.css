@@ -1,16 +1,31 @@
 /* ── Filter bar ──────────────────────────────────────────────────────────── */
+.analyticsHeader {
+  margin-bottom: calc(12px - var(--g-space-6));
+}
+
 .filterCard {
-  padding: 16px 20px;
+  padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 32px;
+  gap: 20px;
   align-items: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .filterGroup {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.filterMeta {
+  margin: 0 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+  text-align: right;
 }
 
 .filterLabel {
@@ -20,12 +35,23 @@
   white-space: nowrap;
 }
 
+.rangeSeparator {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
 .filterSelect {
-  height: 34px;
-  padding: 0 12px;
+  appearance: none;
+  height: 32px;
+  min-width: 150px;
+  padding: 0 40px 0 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  background: var(--color-surface);
+  background-color: var(--color-surface);
+  background-image: url('/icons/chevron-down.svg');
+  background-position: calc(100% - 12px) 50%;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
   color: var(--color-text);
   font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
@@ -105,7 +131,7 @@
 }
 
 .statValue {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   color: var(--color-text);
   line-height: 1.2;
@@ -120,12 +146,21 @@
 }
 
 /* ── Section headings ───────────────────────────────────────────────────── */
+.costUsageSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .sectionHeader {
-  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
 }
 
 .sectionTitle {
-  font-size: var(--g-font-size-lg);
+  font-size: 16px;
   font-family: var(--g-font-display);
   font-weight: 600;
   color: var(--color-text);
@@ -136,7 +171,8 @@
 .sectionSubtitle {
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
-  margin-top: 2px;
+  margin: 0;
+  line-height: 20px;
 }
 
 /* ── Chart cards ────────────────────────────────────────────────────────── */
@@ -151,7 +187,7 @@
 }
 
 .chartTitle {
-  font-size: var(--g-font-size-md);
+  font-size: 14px;
   font-weight: 600;
   font-family: var(--g-font-display);
   letter-spacing: 0;
@@ -162,9 +198,30 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 300px;
+  height: 180px;
   color: var(--color-text-muted);
   font-size: var(--g-font-size-sm);
+}
+
+.emptyStatePanel {
+  display: flex;
+  min-height: 330px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 68px 24px;
+  background: var(--color-surface);
+  border-radius: var(--g-radius-md);
+}
+
+.noDataTitle {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 28px;
+  text-align: center;
 }
 
 /* ── Breakdown table cards ──────────────────────────────────────────────── */
@@ -217,44 +274,6 @@
   font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
   width: 220px;
-}
-
-/* ── Source filter button group ─────────────────────────────────────────── */
-.buttonGroup {
-  display: inline-flex;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-}
-
-.filterBtn {
-  padding: 4px 12px;
-  border: none;
-  background: var(--color-surface);
-  color: var(--color-text);
-  cursor: pointer;
-  font-size: 0.8rem;
-  border-right: 1px solid var(--color-border);
-  transition: background 0.15s;
-}
-
-.filterBtn:last-child {
-  border-right: none;
-}
-
-.filterBtn:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text);
-}
-
-.filterBtnActive {
-  background: var(--color-primary);
-  color: var(--color-primary-foreground);
-}
-
-.filterBtnActive:hover {
-  background: var(--color-primary-hover);
-  color: var(--color-primary-foreground);
 }
 
 .searchInput::placeholder {

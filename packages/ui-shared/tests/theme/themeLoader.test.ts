@@ -84,9 +84,9 @@ describe('applyThemeTokens', () => {
       typography: { fontSans: 'Inter', fontDisplay: 'Lexend', fontMono: 'Menlo' },
       layer1: {
         radii: { md: '8px', none: '' }, // empty value is skipped
-        spacing: { '4': '1rem' },
-        fontSizes: { base: '16px' },
-        effects: { glow: '0 0 8px' },
+        spacing: { '4': '1rem', '0': '' },
+        fontSizes: { base: '16px', xs: '' },
+        effects: { glow: '0 0 8px', shadow: '' },
       },
       lightTokens: { 'color-primary': '#3b518a', 'color-bg': null as unknown as string },
       darkTokens: { 'color-primary': '#9db4ff' },
@@ -99,8 +99,11 @@ describe('applyThemeTokens', () => {
     expect(css).toContain('--g-radius-md: 8px;');
     expect(css).not.toContain('--g-radius-none'); // empty value filtered
     expect(css).toContain('--g-space-4: 1rem;');
+    expect(css).not.toContain('--g-space-0'); // empty value filtered
     expect(css).toContain('--g-font-size-base: 16px;');
+    expect(css).not.toContain('--g-font-size-xs'); // empty value filtered
     expect(css).toContain('--g-effect-glow: 0 0 8px;');
+    expect(css).not.toContain('--g-effect-shadow'); // empty value filtered
     expect(css).toContain(':root, [data-theme="light"]');
     expect(css).toContain('--color-primary: #3b518a;');
     expect(css).not.toContain('--color-bg:'); // null token filtered

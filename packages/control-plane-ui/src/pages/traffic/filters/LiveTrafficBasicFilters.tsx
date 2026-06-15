@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { Chip } from '@nexus-gateway/ui-shared';
 import { projectApi, providerApi, systemApi, virtualKeyApi, devicesApi, iamApi, hubApi } from '@/api/services';
@@ -26,7 +28,7 @@ export function LiveTrafficBasicFilters({
   source,
 }: LiveTrafficBasicFiltersProps) {
   const { t } = useTranslation();
-  const hasTimeRange = Boolean(v.startTime?.trim() || v.endTime?.trim());
+  const [customTimeOpen, setCustomTimeOpen] = useState(false);
   const modelDisabled = !v._providerId?.trim();
 
   const activePreset = (() => {
@@ -37,60 +39,57 @@ export function LiveTrafficBasicFilters({
     if (Math.abs(diffH - 1) < 0.1) return 1;
     if (Math.abs(diffH - 24) < 0.5) return 24;
     if (Math.abs(diffH - 168) < 2) return 168;
-    return null;
+    return 'custom';
   })();
 
   const setPresetRange = (hours: number) => {
     const end = new Date();
     const start = new Date(end.getTime() - hours * 3600_000);
+    setCustomTimeOpen(false);
     onPatch({ startTime: toDatetimeLocalValue(start), endTime: toDatetimeLocalValue(end) });
   };
 
   const setPresetDays = (days: number) => {
     const end = new Date();
     const start = new Date(end.getTime() - days * 86400_000);
+    setCustomTimeOpen(false);
     onPatch({ startTime: toDatetimeLocalValue(start), endTime: toDatetimeLocalValue(end) });
   };
+  const isCustomTime = customTimeOpen || activePreset === 'custom';
 
   return (
     <>
       {/* Time row — always shown */}
       <div className={css.timeRow}>
-        <FieldCompact label={t('pages:traffic.labelQuickRange')} tip={t('pages:traffic.tipQuickRange')}>
-          <Stack direction="horizontal" gap="xs">
-            <Chip size="sm" active={activePreset === 1} onClick={() => setPresetRange(1)}>1h</Chip>
-            <Chip size="sm" active={activePreset === 24} onClick={() => setPresetRange(24)}>24h</Chip>
-            <Chip size="sm" active={activePreset === 168} onClick={() => setPresetDays(7)}>7d</Chip>
-            {hasTimeRange ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={t('pages:traffic.clearTime')}
-                onClick={() => onPatch({ startTime: '', endTime: '' })}
-              >
-                {t('pages:traffic.clearTime')}
-              </Button>
-            ) : null}
+        <FieldCompact label={t('pages:traffic.timeSelect', '时间选择')} tip={t('pages:traffic.tipQuickRange')}>
+          <Stack direction="horizontal" gap="xs" className={css.timePresetGroup}>
+            <Chip size="sm" active={!customTimeOpen && activePreset === 1} onClick={() => setPresetRange(1)}>1h</Chip>
+            <Chip size="sm" active={!customTimeOpen && activePreset === 24} onClick={() => setPresetRange(24)}>24h</Chip>
+            <Chip size="sm" active={!customTimeOpen && activePreset === 168} onClick={() => setPresetDays(7)}>7d</Chip>
+            <Chip size="sm" active={isCustomTime} onClick={() => setCustomTimeOpen(true)}>
+              {t('pages:traffic.timeRangeCustom', '自定义')}
+            </Chip>
           </Stack>
         </FieldCompact>
-        <FieldCompact label={t('pages:traffic.labelFrom')} tip={t('pages:traffic.tipFrom')}>
-          <Input
-            type="datetime-local"
-            aria-label={t('pages:traffic.labelFrom')}
-            value={v.startTime}
-            onChange={(e) => onPatch({ startTime: e.target.value })}
-            className={css.dtInput}
-          />
-        </FieldCompact>
-        <FieldCompact label={t('pages:traffic.labelTo')} tip={t('pages:traffic.tipTo')}>
-          <Input
-            type="datetime-local"
-            aria-label={t('pages:traffic.labelTo')}
-            value={v.endTime}
-            onChange={(e) => onPatch({ endTime: e.target.value })}
-            className={css.dtInput}
-          />
-        </FieldCompact>
+        {isCustomTime ? (
+          <div className={css.timeRangeBox}>
+            <Input
+              type="datetime-local"
+              aria-label={t('pages:traffic.labelFrom')}
+              value={v.startTime}
+              onChange={(e) => onPatch({ startTime: e.target.value })}
+              className={clsx(css.timeRangeInput, !v.startTime && css.timeRangeInputEmpty)}
+            />
+            <span className={css.timeRangeDivider} aria-hidden="true" />
+            <Input
+              type="datetime-local"
+              aria-label={t('pages:traffic.labelTo')}
+              value={v.endTime}
+              onChange={(e) => onPatch({ endTime: e.target.value })}
+              className={clsx(css.timeRangeInput, !v.endTime && css.timeRangeInputEmpty)}
+            />
+          </div>
+        ) : null}
       </div>
 
       {/* Node / Thing — present for every source because traffic_event.thing_id
@@ -98,7 +97,7 @@ export function LiveTrafficBasicFilters({
           its list by source-appropriate node type so users only see relevant
           choices for the active tab. Driven by the same `thingId` filter
           state that node-detail cross-links populate via the URL. */}
-      <div className={css.primaryGrid}>
+      <div className={css.fullWidthFilterRow}>
         <FieldCompact label={t('pages:traffic.labelNode')} tip={t('pages:traffic.tipNode')}>
           <SearchableCombobox
             ariaLabel={t('pages:traffic.labelNode')}
@@ -138,6 +137,7 @@ export function LiveTrafficBasicFilters({
                 value={v.orgId}
                 onChange={(val) => onPatch({ orgId: val as string, _orgLabel: '' })}
                 allowClear
+                inlineSearch
               />
             </FieldCompact>
             <FieldCompact label={t('pages:traffic.stepProject')} tip={t('pages:traffic.tipProject')}>
@@ -473,6 +473,7 @@ export function LiveTrafficBasicFilters({
                 value={v.orgId}
                 onChange={(val) => onPatch({ orgId: val as string, _orgLabel: '' })}
                 allowClear
+                inlineSearch
               />
             </FieldCompact>
             <FieldCompact label={t('pages:traffic.labelHookDecision')} tip={t('pages:traffic.tipHookDecision')}>

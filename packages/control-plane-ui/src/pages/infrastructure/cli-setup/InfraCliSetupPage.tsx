@@ -6,7 +6,7 @@ import { serviceUrlsApi, type ServicePublicURLs } from '@/api/services';
 import styles from './InfraCliSetupPage.module.css';
 
 // The nexus operator toolkit ("nexus") is a single static Go binary with
-// three faces (TUI / CLI / MCP). Unlike the agent it needs no system
+// two faces (TUI / CLI). Unlike the agent it needs no system
 // extension, kernel driver, or device enrollment — so this page stays lean:
 // download → install → quickstart → command reference. No FAQ/live-status.
 
@@ -53,12 +53,12 @@ const INSTALL_STEPS: Record<Platform, string[]> = {
   ],
 };
 
-// Command reference — sourced verbatim from `nexus --help` (commit ffa8e55a4).
+// Command reference — sourced verbatim from `nexus --help`.
 // `completion` and `help` (cobra built-ins) are intentionally omitted.
 const COMMANDS = [
   'setup', 'login', 'env', 'chat', 'models', 'vk', 'route', 'traffic',
   'cost', 'health', 'slo', 'simulate', 'resource', 'killswitch',
-  'passthrough', 'skill', 'mcp',
+  'passthrough',
 ] as const;
 
 export default function InfraCliSetupPage() {

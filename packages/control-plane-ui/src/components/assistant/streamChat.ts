@@ -1,4 +1,7 @@
-import { getAccessToken } from '@/auth/tokens/tokenStore';
+import { authorizedFetch } from '@/api/client';
+import { parseSSEBuffer } from './sse';
+
+export { parseSSEBuffer } from './sse';
 
 // A navigation directive the backend emits when the agent drives the canvas; the
 // widget maps view→route and navigates.
@@ -9,7 +12,7 @@ export interface NavigateDirective {
   eventId?: string;
 }
 
-// ConfirmPreview is the FR-22/AC-6 impact preview for a high-blast-radius confirm-tier
+// ConfirmPreview is the impact preview for a high-blast-radius confirm-tier
 // tool — server-rendered from a read-only state read (current → effect), shown in the
 // card before Allow. `unavailable` means the read failed (fail-open: the card still
 // shows, with a caution). Absent for ordinary confirm tools.
@@ -36,7 +39,7 @@ export interface ConfirmRequest {
 }
 
 // Callbacks the chat widget binds to consume the assistant SSE stream. Mirrors the
-// backend event protocol frozen in e90-s2 (text / reasoning / tool_start / tool_end
+// backend event protocol (text / reasoning / tool_start / tool_end
 // / navigate / confirm / usage / error / turn_aborted / done).
 /** A sandbox file the assistant wrote, surfaced via the structured `file` SSE event
  *  (sourced from the write_file tool's own output — not scraped from the model's prose). */
@@ -49,42 +52,21 @@ export interface StreamCallbacks {
   onText?: (delta: string) => void;
   onReasoning?: (delta: string) => void;
   onToolStart?: (name: string, input?: unknown) => void;
-  onToolEnd?: (name: string, isError: boolean) => void;
+  /** `output` is the tool's (redacted, size-capped) result text so the chip can show the
+   *  response, not just the request. */
+  onToolEnd?: (name: string, isError: boolean, output?: string) => void;
   onNavigate?: (directive: NavigateDirective) => void;
+  /** The kernel condensed older turns to fit the context window — the persisted
+   *  transcript was durably rewritten, so the UI surfaces a notice. */
+  onCompact?: (messagesBefore: number, messagesAfter: number) => void;
   onConfirm?: (request: ConfirmRequest) => void;
   /** A write_file result: render a download button without waiting for the model to echo a URL. */
   onFile?: (file: FileRef) => void;
   onError?: (message: string) => void;
   /** The turn was stopped (interrupt / disconnect-grace). Not an error bubble. */
   onAborted?: () => void;
+  /** The turn finished. */
   onDone?: (sessionId?: string) => void;
-}
-
-interface SSEFrame {
-  event: string;
-  data: string;
-  /** The SSE `id:` — the per-session sequence number, used to reconnect with ?lastSeq=. */
-  id?: string;
-}
-
-// parseSSEBuffer splits a raw buffer into complete `id:/event:/data:` frames, returning
-// the parsed frames plus the trailing incomplete remainder. Exported for unit tests.
-export function parseSSEBuffer(buffer: string): { frames: SSEFrame[]; rest: string } {
-  const parts = buffer.split('\n\n');
-  const rest = parts.pop() ?? '';
-  const frames: SSEFrame[] = [];
-  for (const part of parts) {
-    let event = 'message';
-    let data = '';
-    let id: string | undefined;
-    for (const line of part.split('\n')) {
-      if (line.startsWith('id:')) id = line.slice(3).trim();
-      else if (line.startsWith('event:')) event = line.slice(6).trim();
-      else if (line.startsWith('data:')) data += line.slice(5).trim();
-    }
-    if (data) frames.push(id !== undefined ? { event, data, id } : { event, data });
-  }
-  return { frames, rest };
 }
 
 // newSessionId mints a client-side session id for a new conversation. The id is a path
@@ -116,7 +98,7 @@ function dispatch(event: string, raw: string, cb: StreamCallbacks): void {
       cb.onToolStart?.(String(data.name ?? ''), data.input);
       break;
     case 'tool_end':
-      cb.onToolEnd?.(String(data.name ?? ''), Boolean(data.isError));
+      cb.onToolEnd?.(String(data.name ?? ''), Boolean(data.isError), typeof data.output === 'string' ? data.output : undefined);
       break;
     case 'confirm':
       cb.onConfirm?.({
@@ -146,6 +128,9 @@ function dispatch(event: string, raw: string, cb: StreamCallbacks): void {
     case 'turn_aborted':
       cb.onAborted?.();
       break;
+    case 'compact':
+      cb.onCompact?.(Number(data.messagesBefore ?? 0), Number(data.messagesAfter ?? 0));
+      break;
     case 'done':
       cb.onDone?.(data.sessionId ? String(data.sessionId) : undefined);
       break;
@@ -156,12 +141,7 @@ function dispatch(event: string, raw: string, cb: StreamCallbacks): void {
 
 const maxStreamReconnects = 5;
 
-function authHeaders(): Record<string, string> {
-  const token = getAccessToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-// runChat drives one turn under the P2b command/data-stream split: it POSTs the chat
+// runChat drives one turn under the command/data-stream split: it POSTs the chat
 // to start the turn (which runs detached server-side), then opens the long-lived SSE
 // stream and consumes it, auto-reconnecting with ?lastSeq= across a transient drop
 // (the turn keeps running) until a terminal event (done / turn_aborted) or the caller
@@ -185,9 +165,9 @@ export async function runChat(
 
   // 1. Start the turn. A 409 (turn_in_progress), 422 (auth), or 503 surfaces as an error.
   try {
-    const startRes = await fetch(`${base}/chat`, {
+    const startRes = await authorizedFetch(`${base}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, ...(model ? { model } : {}) }),
       signal,
     });
@@ -219,7 +199,7 @@ export async function runChat(
   while (!signal?.aborted) {
     let terminal = false;
     try {
-      const res = await fetch(`${base}/stream?lastSeq=${lastSeq}`, { headers: authHeaders(), signal });
+      const res = await authorizedFetch(`${base}/stream?lastSeq=${lastSeq}`, { signal });
       if (res.status === 404) break; // turn finished + entry reclaimed, or never started
       if (!res.ok || !res.body) {
         cb.onError?.(`stream failed (${res.status})`);
@@ -264,9 +244,8 @@ export async function runChat(
 // popup close). Best-effort: a 409 (nothing running) is ignored.
 export async function interruptChat(sessionId: string): Promise<void> {
   try {
-    await fetch(`/api/admin/assistant/sessions/${encodeURIComponent(sessionId)}/interrupt`, {
+    await authorizedFetch(`/api/admin/assistant/sessions/${encodeURIComponent(sessionId)}/interrupt`, {
       method: 'POST',
-      headers: authHeaders(),
     });
   } catch {
     /* best-effort: the turn's disconnect-grace will cancel it if this never lands */
@@ -282,10 +261,7 @@ export interface SessionMeta {
 
 // listSessions fetches the caller's own conversation history (metadata only).
 export async function listSessions(): Promise<SessionMeta[]> {
-  const token = getAccessToken();
-  const res = await fetch('/api/admin/assistant/sessions', {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  });
+  const res = await authorizedFetch('/api/admin/assistant/sessions');
   if (!res.ok) return [];
   const j = (await res.json()) as { sessions?: SessionMeta[] };
   return j.sessions ?? [];
@@ -293,26 +269,29 @@ export async function listSessions(): Promise<SessionMeta[]> {
 
 // deleteSession removes one of the caller's sessions (row + spilled transcript).
 export async function deleteSession(id: string): Promise<boolean> {
-  const token = getAccessToken();
-  const res = await fetch(`/api/admin/assistant/sessions/${encodeURIComponent(id)}`, {
+  const res = await authorizedFetch(`/api/admin/assistant/sessions/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
   return res.ok;
 }
 
-// A past conversation re-rendered as a flat role+text transcript.
+// A past conversation re-rendered as a flat role+text transcript, plus the
+// trusted-audit verdict for its revision chain (verified on every load).
 export interface SessionTranscript {
   id: string;
-  messages: { role: string; text: string }[];
+  messages: {
+    role: string;
+    text: string;
+    /** "summary" marks the auto-compact condensed briefing — system-authored
+     *  context the UI renders as a notice, not a user bubble. */
+    kind?: string;
+  }[];
+  integrity?: { status: string; detail?: string };
 }
 
 // getSession fetches one of the caller's conversations for re-rendering.
 export async function getSession(id: string): Promise<SessionTranscript | null> {
-  const token = getAccessToken();
-  const res = await fetch(`/api/admin/assistant/sessions/${encodeURIComponent(id)}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  });
+  const res = await authorizedFetch(`/api/admin/assistant/sessions/${encodeURIComponent(id)}`);
   if (!res.ok) return null;
   return (await res.json()) as SessionTranscript;
 }
@@ -320,10 +299,7 @@ export async function getSession(id: string): Promise<SessionTranscript | null> 
 // downloadFile fetches a sandbox file WITH the bearer (the endpoint is auth-gated, so
 // a plain link would 401) and triggers a browser save. Returns false on failure.
 export async function downloadFile(id: string): Promise<boolean> {
-  const token = getAccessToken();
-  const res = await fetch(`/api/admin/assistant/files/${encodeURIComponent(id)}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  });
+  const res = await authorizedFetch(`/api/admin/assistant/files/${encodeURIComponent(id)}`);
   if (!res.ok) return false;
   const blob = await res.blob();
   const cd = res.headers.get('Content-Disposition') ?? '';
@@ -356,10 +332,7 @@ export interface ModelOptions {
 
 // listModels fetches the backend's default + selectable models for the picker.
 export async function listModels(): Promise<ModelOptions> {
-  const token = getAccessToken();
-  const res = await fetch('/api/admin/assistant/models', {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-  });
+  const res = await authorizedFetch('/api/admin/assistant/models');
   if (!res.ok) return { default: '', models: [] };
   return (await res.json()) as ModelOptions;
 }
@@ -374,10 +347,12 @@ export function fileIdsIn(text: string): string[] {
   return ids;
 }
 
+
+
 // ConfirmResult is the JSON returned by POST /assistant/confirm. In production a
 // first Allow comes back with secondConfirmRequired + a one-time challengeToken: the
 // write is NOT executed yet, and the client must POST a second Allow echoing that
-// token (FR-9 backend-enforced second confirm). Non-prod / deny / the second Allow
+// token (backend-enforced second confirm). Non-prod / deny / the second Allow
 // return { ok: true } with no second step.
 export interface ConfirmResult {
   ok: boolean;
@@ -387,7 +362,7 @@ export interface ConfirmResult {
    * affinity miss); the action did not run and the user should retry. */
   misrouted?: boolean;
   /** True on a `restart_reissue` 409 — the pod that parked the confirm restarted
-   * (NFR-10); the action did not run and the user should re-issue it. */
+   * ; the action did not run and the user should re-issue it. */
   reissue?: boolean;
 }
 
@@ -401,13 +376,9 @@ export async function confirmDecision(
   decision: boolean,
   challengeToken?: string,
 ): Promise<ConfirmResult> {
-  const token = getAccessToken();
-  const res = await fetch('/api/admin/assistant/confirm', {
+  const res = await authorizedFetch('/api/admin/assistant/confirm', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId, callId, decision, ...(challengeToken ? { challengeToken } : {}) }),
   });
   // 421 = the parked confirm lives on another CP instance (affinity miss). The
@@ -418,10 +389,11 @@ export async function confirmDecision(
   try {
     const body = (await res.json()) as ConfirmResult & { error?: { type?: string } };
     if (res.ok) return body;
-    // A non-ok body distinguishes restart_reissue (NFR-10 — the pod restarted, re-issue)
+    // A non-ok body distinguishes restart_reissue (the pod restarted, re-issue)
     // from a plain expiry, so the UI can guide the user instead of a confusing "expired".
     return { ok: false, reissue: body?.error?.type === 'restart_reissue' };
   } catch {
     return { ok: res.ok };
   }
 }
+

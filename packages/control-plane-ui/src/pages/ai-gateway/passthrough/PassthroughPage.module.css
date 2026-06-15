@@ -1,21 +1,123 @@
 /* ── PassthroughPage ─────────────────────────────────────────────────────── */
 
+.pageHeader :global(p) {
+  max-width: none;
+  white-space: nowrap;
+}
+
+.contentStack {
+  margin-top: 20px;
+}
+
 .panelTitle {
   margin: 0;
-  font-size: 1.125rem;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 24px;
+  color: var(--color-text-primary);
 }
 
 .subtitle {
   margin: 0;
   font-size: 0.875rem;
   color: var(--color-text-secondary);
+  line-height: 20px;
+}
+
+.panelSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panelHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.panelHeaderRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .empty {
   margin: 0;
   color: var(--color-text-secondary);
   font-style: italic;
+}
+
+.emptyState {
+  margin: 0;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 20px;
+  font-style: normal;
+}
+
+.textActionButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 !important;
+  height: auto !important;
+  min-height: 0;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--color-tab-active, var(--color-info)) !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  line-height: 22px;
+  margin-bottom: -1px;
+}
+
+.textActionButton:hover,
+.textActionButton:active {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--color-tab-active, var(--color-info)) !important;
+  box-shadow: none !important;
+}
+
+.textActionIcon {
+  font-size: 16px;
+  line-height: 1;
+  color: currentColor;
+}
+
+.globalActions {
+  margin-top: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.saveButton {
+  background: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary-foreground) !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  box-shadow: none !important;
+}
+
+.saveButton:hover {
+  background: color-mix(in srgb, var(--color-primary) 88%, var(--color-text-primary)) !important;
+  border-color: color-mix(in srgb, var(--color-primary) 88%, var(--color-text-primary)) !important;
+  color: var(--color-primary-foreground) !important;
+}
+
+.saveButton:active {
+  background: color-mix(in srgb, var(--color-primary) 80%, var(--color-text-primary)) !important;
+  border-color: color-mix(in srgb, var(--color-primary) 80%, var(--color-text-primary)) !important;
+  color: var(--color-primary-foreground) !important;
 }
 
 .muted {
@@ -28,14 +130,21 @@
 .bannerInactive {
   padding: 12px 16px;
   border-radius: 8px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-info) 16%, transparent);
   display: flex;
-  gap: 12px;
-  align-items: baseline;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--color-primary);
+  letter-spacing: -0.1504px;
 }
 
-.bannerInactive strong { font-weight: 600; }
+.bannerInactive strong {
+  font-weight: 400;
+}
 
 .bannerActive {
   padding: 14px 16px;
@@ -91,6 +200,8 @@
 .reasonInput {
   width: 100%;
   font: inherit;
+  font-size: 14px;
+  line-height: 20px;
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid var(--color-border);
@@ -99,6 +210,12 @@
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
 }
+
+.reasonInput::placeholder {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
 .reasonInput:disabled { opacity: 0.55; }
 
 .byline {

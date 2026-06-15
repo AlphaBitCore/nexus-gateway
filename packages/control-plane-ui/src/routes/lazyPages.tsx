@@ -131,7 +131,6 @@ export const LazyOAuthClientDetailPage = L(() => import('../pages/iam/oauth-clie
 export const LazyOAuthClientFormPage = L(() => import('../pages/iam/oauth-clients/OAuthClientFormPage').then((m) => ({ default: m.OAuthClientFormPage })));
 
 // ── Proxy (operational pages, not deleted) ──
-export const LazyRejectConfigPage = L(() => import('../pages/proxy/reject/RejectConfigPage').then((m) => ({ default: m.RejectConfigPage })));
 export const LazyProxyStatusCompliancePage = L(() => import('../pages/proxy/compliance/ProxyStatusCompliancePage').then((m) => ({ default: m.ProxyStatusCompliancePage })));
 
 // ── Infrastructure ──
