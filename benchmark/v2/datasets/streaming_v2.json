@@ -1,0 +1,21 @@
+{
+  "version": "v2",
+  "count": 15,
+  "prompts": [
+    "Write a detailed 500-word essay on the history and future of artificial intelligence.",
+    "Provide a 500-word technical explanation of how transformer neural networks work.",
+    "Write a detailed 500-word analysis of what makes a great investment thesis.",
+    "Explain in 500 words the history of the internet from ARPANET to modern cloud infrastructure.",
+    "Write a 500-word guide on how to conduct a thorough competitive analysis for a startup.",
+    "Provide a detailed 500-word explanation of how blockchain consensus mechanisms work.",
+    "Write a 500-word analysis of how central banks manage inflation expectations.",
+    "Provide a 500-word technical overview of how a compiler works from source to binary.",
+    "Write a detailed 500-word guide on building a resilient distributed systems architecture.",
+    "Explain in 500 words how modern e-commerce recommendation engines are built and scaled.",
+    "Write a 500-word analysis of the venture capital funding cycle and how startups should approach fundraising.",
+    "Provide a 500-word technical deep dive on database indexing strategies and their tradeoffs.",
+    "Write a 500-word essay on the geopolitical implications of AI development across different nations.",
+    "Explain in 500 words the full lifecycle of a software feature from ideation to production deployment.",
+    "Write a 500-word analysis of how financial derivatives are used for risk management in corporate treasury."
+  ]
+}

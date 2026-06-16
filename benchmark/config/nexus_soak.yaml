@@ -1,0 +1,42 @@
+# Soak / stability test — sustained load over many requests to surface memory
+# leaks, connection pool exhaustion, or error-rate drift over time.
+# A low failure_threshold_pct (10%) causes an early warning log if the gateway
+# starts degrading mid-run.
+#
+# Fair benchmarking note:
+#   - Let the gateway run for at least a few minutes before recording results.
+#   - Use the same concurrency_levels[0] value across all gateways.
+#   - Check the gateway's resource usage (CPU, memory) separately with top/htop.
+#   - Compare results.json artifacts; look at p99 drift between runs, not just avg.
+
+gateway_name: "Nexus"
+base_url: "http://localhost:8080"
+endpoint: "/v1/chat/completions"
+
+auth:
+  api_key: "$NEXUS_API_KEY"
+
+payload:
+  model: "openai/gpt-4o-mini"
+  max_tokens: 128
+  temperature: 0.0
+  stream: false
+
+profile: soak
+concurrency_levels: [10]
+total_requests: 500
+timeout_seconds: 60.0
+warmup_requests: 10
+
+retry:
+  enabled: true
+  max_attempts: 3
+  backoff_seconds: 1.0
+
+caching:
+  enabled: false
+  note: ""
+
+prompts_file: "data/prompts.jsonl"
+output_dir: "results"
+failure_threshold_pct: 10.0

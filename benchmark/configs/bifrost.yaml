@@ -1,0 +1,13 @@
+# Bifrost (maximhq/bifrost) — benchmark target config.
+# Bifrost requires the provider prefix on the model id (openai/...). The parity
+# checker normalises this prefix away when comparing models across gateways.
+gateway_name: bifrost
+version: latest
+base_url: http://localhost:8080
+api_key_env: BIFROST_API_KEY
+model: openai/gpt-4o-mini
+provider: openai
+cache_mode: disabled        # enabled | disabled
+request_timeout: 60
+max_tokens: 512
+stream: true

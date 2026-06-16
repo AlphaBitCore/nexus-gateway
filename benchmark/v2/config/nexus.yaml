@@ -1,0 +1,23 @@
+gateway:
+  name: "Nexus Gateway"
+  version: "1.0"
+  base_url: "${NEXUS_BASE_URL:-http://localhost:3050}"
+  api_key: "${NEXUS_API_KEY}"
+
+request:
+  timeout_seconds: 60
+  max_retries: 0
+  stream: true
+
+features:
+  caching_enabled: false   # Set to true only for S-08 cache feature tests
+
+benchmark:
+  warmup_duration_seconds: 30
+  virtual_users: 20
+  test_duration_seconds: 300
+
+admin:
+  # Used by config_validator to verify caching state before runs
+  admin_base_url: "${NEXUS_ADMIN_URL:-http://localhost:3001}"
+  admin_api_key: "${NEXUS_ADMIN_API_KEY}"

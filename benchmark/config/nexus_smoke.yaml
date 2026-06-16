@@ -1,0 +1,39 @@
+# Smoke test — minimal requests, verifies the gateway is reachable and returning valid responses.
+# Run this first before any other profile.
+# Fair benchmarking: ensure the gateway is fully started before running.
+
+gateway_name: "Nexus"
+base_url: "http://localhost:8080"
+endpoint: "/v1/chat/completions"
+
+auth:
+  # Set NEXUS_API_KEY in your environment, or replace with a literal value for local testing.
+  api_key: "$NEXUS_API_KEY"
+  # Nexus virtual key header — uncomment and set if your route requires it.
+  # headers:
+  #   x-nexus-virtual-key: "$NEXUS_VIRTUAL_KEY"
+
+payload:
+  model: "openai/gpt-4o-mini"
+  max_tokens: 64
+  temperature: 0.0
+  stream: false
+
+profile: smoke
+concurrency_levels: [1]
+total_requests: 10     # Smoke runs 10 regardless of this value
+timeout_seconds: 30.0
+warmup_requests: 2
+
+retry:
+  enabled: true
+  max_attempts: 2
+  backoff_seconds: 0.5
+
+caching:
+  enabled: false
+  note: ""
+
+static_prompt: "Say hello in one sentence."
+output_dir: "results"
+failure_threshold_pct: 50.0

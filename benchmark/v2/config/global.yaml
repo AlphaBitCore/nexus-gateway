@@ -1,0 +1,20 @@
+# Global defaults — overridden per-scenario
+defaults:
+  model: "gpt-4o-mini"
+  provider: "openai"
+  max_tokens: 256
+  temperature: 0.0
+  stream: true
+  timeout_seconds: 60
+  max_retries: 0          # 0 for benchmark — preserve raw failure data
+  warmup_duration_seconds: 30
+  virtual_users: 20
+  test_duration_seconds: 300
+  caching_enabled: false  # Mode A default — explicitly OFF for fair comparison
+
+thresholds:
+  ttft_p95_ms: 1500
+  http_failure_pct: 1.0
+  stream_broken_pct: 0.5
+
+results_dir: "./results"

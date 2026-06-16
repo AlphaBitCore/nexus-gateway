@@ -170,6 +170,14 @@ packages/control-plane/.nexus/
 tests/.env.local
 tests/.env.dev
 tests/.env.prod
+benchmark/v2/.env.local
+# Benchmark runtime artifacts — regenerated on container/run start
+benchmark/v2/gateways/bifrost-data/*.db
+benchmark/v2/gateways/bifrost-data/*.db-wal
+benchmark/v2/gateways/bifrost-data/*.db-shm
+benchmark/v2/gateways/bifrost-data/logs/
+benchmark/v2/demo/pii_demo_evidence.json
+benchmark/**/.DS_Store
 /tmp/nexus-test/
 
 # Test program runtime artifacts

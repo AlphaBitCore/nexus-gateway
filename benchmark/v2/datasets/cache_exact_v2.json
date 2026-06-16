@@ -1,0 +1,12 @@
+{
+  "version": "v2",
+  "note": "Repeat these exact prompts to test exact-match cache hit rate",
+  "count": 5,
+  "prompts": [
+    "What is the difference between a stock and a bond?",
+    "Explain what an ETF is in two sentences.",
+    "What does the Federal Reserve do?",
+    "What is dollar-cost averaging?",
+    "What is a balance sheet?"
+  ]
+}

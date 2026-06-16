@@ -1,0 +1,16 @@
+{
+  "version": "v2",
+  "count": 10,
+  "prompts": [
+    "[REQUEST-af3e0bf1-f791-4c1b-bbbf-9b73965a93e7] Analyze the competitive dynamics of the global semiconductor industry. Cover: market structure, key players, supply chain dependencies, geopolitical risks, R&D investment cycles, and the outlook for the next five years.",
+    "[REQUEST-a411a2e5-7f71-4fe7-931a-5ddbdaf80f77] Write a comprehensive analysis of how central bank monetary policy transmission works, covering interest rate channels, credit channels, exchange rate effects, asset price effects, and expectations channels with historical examples.",
+    "[REQUEST-d27c51a6-5ab3-420b-bb9d-6dc5bb4de6a8] Explain in depth the technical architecture of a modern distributed database system, covering consensus algorithms (Raft, Paxos), replication strategies, sharding approaches, ACID vs BASE tradeoffs, and CAP theorem implications.",
+    "[REQUEST-021a7132-76ec-49cd-a3ce-31707bc11ef6] Provide a detailed comparison of value investing vs growth investing philosophies, covering historical performance, key metrics used, famous practitioners, behavioral biases, and how market cycles affect each style.",
+    "[REQUEST-23839121-2758-402a-a345-d076dc2fbd16] Describe the full end-to-end flow of an HTTPS request from a browser to a server and back, covering DNS resolution, TLS handshake, certificate chain validation, HTTP/2 multiplexing, and response rendering.",
+    "[REQUEST-f01027b6-dc12-4b13-8c35-ad5049abdfd2] Write a thorough analysis of the private equity business model, covering fund structure, LBO mechanics, value creation levers, typical return profiles, the role of leverage, exit strategies, and current market conditions.",
+    "[REQUEST-7699478f-a2b3-4a22-9ab0-36af13d022b9] Explain the architecture and design patterns of a modern microservices system, covering service discovery, API gateway patterns, circuit breakers, event sourcing, CQRS, distributed tracing, and observability.",
+    "[REQUEST-ead6f87c-b7f4-4d7d-b1d8-386a981943e6] Provide a deep dive into the mechanics of options pricing, covering Black-Scholes model derivation, the Greeks (delta, gamma, theta, vega, rho), implied volatility, volatility surfaces, and practical hedging strategies.",
+    "[REQUEST-82378311-1c66-4f71-8106-2bb391d75f2c] Analyze how ESG (Environmental, Social, Governance) factors have evolved in institutional investing, covering regulatory drivers, data challenges, integration methodologies, performance debates, and greenwashing concerns.",
+    "[REQUEST-299244f5-5b35-452a-afe0-8ef4a5024dc9] Explain how modern recommendation systems work end-to-end, from data collection through collaborative filtering, content-based filtering, matrix factorization, deep learning approaches, and real-time serving architecture."
+  ]
+}

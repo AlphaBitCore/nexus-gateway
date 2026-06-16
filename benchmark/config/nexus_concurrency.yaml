@@ -1,0 +1,42 @@
+# Concurrency sweep — runs a full benchmark pass at each concurrency level.
+# Reveals how throughput and latency scale as concurrent load increases.
+# Use prompts_file so requests are varied (avoids cache hits skewing results).
+#
+# Fair benchmarking note:
+#   - Run LiteLLM/Bifrost with the same concurrency_levels list and total_requests.
+#   - Keep caching.enabled identical across gateways. If one gateway caches and
+#     another does not, their RPS numbers are not comparable — document in note.
+#   - Compare results.json artifacts side-by-side; config_fingerprint identifies
+#     runs that used equivalent settings.
+
+gateway_name: "Nexus"
+base_url: "http://localhost:8080"
+endpoint: "/v1/chat/completions"
+
+auth:
+  api_key: "$NEXUS_API_KEY"
+
+payload:
+  model: "openai/gpt-4o-mini"
+  max_tokens: 128
+  temperature: 0.0
+  stream: false
+
+profile: concurrency
+concurrency_levels: [1, 5, 10, 25, 50]
+total_requests: 100
+timeout_seconds: 60.0
+warmup_requests: 5
+
+retry:
+  enabled: true
+  max_attempts: 2
+  backoff_seconds: 0.5
+
+caching:
+  enabled: false
+  note: ""
+
+prompts_file: "data/prompts.jsonl"
+output_dir: "results"
+failure_threshold_pct: 25.0

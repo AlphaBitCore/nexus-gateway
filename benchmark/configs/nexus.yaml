@@ -1,0 +1,12 @@
+# Nexus Gateway — benchmark target config.
+# api_key is NOT stored here; the harness reads it from the env var named below.
+gateway_name: nexus
+version: dev
+base_url: http://localhost:3050
+api_key_env: NEXUS_API_KEY
+model: gpt-4o-mini
+provider: openai
+cache_mode: disabled        # enabled | disabled  (per-run scenarios may override)
+request_timeout: 60         # seconds
+max_tokens: 512
+stream: true

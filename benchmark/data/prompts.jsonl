@@ -1,0 +1,20 @@
+{"prompt": "Say hello in one sentence."}
+{"prompt": "What is 2 + 2? Reply with just the number."}
+{"prompt": "Name the capital of France in one word."}
+{"prompt": "Explain recursion in two sentences."}
+{"prompt": "What is a REST API? Answer in two sentences."}
+{"prompt": "Name three popular programming languages."}
+{"prompt": "What is a transformer in machine learning? Two sentences."}
+{"prompt": "What does HTTP stand for?"}
+{"prompt": "What is a load balancer? One sentence."}
+{"prompt": "Describe the difference between TCP and UDP in two sentences."}
+{"prompt": "What is latency in networking? One sentence."}
+{"prompt": "What is a token in the context of LLMs? One sentence."}
+{"prompt": "What does GPU stand for?"}
+{"prompt": "Explain the concept of caching in one sentence."}
+{"prompt": "What is a rate limiter? One sentence."}
+{"prompt": "What is an API gateway? One sentence."}
+{"prompt": "Name two differences between SQL and NoSQL databases."}
+{"prompt": "What is a webhook? One sentence."}
+{"prompt": "What is a vector embedding? One sentence."}
+{"prompt": "What is the difference between authentication and authorization? Two sentences."}
