@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,7 @@ func main() {
 	vk := flag.String("vk", "", "convenience: sets defaults Authorization: Bearer <vk> on all scenarios")
 	modelOv := flag.String("model", "", "override defaults.model (and scenarios inheriting it); e.g. a gateway that needs a 'provider/model' form")
 	stagesS := flag.String("stages", "", "override stages, e.g. '1:10s,100:60s,1000:120s'")
+	insecure := flag.Bool("insecure", false, "skip TLS certificate verification (self-signed gateways, e.g. an appliance on a bare IP)")
 	flag.Parse()
 	if *cfgPath == "" {
 		fmt.Fprintln(os.Stderr, "error: -config is required (see tools/loadtest/profiles/)")
@@ -90,6 +92,9 @@ func main() {
 		cfg.Stages = parseStagesFlag(*stagesS)
 		_, err = cfg.finalize()
 		must(err, "re-finalize after -stages")
+	}
+	if *insecure {
+		cfg.Insecure = true
 	}
 	for i := range cfg.Scenarios {
 		if _, ok := cfg.Scenarios[i].Headers["Content-Type"]; !ok {
@@ -191,6 +196,9 @@ func buildClient(cfg *Config, maxConc int) *http.Client {
 		ReadBufferSize:      64 << 10,
 		ForceAttemptHTTP2:   !cfg.DisableHTTP2,
 		DisableKeepAlives:   cfg.DisableKeepAlive,
+	}
+	if cfg.Insecure {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	return &http.Client{Timeout: cfg.timeout, Transport: tr}
 }
