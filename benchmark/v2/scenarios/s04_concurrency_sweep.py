@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import csv
+import os
 import time
 from pathlib import Path
 from engine.metrics import ScenarioMetrics
@@ -11,8 +12,19 @@ from gateway_adapters.base import BaseGatewayAdapter
 from scenarios.base_scenario import load_prompts
 
 SCENARIO_ID = "S-04"
-VU_LEVELS = [1, 5, 10, 20, 50, 100]
-LEVEL_DURATION = 120  # 2 minutes per level
+
+# VU levels and per-level duration are env-configurable so local validation can
+# cap at e.g. [1,5,10,20] (50/100 saturate OpenAI's RPM ceiling on a laptop)
+# while the AWS run keeps the full sweep. Defaults preserve the original sweep.
+#   BENCH_VU_LEVELS=1,5,10,20      BENCH_LEVEL_DURATION=60
+def _vu_levels() -> list[int]:
+    raw = os.getenv("BENCH_VU_LEVELS", "")
+    if raw.strip():
+        return [int(x) for x in raw.split(",") if x.strip()]
+    return [1, 5, 10, 20, 50, 100]
+
+VU_LEVELS = _vu_levels()
+LEVEL_DURATION = int(os.getenv("BENCH_LEVEL_DURATION", "120"))  # seconds per level
 
 async def run(config: GatewayFullConfig, adapter: BaseGatewayAdapter,
               mode: str = "cache-disabled", output_dir: str = "./results") -> list[ScenarioMetrics]:

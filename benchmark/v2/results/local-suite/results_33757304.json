@@ -1,0 +1,51 @@
+{
+  "run_id": "33757304",
+  "environment": {
+    "run_id": "33757304-9f08-4504-afe3-64d4e14cb1bf",
+    "timestamp": "2026-06-16T16:51:54.497243+00:00",
+    "gateway_name": "bifrost",
+    "test_machine": {
+      "hostname": "Kaushiks-MacBook-Pro-7.local",
+      "os": "macOS-26.2-arm64-arm-64bit",
+      "cpu": "arm",
+      "cpu_count": 10,
+      "python_version": "3.11.9",
+      "ram_gb": 17.2
+    },
+    "git_commit": "6b31264be5c7",
+    "config_fingerprint": "b826debc0e5f"
+  },
+  "results": [
+    {
+      "gateway": "Bifrost",
+      "scenario": "S-03",
+      "mode": "cache-disabled",
+      "total_requests": 88,
+      "successful": 88,
+      "failed": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "stream_broken": 0,
+      "connection_timeouts": 0,
+      "stream_timeouts": 0,
+      "json_errors": 0,
+      "ttft_avg_ms": 664.65,
+      "ttft_p50_ms": 420.87,
+      "ttft_p95_ms": 1203.25,
+      "ttft_p99_ms": 4243.56,
+      "ttft_stddev_ms": 880.49,
+      "e2e_avg_ms": 4180.81,
+      "e2e_p50_ms": 3860.32,
+      "e2e_p95_ms": 5609.15,
+      "e2e_p99_ms": 8413.15,
+      "rps": 2.363,
+      "http_failure_rate_pct": 0.0,
+      "stream_broken_rate_pct": 0.0,
+      "cache_hit_rate_pct": null,
+      "cache_hit_ttft_p95_ms": null,
+      "cache_miss_ttft_p95_ms": null,
+      "ttft_gain_p95_ms": null,
+      "wall_time_seconds": 37.239
+    }
+  ]
+}

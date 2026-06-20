@@ -69,6 +69,13 @@ async def run_scenario(
         timeout=httpx.Timeout(config.request.timeout_seconds),
         limits=limits,
         follow_redirects=True,
+        # verify=False: the AWS Nexus gateway terminates TLS with a self-signed
+        # cert, and the shared mock provider (mockprovider.taskforce10x.com) is
+        # likewise self-signed. Without this the benchmark fails immediately on
+        # cert verification. This is a load-test client hitting known internal
+        # endpoints — not production traffic — so skipping verification is safe
+        # and intentional here.
+        verify=False,
     ) as client:
         # ── Warmup ──────────────────────────────────────────────────────
         if warmup_seconds > 0 and not is_warmup:

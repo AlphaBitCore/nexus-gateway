@@ -141,7 +141,7 @@ docker run -d --name litellm -p 4000:4000 \
   ghcr.io/berriai/litellm:main-latest --config /app/config.yaml --port 4000
 
 docker run -d --name bifrost -p 8080:8080 \
-  -e OPENAI_API_KEY="$OPENAI_API_KEY" -e APP_PORT=8080 -e APP_HOST=0.0.0.0 \
+  -e OPENAI_API_KEY="$OPENAI_API_KEY" -e APP_PORT=8080 -e APP_HOST=<REDACTED-IP> \
   -e LOG_LEVEL=info -e LOG_STYLE=json -e APP_DIR=/app/data \
   -v "$PWD/gateways/bifrost-data:/app/data" \
   maximhq/bifrost:latest
@@ -315,3 +315,37 @@ Build a table comparing:
 ✅ All Nexus hooks confirmed ON at end of run
 
 Once all 8 boxes tick, send the `aws-results-YYYYMMDD/` directory + the generated markdown to James + Tiebin's team. That is the final deliverable.
+
+---
+
+## Correct hooks_toggle workflow
+
+hooks_toggle.sh must run ON the Nexus AMI directly, not from the bench-runner.
+
+**Why the runner-side approach fails silently:**
+The script sources `.env.local` at the top and exits before touching any hook if the
+file doesn't exist at that path. When run via SSM send-command as root, `.env.local`
+doesn't exist at `/root/bench-v2/.env.local` — the file lives at
+`/home/ec2-user/bench-v2/.env.local`. The script exits cleanly (exit 0), Nexus hooks
+remain at their prior state, and the benchmark proceeds as if the toggle succeeded.
+This was the root cause of invalid run a4601b32 (hooks-OFF run that ran hooks-ON).
+
+**Correct steps:**
+1. In the AWS console, select the Nexus AMI instance → Connect → EC2 Instance Connect
+2. This opens a browser terminal as ec2-user — no PEM key needed
+3. `cd /home/ec2-user/bench-v2`
+4. `./scripts/hooks_toggle.sh off`   # sets size:0, verifies in journalctl
+5. Confirm `"size": 0` appears in the gateway log before starting the run
+6. From the bench-runner, launch the S-02 run
+7. After the run: `./scripts/hooks_toggle.sh on`   # restores all 4 hooks
+
+**CP URL inside the AMI:** `http://localhost:3001`
+**NEXUS_OAUTH_REDIRECT_URI:** `https://<nexus-ami-public-ip>/auth/callback`
+
+**Deprecated — do not use:**
+Running hooks_toggle.sh via `aws ssm send-command` from the runner. Fails silently
+(see above). All references to SSM-based toggle are superseded by EC2 Instance Connect.
+
+**Per-hook cost isolation:** to attribute the compliance overhead to individual hooks,
+use `./scripts/per_hook_sweep.sh` (enables one hook at a time, runs S-02, tags each
+result `_hook_<name>`). Run it the same way — on the AMI via EC2 Instance Connect.
