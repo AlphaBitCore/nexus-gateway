@@ -1,0 +1,2 @@
+gateway,scenario,mode,total_requests,successful,failed,http_4xx,http_5xx,stream_broken,connection_timeouts,stream_timeouts,json_errors,ttft_avg_ms,ttft_p50_ms,ttft_p95_ms,ttft_p99_ms,ttft_stddev_ms,e2e_avg_ms,e2e_p50_ms,e2e_p95_ms,e2e_p99_ms,rps,http_failure_rate_pct,stream_broken_rate_pct,cache_hit_rate_pct,cache_hit_ttft_p95_ms,cache_miss_ttft_p95_ms,ttft_gain_p95_ms,wall_time_seconds
+Nexus Gateway,S-03,cache-disabled,100,100,0,0,0,0,0,0,0,1591.87,1454.76,3109.41,6716.63,1352.08,3909.63,3883.89,6888.16,13358.58,2.036,0.0,0.0,17.0,67.94,3423.0,3355.06,49.125

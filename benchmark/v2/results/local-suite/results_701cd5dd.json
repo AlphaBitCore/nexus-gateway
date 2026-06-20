@@ -1,0 +1,51 @@
+{
+  "run_id": "701cd5dd",
+  "environment": {
+    "run_id": "701cd5dd-d6da-4f12-8bd9-f48c00949a0a",
+    "timestamp": "2026-06-16T16:50:27.195849+00:00",
+    "gateway_name": "nexus",
+    "test_machine": {
+      "hostname": "Kaushiks-MacBook-Pro-7.local",
+      "os": "macOS-26.2-arm64-arm-64bit",
+      "cpu": "arm",
+      "cpu_count": 10,
+      "python_version": "3.11.9",
+      "ram_gb": 17.2
+    },
+    "git_commit": "6b31264be5c7",
+    "config_fingerprint": "3e0640b12f43"
+  },
+  "results": [
+    {
+      "gateway": "Nexus Gateway",
+      "scenario": "S-03",
+      "mode": "cache-disabled",
+      "total_requests": 100,
+      "successful": 100,
+      "failed": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "stream_broken": 0,
+      "connection_timeouts": 0,
+      "stream_timeouts": 0,
+      "json_errors": 0,
+      "ttft_avg_ms": 1591.87,
+      "ttft_p50_ms": 1454.76,
+      "ttft_p95_ms": 3109.41,
+      "ttft_p99_ms": 6716.63,
+      "ttft_stddev_ms": 1352.08,
+      "e2e_avg_ms": 3909.63,
+      "e2e_p50_ms": 3883.89,
+      "e2e_p95_ms": 6888.16,
+      "e2e_p99_ms": 13358.58,
+      "rps": 2.036,
+      "http_failure_rate_pct": 0.0,
+      "stream_broken_rate_pct": 0.0,
+      "cache_hit_rate_pct": 17.0,
+      "cache_hit_ttft_p95_ms": 67.94,
+      "cache_miss_ttft_p95_ms": 3423.0,
+      "ttft_gain_p95_ms": 3355.06,
+      "wall_time_seconds": 49.125
+    }
+  ]
+}

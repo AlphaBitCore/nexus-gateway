@@ -1,0 +1,51 @@
+{
+  "run_id": "df1f81ce",
+  "environment": {
+    "run_id": "df1f81ce-7a32-4ab2-984a-e16f199d8f49",
+    "timestamp": "2026-06-16T16:53:06.027304+00:00",
+    "gateway_name": "litellm",
+    "test_machine": {
+      "hostname": "Kaushiks-MacBook-Pro-7.local",
+      "os": "macOS-26.2-arm64-arm-64bit",
+      "cpu": "arm",
+      "cpu_count": 10,
+      "python_version": "3.11.9",
+      "ram_gb": 17.2
+    },
+    "git_commit": "6b31264be5c7",
+    "config_fingerprint": "8d44d1ce97ab"
+  },
+  "results": [
+    {
+      "gateway": "LiteLLM",
+      "scenario": "S-03",
+      "mode": "cache-disabled",
+      "total_requests": 76,
+      "successful": 76,
+      "failed": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "stream_broken": 0,
+      "connection_timeouts": 0,
+      "stream_timeouts": 0,
+      "json_errors": 0,
+      "ttft_avg_ms": 581.0,
+      "ttft_p50_ms": 476.11,
+      "ttft_p95_ms": 861.27,
+      "ttft_p99_ms": 2920.55,
+      "ttft_stddev_ms": 575.54,
+      "e2e_avg_ms": 4678.73,
+      "e2e_p50_ms": 3988.39,
+      "e2e_p95_ms": 8196.88,
+      "e2e_p99_ms": 13935.66,
+      "rps": 2.243,
+      "http_failure_rate_pct": 0.0,
+      "stream_broken_rate_pct": 0.0,
+      "cache_hit_rate_pct": null,
+      "cache_hit_ttft_p95_ms": null,
+      "cache_miss_ttft_p95_ms": null,
+      "ttft_gain_p95_ms": null,
+      "wall_time_seconds": 33.882
+    }
+  ]
+}

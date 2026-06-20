@@ -373,7 +373,7 @@ def preflight_cmd(
     skip_quota: bool = typer.Option(False, "--skip-quota", help="Skip the OpenAI quota check (saves one paid call)"),
 ) -> None:
     """Pass/fail preflight before any scenario. Verifies OpenAI quota, gateway health, VK shape, and nexus circuit state."""
-    import os, json, httpx
+    import os, json, time as _time, httpx
     rows = []  # (check, status, detail)
 
     # 1) OPENAI_API_KEY funded?
@@ -410,17 +410,31 @@ def preflight_cmd(
         except Exception as e:
             rows.append((f"{gw}: config load", "FAIL", f"{type(e).__name__}: {e}")); continue
 
-        # Health
+        # Health — retry with backoff. A container just after `docker restart`
+        # sits in health: starting (~8s for Bifrost) and a single immediate probe
+        # gives a false UNHEALTHY (observed on AWS). Retry up to ~15s before failing.
         base = cfg.gateway.base_url
-        try:
-            for path in ("/health", "/healthz", "/v1/models"):
-                r = httpx.get(base + path, timeout=5.0, headers={"Authorization": f"Bearer {cfg.gateway.api_key}"} if cfg.gateway.api_key else {})
-                if r.status_code < 500:
-                    rows.append((f"{gw}: reachable ({path})", "PASS", f"HTTP {r.status_code}")); break
-            else:
-                rows.append((f"{gw}: reachable", "FAIL", "no health endpoint < 500"))
-        except Exception as e:
-            rows.append((f"{gw}: reachable", "FAIL", f"{type(e).__name__}: {e}"))
+        hdrs = {"Authorization": f"Bearer {cfg.gateway.api_key}"} if cfg.gateway.api_key else {}
+        healthy = False
+        last_detail = "no response"
+        for attempt in range(5):  # ~0+3+3+3+3 = up to ~12s of retries
+            try:
+                for path in ("/health", "/healthz", "/v1/models"):
+                    r = httpx.get(base + path, timeout=5.0, headers=hdrs, verify=False)
+                    if r.status_code < 500:
+                        rows.append((f"{gw}: reachable ({path})", "PASS",
+                                     f"HTTP {r.status_code}" + (f" (attempt {attempt+1})" if attempt else "")))
+                        healthy = True
+                        break
+                if healthy:
+                    break
+                last_detail = "no health endpoint < 500"
+            except Exception as e:
+                last_detail = f"{type(e).__name__}: {e}"
+            if attempt < 4:
+                _time.sleep(3.0)
+        if not healthy:
+            rows.append((f"{gw}: reachable", "FAIL", f"{last_detail} (after 5 attempts / ~12s)"))
 
         # Nexus VK shape
         if gw == "nexus":
