@@ -1,5 +1,5 @@
 /**
- * IAM page-resource consistency guard (F-0286).
+ * IAM page-resource consistency guard.
  *
  * The highest-value silent-403 class is "valid-but-wrong-key": a page gates an
  * affordance on a `usePermission(...)` key that resolves to a DIFFERENT IAM
@@ -7,9 +7,9 @@
  * ACTION_MAP (so the ACTION_MAP coverage test passes) and the action string is
  * canonical (so the shape test passes) — yet a principal with the page's
  * resource but not the affordance's resource hits a silent 403, and the
- * converse gets an invisible button. F-0159 (quota-OVERRIDE pages gating on
- * quota-POLICY) and C9 F-0207 (node-detail tabs needing settings/observability/
- * traffic-log under a node.read route) both shipped precisely because no test
+ * converse gets an invisible button. The quota-OVERRIDE-pages-gating-on-
+ * quota-POLICY bug and the node-detail-tabs-needing settings/observability/
+ * traffic-log-under-a-node.read-route bug both shipped precisely because no test
  * asserted per-page resource consistency.
  *
  * This test cross-checks, per route, the IAM resources used by in-page
@@ -113,7 +113,7 @@ function permKeysInFile(file: string): string[] {
  * Routes whose page legitimately gates an affordance on a resource other than
  * the page's own read action. Each entry: route path -> { resource: why }.
  * Adding a row is a conscious "yes, this page has a cross-resource button"
- * decision — the alternative is fixing the key (the F-0159 case).
+ * decision — the alternative is fixing the key (the wrong-key case).
  */
 const CROSS_RESOURCE_ALLOWLIST: Record<string, Record<string, string>> = {
   'ai-gateway/providers/:id': {
@@ -125,13 +125,12 @@ const CROSS_RESOURCE_ALLOWLIST: Record<string, Record<string, string>> = {
   'infrastructure/overrides': {
     // Registry is reachable with settings.read (the list endpoint), but the
     // per-row Clear / Force-resync write actions carry their own node-scoped
-    // backend actions (F-0065).
+    // backend actions.
     node: 'Clear (node.write-override) + Force resync (node.force-resync) per-row actions',
   },
   'infrastructure/nodes/:id': {
     // Page loads via GET /nodes/:id (node.read); each tab fetches from an
-    // endpoint with its own action and is hidden when the principal lacks it
-    // (F-0207).
+    // endpoint with its own action and is hidden when the principal lacks it.
     settings: 'Configuration + Runtime tabs (applied-config / runtime)',
     observability: 'Live Metrics + Diagnostics + Usage Trends tabs',
     'traffic-log': 'Traffic tab (GET /traffic)',

@@ -1,3 +1,7 @@
+.setupSectionCard + .setupSectionCard {
+  margin-top: calc(12px - var(--g-space-6));
+}
+
 .sectionHeader {
   display: flex;
   align-items: flex-start;
@@ -15,7 +19,7 @@
   align-items: center;
   justify-content: center;
   font-size: 0.75rem;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text-secondary);
 }
 
@@ -52,7 +56,7 @@
 
 .manualInstallTitle {
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -66,6 +70,9 @@
 }
 
 .stepList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   padding-left: 1.25rem;
   margin: 0 0 8px;
   font-size: 0.875rem;
@@ -76,7 +83,7 @@
 .codeBlock {
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   padding: 10px 14px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.8125rem;
@@ -95,7 +102,7 @@
   color: var(--color-text-primary);
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   padding: 8px 12px;
   margin: 0 0 12px;
 }

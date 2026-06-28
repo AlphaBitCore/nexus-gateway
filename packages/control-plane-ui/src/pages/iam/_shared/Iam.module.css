@@ -26,8 +26,8 @@
 }
 
 .kvLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -43,7 +43,7 @@
 
 .kvValue {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   word-break: break-all;
 }
@@ -54,7 +54,7 @@
   display: inline-block;
   padding: 2px 8px;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   border-radius: var(--g-radius-md);
   background: var(--color-muted);
   color: var(--color-text-secondary);
@@ -64,7 +64,7 @@
   display: inline-block;
   padding: 2px 7px;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   border-radius: var(--g-radius-md);
   background: var(--color-border);
   color: var(--color-text-muted);
@@ -74,8 +74,8 @@
 .roleBadgePrimary {
   display: inline-block;
   padding: 2px 8px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   border-radius: var(--g-radius-md);
   background: var(--color-primary-light);
   color: var(--color-primary-dark);
@@ -85,7 +85,7 @@
   display: inline-block;
   padding: 2px 8px;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   border-radius: var(--g-radius-md);
   background: var(--color-warning-light);
   color: var(--color-warning-dark);
@@ -115,7 +115,7 @@
 .formLabel {
   display: block;
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-secondary);
   margin-bottom: var(--g-space-1);
 }
@@ -125,15 +125,15 @@
 .sectionHeading {
   font-size: var(--g-font-size-md);
   font-family: var(--g-font-display);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   margin-bottom: var(--g-space-3);
   margin-top: var(--g-space-8);
 }
 
 .sectionSubheading {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
   margin-bottom: var(--g-space-3);
   text-transform: uppercase;
@@ -148,15 +148,15 @@
 }
 
 .successTitle {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   margin-bottom: 12px;
   color: var(--color-success-dark);
 }
 
 .keyBox {
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   padding: 12px 16px;
   background: var(--color-surface);
   border-radius: var(--g-radius-md);
@@ -168,7 +168,7 @@
 }
 
 .keyWarning {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-warning-dark);
   margin-top: 12px;
 }
@@ -177,7 +177,7 @@
 
 .mono {
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
 }
 
 .codeChip {
@@ -186,7 +186,7 @@
   border-radius: var(--g-radius-md);
   font-size: var(--g-font-size-xs);
   font-family: var(--g-font-mono);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   background: var(--color-muted);
   color: var(--color-text);
   margin-right: 4px;
@@ -204,11 +204,11 @@
 /* ── Statement card (policy detail) ───────────────────────────────────── */
 
 .statementCard {
-  background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   padding: var(--g-space-4);
   margin-bottom: var(--g-space-3);
+  background: var(--color-muted);
 }
 
 /* ── Type badge ───────────────────────────────────────────────────────── */
@@ -217,8 +217,8 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: var(--g-radius-md);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   background: var(--color-info-bg);
   color: var(--color-info);
 }
@@ -227,8 +227,8 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: var(--g-radius-md);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   background: var(--color-muted-bg);
   color: var(--color-text-secondary);
 }
@@ -239,8 +239,8 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: var(--g-radius-md);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-bold);
   background: var(--color-success-light);
   color: var(--color-success-dark);
 }
@@ -249,8 +249,8 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: var(--g-radius-md);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-bold);
   background: var(--color-danger-light);
   color: var(--color-danger-dark);
 }
@@ -265,8 +265,8 @@
   background: transparent;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: all var(--g-transition-fast);
@@ -284,13 +284,13 @@
   display: flex;
   gap: 0;
   border-bottom: 2px solid var(--color-border);
-  margin-bottom: var(--g-space-6);
+  margin-bottom: 0;
 }
 
 .tab {
   padding: 10px 20px;
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   cursor: pointer;
   border: none;
   background: transparent;
@@ -308,7 +308,7 @@
   composes: tab;
   color: var(--color-primary);
   border-bottom-color: var(--color-primary);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 /* ── Policy editor ────────────────────────────────────────────────────── */
@@ -322,9 +322,9 @@
 }
 
 .editorSectionTitle {
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   font-family: var(--g-font-display);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0;
 }
 
@@ -387,9 +387,9 @@
 
 .viewToggle {
   padding: 6px 14px;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   border-radius: var(--g-radius-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   cursor: pointer;
 }
 
@@ -420,7 +420,7 @@
   align-self: flex-start;
   padding: var(--g-space-2) var(--g-space-4);
   border-radius: var(--g-radius-md);
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   font-size: var(--g-font-size-lg);
 }
 
@@ -445,7 +445,7 @@
   padding: var(--g-space-2) var(--g-space-3);
   text-align: left;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
   background: var(--color-muted);
   border-bottom: 1px solid var(--color-border);
@@ -462,9 +462,9 @@
 .directBadge {
   display: inline-block;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   border-radius: var(--g-radius-md);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   background: var(--color-primary-light);
   color: var(--color-primary-dark);
 }
@@ -472,9 +472,9 @@
 .groupBadge {
   display: inline-block;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   border-radius: var(--g-radius-md);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   background: var(--color-muted-light);
   color: var(--color-muted-dark);
 }
@@ -508,12 +508,16 @@
 /* ── IamPolicyDetail inline-style extractions ─────────────────────────── */
 
 .tooltipIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: help;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
+  line-height: 1;
 }
 
 .descriptionValue {
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   line-height: 1.5;
   white-space: pre-wrap;
 }
@@ -523,7 +527,7 @@
 }
 
 .statementsPanel {
-  margin-top: var(--g-space-4);
+  margin-top: 12px;
 }
 
 .statementsEmpty {
@@ -535,7 +539,7 @@
 
 .stmtHeader {
   align-items: center;
-  margin-bottom: var(--g-space-3);
+  margin-bottom: 0;
   flex-wrap: wrap;
 }
 
@@ -544,7 +548,7 @@
 }
 
 .stmtSection {
-  margin-bottom: var(--g-space-3);
+  margin-bottom: 0;
 }
 
 .chipRow {
@@ -564,7 +568,7 @@
 }
 
 .attachmentsIntro {
-  margin: 0 0 var(--g-space-4);
+  margin: 6px 0 var(--g-space-4);
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
   line-height: 1.5;
@@ -585,7 +589,7 @@
 }
 
 .roleNameLink {
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   cursor: pointer;
   color: var(--color-primary);
 }
@@ -644,13 +648,13 @@
 .validationBadgeOk {
   font-size: var(--g-font-size-sm);
   color: var(--color-success);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   padding: 0 var(--g-space-2);
 }
 .validationBadgeError {
   font-size: var(--g-font-size-sm);
   color: var(--color-danger);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   padding: 0 var(--g-space-2);
 }
 
@@ -730,13 +734,13 @@
 
 .jsonPreviewTitle {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
 }
 
 .jsonPreviewBody {
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   line-height: 1.5;
   white-space: pre;
   color: var(--color-text);
@@ -783,9 +787,9 @@
 .effectBadge {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--g-radius-full);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   flex-shrink: 0;
@@ -809,7 +813,7 @@
   display: flex;
   align-items: center;
   gap: var(--g-space-1);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
   font-family: var(--g-font-mono);
   overflow: hidden;
@@ -819,7 +823,7 @@
 .statementSummaryDim {
   color: var(--color-text-secondary);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
 }
 .statementSummaryPlaceholder {
   color: var(--color-text-tertiary);
@@ -845,7 +849,7 @@
   background: transparent;
   border-radius: var(--g-radius-sm);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   cursor: pointer;
 }
 .statementIconBtn:hover:not(:disabled) {
@@ -880,12 +884,12 @@
   background: var(--color-danger-light);
   border: 1px solid var(--color-danger);
   border-radius: var(--g-radius-md);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
 }
 .wildcardBanner code {
   font-family: var(--g-font-mono);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-danger);
   background: var(--color-bg);
   padding: 2px 8px;
@@ -910,7 +914,7 @@
 
 .tooltipHelp {
   cursor: help;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 .validationTitle {
@@ -930,13 +934,13 @@
 
 .jsonLabelText {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .jsonTextarea {
   width: 100%;
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   padding: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
@@ -945,7 +949,7 @@
 }
 
 .statementHeading {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   font-size: var(--g-font-size-sm);
 }
 
@@ -970,10 +974,171 @@
 
 .conditionTextarea {
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 /* ── IamUserDetail extracted styles ───────────────────────────────────── */
+
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+}
+
+.detailHeaderRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detailBackLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.detailBackLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.detailBackLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.detailBackIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.detailHeaderText {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.detailTitle {
+  margin: var(--g-space-0);
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
+}
+
+.detailMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-xs);
+  line-height: 20px;
+}
+
+.detailHeaderActions {
+  flex-shrink: 0;
+}
+
+.detailHeaderActions :global(button),
+.detailHeaderActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.detailTabs {
+  margin-top: calc(12px - var(--g-space-6));
+}
+
+.userInfoGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.userInfoFormGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.userInfoActions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.userInfoActions :global(button),
+.userInfoActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.userInfoOrgSelect :global([class*='trigger']),
+.userInfoOrgSelect :global(input) {
+  background: var(--color-bg) !important;
+}
+
+.permissionSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.permissionHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.permissionTitleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.linkActionButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-link);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
+  cursor: pointer;
+}
+
+.linkActionButton:hover {
+  color: var(--color-link);
+  text-decoration: underline;
+}
+
+.linkActionIcon {
+  font-size: var(--g-font-size-base);
+  line-height: 1;
+}
+
+.permissionSection :global([class*='iconButtonDanger']) {
+  color: var(--color-danger);
+}
 
 .editBtnRow {
   margin-bottom: var(--g-space-4);
@@ -984,8 +1149,8 @@
 }
 
 .secretKeyLabel {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   margin-bottom: 8px;
   color: var(--color-text);
 }
@@ -1006,7 +1171,7 @@
 
 .sectionTitleText {
   font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0;
 }
 
@@ -1029,25 +1194,139 @@
 }
 
 .rolesSectionDesc {
-  margin: 0 0 var(--g-space-4) 0;
+  margin: 0;
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
   line-height: 1.5;
 }
 
+@media (max-width: 1200px) {
+  .userInfoGrid,
+  .userInfoFormGrid,
+  .roleInfoGrid,
+  .policyInfoGrid,
+  .roleEditFormGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .roleEditDescriptionField {
+    grid-column: 1 / -1;
+  }
+
+  .statementInlineGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .userInfoGrid,
+  .userInfoFormGrid,
+  .roleInfoGrid,
+  .policyInfoGrid,
+  .roleEditFormGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .statementInlineGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── IamRoleDetail extracted styles ───────────────────────────────────── */
+
+.roleInfoGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.roleEditButtonRow {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.roleEditButtonRow :global(button),
+.roleEditButtonRow :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.roleInfoEdit {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.roleEditFormGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.roleEditDescriptionField {
+  width: 100%;
+}
+
+.roleEditInput,
+.roleEditTextarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg) !important;
+  color: var(--color-text);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  box-sizing: border-box;
+}
+
+.roleEditTextarea {
+  min-height: 80px;
+  padding: var(--g-space-2) var(--g-space-3);
+  resize: vertical;
+}
+
+.roleEditInput:focus,
+.roleEditTextarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: none !important;
+  outline: none;
+}
+
+.roleInfoActions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.roleInfoActions :global(button),
+.roleInfoActions :global(button *),
+.roleMembersSection :global(button),
+.roleMembersSection :global(button *),
+.rolePoliciesSection :global(button),
+.rolePoliciesSection :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.roleMembersSection,
+.rolePoliciesSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.roleMembersSection :global([class*='iconButtonDanger']),
+.rolePoliciesSection :global([class*='iconButtonDanger']) {
+  color: var(--color-danger);
+}
 
 .memberBtnRow {
   margin-bottom: var(--g-space-4);
 }
 
 .memberUsername {
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .memberEmail {
   color: var(--color-text-muted);
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   margin-left: 8px;
 }
 
@@ -1075,6 +1354,58 @@
   align-items: center;
 }
 
+.policyTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.policyInfoGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.policyInfoCard {
+  margin-top: 12px;
+}
+
+.policyTabSection {
+  display: flex;
+  flex-direction: column;
+  margin-top: 12px;
+}
+
+.policyTabSection .sectionHeading {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.statementInlineGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.statementInlineGrid .kvLabelRow {
+  align-items: center;
+  min-height: 16px;
+}
+
+.statementField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.statementLabelRow {
+  margin-bottom: 8px;
+}
+
+.statementConditionBlock {
+  grid-column: 1 / -1;
+}
+
 .stmtLastSection {
   margin-bottom: 0;
 }
@@ -1086,8 +1417,8 @@
 }
 
 .secretKeyLabelRow {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   margin-bottom: 8px;
   color: var(--color-text);
 }
@@ -1108,7 +1439,7 @@
 
 .sectionH3 {
   font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0;
 }
 

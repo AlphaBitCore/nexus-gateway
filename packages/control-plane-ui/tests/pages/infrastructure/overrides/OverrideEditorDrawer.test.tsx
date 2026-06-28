@@ -208,7 +208,7 @@ describe('OverrideEditorDrawer', () => {
     const user = userEvent.setup();
     // Override the suite-wide success mock with a rejection carrying the
     // server message we expect to render verbatim. CP+Hub now forward 4xx
-    // bodies through (S2 commit c58b1b60), so the message reaching the
+    // bodies through, so the message reaching the
     // browser layer is the canonical operator-facing text.
     const serverMsg = 'override.state must contain `engaged` boolean';
     setSpy.mockReset();

@@ -186,67 +186,81 @@ export function AIGuardPage() {
           'pages:settings.aiGuard.subtitle',
           'Configure the centralized AI content classifier used by hooks and policies.',
         )}
+        subtitleClassName={styles.headerSubtitle}
       />
 
+      <div className={styles.configHeader}>
+        <h2 className={styles.configTitle}>
+          {t('pages:settings.aiGuard.backendConfigTitle', 'Backend configuration')}
+        </h2>
+        <p className={styles.configSubtitle}>
+          {t(
+            'pages:settings.aiGuard.backendConfigSubtitle',
+            'Choose the classifier backend, provider model, prompt template, and runtime limits used by AI Guard.',
+          )}
+        </p>
+      </div>
       <Card>
         <div className={styles.form}>
-          <FormField label={t('pages:settings.aiGuard.backendMode', 'Backend mode')}>
-            <RadioGroup
-              value={draft.backendMode}
-              onValueChange={(v) =>
-                setDraft({ ...draft, backendMode: v as AIGuardBackendMode })
-              }
-            >
-              <div className={styles.radioRow}>
-                <RadioGroupItem value="configured_provider" id="aig-mode-provider" />
-                <label htmlFor="aig-mode-provider" className={styles.radioLabel}>
-                  {t(
-                    'pages:settings.aiGuard.modeConfiguredProvider',
-                    'Configured provider (reuse existing provider + model)',
-                  )}
-                </label>
-              </div>
-              <div className={styles.radioRow}>
-                <RadioGroupItem value="external_url" id="aig-mode-external" />
-                <label htmlFor="aig-mode-external" className={styles.radioLabel}>
-                  {t(
-                    'pages:settings.aiGuard.modeExternalUrl',
-                    'External URL (OpenAI-compatible endpoint)',
-                  )}
-                </label>
-              </div>
-            </RadioGroup>
-          </FormField>
-
-          <FormField
-            label={t('pages:settings.aiGuard.complianceWebhookUrl', 'Compliance webhook URL')}
-            helpText={t(
-              'pages:settings.aiGuard.complianceWebhookUrlHelp',
-              'Use this URL when a webhook hook should call AIGuard directly.',
-            )}
-          >
-            <div className={styles.webhookRow}>
-              <Input
-                className={styles.webhookInput}
-                value={runtimeWebhookUrl}
-                readOnly
-                onFocus={(e) => e.currentTarget.select()}
-              />
-              <Button
-                className={styles.copyButton}
-                variant="secondary"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(runtimeWebhookUrl);
-                  addToast(
-                    t('pages:settings.aiGuard.complianceWebhookUrlCopied', 'Webhook URL copied'),
-                    'success',
-                  );
-                }}
+          <div className={styles.twoColumnGrid}>
+            <FormField label={t('pages:settings.aiGuard.backendMode', 'Backend mode')}>
+              <RadioGroup
+                value={draft.backendMode}
+                onValueChange={(v) =>
+                  setDraft({ ...draft, backendMode: v as AIGuardBackendMode })
+                }
               >
-                {t('pages:settings.aiGuard.copyWebhookUrl', 'Copy URL')}
-              </Button>
-            </div>
-          </FormField>
+                <div className={styles.radioRow}>
+                  <RadioGroupItem value="configured_provider" id="aig-mode-provider" />
+                  <label htmlFor="aig-mode-provider" className={styles.radioLabel}>
+                    {t(
+                      'pages:settings.aiGuard.modeConfiguredProvider',
+                      'Configured provider (reuse existing provider + model)',
+                    )}
+                  </label>
+                </div>
+                <div className={styles.radioRow}>
+                  <RadioGroupItem value="external_url" id="aig-mode-external" />
+                  <label htmlFor="aig-mode-external" className={styles.radioLabel}>
+                    {t(
+                      'pages:settings.aiGuard.modeExternalUrl',
+                      'External URL (OpenAI-compatible endpoint)',
+                    )}
+                  </label>
+                </div>
+              </RadioGroup>
+            </FormField>
+
+            <FormField
+              label={t('pages:settings.aiGuard.complianceWebhookUrl', 'Compliance webhook URL')}
+              helpText={t(
+                'pages:settings.aiGuard.complianceWebhookUrlHelp',
+                'Use this URL when a webhook hook should call AIGuard directly.',
+              )}
+            >
+              <div className={styles.webhookRow}>
+                <Input
+                  className={styles.webhookInput}
+                  value={runtimeWebhookUrl}
+                  readOnly
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <Button
+                  className={styles.copyButton}
+                  variant="secondary"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(runtimeWebhookUrl);
+                    addToast(
+                      t('pages:settings.aiGuard.complianceWebhookUrlCopied', 'Webhook URL copied'),
+                      'success',
+                    );
+                  }}
+                >
+                  {t('pages:settings.aiGuard.copyWebhookUrl', 'Copy URL')}
+                </Button>
+              </div>
+            </FormField>
+          </div>
 
           {draft.backendMode === 'external_url' && (
             <div role="alert" className={styles.warningBanner}>
@@ -258,20 +272,23 @@ export function AIGuardPage() {
           )}
 
           {draft.backendMode === 'configured_provider' ? (
-            <ProviderModelPicker
-              providerGroups={providerGroups}
-              providerId={draft.providerId ?? null}
-              modelId={draft.modelId ?? null}
-              onChange={({ providerId, modelId }) =>
-                setDraft({ ...draft, providerId, modelId })
-              }
-              providerLabel={t('pages:settings.aiGuard.providerId', 'Provider')}
-              modelLabel={t('pages:settings.aiGuard.modelId', 'Model')}
-              helpText={t(
-                'pages:settings.aiGuard.providerHint',
-                'Only providers and models you have already configured are selectable. Add new entries on the Providers page.',
-              )}
-            />
+            <div className={styles.providerModelGrid}>
+              <ProviderModelPicker
+                providerGroups={providerGroups}
+                providerId={draft.providerId ?? null}
+                modelId={draft.modelId ?? null}
+                onChange={({ providerId, modelId }) =>
+                  setDraft({ ...draft, providerId, modelId })
+                }
+                providerLabel={t('pages:settings.aiGuard.providerId', 'Provider')}
+                modelLabel={t('pages:settings.aiGuard.modelId', 'Model')}
+                layout="horizontal"
+                helpText={t(
+                  'pages:settings.aiGuard.providerHint',
+                  'Only providers and models you have already configured are selectable. Add new entries on the Providers page.',
+                )}
+              />
+            </div>
           ) : (
             <Stack gap="sm">
               <FormField label={t('pages:settings.aiGuard.externalUrl', 'Endpoint URL')}>
@@ -382,33 +399,35 @@ export function AIGuardPage() {
             />
           </div>
 
-          <FormField
-            label={t('pages:settings.aiGuard.timeoutMs', 'Timeout (ms)')}
-          >
-            <Input
-              type="number"
-              min={1000}
-              max={30000}
-              step={500}
-              className={styles.numberField}
-              value={String(draft.timeoutMs)}
-              onChange={onNumber('timeoutMs')}
-            />
-          </FormField>
+          <div className={styles.twoColumnGrid}>
+            <FormField
+              label={t('pages:settings.aiGuard.timeoutMs', 'Timeout (ms)')}
+            >
+              <Input
+                type="number"
+                min={1000}
+                max={30000}
+                step={500}
+                className={styles.numberField}
+                value={String(draft.timeoutMs)}
+                onChange={onNumber('timeoutMs')}
+              />
+            </FormField>
 
-          <FormField
-            label={t('pages:settings.aiGuard.cacheTtlSeconds', 'Cache TTL (seconds, 0 to disable)')}
-          >
-            <Input
-              type="number"
-              min={0}
-              max={86400}
-              step={60}
-              className={styles.numberField}
-              value={String(draft.cacheTtlSeconds)}
-              onChange={onNumber('cacheTtlSeconds')}
-            />
-          </FormField>
+            <FormField
+              label={t('pages:settings.aiGuard.cacheTtlSeconds', 'Cache TTL (seconds, 0 to disable)')}
+            >
+              <Input
+                type="number"
+                min={0}
+                max={86400}
+                step={60}
+                className={styles.numberField}
+                value={String(draft.cacheTtlSeconds)}
+                onChange={onNumber('cacheTtlSeconds')}
+              />
+            </FormField>
+          </div>
 
           <div className={styles.actions}>
             <Button onClick={() => save(undefined as never)} loading={saving}>

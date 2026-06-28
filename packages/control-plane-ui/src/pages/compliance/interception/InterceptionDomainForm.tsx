@@ -31,6 +31,7 @@ import {
   type HostMatchType,
   type NetworkZone,
 } from '@/api/services';
+import styles from './InterceptionDomainForm.module.css';
 
 const HOST_MATCH_TYPES: HostMatchType[] = ['EXACT', 'PREFIX', 'GLOB', 'REGEX'];
 const DEFAULT_PATH_ACTIONS: DefaultPathAction[] = ['PROCESS', 'PASSTHROUGH', 'BLOCK'];
@@ -220,15 +221,21 @@ export function InterceptionDomainForm({
       : t('pages:interceptionDomains.editTitle', 'Edit interception domain');
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={title}>
-      <Stack gap="md">
-        <FormField label={t('pages:interceptionDomains.name', 'Name')}>
-          <Input
-            value={values.name}
-            onChange={(e) => update('name', e.target.value)}
-            placeholder={t('pages:interception.endpointExamplePlaceholder')}
-          />
-        </FormField>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => !o && onClose()}
+      title={title}
+      className={styles.formDialog}
+    >
+      <div className={styles.formShell}>
+        <Stack gap="md" className={styles.formContent}>
+          <FormField label={t('pages:interceptionDomains.name', 'Name')}>
+            <Input
+              value={values.name}
+              onChange={(e) => update('name', e.target.value)}
+              placeholder={t('pages:interception.endpointExamplePlaceholder')}
+            />
+          </FormField>
 
         <FormField label={t('pages:interceptionDomains.description', 'Description')}>
           <Textarea
@@ -365,7 +372,8 @@ export function InterceptionDomainForm({
           />
         </FormField>
 
-        <Stack direction="horizontal" gap="sm" justify="end">
+        </Stack>
+        <Stack direction="horizontal" gap="sm" justify="end" className={styles.formActions}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t('common:cancel', 'Cancel')}
           </Button>
@@ -381,7 +389,7 @@ export function InterceptionDomainForm({
                 : t('common:save', 'Save')}
           </Button>
         </Stack>
-      </Stack>
+      </div>
     </Dialog>
   );
 }

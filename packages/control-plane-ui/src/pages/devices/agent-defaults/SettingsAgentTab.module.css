@@ -1,5 +1,25 @@
+.settingsSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.sectionHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-1);
+}
+
+.sectionTitle {
+  margin: var(--g-space-0);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 20px;
+}
+
 .helpTextSecondary {
-  font-size: 0.875rem;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-secondary);
   margin: 0;
 }
@@ -48,7 +68,7 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 0.875rem;
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   margin-bottom: -1px;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
@@ -60,7 +80,7 @@
 
 .localeTabActive {
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   border-bottom-color: var(--color-primary);
   background: transparent;
 }
@@ -75,4 +95,55 @@
   resize: vertical;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
+}
+
+.runtimeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4) var(--g-space-3);
+}
+
+.runtimeSwitchField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--g-space-2);
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.runtimeSwitchTitle {
+  color: var(--color-text);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+  line-height: 18px;
+}
+
+.stickyActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: flex-start;
+  padding: var(--g-space-3) var(--g-space-0);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.saveButton,
+.saveButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+@media (max-width: 900px) {
+  .runtimeGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .runtimeGrid {
+    grid-template-columns: 1fr;
+  }
 }

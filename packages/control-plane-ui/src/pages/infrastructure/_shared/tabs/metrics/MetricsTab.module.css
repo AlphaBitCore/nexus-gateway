@@ -7,13 +7,6 @@
   gap: var(--g-space-3);
 }
 
-.rangeLabel {
-  font-size: var(--g-font-size-sm);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0;
-}
-
 .rangeButtons {
   display: flex;
   gap: var(--g-space-2);
@@ -23,8 +16,8 @@
 /* ── Section heading ───────────────────────────────────────────── */
 
 .sectionTitle {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   margin: 0 0 var(--g-space-3);
 }
 
@@ -40,12 +33,12 @@
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
   padding: var(--g-space-3);
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-subtle);
 }
 
 .cellTitle {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0 0 var(--g-space-2);
 }
 

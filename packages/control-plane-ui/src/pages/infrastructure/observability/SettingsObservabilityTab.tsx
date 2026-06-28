@@ -4,6 +4,7 @@ import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 import { systemApi, type ObservabilityConfig } from '@/api/services/infrastructure/misc/system';
 import { Card, Stack, Button, Skeleton, ErrorBanner, Input, FormField, Switch } from '@/components/ui';
+import styles from './SettingsObservabilityTab.module.css';
 
 export function SettingsObservabilityTab() {
   const { t } = useTranslation();
@@ -41,63 +42,60 @@ export function SettingsObservabilityTab() {
   if (!data) return null;
 
   return (
-    <Card>
-      <Stack gap="md">
-        <h2>{t('pages:settingsObservability.title')}</h2>
-        <p style={{ fontSize: 'var(--g-font-size-base)', color: 'var(--color-text-secondary)' }}>
-          {t('pages:settingsObservability.subtitle')}
-        </p>
+    <section className={styles.contentSection}>
+      <h2 className={styles.sectionTitle}>{t('pages:settingsObservability.title')}</h2>
+      <p className={styles.subtitle}>
+        {t('pages:settingsObservability.subtitle')}
+      </p>
+      <Card>
+        <Stack gap="md">
+          <div className={styles.configGrid}>
+            <div className={styles.configItem}>
+              <span className={styles.itemTitle}>{t('pages:settingsObservability.otelEnabled')}</span>
+              <Switch checked={otelEnabled} onCheckedChange={setOtelEnabled} />
+            </div>
+            <ConfigItem label={t('pages:settingsObservability.endpoint')} value={data.otelEndpoint} />
+            <ConfigItem label={t('pages:settingsObservability.serviceName')} value={data.otelServiceName} />
+          </div>
 
-        <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-          <Switch checked={otelEnabled} onCheckedChange={setOtelEnabled} />
-          <span style={{ fontSize: 'var(--g-font-size-base)' }}>{t('pages:settingsObservability.otelEnabled')}</span>
+          <div className={styles.formGrid}>
+            <FormField label={t('pages:settingsObservability.samplingRate')} className={styles.formField}>
+              <Input
+                type="number"
+                value={samplingRate}
+                onChange={e => setSamplingRate(e.target.value)}
+                min={0}
+                max={1}
+                step={0.01}
+              />
+            </FormField>
+
+            <FormField label={t('pages:settingsObservability.traceViewerUrl')} className={styles.formField}>
+              <Input
+                type="url"
+                value={traceViewerUrl}
+                onChange={e => setTraceViewerUrl(e.target.value)}
+                placeholder="https://grafana.example.com/d/traces"
+              />
+            </FormField>
+          </div>
+
+          <Stack direction="horizontal" gap="sm">
+            <Button className={styles.saveButton} onClick={() => save(undefined)} loading={saving}>
+              {t('common:save')}
+            </Button>
+          </Stack>
         </Stack>
-
-        <h3 style={{ marginTop: 'var(--g-space-4)' }}>{t('pages:settingsObservability.currentConfig')}</h3>
-        <Stack gap="sm">
-          <Row label={t('pages:settingsObservability.endpoint')} value={data.otelEndpoint} />
-          <Row label={t('pages:settingsObservability.serviceName')} value={data.otelServiceName} />
-        </Stack>
-
-        <div style={{ maxWidth: 200 }}>
-          <FormField label={t('pages:settingsObservability.samplingRate')}>
-            <Input
-              type="number"
-              value={samplingRate}
-              onChange={e => setSamplingRate(e.target.value)}
-              min={0}
-              max={1}
-              step={0.01}
-            />
-          </FormField>
-        </div>
-
-        <FormField label={t('pages:settingsObservability.traceViewerUrl')}>
-          <Input
-            type="url"
-            value={traceViewerUrl}
-            onChange={e => setTraceViewerUrl(e.target.value)}
-            placeholder="https://grafana.example.com/d/traces"
-          />
-        </FormField>
-
-        <Stack direction="horizontal" gap="sm">
-          <Button onClick={() => save(undefined)} loading={saving}>
-            {t('common:save')}
-          </Button>
-        </Stack>
-      </Stack>
-    </Card>
+      </Card>
+    </section>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function ConfigItem({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: 'flex', gap: 'var(--g-space-3)' }}>
-      <span style={{ minWidth: 160, fontSize: 'var(--g-font-size-base)', color: 'var(--color-text-secondary)' }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 'var(--g-font-size-base)', fontFamily: 'monospace' }}>{value}</span>
+    <div className={styles.configItem}>
+      <span className={styles.itemTitle}>{label}</span>
+      <span className={styles.itemValue}>{value || '—'}</span>
     </div>
   );
 }

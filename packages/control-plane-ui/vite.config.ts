@@ -18,6 +18,10 @@ const httpsConfig =
 
 export default defineConfig({
   plugins: [react()],
+  // Set base to './' so the built index.html emits ./assets/… relative paths.
+  // nginx injects <base href="/nexus/"> at serve time for sub-path deployments;
+  // the relative assets resolve correctly regardless of the mount prefix.
+  base: './',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

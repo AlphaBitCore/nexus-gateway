@@ -31,15 +31,18 @@ export function ShutdownWarningCard({
   const { t } = useTranslation();
 
   return (
-    <Card>
-      <Stack gap="md">
-        <h3 style={{ margin: 'var(--g-space-0)' }}>{t('pages:settings.agentShutdownWarningTitle')}</h3>
+    <div className={styles.settingsSection}>
+      <div className={styles.sectionHeader}>
+        <h3 className={styles.sectionTitle}>{t('pages:settings.agentShutdownWarningTitle')}</h3>
         <p className={styles.helpTextSecondary}>
           {quitAllowed
             ? t('pages:settings.agentShutdownWarningDesc')
             : t('pages:settings.shutdownWarningDisabledHint', 'This text only appears when "Allow users to turn off the agent" is turned on. Edit it now so the message is ready.')}
         </p>
+      </div>
 
+      <Card>
+        <Stack gap="md">
         {/* shutdownWarningEnabled gate. Admin can prepare the
             warning text but suppress the dialog (text saved but
             not shown). Mirrors the field the agent's
@@ -85,7 +88,8 @@ export function ShutdownWarningCard({
             {t('pages:settings.agentWarningUsingDefault')}
           </p>
         )}
-      </Stack>
-    </Card>
+        </Stack>
+      </Card>
+    </div>
   );
 }

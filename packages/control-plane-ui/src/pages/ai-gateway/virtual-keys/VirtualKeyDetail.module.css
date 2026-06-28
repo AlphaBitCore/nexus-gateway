@@ -4,14 +4,13 @@
 
 .kvGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--g-space-4);
-  margin-top: var(--g-space-4);
 }
 
 .kvLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -24,29 +23,29 @@
 
 .kvValue {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   word-break: break-all;
 }
 
 .kvValueBold {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   word-break: break-all;
 }
 
 .kvValueMono {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   font-family: var(--g-font-mono);
   color: var(--color-text);
   word-break: break-all;
 }
 
 .statValue {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: var(--g-font-size-2xl);
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text);
 }
 
@@ -58,16 +57,18 @@
   height: 16px;
   border-radius: 50%;
   font-size: 10px;
-  font-weight: 700;
-  background: var(--color-muted);
+  font-weight: var(--g-font-weight-bold);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
   color: var(--color-text-muted);
   cursor: help;
+  line-height: 1;
 }
 
 .link {
   color: var(--color-primary);
   text-decoration: none;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .link:hover {
@@ -75,27 +76,123 @@
 }
 
 .widgetTitle {
-  font-size: var(--g-font-size-base);
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
-  margin-bottom: var(--g-space-4);
+  margin: 0;
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.infoToolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.infoToolbar :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.editGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.editGrid > * {
+  min-width: 0;
+}
+
+.infoSectionDivider {
+  height: 1px;
+  background: var(--color-border);
+}
+
+.enabledEditField {
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionTitleActionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+}
+
+.editModelsButton,
+.editActions :global(button),
+.modelDrawerFooterActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.editModelsButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none !important;
+  background: transparent !important;
+  color: var(--color-primary) !important;
+  box-shadow: none !important;
+}
+
+.editModelsButton:hover,
+.editModelsButton:active,
+.editModelsButton:focus-visible {
+  border: none !important;
+  background: transparent !important;
+  color: var(--color-primary-hover) !important;
+  box-shadow: none !important;
 }
 
 .chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 10px;
   border-radius: var(--g-radius-full);
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   background: var(--color-primary-light);
   color: var(--color-primary-dark);
   margin-right: 6px;
   margin-bottom: 4px;
 }
 
+.chipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-normal);
+  line-height: 1;
+}
+
+.chipRemove:hover,
+.chipRemove:active {
+  background: transparent !important;
+  color: var(--color-primary);
+}
+
 .modelGroupLabel {
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -114,14 +211,23 @@
 
 .inlineLabel {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   margin-bottom: 6px;
 }
 
+.inlineLabelNoMargin {
+  composes: inlineLabel;
+  margin-bottom: 0;
+}
+
+.labelWithHelp {
+  margin-bottom: 6px;
+}
+
 .inlineInput {
-  height: 32px;
+  height: 36px;
   padding: 0 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
@@ -129,15 +235,17 @@
   outline: none;
   width: 100%;
   box-sizing: border-box;
+  background: var(--color-bg);
 }
 
 .nativeSelect {
   width: 100%;
-  height: 40px;
+  height: 36px;
   padding: 0 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   font-size: var(--g-font-size-sm);
+  background: var(--color-bg);
 }
 
 .modelSelectPanel {
@@ -153,7 +261,7 @@
   align-items: center;
   gap: 6px;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -180,19 +288,8 @@
 }
 
 .regenBtn {
-  color: var(--color-warning-dark);
-  border-color: var(--color-warning);
-}
-
-.regenConfirm {
-  padding: 12px 16px;
-  background: var(--color-warning-light);
-  border: 1px solid var(--color-warning);
-  border-radius: var(--g-radius-md);
-}
-
-.regenConfirmBtn {
-  background: var(--color-warning);
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .newKeyCard {
@@ -202,7 +299,7 @@
 
 .newKeyDisplay {
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   padding: 8px 12px;
   background: var(--color-surface);
   border-radius: var(--g-radius-md);
@@ -222,7 +319,7 @@
   padding: var(--g-space-3) var(--g-space-4);
   text-align: left;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -238,7 +335,7 @@
 }
 
 .tdBold {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .tdMono {
@@ -286,7 +383,7 @@
 }
 
 .providerCounter {
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   color: var(--color-text-muted);
 }
 
@@ -309,26 +406,14 @@
   margin-top: 2px;
 }
 
-.regenConfirmTitle {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.regenConfirmDesc {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  margin-bottom: 12px;
-}
-
 .newKeyTitle {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   margin-bottom: 8px;
 }
 
 .newKeyWarning {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-warning-dark);
   margin-top: 8px;
 }
@@ -337,8 +422,22 @@
   margin-top: 12px;
 }
 
+.editActions {
+  justify-content: flex-start;
+}
+
+.modelDrawerFooter {
+  min-height: 80px;
+  padding: var(--g-space-4) var(--g-space-6);
+  border-top: 1px solid var(--color-border);
+}
+
+.modelDrawerFooterActions {
+  justify-content: flex-start;
+}
+
 .allowedModelsSection {
-  margin-top: var(--g-space-4);
+  margin-top: 0;
 }
 
 .allowedModelGroup {
@@ -365,6 +464,14 @@
   flex: 1;
 }
 
+.expirationTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+  margin-bottom: 6px;
+}
+
 .neverExpiresLabel {
   display: flex;
   align-items: center;
@@ -386,6 +493,16 @@
   margin-top: var(--g-space-4);
 }
 
-.accessLogSection {
-  margin-top: var(--g-space-4);
+@media (max-width: 1100px) {
+  .editGrid,
+  .kvGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .editGrid,
+  .kvGrid {
+    grid-template-columns: 1fr;
+  }
 }

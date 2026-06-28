@@ -1,32 +1,82 @@
-.header {
-  display: grid;
-  gap: 0.35rem;
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
 }
 
-.headerRow {
+.headerTitleRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
+  gap: var(--g-space-4);
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .headerActions {
   display: flex;
-  gap: 0.6rem;
+  flex: 0 0 auto;
+  gap: var(--g-space-2);
   flex-wrap: wrap;
+}
+
+.headerActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .title {
   margin: 0;
-  font-size: 1.9rem;
-  line-height: 1.08;
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
 }
 
 .subtitle {
-  margin: 0;
-  max-width: 58rem;
-  color: var(--color-text-secondary);
+  margin: 4px 0 0;
+  max-width: none;
+  white-space: nowrap;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
 }
 
 .metaGrid {
@@ -35,17 +85,26 @@
   gap: 1rem;
 }
 
+.metaGrid > div {
+  min-width: 0;
+}
+
+.metaGrid > div + div {
+  padding-left: var(--g-space-4);
+  border-left: 1px solid var(--color-border);
+}
+
 .metaLabel {
   margin-bottom: 0.25rem;
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-secondary);
 }
 
 .metaValue {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .sectionHeader {
@@ -53,12 +112,27 @@
   align-items: end;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.9rem;
+  margin-bottom: 12px;
+}
+
+.flatSection {
+  display: block;
+}
+
+.dryRunStack {
+  gap: 12px !important;
+}
+
+.dryRunHeader {
+  margin-bottom: 0;
 }
 
 .sectionTitle {
   margin: 0;
-  font-size: 1.1rem;
+  color: var(--color-text);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 24px;
 }
 
 .sortHint {
@@ -76,6 +150,7 @@
   width: 100%;
   border-collapse: collapse;
   background: var(--color-surface);
+  font-size: var(--g-font-size-sm);
 }
 
 .table th,
@@ -88,11 +163,16 @@
 
 .table th {
   background: var(--color-muted);
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-secondary);
+}
+
+.table th:first-child,
+.table td:first-child {
+  white-space: nowrap;
 }
 
 .table tbody tr:last-child td {
@@ -122,24 +202,43 @@
 
 .state {
   padding: 1rem 1.1rem;
-  border-radius: 14px;
-  border: 1px solid var(--color-border-light);
-  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+  text-align: center;
 }
 
 @media (max-width: 960px) {
   .metaGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .metaGrid > div:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 
 @media (max-width: 720px) {
+  .headerTitleRow {
+    flex-wrap: wrap;
+  }
+
   .title {
-    font-size: 1.5rem;
+    font-size: var(--g-font-size-xl);
+  }
+
+  .subtitle {
+    white-space: normal;
   }
 
   .metaGrid {
     grid-template-columns: 1fr;
+  }
+
+  .metaGrid > div + div {
+    padding-left: 0;
+    border-left: 0;
   }
 
   .sectionHeader {

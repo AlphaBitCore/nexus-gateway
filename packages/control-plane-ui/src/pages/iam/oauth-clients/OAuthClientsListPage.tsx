@@ -7,6 +7,7 @@ import { useMutation } from '@/hooks/useMutation';
 import { usePermission } from '@/hooks/usePermission';
 import {
   PageHeader, DataTable, Card, Skeleton, ErrorBanner, Button, Stack,
+  RowActions, RowActionIconButton, OpenActionIcon, DeleteActionIcon,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import { DeleteClientConfirmDialog } from './components/DeleteClientConfirmDialog';
@@ -123,19 +124,25 @@ export function OAuthClientsListPage() {
     },
     {
       key: 'actions',
-      label: t('pages:iam.actions'),
+      label: t('common:actions', 'Actions'),
       render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={(e) => e.stopPropagation()}>
+        <RowActions>
+          <RowActionIconButton
+            label={t('common:view', 'View')}
+            onAction={() => navigate(`/iam/oauth-clients/${r.id}`)}
+          >
+            <OpenActionIcon />
+          </RowActionIconButton>
           {canDelete && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={(e) => { e.stopPropagation(); openDelete(r); }}
+            <RowActionIconButton
+              label={t('common:delete')}
+              tone="danger"
+              onAction={() => openDelete(r)}
             >
-              {t('common:delete')}
-            </Button>
+              <DeleteActionIcon />
+            </RowActionIconButton>
           )}
-        </Stack>
+        </RowActions>
       ),
     },
   ];
@@ -154,7 +161,7 @@ export function OAuthClientsListPage() {
         }
       />
 
-      <Card padding="none">
+      <Card padding="none" className={styles.tableCard}>
         <DataTable
           hideSearch
           frameless

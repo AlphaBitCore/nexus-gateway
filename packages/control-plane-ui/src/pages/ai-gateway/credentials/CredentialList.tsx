@@ -218,6 +218,7 @@ export function CredentialListPage() {
 
       <ListFilterToolbar
         variant="boxed"
+        hideClearButton
         searchPlaceholder={t('pages:credentials.searchPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}

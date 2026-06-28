@@ -9,17 +9,11 @@
  * this task's UI because Hub does not honour the filter server-side yet —
  * it will be added when Hub wires it.
  *
- * Auto-refresh: every 15s the page calls `refetch()` so the inbox stays
- * fresh without the user hitting reload. The interval is cleared on unmount.
+ * State, the paged fetch, the ack/resolve mutations and the auto-refresh loop
+ * live in the `useAlertList` hook; this component renders pure layout.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { useApi } from '@/hooks/useApi';
-import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { alertsApi } from '@/api/services';
 import type {
   Alert,
-  AlertListResponse,
   AlertSeverity,
   AlertState,
 } from '@/api/services';
@@ -27,23 +21,23 @@ import {
   PageHeader,
   DataTable,
   Badge,
-  Button,
   Stack,
   Card,
   ErrorBanner,
   Skeleton,
   MultiSelectDropdown,
   Input,
+  Button,
   ListPagination,
-  DEFAULT_ADMIN_LIST_PAGE_SIZE,
-  type AdminListPageSize,
+  RowActions,
+  RowActionIconButton,
+  OpenActionIcon,
 } from '@/components/ui';
 import type { BadgeProps, DataTableColumn } from '@/components/ui';
-import { useMutation } from '@/hooks/useMutation';
 import { AlertDetailDrawer } from '../detail/AlertDetailDrawer';
+import { AckActionIcon, ResolveActionIcon } from './AlertListPage.icons';
+import { useAlertList } from './useAlertList';
 import styles from './AlertListPage.module.css';
-
-const AUTO_REFRESH_MS = 15_000;
 
 const STATE_OPTIONS: AlertState[] = ['firing', 'acknowledged', 'resolved'];
 const SEVERITY_OPTIONS: AlertSeverity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -77,142 +71,46 @@ function stateVariant(s: AlertState): BadgeProps['variant'] {
 }
 
 export function AlertListPage() {
-  const { t } = useTranslation();
-
-  /* ── Filters ───────────────────────────────────────────────────────────── */
-  const [states, setStates] = useState<AlertState[]>([]);
-  const [severities, setSeverities] = useState<AlertSeverity[]>([]);
-  const [sourceTypes, setSourceTypes] = useState<string[]>([]);
-  const [ruleIdInput, setRuleIdInput] = useState('');
-  const [since, setSince] = useState('');
-  const [until, setUntil] = useState('');
-  const [offset, setOffset] = useState(0);
-  const [pageLimit, setPageLimit] = useState<AdminListPageSize>(
-    DEFAULT_ADMIN_LIST_PAGE_SIZE,
-  );
-
-  const debouncedRuleId = useDebouncedValue(ruleIdInput, 300);
-
-  // Convert local datetime strings into ISO-Z so Hub receives UTC regardless
-  // of the user's timezone. Empty string → undefined (omit the filter).
-  const sinceIso = since ? new Date(since).toISOString() : undefined;
-  const untilIso = until ? new Date(until).toISOString() : undefined;
-
-  /* ── List fetch ────────────────────────────────────────────────────────── */
-  const { data, loading, error, refetch } = useApi<AlertListResponse>(
-    () =>
-      alertsApi.list({
-        state: states.length ? states : undefined,
-        severity: severities.length ? severities : undefined,
-        sourceType: sourceTypes.length ? sourceTypes : undefined,
-        ruleId: debouncedRuleId || undefined,
-        since: sinceIso,
-        until: untilIso,
-        offset,
-        limit: pageLimit,
-      }),
-    [
-      'admin',
-      'alerts',
-      'inbox',
-      states.join(','),
-      severities.join(','),
-      sourceTypes.join(','),
-      debouncedRuleId,
-      sinceIso ?? '',
-      untilIso ?? '',
-      offset,
-      pageLimit,
-    ],
-  );
-
-  // Auto-refresh every 15s. The interval does not debounce user filter
-  // changes — React Query dedupes rapidly fired refetches on the same key.
-  useEffect(() => {
-    const id = setInterval(() => {
-      refetch();
-    }, AUTO_REFRESH_MS);
-    return () => clearInterval(id);
-  }, [refetch]);
-
-  /* ── Row-action mutations (refetch on success) ─────────────────────────── */
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
-  const { mutate: ackAlert, loading: ackLoading } = useMutation<string, Alert>(
-    (id) => alertsApi.ack(id),
-    {
-      onSuccess: () => refetch(),
-      successMessage: t('pages:alerts.inbox.ackSuccess'),
-    },
-  );
-
-  const { mutate: resolveAlert, loading: resolveLoading } = useMutation<
-    string,
-    Alert
-  >((id) => alertsApi.resolve(id), {
-    onSuccess: () => refetch(),
-    successMessage: t('pages:alerts.inbox.resolveSuccess'),
-  });
-
-  const rows = data?.alerts ?? [];
-  const total = data?.total ?? 0;
-
-  const stateLabel = useMemo<Record<AlertState, string>>(
-    () => ({
-      firing: t('pages:alerts.inbox.states.firing'),
-      acknowledged: t('pages:alerts.inbox.states.acknowledged'),
-      resolved: t('pages:alerts.inbox.states.resolved'),
-    }),
-    [t],
-  );
-  const severityLabel = useMemo<Record<AlertSeverity, string>>(
-    () => ({
-      critical: t('pages:alerts.inbox.severities.critical'),
-      high: t('pages:alerts.inbox.severities.high'),
-      medium: t('pages:alerts.inbox.severities.medium'),
-      low: t('pages:alerts.inbox.severities.low'),
-      info: t('pages:alerts.inbox.severities.info'),
-    }),
-    [t],
-  );
-
-  /* ── Filter handlers reset paging ──────────────────────────────────────── */
-  const resetPaging = () => setOffset(0);
-
-  const onStatesChange = useCallback((next: string[]) => {
-    setStates(next as AlertState[]);
-    resetPaging();
-  }, []);
-  const onSeveritiesChange = useCallback((next: string[]) => {
-    setSeverities(next as AlertSeverity[]);
-    resetPaging();
-  }, []);
-  const onSourceTypesChange = useCallback((next: string[]) => {
-    setSourceTypes(next);
-    resetPaging();
-  }, []);
-  const onRuleIdChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setRuleIdInput(e.target.value);
-    resetPaging();
-  }, []);
-  const onSinceChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setSince(e.target.value);
-    resetPaging();
-  }, []);
-  const onUntilChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setUntil(e.target.value);
-    resetPaging();
-  }, []);
-
-  const openDrawer = useCallback((row: Alert) => {
-    setSelectedId(row.id);
-    setDrawerOpen(true);
-  }, []);
-
-  const closeDrawer = useCallback(() => {
-    setDrawerOpen(false);
-  }, []);
+  const {
+    t,
+    states,
+    severities,
+    sourceTypes,
+    ruleIdInput,
+    since,
+    until,
+    advancedOpen,
+    setAdvancedOpen,
+    offset,
+    setOffset,
+    pageLimit,
+    setPageLimit,
+    data,
+    loading,
+    error,
+    refetch,
+    rows,
+    total,
+    stateLabel,
+    severityLabel,
+    ackAlert,
+    ackLoading,
+    resolveAlert,
+    resolveLoading,
+    selectedId,
+    drawerOpen,
+    openDrawer,
+    closeDrawer,
+    onStatesChange,
+    onSeveritiesChange,
+    onSourceTypesChange,
+    onRuleIdChange,
+    onSinceChange,
+    onUntilChange,
+    resetAdvancedFilters,
+    confirmAdvancedFilters,
+    clearRuleId,
+  } = useAlertList();
 
   if (loading && !data) return <Skeleton.ListPageSkeleton />;
   if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
@@ -259,34 +157,29 @@ export function AlertListPage() {
       label: t('pages:alerts.inbox.columns.actions'),
       sortable: false,
       render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={(e) => e.stopPropagation()}>
+        <RowActions>
+          <RowActionIconButton label={t('common:view', 'View')} onAction={() => openDrawer(r)}>
+            <OpenActionIcon />
+          </RowActionIconButton>
           {r.state === 'firing' && (
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={ackLoading}
-              onClick={(e) => {
-                e.stopPropagation();
-                ackAlert(r.id);
-              }}
+            <RowActionIconButton
+              label={t('pages:alerts.inbox.actions.ack')}
+              disabled={ackLoading}
+              onAction={() => ackAlert(r.id)}
             >
-              {t('pages:alerts.inbox.actions.ack')}
-            </Button>
+              <AckActionIcon />
+            </RowActionIconButton>
           )}
           {r.state !== 'resolved' && (
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={resolveLoading}
-              onClick={(e) => {
-                e.stopPropagation();
-                resolveAlert(r.id);
-              }}
+            <RowActionIconButton
+              label={t('pages:alerts.inbox.actions.resolve')}
+              disabled={resolveLoading}
+              onAction={() => resolveAlert(r.id)}
             >
-              {t('pages:alerts.inbox.actions.resolve')}
-            </Button>
+              <ResolveActionIcon />
+            </RowActionIconButton>
           )}
-        </Stack>
+        </RowActions>
       ),
     },
   ];
@@ -298,68 +191,106 @@ export function AlertListPage() {
         subtitle={t('pages:alerts.inbox.subtitle')}
       />
 
-      <Card>
-        <div className={styles.filterGrid}>
-          <MultiSelectDropdown
-            label={t('pages:alerts.inbox.filters.state')}
-            emptyLabel={t('pages:alerts.inbox.filters.allStates')}
-            options={STATE_OPTIONS.map((v) => ({ value: v, label: stateLabel[v] }))}
-            value={states}
-            onChange={onStatesChange}
+      <div className={styles.filterToolbar} role="search">
+        <div className={styles.searchBox}>
+          <span className={styles.searchIcon} aria-hidden="true" />
+          <Input
+            id="alerts-rule-id"
+            type="text"
+            enterKeyHint="search"
+            autoComplete="off"
+            aria-label={t('pages:alerts.inbox.filters.ruleId')}
+            placeholder={t('pages:alerts.inbox.filters.ruleIdPlaceholder')}
+            value={ruleIdInput}
+            onChange={onRuleIdChange}
+            className={styles.searchInput}
           />
-          <MultiSelectDropdown
-            label={t('pages:alerts.inbox.filters.severity')}
-            emptyLabel={t('pages:alerts.inbox.filters.allSeverities')}
-            options={SEVERITY_OPTIONS.map((v) => ({
-              value: v,
-              label: severityLabel[v],
-            }))}
-            value={severities}
-            onChange={onSeveritiesChange}
-          />
-          <MultiSelectDropdown
-            label={t('pages:alerts.inbox.filters.sourceType')}
-            emptyLabel={t('pages:alerts.inbox.filters.allSourceTypes')}
-            options={SOURCE_TYPE_OPTIONS.map((v) => ({ value: v, label: v }))}
-            value={sourceTypes}
-            onChange={onSourceTypesChange}
-          />
-          <div className={styles.filterField}>
-            <label className={styles.filterLabel} htmlFor="alerts-rule-id">
-              {t('pages:alerts.inbox.filters.ruleId')}
-            </label>
-            <Input
-              id="alerts-rule-id"
-              type="search"
-              placeholder={t('pages:alerts.inbox.filters.ruleIdPlaceholder')}
-              value={ruleIdInput}
-              onChange={onRuleIdChange}
-            />
-          </div>
-          <div className={styles.filterField}>
-            <label className={styles.filterLabel} htmlFor="alerts-since">
-              {t('pages:alerts.inbox.filters.since')}
-            </label>
-            <Input
-              id="alerts-since"
-              type="datetime-local"
-              value={since}
-              onChange={onSinceChange}
-            />
-          </div>
-          <div className={styles.filterField}>
-            <label className={styles.filterLabel} htmlFor="alerts-until">
-              {t('pages:alerts.inbox.filters.until')}
-            </label>
-            <Input
-              id="alerts-until"
-              type="datetime-local"
-              value={until}
-              onChange={onUntilChange}
-            />
-          </div>
+          {ruleIdInput.trim().length > 0 && (
+            <button
+              type="button"
+              onClick={clearRuleId}
+              className={styles.clearSearchButton}
+              aria-label={t('common:clear')}
+              title={t('common:clear')}
+            >
+              <span aria-hidden="true" />
+            </button>
+          )}
+          <button
+            type="button"
+            className={styles.advancedButton}
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            {t('common:advancedFilter')}
+          </button>
+          {advancedOpen && (
+            <div className={styles.advancedPanel}>
+              <div className={styles.advancedGrid}>
+                <MultiSelectDropdown
+                  label={t('pages:alerts.inbox.filters.state')}
+                  emptyLabel={t('pages:alerts.inbox.filters.allStates')}
+                  options={STATE_OPTIONS.map((v) => ({ value: v, label: stateLabel[v] }))}
+                  value={states}
+                  onChange={onStatesChange}
+                />
+                <MultiSelectDropdown
+                  label={t('pages:alerts.inbox.filters.severity')}
+                  emptyLabel={t('pages:alerts.inbox.filters.allSeverities')}
+                  options={SEVERITY_OPTIONS.map((v) => ({
+                    value: v,
+                    label: severityLabel[v],
+                  }))}
+                  value={severities}
+                  onChange={onSeveritiesChange}
+                />
+                <MultiSelectDropdown
+                  label={t('pages:alerts.inbox.filters.sourceType')}
+                  emptyLabel={t('pages:alerts.inbox.filters.allSourceTypes')}
+                  options={SOURCE_TYPE_OPTIONS.map((v) => ({ value: v, label: v }))}
+                  value={sourceTypes}
+                  onChange={onSourceTypesChange}
+                />
+                <div className={styles.dateRangeField}>
+                  <span className={styles.filterLabel}>{t('pages:alerts.inbox.filters.timeRange', 'Time range')}</span>
+                  <div className={styles.dateRangeBox}>
+                    <label className={styles.dateRangeItem}>
+                      <span className={styles.dateRangeLabel}>{t('pages:alerts.inbox.filters.since')}</span>
+                      <Input
+                        id="alerts-since"
+                        type="datetime-local"
+                        data-empty={since === '' || undefined}
+                        value={since}
+                        onChange={onSinceChange}
+                        className={styles.dateInput}
+                      />
+                    </label>
+                    <span className={styles.dateRangeDivider} aria-hidden="true" />
+                    <label className={styles.dateRangeItem}>
+                      <span className={styles.dateRangeLabel}>{t('pages:alerts.inbox.filters.until')}</span>
+                      <Input
+                        id="alerts-until"
+                        type="datetime-local"
+                        data-empty={until === '' || undefined}
+                        value={until}
+                        onChange={onUntilChange}
+                        className={styles.dateInput}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div className={styles.advancedFooter}>
+                <Button variant="secondary" className={styles.advancedFooterButton} onClick={resetAdvancedFilters}>
+                  {t('common:reset', 'Reset')}
+                </Button>
+                <Button className={styles.advancedFooterButton} onClick={confirmAdvancedFilters}>
+                  {t('common:confirmSearch', 'Confirm Search')}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-      </Card>
+      </div>
 
       <Card padding="none">
         <DataTable

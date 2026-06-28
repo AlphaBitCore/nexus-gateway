@@ -1,32 +1,21 @@
 import { useState, useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import clsx from 'clsx';
 import { useApi } from '@/hooks/useApi';
 import { credentialApi, providerApi } from '@/api/services';
 import { useMutation } from '@/hooks/useMutation';
 import { usePermission } from '@/hooks/usePermission';
 import {
-  PageHeader, Badge, statusToVariant, AlertDialog, Breadcrumb, Skeleton, ErrorBanner,
-  FormField, Input, Switch, Tooltip, Button, Stack, Card,
+  PageHeader, AlertDialog, Breadcrumb, Skeleton, ErrorBanner,
+  Button, Stack, Card,
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '@/components/ui';
 import type { Credential, Provider } from '@/api/types';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '@/constants/admin-api';
 import { formatDateTime } from '@/lib/format';
 import { ReliabilityPanel } from './ReliabilityPanel';
+import { CredentialInfoTab } from './CredentialDetail.InfoTab';
 import styles from './CredentialDetail.module.css';
-
-function rotationBadgeClass(state: string, s: Record<string, string>): string {
-  switch (state) {
-    case 'pending_rotation': return s.rotationStatePendingRotation;
-    case 'validating': return s.rotationStateValidating;
-    case 'rotated': return s.rotationStateRotated;
-    case 'completed': return s.rotationStateCompleted;
-    case 'failed': return s.rotationStateFailed;
-    default: return s.rotationStateNone;
-  }
-}
 
 export function CredentialDetail() {
   const { t } = useTranslation();
@@ -65,7 +54,7 @@ export function CredentialDetail() {
     (data: Record<string, unknown>) => credentialApi.update(id!, data),
     {
       invalidateQueries: [['api', 'admin', 'credentials']],
-      onSuccess: () => { setIsEditing(false); },
+      onSuccess: () => { setIsEditing(false); refetch(); },
       successMessage: t('pages:credentials.credentialUpdated'),
     },
   );
@@ -132,14 +121,12 @@ export function CredentialDetail() {
         subtitle={provider ? t('pages:credentials.providerSubtitleLabel', { name: provider.displayName || provider.name }) : undefined}
         action={
           <Stack direction="horizontal" gap="sm">
-            {canUpdate && !isEditing && (
-              <Button variant="secondary" onClick={startEditing}>{t('common:edit')}</Button>
-            )}
-            {canUpdate && !isEditing && (
+            {canUpdate && (
               <Button
                 variant="secondary"
                 onClick={() => updateCred({ enabled: !credential.enabled })}
-              >{credential.enabled ? t('pages:credentials.disable') : t('pages:credentials.enable')}</Button>
+                className={styles.credentialStatusButton}
+              >{credential.enabled ? t('common:enabled') : t('common:disabled')}</Button>
             )}
             {canDelete && (
               <Button variant="danger" onClick={() => setDeleting(true)}>{t('common:delete')}</Button>
@@ -156,202 +143,29 @@ export function CredentialDetail() {
         </TabsList>
 
         <TabsContent value="info">
-          <Card>
-            {isEditing ? (
-              <Stack gap="md">
-                <FormField label={t('pages:credentials.name')} required>
-                  <Input name="editName" value={editName} onChange={(e) => setEditName(e.target.value)} required />
-                </FormField>
-                <FormField
-                  label={t('pages:credentials.newApiKeyLabel')}
-                  helpText={t('pages:credentials.newApiKeyHelpText')}
-                >
-                  <Input name="editApiKey" value={editApiKey} onChange={(e) => setEditApiKey(e.target.value)} type="password" placeholder={t('pages:credentials.placeholderApiKeyHint')} />
-                </FormField>
-                <Stack direction="horizontal" gap="sm" align="center">
-                  <Switch checked={editEnabled} onCheckedChange={setEditEnabled} />
-                  <Tooltip content={t('pages:credentials.enabledTooltip')}>
-                    <span>{t('pages:credentials.enabledLabel')}</span>
-                  </Tooltip>
-                </Stack>
-                <FormField label={t('pages:credentials.selectionWeightLabel')} helpText={t('pages:credentials.selectionWeightHelp')}>
-                  <Input
-                    name="editWeight"
-                    type="number"
-                    min={0}
-                    max={10000}
-                    value={String(editWeight)}
-                    onChange={(e) => setEditWeight(Number(e.target.value))}
-                  />
-                </FormField>
-                <FormField label={t('pages:credentials.poolStatusLabel')} helpText={t('pages:credentials.poolStatusHelp')}>
-                  <select
-                    value={editStatus}
-                    onChange={(e) => setEditStatus(e.target.value)}
-                  >
-                    <option value="active">{t('pages:credentials.poolStatus_active')}</option>
-                    <option value="retiring">{t('pages:credentials.poolStatus_retiring')}</option>
-                  </select>
-                </FormField>
-                <FormField label={t('pages:providers.credExpiresAtLabel')} helpText={t('pages:providers.credExpiresAtHelp')}>
-                  <Input
-                    name="editExpiresAt"
-                    type="date"
-                    value={editExpiresAt}
-                    onChange={(e) => setEditExpiresAt(e.target.value)}
-                  />
-                </FormField>
-                <Stack direction="horizontal" gap="sm" justify="end">
-                  <Button variant="secondary" onClick={() => setIsEditing(false)}>{t('common:cancel')}</Button>
-                  <Button onClick={handleSave} disabled={updating || !editName} loading={updating}>
-                    {t('common:save')}
-                  </Button>
-                </Stack>
-              </Stack>
-            ) : (
-              <div className={styles.kvGrid}>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.name')}</span>
-                    <Tooltip content={t('pages:credentials.nameTooltip')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.kvValueBold}>{credential.name}</div>
-                </div>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.provider')}</span>
-                    <Tooltip content={t('pages:credentials.providerTooltip')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.kvValue}>
-                    {provider ? (
-                      <Link to={`/ai-gateway/providers/${provider.id}`} className={styles.link}>{provider.displayName || provider.name}</Link>
-                    ) : credential.providerId}
-                  </div>
-                </div>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.status')}</span>
-                    <Tooltip content={t('pages:credentials.statusTooltip')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.badgeOffset}><Badge variant={statusToVariant(credential.enabled ? 'enabled' : 'disabled')}>{credential.enabled ? t('common:enabled') : t('common:disabled')}</Badge></div>
-                </div>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.rotationState')}</span>
-                    <Tooltip content={t('pages:credentials.rotationStateTooltip')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.badgeOffset}><span className={clsx(styles.rotationBadge, rotationBadgeClass(rotationState, styles))}>{rotationState.replace(/_/g, ' ')}</span></div>
-                </div>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.storedSecret')}</span>
-                    <Tooltip content={t('pages:credentials.storedSecretTooltip')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.kvValueMono}>{t('pages:credentials.notDisplayed')}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:credentials.expires')}</div>
-                  <div className={styles.kvValue}>
-                    {credential.expiresAt ? (
-                      <Stack direction="horizontal" gap="xs" align="center">
-                        <span>{formatDateTime(credential.expiresAt)}</span>
-                        {new Date(credential.expiresAt) < new Date() ? (
-                          <Badge variant="danger">{t('pages:credentials.expiresOverdue')}</Badge>
-                        ) : rotationState === 'pending_rotation' ? (
-                          <Badge variant="warning">{t('pages:credentials.expiringSoon')}</Badge>
-                        ) : null}
-                      </Stack>
-                    ) : '—'}
-                  </div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:credentials.created')}</div>
-                  <div className={styles.kvValue}>{formatDateTime(credential.createdAt)}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:credentials.lastUpdated')}</div>
-                  <div className={styles.kvValue}>{formatDateTime(credential.updatedAt)}</div>
-                </div>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.lastRotated')}</span>
-                    <Tooltip content={t('pages:credentials.lastRotatedTooltip')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.kvValue}>{formatDateTime(credential.lastRotatedAt)}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:credentials.lastUsedLabel')}</div>
-                  <div className={styles.kvValue}>{formatDateTime(credential.lastUsedAt)}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:credentials.lastSuccess')}</div>
-                  <div className={styles.kvValue}>{formatDateTime(credential.lastSuccessAt)}</div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:credentials.lastFailure')}</div>
-                  <div className={styles.kvValue}>
-                    {credential.lastFailureAt ? <span className={styles.dangerText}>{formatDateTime(credential.lastFailureAt)}</span> : '--'}
-                    {credential.lastFailureReason && (
-                      <div className={styles.failureDetail}>{credential.lastFailureReason}</div>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className={styles.kvLabel}>{t('pages:credentials.totalUsageCount')}</div>
-                  <div className={styles.kvValueMono}>{credential.totalUsageCount.toLocaleString()}</div>
-                </div>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.selectionWeightLabel')}</span>
-                    <Tooltip content={t('pages:credentials.selectionWeightHelp')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.kvValueMono}>{credential.selectionWeight ?? 100}</div>
-                </div>
-                <div>
-                  <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
-                    <span className={styles.kvLabel}>{t('pages:credentials.poolStatusLabel')}</span>
-                    <Tooltip content={t('pages:credentials.poolStatusHelp')}>
-                      <span className={styles.helpIcon}>?</span>
-                    </Tooltip>
-                  </Stack>
-                  <div className={styles.badgeOffset}>
-                    <Badge variant={
-                      credential.status === 'retiring' ? 'warning' :
-                      credential.status === 'retired' ? 'default' : 'success'
-                    }>
-                      {t(`pages:credentials.poolStatus_${credential.status ?? 'active'}`)}
-                    </Badge>
-                  </div>
-                </div>
-                {credential.retireAt && (
-                  <div>
-                    <div className={styles.kvLabel}>{t('pages:credentials.retireAt')}</div>
-                    <div className={styles.kvValue}>{formatDateTime(credential.retireAt)}</div>
-                  </div>
-                )}
-                <div>
-                  <span className={styles.kvLabel}>{t('pages:credentials.reliability')}</span>
-                  <div className={styles.badgeOffset}>
-                    <span className={styles.mutedText}>{t('pages:credentials.seeReliabilityTab')}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </Card>
+          <CredentialInfoTab
+            credential={credential}
+            provider={provider}
+            rotationState={rotationState}
+            canUpdate={canUpdate}
+            isEditing={isEditing}
+            startEditing={startEditing}
+            handleSave={handleSave}
+            updating={updating}
+            setIsEditing={setIsEditing}
+            editName={editName}
+            setEditName={setEditName}
+            editEnabled={editEnabled}
+            setEditEnabled={setEditEnabled}
+            editApiKey={editApiKey}
+            setEditApiKey={setEditApiKey}
+            editWeight={editWeight}
+            setEditWeight={setEditWeight}
+            editStatus={editStatus}
+            setEditStatus={setEditStatus}
+            editExpiresAt={editExpiresAt}
+            setEditExpiresAt={setEditExpiresAt}
+          />
         </TabsContent>
 
         <TabsContent value="reliability">
@@ -359,8 +173,8 @@ export function CredentialDetail() {
         </TabsContent>
 
         <TabsContent value="history">
+          <h2 className={styles.historyTitle}>{t('pages:credentials.rotationHistory')}</h2>
           <Card>
-            <h2 className={styles.widgetTitle}>{t('pages:credentials.rotationHistory')}</h2>
             {timeline.length === 0 ? (
               <div className={styles.emptyMessage}>
                 {t('pages:credentials.noRotationHistory')}

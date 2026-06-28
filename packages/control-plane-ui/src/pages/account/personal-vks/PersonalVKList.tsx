@@ -8,10 +8,22 @@ import { useTheme } from '@/theme/useTheme';
 import {
   DataTable, AlertDialog, Badge, statusToVariant,
   Skeleton, ErrorBanner, Button, Stack, Card, SecretDialog,
+  RowActions, RowActionIconButton, RowDeleteAction,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import type { VirtualKey } from '@/api/types';
 import styles from './PersonalVKList.module.css';
+
+function RegenerateActionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 12a9 9 0 0 1-15.3 6.36" />
+      <path d="M3 12A9 9 0 0 1 18.3 5.64" />
+      <path d="M18 3v4h-4" />
+      <path d="M6 21v-4h4" />
+    </svg>
+  );
+}
 
 export function PersonalVKList() {
   const { t } = useTranslation();
@@ -76,22 +88,12 @@ export function PersonalVKList() {
       key: 'actions',
       label: t('pages:personalVks.actions'),
       render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); regenerateVk(r.id); }}
-          >
-            {t('pages:personalVks.regenerate')}
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); setDeleting(r); }}
-          >
-            {t('common:delete')}
-          </Button>
-        </Stack>
+        <RowActions>
+          <RowActionIconButton label={t('pages:personalVks.regenerate')} onAction={() => regenerateVk(r.id)}>
+            <RegenerateActionIcon />
+          </RowActionIconButton>
+          <RowDeleteAction label={t('common:delete')} onAction={() => setDeleting(r)} />
+        </RowActions>
       ),
     },
   ];
@@ -104,7 +106,7 @@ export function PersonalVKList() {
             <h2 style={{ fontSize: 'var(--g-font-size-md)', fontWeight: 'var(--g-font-weight-semibold)', marginBottom: 'var(--g-space-1)' }}>{t('pages:personalVks.title')}</h2>
             <p className={styles.descriptionText}>{t('pages:personalVks.description', { productName: brand.productName })}</p>
           </div>
-          <Button onClick={() => navigate('/settings/personal-vks/new')}>
+          <Button className={styles.createVkButton} onClick={() => navigate('/settings/personal-vks/new')}>
             {t('pages:personalVks.createVk')}
           </Button>
         </Stack>

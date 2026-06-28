@@ -1,5 +1,5 @@
 /**
- * Compliance report service (S43, M5-10).
+ * Compliance report service.
  *
  * Returns a structured JSON snapshot the dashboard renders as a
  * print-friendly HTML page. The compliance officer uses the browser's

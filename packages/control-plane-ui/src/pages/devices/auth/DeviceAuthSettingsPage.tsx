@@ -46,24 +46,30 @@ export function DeviceAuthSettingsPage() {
       <Card>
         <div className={styles.content}>
           <div className={styles.radioGroup}>
-            <label className={styles.radioLabel}>
-              <input type="radio" name="authMode" value="mtls-only" checked={mode === 'mtls-only'} onChange={() => setMode('mtls-only')} />
-              <span>{t('pages:fleet.authModeMtls')}</span>
-            </label>
-            <p className={styles.radioDescription}>{t('pages:fleet.authModeDescription')}</p>
+            <div className={styles.radioOption}>
+              <label className={styles.radioLabel}>
+                <input type="radio" name="authMode" value="mtls-only" checked={mode === 'mtls-only'} onChange={() => setMode('mtls-only')} />
+                <span>{t('pages:fleet.authModeMtls')}</span>
+              </label>
+              <p className={styles.radioDescription}>{t('pages:fleet.authModeDescription')}</p>
+            </div>
 
-            <label className={styles.radioLabel}>
-              <input type="radio" name="authMode" value="local-login" checked={mode === 'local-login'} onChange={() => setMode('local-login')} />
-              <span>{t('pages:fleet.authModeLocal', 'Local Login')}</span>
-            </label>
-            <p className={styles.radioDescription}>{t('pages:fleet.authModeLocalDesc')}</p>
-            <p className={styles.radioAdvisory}>{t('pages:fleet.authModeLocalAdvisory')}</p>
+            <div className={styles.radioOption}>
+              <label className={styles.radioLabel}>
+                <input type="radio" name="authMode" value="local-login" checked={mode === 'local-login'} onChange={() => setMode('local-login')} />
+                <span>{t('pages:fleet.authModeLocal', 'Local Login')}</span>
+              </label>
+              <p className={styles.radioDescription}>{t('pages:fleet.authModeLocalDesc')}</p>
+              <p className={styles.radioAdvisory}>{t('pages:fleet.authModeLocalAdvisory')}</p>
+            </div>
 
-            <label className={styles.radioLabel}>
-              <input type="radio" name="authMode" value="enterprise-login" checked={mode === 'enterprise-login'} onChange={() => setMode('enterprise-login')} />
-              <span>{t('pages:fleet.authModeEnterprise', 'Enterprise Login')}</span>
-            </label>
-            <p className={styles.radioDescription}>{t('pages:fleet.authModeEnterpriseDesc')}</p>
+            <div className={styles.radioOption}>
+              <label className={styles.radioLabel}>
+                <input type="radio" name="authMode" value="enterprise-login" checked={mode === 'enterprise-login'} onChange={() => setMode('enterprise-login')} />
+                <span>{t('pages:fleet.authModeEnterprise', 'Enterprise Login')}</span>
+              </label>
+              <p className={styles.radioDescription}>{t('pages:fleet.authModeEnterpriseDesc')}</p>
+            </div>
           </div>
 
           {mode === 'local-login' && !localLoginAvailable && (
@@ -103,13 +109,13 @@ export function DeviceAuthSettingsPage() {
             </div>
           )}
 
-          <div className={styles.actions}>
-            <Button onClick={() => save(undefined as never)} loading={saving} disabled={saveDisabled}>
-              {t('common:save', 'Save')}
-            </Button>
-          </div>
         </div>
       </Card>
+      <div className={styles.actions}>
+        <Button className={styles.actionButton} onClick={() => save(undefined as never)} loading={saving} disabled={saveDisabled}>
+          {t('common:save', 'Save')}
+        </Button>
+      </div>
     </Stack>
   );
 }

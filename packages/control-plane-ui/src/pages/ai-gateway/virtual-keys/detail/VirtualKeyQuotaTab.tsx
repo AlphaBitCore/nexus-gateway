@@ -12,13 +12,14 @@ export function VirtualKeyQuotaTab({ vk }: VirtualKeyQuotaTabProps) {
 
   return (
     <Stack gap="md">
-      <Card>
-        <Stack direction="horizontal" gap="xs" align="center" className={styles.sectionTitleRow}>
-          <h2 className={`${styles.widgetTitle} ${styles.sectionTitleNoMargin}`}>{t('pages:virtualKeys.rateLimits')}</h2>
+      <section className={styles.detailSection}>
+        <Stack direction="horizontal" gap="xs" align="center">
+          <h2 className={styles.widgetTitle}>{t('pages:virtualKeys.rateLimits')}</h2>
           <Tooltip content={t('pages:virtualKeys.rateLimitsTooltip')}>
             <span className={styles.helpIcon}>?</span>
           </Tooltip>
         </Stack>
+        <Card>
         <div className={styles.kvGrid}>
           <div>
             <Stack direction="horizontal" gap="xs" align="center" className={styles.kvLabelRow}>
@@ -32,7 +33,8 @@ export function VirtualKeyQuotaTab({ vk }: VirtualKeyQuotaTabProps) {
             </div>
           </div>
         </div>
-      </Card>
+        </Card>
+      </section>
     </Stack>
   );
 }

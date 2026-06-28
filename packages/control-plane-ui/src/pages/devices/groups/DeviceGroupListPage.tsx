@@ -9,19 +9,24 @@ import { deviceGroupsApi, type DeviceGroupListItem, type DeviceGroup } from '@/a
 import {
   PageHeader,
   DataTable,
-  ListFilterToolbar,
   Skeleton,
   ErrorBanner,
   Button,
   Stack,
   Card,
+  Input,
   ListPagination,
   AlertDialog,
+  RowActions,
+  RowActionIconButton,
+  RowDeleteAction,
+  EditActionIcon,
   DEFAULT_ADMIN_LIST_PAGE_SIZE,
   type AdminListPageSize,
   type DataTableColumn,
 } from '@/components/ui';
 import { DeviceGroupForm } from './DeviceGroupForm';
+import styles from './DeviceGroupListPage.module.css';
 
 export function DeviceGroupListPage() {
   const { t } = useTranslation();
@@ -83,29 +88,26 @@ export function DeviceGroupListPage() {
     },
     {
       key: 'actions',
-      label: '',
+      label: t('common:actions', 'Actions'),
       sortable: false,
       render: (r) =>
         canUpdate || canDelete ? (
-          <Stack direction="horizontal" gap="xs" onClick={(e) => e.stopPropagation()}>
+          <RowActions>
             {canUpdate && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
+              <RowActionIconButton
+                label={t('common:edit', 'Edit')}
+                onAction={() => {
                   setEditing(r);
                   setShowEditForm(true);
                 }}
               >
-                {t('common:edit')}
-              </Button>
+                <EditActionIcon />
+              </RowActionIconButton>
             )}
             {canDelete && (
-              <Button size="sm" variant="danger" onClick={() => setDeleting(r)}>
-                {t('common:delete')}
-              </Button>
+              <RowDeleteAction label={t('common:delete', 'Delete')} onAction={() => setDeleting(r)} />
             )}
-          </Stack>
+          </RowActions>
         ) : null,
     },
   ];
@@ -123,29 +125,52 @@ export function DeviceGroupListPage() {
           ) : undefined
         }
       />
-      <ListFilterToolbar
-        searchPlaceholder={t('pages:deviceGroups.searchPlaceholder')}
-        searchValue={search}
-        onSearchChange={onSearchChange}
-        meta={t('pages:deviceGroups.pageMeta', { count: items.length, total })}
-      />
-      <Card padding="none">
-        <DataTable
-          columns={columns}
-          data={items}
-          onRowClick={(r) => navigate(`/devices/groups/${r.id}`)}
-          hideSearch
-          frameless
-          emptyMessage={t('pages:deviceGroups.noGroups')}
-        />
-        <ListPagination
-          total={total}
-          offset={offset}
-          limit={pageLimit}
-          onOffsetChange={setOffset}
-          onLimitChange={setPageLimit}
-        />
-      </Card>
+      <div className={styles.listSection}>
+        <div className={styles.filterBar}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon} aria-hidden />
+            <Input
+              className={styles.searchInput}
+              placeholder={t('pages:deviceGroups.searchPlaceholder')}
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+            />
+            {search && (
+              <button
+                type="button"
+                className={styles.clearSearchButton}
+                aria-label={t('common:clearSearch', 'Clear search')}
+                title={t('common:clearSearch', 'Clear search')}
+                onClick={() => onSearchChange('')}
+              >
+                <span aria-hidden />
+              </button>
+            )}
+          </div>
+        </div>
+        <p className={styles.listMeta}>
+          {t('pages:deviceGroups.pageMeta', { count: items.length, total })}
+        </p>
+        <Card padding="none">
+          <DataTable
+            columns={columns}
+            data={items}
+            onRowClick={(r) => navigate(`/devices/groups/${r.id}`)}
+            hideSearch
+            frameless
+            emptyMessage={t('pages:deviceGroups.noGroups')}
+          />
+        </Card>
+        <div className={styles.paginationWrap}>
+          <ListPagination
+            total={total}
+            offset={offset}
+            limit={pageLimit}
+            onOffsetChange={setOffset}
+            onLimitChange={setPageLimit}
+          />
+        </div>
+      </div>
 
       <DeviceGroupForm
         open={showEditForm}

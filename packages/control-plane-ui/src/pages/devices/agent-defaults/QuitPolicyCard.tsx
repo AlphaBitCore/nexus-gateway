@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { Card, Stack, Switch } from '@/components/ui';
+import { Card, Switch } from '@/components/ui';
 import styles from './SettingsAgentTab.module.css';
 
 interface QuitPolicyCardProps {
@@ -12,13 +12,14 @@ export function QuitPolicyCard({ quitAllowed, onQuitToggle, loading }: QuitPolic
   const { t } = useTranslation();
 
   return (
-    <Card>
-      <Stack gap="md">
-        <h3 style={{ margin: 'var(--g-space-0)' }}>{t('pages:settings.quitPolicyTitle', 'Agent Quit Policy')}</h3>
+    <div className={styles.settingsSection}>
+      <div className={styles.sectionHeader}>
+        <h3 className={styles.sectionTitle}>{t('pages:settings.quitPolicyTitle', 'Agent Quit Policy')}</h3>
         <p className={styles.helpTextSecondary}>
           {t('pages:settings.quitPolicyDesc', "Controls whether employees can turn protection off on their device. Turn off for compliance always-on deployments: the user cannot quit, pause, or sign out of the agent, so monitoring can't be disabled. Signing in always works.")}
         </p>
-
+      </div>
+      <Card>
         <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-3)', cursor: 'pointer' }}>
           <Switch
             checked={quitAllowed}
@@ -36,7 +37,7 @@ export function QuitPolicyCard({ quitAllowed, onQuitToggle, loading }: QuitPolic
             </div>
           </div>
         </label>
-      </Stack>
-    </Card>
+      </Card>
+    </div>
   );
 }

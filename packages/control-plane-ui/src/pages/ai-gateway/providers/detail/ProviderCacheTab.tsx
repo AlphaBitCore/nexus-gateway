@@ -1,7 +1,7 @@
 /**
  * Provider detail Cache tab.
  *
- * Rewritten to use the three-tier API: reads effective config from
+ * Uses the three-tier API: reads effective config from
  * `/api/admin/cache/effective?provider_id=…`, writes per-field overrides via
  * `/api/admin/cache/provider/:id`, and renders per-field "Inherited vs
  * Overridden" badges so operators see at a glance which tier sources each
@@ -41,16 +41,14 @@ export function ProviderCacheTab({ providerID, adapterType }: ProviderCacheTabPr
   const family = familyOf(adapterType);
 
   // No admin-tunable cache config for adapters outside the Anthropic / Gemini
-  // families. Show an info card so the operator knows it's a fully provider-
+  // families. Show an info banner so the operator knows it's a fully provider-
   // managed cache path.
   if (family === 'none') {
     return (
-      <Card>
-        <Stack gap="sm">
-          <h3 style={{ margin: 'var(--g-space-0)' }}>{t('pages:providers.cacheAutoTitle')}</h3>
-          <p className={styles.cardSubtitle}>{t('pages:providers.cacheAutoInfo')}</p>
-        </Stack>
-      </Card>
+      <div className={styles.autoCacheBanner}>
+        <h3 className={styles.autoCacheBannerTitle}>{t('pages:providers.cacheAutoTitle')}</h3>
+        <p className={styles.autoCacheBannerText}>{t('pages:providers.cacheAutoInfo')}</p>
+      </div>
     );
   }
 
@@ -80,7 +78,7 @@ function ProviderOverrideEditor({
   // Edit buffer mirrors the persisted override row plus any in-flight
   // changes. `null` means "no edits — render from the fetched override
   // (or fall back to inherited values from `eff` for unset fields)".
-  // This pattern avoids the prod-20260513c race where useState({}) +
+  // This pattern avoids the race where useState({}) +
   // useEffect would leave a render gap where draft was empty, and a fast
   // Save click during that gap PUT an empty body, wiping the override row.
   const [draft, setDraft] = useState<CacheProviderConfig | null>(null);
@@ -118,7 +116,7 @@ function ProviderOverrideEditor({
   // setField writes into the draft buffer. The draft starts from a clone
   // of the persisted override so toggling an inherited-default field
   // produces a complete-row PUT, not a partial body that drops other
-  // fields (this is what caused the prod-20260513c data loss incident).
+  // fields (a partial body would silently wipe the omitted fields).
   const setField = <K extends keyof CacheProviderConfig>(key: K, value: CacheProviderConfig[K]) =>
     setDraft(prev => ({ ...(prev ?? override ?? {}), [key]: value }));
 

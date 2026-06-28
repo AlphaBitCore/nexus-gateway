@@ -1,8 +1,30 @@
 /* ── ObservabilityRetention ────────────────────────────────────────── */
 
-.layerGrid {
+.page {
+  padding-bottom: 80px;
+}
+
+.pageSubtitle {
+  max-width: none !important;
+  white-space: nowrap;
+}
+
+.sectionGrid {
   display: grid;
   grid-template-columns: 1fr;
+  gap: var(--g-space-4);
+}
+
+.contentSection {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layerGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--g-space-3);
 }
 
@@ -30,19 +52,39 @@
 }
 
 .sectionTitle {
-  font-size: var(--g-font-size-md);
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   margin: 0;
 }
 
 .actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   gap: var(--g-space-2);
+  margin: 0 calc(var(--g-space-6) * -1);
+  padding: 12px var(--g-space-6);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  box-shadow: 0 -8px 16px -16px color-mix(in srgb, var(--color-text) 35%, transparent);
+}
+
+.actions :global(button),
+.actions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .changeBadge {
   font-size: var(--g-font-size-xs);
   color: var(--color-info);
   margin-left: 8px;
+}
+
+@media (max-width: 1200px) {
+  .layerGrid {
+    grid-template-columns: 1fr;
+  }
 }

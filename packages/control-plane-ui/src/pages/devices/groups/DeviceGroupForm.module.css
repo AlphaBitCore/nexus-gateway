@@ -1,0 +1,4 @@
+.dialogActionButton,
+.dialogActionButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+}

@@ -32,7 +32,7 @@
 .errorTitle {
   margin-bottom: 0.35rem;
   font-size: 0.85rem;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
 }
 
 .errorTitle {

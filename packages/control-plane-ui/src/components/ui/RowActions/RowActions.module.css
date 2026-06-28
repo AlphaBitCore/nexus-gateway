@@ -35,6 +35,10 @@
   color: var(--color-text-primary);
 }
 
+.iconButtonDanger {
+  color: var(--color-danger);
+}
+
 .iconButtonDanger:hover {
   background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg));
   border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-border));

@@ -53,7 +53,7 @@ function AdapterConfigCard({ adapterType }: { adapterType: string }) {
 
   // Local draft of changes the user has made since the last save. NULL means
   // "no edits — display values come from `data`". This pattern avoids the
-  // prod-20260513c race where useState({}) + useEffect left a single render
+  // race where useState({}) + useEffect left a single render
   // where cfg was empty before data populated, and a fast Save click during
   // that gap wiped the row.
   const [draft, setDraft] = useState<Partial<CacheAdapterConfig> | null>(null);

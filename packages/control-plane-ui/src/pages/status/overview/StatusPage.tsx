@@ -74,7 +74,7 @@ export function StatusPage() {
   // (the legacy /api/admin/service-metrics endpoint was deleted in
   // spec §10.5). The flat sample list is reshaped per-service by
   // groupOpsSamples() below so the existing ServiceCard renderer keeps
-  // its current shape; richer per-thing views land in T36-T41.
+  // its current shape; richer per-thing views can layer on top later.
   const { data: opsCurrent, refetch: refetchMetrics } = useApi<OpsMetricSample[]>(
     () => opsMetricsApi.current().catch((): OpsMetricSample[] => []),
     ['admin', 'ops-metrics', 'current', 'status'],

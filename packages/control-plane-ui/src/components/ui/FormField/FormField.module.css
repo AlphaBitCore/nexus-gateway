@@ -33,10 +33,11 @@
   width: 16px;
   height: 16px;
   margin-left: 4px;
+  border: 1px solid var(--color-border);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
-  background: var(--color-muted);
+  background: var(--color-surface);
   border-radius: 50%;
   cursor: help;
   vertical-align: middle;

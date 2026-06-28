@@ -10,6 +10,7 @@ import { useZodForm, FormInput, FormSelect } from '@/lib/forms';
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import type { Provider } from '@/api/types';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '@/constants/admin-api';
+import styles from './CredentialCreate.module.css';
 
 const credentialSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -74,65 +75,67 @@ export function CredentialCreate() {
       <Card>
         <form onSubmit={onSubmit}>
           <Stack gap="md">
-            <FormInput
-              form={form}
-              name="name"
-              label={t('pages:credentials.name')}
-              required
-              helpText={t('pages:credentials.nameHelpTextCreate')}
-            />
-            <FormSelect
-              form={form}
-              name="providerId"
-              label={t('pages:credentials.provider')}
-              required
-              helpText={t('pages:credentials.providerHelpTextCreate')}
-              options={providerOptions}
-              placeholder={t('pages:credentials.placeholderSelect')}
-            />
-            <FormInput
-              form={form}
-              name="apiKey"
-              label={t('pages:providers.apiKeyLabel')}
-              required
-              helpText={t('pages:credentials.apiKeyHelpTextCreate')}
-              type="password"
-              placeholder={t('pages:credentials.placeholderApiKeyHint')}
-            />
-            <FormInput
-              form={form}
-              name="selectionWeight"
-              label={t('pages:credentials.selectionWeightLabel')}
-              helpText={t('pages:credentials.selectionWeightHelp')}
-              type="number"
-            />
-            <FormInput
-              form={form}
-              name="expiresAt"
-              label={t('pages:providers.credExpiresAtLabel')}
-              helpText={t('pages:providers.credExpiresAtHelp')}
-              type="date"
-            />
-            <FormField label={t('pages:credentials.enabledLabel')}>
-              <Stack direction="horizontal" gap="sm" align="center">
-                <Switch
-                  checked={form.watch('enabled')}
-                  onCheckedChange={(v) => form.setValue('enabled', v, { shouldDirty: true })}
-                />
-                <span>{form.watch('enabled') ? t('common:enabled') : t('common:disabled')}</span>
-              </Stack>
-            </FormField>
+            <div className={styles.formGrid}>
+              <FormInput
+                form={form}
+                name="name"
+                label={t('pages:credentials.name')}
+                required
+                helpText={t('pages:credentials.nameHelpTextCreate')}
+              />
+              <FormSelect
+                form={form}
+                name="providerId"
+                label={t('pages:credentials.provider')}
+                required
+                helpText={t('pages:credentials.providerHelpTextCreate')}
+                options={providerOptions}
+                placeholder={t('pages:credentials.placeholderSelect')}
+              />
+              <FormInput
+                form={form}
+                name="apiKey"
+                label={t('pages:providers.apiKeyLabel')}
+                required
+                helpText={t('pages:credentials.apiKeyHelpTextCreate')}
+                type="password"
+                placeholder={t('pages:credentials.placeholderApiKeyHint')}
+              />
+              <FormInput
+                form={form}
+                name="selectionWeight"
+                label={t('pages:credentials.selectionWeightLabel')}
+                helpText={t('pages:credentials.selectionWeightHelp')}
+                type="number"
+              />
+              <FormInput
+                form={form}
+                name="expiresAt"
+                label={t('pages:providers.credExpiresAtLabel')}
+                helpText={t('pages:providers.credExpiresAtHelp')}
+                type="date"
+              />
+              <FormField label={t('pages:credentials.enabledLabel')}>
+                <Stack direction="horizontal" gap="sm" align="center">
+                  <Switch
+                    checked={form.watch('enabled')}
+                    onCheckedChange={(v) => form.setValue('enabled', v, { shouldDirty: true })}
+                  />
+                  <span>{form.watch('enabled') ? t('common:enabled') : t('common:disabled')}</span>
+                </Stack>
+              </FormField>
+            </div>
 
-            <Stack direction="horizontal" gap="sm" justify="end">
-              <Button type="button" variant="secondary" onClick={() => navigate('/ai-gateway/credentials')}>
-                {t('common:cancel')}
-              </Button>
+            <Stack direction="horizontal" gap="sm" className={styles.actions}>
               <Button
                 type="submit"
                 disabled={loading || !form.formState.isValid}
                 loading={loading}
               >
                 {t('pages:credentials.createCredential')}
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => navigate('/ai-gateway/credentials')}>
+                {t('common:cancel')}
               </Button>
             </Stack>
           </Stack>

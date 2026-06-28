@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Card, Button } from '@/components/ui';
 import type { ProviderBreakdown } from '../../api/types';
-import { formatTokens } from '@/lib/format';
+import { formatTokens, formatUsd } from '@/lib/format';
 import styles from './DashboardPage.module.css';
 
 interface ProvidersTableProps {
@@ -41,7 +41,7 @@ export function ProvidersTable({ topProviders, navigate }: ProvidersTableProps) 
                 <td className={styles.td}>{p.requestCount.toLocaleString()}</td>
                 <td className={styles.td}>{Math.round(p.avgLatencyMs)}ms</td>
                 <td className={styles.td}>{formatTokens(p.totalTokens)}</td>
-                <td className={styles.tdMono}>${Number(p.totalEstimatedCostUsd).toFixed(2)}</td>
+                <td className={styles.tdMono}>{formatUsd(Number(p.totalEstimatedCostUsd))}</td>
               </tr>
             ))}
           </tbody>

@@ -227,6 +227,14 @@
     "cachedInputReadPriceHelp": "缓存命中的 input token 单价（按百万）。可选，留空则按 Input $/M 计费。常见折扣：Anthropic ~0.1×、OpenAI ~0.5×、Gemini ~0.25×。",
     "cachedInputWritePriceHelp": "缓存写入（创建）的 input token 单价（按百万）。可选，留空则按 Input $/M 计费。常见加价：Anthropic ~1.25×。",
     "addAnotherModel": "+ 添加另一个模型",
+    "wizardModelsFetchHint": "支持从 OpenAI / OpenAI 兼容提供商获取模型列表。",
+    "wizardModelsFetchButton": "从 /v1/models 获取",
+    "wizardModelsFetching": "获取中…",
+    "wizardModelsFetchDisabledHint": "请先填写 Base URL 和 API Key",
+    "wizardModelsFetchOpenAIOnly": "从 /v1/models 获取模型仅适用于 OpenAI / OpenAI 兼容提供商。请在下方手动添加模型。",
+    "wizardModelsFetchError": "获取模型失败",
+    "wizardModelsFetchCount": "已获取 {{count}} 个模型 — 请选择需要添加的模型。",
+    "wizardModelsTypeGuessHint": "模型类型由 ID 推断，保存前请核实。",
     "emptyModelsHint": "此流程中暂无模型。您可以现在添加，也可以在创建后从供应商页面添加。",
     "review": "审查",
     "reviewProvider": "供应商",
@@ -292,6 +300,7 @@
     "modelTableFeatures": "功能",
     "modelTableInputPrice": "输入 $/M",
     "modelTableOutputPrice": "输出 $/M",
+    "pricingNotSet": "未配置价格",
     "modelTableCachedInputReadPrice": "缓存读取 $/M",
     "modelTableCachedInputWritePrice": "缓存写入 $/M",
     "modelTableContext": "上下文",
@@ -835,7 +844,7 @@
       "importErrors": "错误",
       "bindSuccess": "规则包已安装",
       "bindTitle": "绑定规则包",
-      "bindSubtitle": "将某个规则包版本绑定到指定 Hook，并控制是否默认启用。",
+      "bindSubtitle": "搜索并选择一个或多个规则包安装到当前 Hook(每个按其最新版本绑定)。",
       "bindPack": "规则包",
       "bindChooseVersion": "选择版本",
       "bindEnabled": "启用",
@@ -898,26 +907,48 @@
       "overridesPerInstallScope": "Overrides 仅作用于当前这个 install。同一 Hook 上的其他 install，或绑定在其他 Hook 上的同一 Rule Pack，各自保留独立的 override 数据。",
       "addRule": "添加规则",
       "colFlags": "标志",
+      "perfTest": {
+        "label": "Vectorscan 性能",
+        "test": "测试性能",
+        "testing": "测试中…",
+        "clean": "正常文本",
+        "adversarial": "对抗文本",
+        "unreachable": "AI 网关不可达",
+        "failed": "性能测试失败",
+        "verdict": {
+          "ok": "快",
+          "slow": "慢",
+          "invalid": "无效"
+        }
+      },
       "colLabels": "标签（逗号分隔）",
       "formMode": "表单模式",
       "jsonMode": "JSON 模式",
-      "ruleItemTitle": "规则"
+      "ruleItemTitle": "规则",
+      "bindOptionMulti": "{{name}} · 最新 {{version}}(共 {{count}} 个版本)",
+      "bindOptionSingle": "{{name}} · {{version}}",
+      "bindSearchPlaceholder": "搜索规则包…",
+      "bindEmptyLabel": "选择规则包",
+      "bindButtonMulti": "绑定 {{count}} 个规则包",
+      "importLintTitle": "引擎兼容性与性能",
+      "severityTip": "严重级别只是分类信号,并非最终执行动作。匹配命中后是阻断、脱敏还是仅标记,由绑定 hook 的 onMatch 动作策略决定。",
+      "severityHard": "hard — 关键",
+      "severitySoft": "soft — 较高",
+      "severityWarn": "warn — 提示",
+      "upgradeButton": "升级到最新",
+      "upgradeSuccess": "已将 {{name}} 从 {{from}} 升级到 {{to}}",
+      "upgradeNoop": "{{name}} 已是最新版本（{{to}}）"
     },
     "form": {
       "placeholderName": "名称",
       "placeholderValue": "值",
       "placeholderOneValuePerLine": "每行一个值",
       "onMatchSection": "动作策略",
-      "onMatchHelp": "控制 hook 命中时的处理方式。Inflight 动作决定上游 provider 收到什么;Storage 动作决定审计日志保存什么。两者相互独立。",
-      "inflightAction": "Inflight 动作",
-      "inflightApprove": "放行(原文转发)",
-      "inflightBlockHard": "硬阻断(HTTP 403)",
-      "inflightBlockSoft": "软阻断(HTTP 246)",
-      "inflightRedact": "脱敏(转发脱敏后内容)",
-      "storageAction": "Storage 动作",
-      "storageKeep": "保留(审计日志保存原文)",
-      "storageRedact": "脱敏(审计日志保存脱敏副本)",
-      "storageDropContent": "丢弃内容(仅保留 metadata)",
+      "onMatchHelp": "控制 hook 命中时的处理方式。放行:原样转发并存储;脱敏:改写载荷(转发、返回、存储用同一份脱敏内容);阻断:拒绝请求并存储脱敏副本。",
+      "action": "动作",
+      "actionApprove": "放行(原样转发并存储)",
+      "actionRedact": "脱敏(改写并存储脱敏内容)",
+      "actionBlock": "阻断(拒绝;存储脱敏副本)",
       "replacement": "替换模板",
       "replacementHelp": "脱敏 span 使用的占位串,支持 <RULE_ID> 变量。",
       "applicableTrafficKinds": "适用流量类型",
@@ -956,6 +987,7 @@
     "backToList": "返回列表",
     "goToDetail": "查看虚拟密钥详情",
     "modelAccess": "模型访问",
+    "selectModels": "选择模型",
     "searchModels": "搜索模型...",
     "selectAll": "全选",
     "deselectAll": "取消全选",
@@ -1023,7 +1055,7 @@
     "nameHelpText": "虚拟密钥的人读名称，在仪表板和审计日志中作为显示名使用。",
     "namePlaceholder": "engineering-openai",
     "projectTooltip": "此虚拟密钥所属的项目，用于流量归属和配额计算。",
-    "expirationTooltip": "密钥过期后将无法用于认证。留空表示永不过期。",
+    "expirationTooltip": "应用类型虚拟密钥必须设置过期时间，且不得超过 3 个月。密钥过期后将无法用于认证。",
     "disabledKeysTooltip": "已禁用的密钥立即拒绝所有调用，但保留配置以供审计或重新启用。",
     "vkType": "Virtual Key 类型",
     "vkStatus": "Virtual Key 状态",
@@ -1041,7 +1073,8 @@
     "deleted": "虚拟密钥已删除",
     "rejectVk": "拒绝虚拟密钥",
     "rejectConfirm": "确定要拒绝虚拟密钥 \"{{name}}\" 吗？",
-    "rejectReason": "原因"
+    "rejectReason": "原因",
+    "selectProject": "选择项目"
   },
   "credentials": {
     "title": "凭证",
@@ -1364,7 +1397,6 @@
     },
     "providerHealthSubtitle": "所有已配置供应商的实时健康状态",
     "tabOverview": "概览",
-    "tabCache": "缓存",
     "tabProviders": "供应商 ({{count}})",
     "uptime": "运行时间",
     "version": "版本",
@@ -1387,7 +1419,6 @@
     "scopeAllServicesLink": "查看所有服务 →",
     "configVersion": "配置版本",
     "configVersionTooltip": "网关的活跃配置快照标识符。使用配置管理与历史版本进行关联。",
-    "responseCache": "响应缓存",
     "cacheEnabled": "已启用",
     "cacheDisabled": "已禁用",
     "cacheTooltip": "命中率反映此实例上的近期流量。部署后低命中率是正常的，因为缓存条目需要预热。",
@@ -1399,9 +1430,6 @@
     "evictions": "淘汰数",
     "memory": "内存",
     "cacheNotAvailable": "缓存统计不可用。",
-    "runtimeConfigCache": "运行时配置缓存",
-    "runtimeConfigDesc": "清除进程内的钩子、路由和凭证解密缓存，使下一个请求从数据库重新加载。",
-    "refreshRuntimeCaches": "刷新运行时缓存",
     "noProviders": "未配置供应商。",
     "errorRate": "错误率",
     "latency": "延迟",
@@ -1415,8 +1443,6 @@
     "ariaHelpResponseCache": "帮助：响应缓存",
     "ariaHelpProviderStatus": "帮助：供应商状态",
     "colStatus": "状态",
-    "runtimeCacheRefreshed": "运行时缓存已刷新",
-    "refreshFailed": "刷新失败",
     "services": "服务",
     "noServicesRegistered": "未注册任何服务",
     "instancesCount": "{{count}} 个实例",
@@ -1499,11 +1525,6 @@
     "metricBreakdown": "指标分解",
     "viewDetail": "查看 →",
     "backToStatus": "← 系统状态",
-    "iamPolicyCache": "IAM 策略缓存",
-    "iamPolicyCacheEntries": "缓存条目数",
-    "iamPolicyCacheNote": "CP 侧已解析 IAM 授权决策的缓存，策略编辑时自动清空。",
-    "responseCacheRedirectNote": "Response cache 由 ai-gateway 数据平面持有。在服务详情页查看每个实例的命中率/条目数/内存。",
-    "responseCacheRedirectLink": "打开 基础设施 → 节点 →",
     "recentErrors": {
       "title": "最近错误",
       "viewAll": "查看全部 →",
@@ -1814,19 +1835,7 @@
       },
       "ruleDesc": {
         "claudeCodeCchStrip": "剥离 Anthropic system prompt 中 Claude Code 的计费 nonce（cch=<hex>），让共享同一 system prompt 的连续会话之间 cache key 保持稳定。",
-        "bedrockClaudeCchStrip": "Bedrock 通道下 Claude 请求的同款 nonce 剥离规则 —— Bedrock 使用 Anthropic Messages 格式，cch token 出现在同一位置。",
-        "openaiFieldOrder": "对 OpenAI wire body 顶层 JSON 字段做规范排序，保证 cache key 在不同 SDK（Python / Go / TS 顺序不同）下保持一致。",
-        "azureOpenaiFieldOrder": "Azure OpenAI 的字段顺序规范化，wire 格式与 OpenAI 一致。",
-        "deepseekFieldOrder": "DeepSeek OpenAI 兼容接口的字段顺序规范化。",
-        "glmFieldOrder": "GLM（智谱）OpenAI 兼容接口的字段顺序规范化。",
-        "moonshotFieldOrder": "Moonshot OpenAI 兼容接口的字段顺序规范化。",
-        "mistralFieldOrder": "Mistral OpenAI 兼容接口的字段顺序规范化。",
-        "xaiFieldOrder": "xAI（Grok）OpenAI 兼容接口的字段顺序规范化。",
-        "groqFieldOrder": "Groq OpenAI 兼容接口的字段顺序规范化。",
-        "perplexityFieldOrder": "Perplexity OpenAI 兼容接口的字段顺序规范化。",
-        "togetherFieldOrder": "Together AI OpenAI 兼容接口的字段顺序规范化。",
-        "fireworksFieldOrder": "Fireworks AI OpenAI 兼容接口的字段顺序规范化。",
-        "minimaxFieldOrder": "MiniMax OpenAI 兼容接口的字段顺序规范化。"
+        "bedrockClaudeCchStrip": "Bedrock 通道下 Claude 请求的同款 nonce 剥离规则 —— Bedrock 使用 Anthropic Messages 格式，cch token 出现在同一位置。"
       },
       "overridesTitle": "当前 Provider 覆盖列表",
       "overridesSubtitle": "至少有一项 cache 配置被 provider 级别覆盖的 provider。点击 provider 进入详情页管理覆盖。",
@@ -2781,7 +2790,10 @@
         "requestBody": "请求体",
         "responseBody": "响应体",
         "routingTrace": "路由轨迹",
-        "details": "详情"
+        "details": "详情",
+        "errorBadge": "错误",
+        "errorTitle": "网关 / 上游错误 — HTTP {{status}} · {{code}}",
+        "errorHint": "这是一条错误信封,不是对话内容。"
       },
       "tabs": {
         "overview": "概览",
@@ -3576,6 +3588,12 @@
     "certExpiresAt": "证书过期时间",
     "allStatuses": "所有状态",
     "allOS": "所有平台",
+    "statusActive": "在线",
+    "statusEnrolled": "已注册",
+    "statusOffline": "离线",
+    "statusRevoked": "已吊销",
+    "osMacOS": "macOS",
+    "osWindows": "Windows",
     "certSerial": "证书序列号",
     "enrollDevice": "注册设备",
     "hostnameHint": "主机名（可选）",
@@ -4350,7 +4368,7 @@
     "jobsTitle": "定时任务",
     "jobsDescription": "后台任务状态和管理",
     "killSwitchTitle": "整体紧急开关",
-    "killSwitchDescription": "立即停止集群内所有 Compliance Proxy 和 Agent 的 TLS 解密。仅用于紧急情况：供应商发布出错、Hook 回归拦截了正常流量，或 NetworkExtension 出现严重故障。",
+    "killSwitchDescription": "紧急停止所有代理和 Agent 的 TLS 解密。",
     "killSwitchEngaged": "已启动 — 已在集群范围内禁用 TLS 解密",
     "killSwitchDisengaged": "正常运行 — TLS 解密已启用",
     "killSwitchStatusComplianceProxy": "Compliance Proxy",
@@ -5074,7 +5092,7 @@
     "agentSetup": {
       "downloadTitle": "1. 下载安装包",
       "downloadHintMacOS": "通过软件分发渠道（Jamf、Kandji、内部共享、GitHub Releases 等）分发签名+公证后的 .pkg。终端用户双击即可安装。",
-      "downloadHintWindows": "WiX v4 MSI 安装包（Authenticode 证书签发后会签名）。双击运行 Windows 标准向导：注册 Nexus Agent 为 Windows 服务、安装 WinDivert 内核驱动、设置系统级环境变量 NEXUS_DEVICE_CA_PEM + NODE_EXTRA_CA_CERTS + REQUESTS_CA_BUNDLE + SSL_CERT_FILE，让 Node.js / Python / Go / curl 自动信任 agent 拦截的 TLS 流量。支持 GPO / SCCM / Intune 批量分发。",
+      "downloadHintWindows": "WiX v4 MSI 安装包（Authenticode 证书签发后会签名）。双击运行 Windows 标准向导：注册 Nexus Agent 为 Windows 服务、通过 pnputil 安装已签名的 NexusWFP Windows Filtering Platform (WFP) 内核 callout 驱动、设置系统级环境变量 NEXUS_DEVICE_CA_PEM + NODE_EXTRA_CA_CERTS + REQUESTS_CA_BUNDLE + SSL_CERT_FILE，让 Node.js / Python / Go / curl 自动信任 agent 拦截的 TLS 流量。支持 GPO / SCCM / Intune 批量分发。",
       "downloadHintLinux": "跨编译的 Go 原始二进制(还没 .deb/.rpm 打包)。运维手动用 systemd unit 装 — 见 Step 2。无界面服务器和开发机都适用。",
       "downloadFilenameMacOS": "NexusAgent-<VERSION>.pkg",
       "downloadFilenameWindows": "NexusAgent-<VERSION>.msi",
@@ -5087,9 +5105,9 @@
       "installMacOSStep3": "首次启动 macOS 会提示「System Extension Blocked」。进入 系统设置 → 通用 → 登录项与扩展 → 网络扩展，允许来自 YOUR ORG NAME 的 com.nexus-gateway.agent.extension。(MDM 管理的设备可部署 agent 自带的 .mobileconfig 模板预批准。)",
       "installMacOSStep4": "首次启动时 postinstall 会生成设备 CA 并装入系统钥匙串作为受信任根证书 — 这是 agent 拦截 TLS 后本地 HTTPS 客户端能信任的前提。",
       "installWindowsStep1": "双击 NexusAgent-<VERSION>.msi。Windows 会弹出标准安装向导（Welcome → License → Install Location → Confirm → Install → Finish）。一路下一步即可；UAC 会因为 MSI 要注册系统服务和内核驱动弹一次提权窗口。",
-      "installWindowsStep2": "向导会安装：nexus-agent.exe（服务）+ nexus-agent-tray.exe（登录自启）+ nexus-dashboard.exe（开始菜单快捷方式）到 C:\\Program Files\\Nexus Agent\\；WinDivert64.sys + WinDivert.dll 提供内核级抓包能力；%ProgramData%\\NexusAgent\\ 存设备 CA、配置和日志。",
+      "installWindowsStep2": "向导会安装：nexus-agent.exe（服务）+ nexus-agent-tray.exe（登录自启）+ nexus-dashboard.exe（开始菜单快捷方式）到 C:\\Program Files\\Nexus Agent\\；已签名的 NexusWFP callout 驱动（nexus-wfp.sys + nexus-wfp.inf + .cat 目录文件，分 amd64 + arm64 架构）通过 `pnputil /add-driver nexus-wfp.inf /install` 注册进 Windows 驱动仓库 —— pnputil 管理驱动仓库，所以驱动不会被复制到 System32\\drivers；%ProgramData%\\NexusAgent\\ 存设备 CA、配置和日志。",
       "installWindowsStep3": "服务首次启动时 daemon 会在 %ProgramData%\\NexusAgent\\device-ca.pem 生成设备 CA，并通过 certutil 导入到 Windows LocalMachine Root 证书存储。MSI 同时设置系统级环境变量 NEXUS_DEVICE_CA_PEM / NODE_EXTRA_CA_CERTS / REQUESTS_CA_BUNDLE / SSL_CERT_FILE，让 Node.js（Claude CLI、Cursor、Electron 应用）、Python（requests、boto3、pip）、Go、curl 都自动信任 agent 拦截的 TLS，不用每个应用单独配置。已经在跑的进程需要重新登录（或在 cmd/pwsh 里运行 `refreshenv`）才能读到新环境变量。",
-      "installWindowsStep4": "验证：在管理员 PowerShell 里跑 `sc.exe query NexusAgent`（应看到 STATE: 4 RUNNING）和 `Get-Item Env:NEXUS_DEVICE_CA_PEM`（应看到 C:\\ProgramData\\NexusAgent\\device-ca.pem）。托盘图标会在几秒内变绿。如果 WinDivert 加载失败（极少数情况，多半是 SecureBoot 或企业 EDR 冲突），托盘变黄，agent 降级到 system-proxy fallback 模式 —— 在 Dashboard 的 Diagnostics 页可以看到 Win32 错误码。",
+      "installWindowsStep4": "验证：在管理员 PowerShell 里跑 `sc.exe query NexusAgent`（应看到 STATE: 4 RUNNING）、`sc.exe query NexusWFP`（内核驱动服务 —— 应看到 RUNNING）和 `Get-Item Env:NEXUS_DEVICE_CA_PEM`（应看到 C:\\ProgramData\\NexusAgent\\device-ca.pem）。托盘图标会在几秒内变绿。如果 NexusWFP 驱动加载失败（极少数情况，多半是 SecureBoot 或企业 EDR 冲突），托盘变黄，agent 降级到 system-proxy fallback 模式（HTTP CONNECT）—— 大多数 TCP 流量仍能走，但 UDP / QUIC 抓不到；在 Dashboard 的 Diagnostics 页可以看到错误。",
       "installLinuxStep1Deb": "curl -L -o /usr/local/bin/nexus-agent {{downloadBase}}/downloads/nexus-agent-linux-latest && sudo chmod +x /usr/local/bin/nexus-agent",
       "installLinuxStep1Rpm": "# 同一份 binary 适配所有 glibc Linux(Debian / Ubuntu / RHEL / Fedora / SUSE / Amazon Linux)。当前没 distro 特定打包。",
       "installLinuxStep2": "在 /etc/systemd/system/nexus-agent.service 建 systemd unit: [Unit] After=network.target / [Service] ExecStart=/usr/local/bin/nexus-agent run --config /etc/nexus-agent/agent.yaml User=root Restart=always / [Install] WantedBy=multi-user.target。然后 sudo systemctl daemon-reload && sudo systemctl enable --now nexus-agent。",
@@ -5196,13 +5214,13 @@
             }
           },
           "windows": {
-            "windivertFailed": {
-              "q": "WinDivert 加载失败 —— 托盘变黄",
-              "a": "最常见原因：(1) SecureBoot 在严格 cross-cert policy 模式拒绝 WinDivert64.sys 的签名链 —— 关掉 SecureBoot 或让 IT 通过 GPO 推送 WinDivert 的 cross-cert。(2) 企业 EDR（CrowdStrike、SentinelOne、Defender for Endpoint）在拦截未知内核驱动 —— 申请对 basil00 发布的 WinDivert v2.2.2 的 per-vendor 允许规则。(3) 别的抓包工具（Wireshark/npcap、Sysmon）已经占了同一个内核驱动槽位。降级期间 agent 跑在 system-proxy fallback 模式（HTTP CONNECT），大多数流量仍能走，但 UDP / QUIC 抓不到。"
+            "wfpDriverFailed": {
+              "q": "NexusWFP 驱动加载失败 —— 托盘变黄",
+              "a": "最常见原因：(1) SecureBoot 拒绝已签名 NexusWFP 驱动的签名链 —— 让 IT 信任或部署签名证书（例如通过 GPO 推送）。(2) 企业 EDR（CrowdStrike、SentinelOne、Defender for Endpoint）在拦截未知内核驱动 —— 申请对已签名 NexusWFP 驱动的允许规则。(3) 别的 WFP / 抓包工具（Wireshark/npcap、Sysmon）占用了冲突的过滤槽位。驱动不可用期间 agent 跑在 system-proxy fallback 模式（HTTP CONNECT），大多数 TCP 流量仍能走，但 UDP / QUIC 抓不到。用 `sc.exe queryex NexusWFP` 查看驱动状态。"
             },
             "msiHang": {
               "q": "MSI 安装/卸载卡在「Starting services」/「Stopping services」",
-              "a": "两种已知原因：(1) agent 服务还在跑且 WinDivert 持有 divert handle —— 打开 Services.msc，先停 NexusAgent，再重跑卸载程序。(2) WinDivert SCM 服务卡在 STOP_PENDING —— `sc.exe queryex WinDivert` 显示 PID 0 就是这种情况；重启是干净的恢复方式。**千万别在 STOP_PENDING 状态下用 `sc delete` 强删内核服务** —— 下次开机可能触发 DRIVER_POWER_STATE_FAILURE 蓝屏。"
+              "a": "两种已知原因：(1) agent 服务还在跑且 NexusWFP 驱动仍处于激活状态 —— 打开 Services.msc，先停 NexusAgent，再重跑卸载程序（它会先停 NexusWFP 服务，再用 `pnputil /delete-driver /uninstall /force` 移除驱动）。(2) NexusWFP 内核服务卡在 STOP_PENDING —— `sc.exe queryex NexusWFP` 显示 PID 0 就是这种情况；重启是干净的恢复方式。**千万别在 STOP_PENDING 状态下用 `sc delete` 强删内核服务** —— 下次开机可能触发 DRIVER_POWER_STATE_FAILURE 蓝屏。"
             }
           },
           "linux": {
@@ -5866,7 +5884,7 @@
   },
   "identityProvider": {
     "title": "Identity Provider",
-    "subtitle": "平台信任的外部身份提供商（Okta、Azure AD、Google Workspace 等）用于单点登录和 SCIM 用户/分组配置。Nexus 是 SP（服务提供方）；请先在 IdP 厂商侧配置应用，然后在此处登记。",
+    "subtitle": "管理用于 SSO 和 SCIM 同步的外部 IdP；先在厂商侧配置，再在这里登记。",
     "localIdpNote": "平台内置的本地用户库,不接收 SCIM 推送,也没有外部分组映射。",
     "addIdp": "添加身份提供商",
     "testConnection": "测试",
@@ -6229,7 +6247,7 @@
         "disableConfirmButton": "立即停用",
         "disableSuccess": "语义缓存已在全 fleet 范围停用",
         "disableError": "停用语义缓存失败",
-        "disableMenuTrigger": "停用缓存…",
+        "disableMenuTrigger": "停用缓存",
         "disableSemanticItem": "停用语义缓存",
         "disableExtractItem": "停用精确匹配缓存",
         "disableAllItem": "停用所有网关缓存",
@@ -6254,7 +6272,8 @@
         "ttlHelp": "缓存条目有效期。范围 60–604800(1 分钟到 7 天),默认 3600(1 小时)。静态 FAQ 可调高,时效敏感场景调低。",
         "ttlOutOfRange": "启用时 TTL 必须在 60 到 604800 秒之间。",
         "saved": "精确匹配缓存设置已保存。"
-      }
+      },
+      "perfTip": "性能提示:缓存为可选项,每个请求都要付出一次查找开销。命中率低时,这部分开销会超过收益、拖慢网关——仅当流量中提示词高度重复时再启用。"
     }
   },
   "cache": {

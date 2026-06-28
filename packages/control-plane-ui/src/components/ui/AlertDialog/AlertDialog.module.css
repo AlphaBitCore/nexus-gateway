@@ -29,7 +29,7 @@
 /* ── Title ───────────────────────────────────────────────────────────────── */
 
 .title {
-  font-size: var(--g-font-size-lg);
+  font-size: var(--g-font-size-base);
   font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
@@ -60,7 +60,7 @@
   height: 36px;
   padding: 0 var(--g-space-3);
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   background: var(--color-surface);
@@ -89,7 +89,7 @@
   height: 36px;
   padding: 0 var(--g-space-3);
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   border: none;
   border-radius: var(--g-radius-md);
   background: var(--color-primary);

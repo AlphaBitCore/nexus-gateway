@@ -7,13 +7,13 @@
  * merged 4-column view, force-resync surface, and override editor wiring.
  * Config data is consumed via the applied-config endpoint.
  */
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { hubApi } from '@/api/services/infrastructure/nodes/hub';
 import type { Node } from '@/api/services/infrastructure/nodes/hub';
 import {
-  Stack, Card, Badge, Skeleton, ErrorBanner, Breadcrumb,
+  Stack, Card, Badge, Skeleton, ErrorBanner,
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '@/components/ui';
 import { ConfigurationTab } from '../_shared/tabs/config/ConfigurationTab';
@@ -74,18 +74,24 @@ export default function InfraNodeDetailPage() {
   if (!node) return null;
 
   return (
-    <Stack gap="lg">
-      <Breadcrumb items={[
-        { label: t('pages:infrastructure.nodesTitle'), to: '/infrastructure/nodes' },
-        { label: node.name },
-      ]} />
-
-      {/* Header */}
-      <div className={styles.headerRow}>
-        <h1 className={styles.headerName}>{node.name}</h1>
-        <Badge variant="outline">{node.type}</Badge>
-        <Badge variant={thingStatusVariant(node.status)}>{node.status}</Badge>
-      </div>
+    <Stack gap="md">
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/infrastructure/nodes" className={styles.backLink} aria-label={t('pages:infrastructure.backToNodes')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{node.name}</h1>
+            <div className={styles.headerMeta}>
+              <Badge variant="outline">{node.type}</Badge>
+              <Badge variant={thingStatusVariant(node.status)}>{node.status}</Badge>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <Tabs defaultValue="overview">
         <TabsList>
@@ -130,65 +136,72 @@ export default function InfraNodeDetailPage() {
 
         {/* Node info */}
         <TabsContent value="overview">
-          <Card>
-            <h2 className={styles.sectionTitle}>{t('pages:infrastructure.nodeInfo')}</h2>
-            <dl className={styles.infoGrid}>
-              <InfoRow label={t('pages:infrastructure.hostname')} value={node.hostname || node.name} />
-              <InfoRow label={t('pages:infrastructure.thingId')} value={<code className={styles.mono}>{node.id}</code>} />
-              {node.physicalId && (
-                <InfoRow label={t('pages:infrastructure.physicalIdFull')} value={<code className={styles.mono}>{node.physicalId}</code>} />
-              )}
-              <InfoRow label={t('pages:infrastructure.primaryIp')} value={node.primaryIp ? <code className={styles.mono}>{node.primaryIp}</code> : null} />
-              {node.boundUserDisplayName && (
-                <InfoRow
-                  label={t('pages:infrastructure.boundUser')}
-                  value={
-                    <span>
-                      {node.boundUserDisplayName}
-                      {node.boundUserEmail && <span style={{ color: 'var(--color-text-muted)' }}> · {node.boundUserEmail}</span>}
-                    </span>
-                  }
-                />
-              )}
-              <InfoRow label={t('pages:infrastructure.os')} value={node.os ? `${node.os}${node.osVersion ? ' ' + node.osVersion : ''}` : null} />
-              <InfoRow label={t('pages:infrastructure.nodeType')} value={node.type} />
-              <InfoRow label={t('pages:infrastructure.status')} value={<Badge variant={thingStatusVariant(node.status)}>{node.status}</Badge>} />
-              <InfoRow label={t('pages:infrastructure.version')} value={node.version} />
-              <InfoRow label={t('pages:infrastructure.role')} value={node.role} />
-              <InfoRow label={t('pages:infrastructure.listenAddress')} value={node.listen_address} />
-              <InfoRow label={t('pages:infrastructure.metricsUrl')} value={node.metrics_url} />
-              <InfoRow label={t('pages:infrastructure.authType')} value={node.auth_type} />
-              <InfoRow label={t('pages:infrastructure.connProtocol')} value={node.conn_protocol} />
-              <InfoRow label={t('pages:infrastructure.createdAt')} value={new Date(node.created_at).toLocaleString()} />
-              <InfoRow label={t('pages:infrastructure.lastSeen')} value={node.last_seen_at ? new Date(node.last_seen_at).toLocaleString() : null} />
-              <InfoRow
-                label={t('pages:infrastructure.processStartedAt')}
-                value={node.processStartedAt ? new Date(node.processStartedAt).toLocaleString() : null}
-              />
-              <InfoRow
-                label={t('pages:infrastructure.uptime')}
-                value={<span title={node.processStartedAt ?? undefined}>{formatUptime(node.processStartedAt)}</span>}
-              />
-            </dl>
-          </Card>
+          <div className={styles.overviewSections}>
+            <section className={styles.contentSection}>
+              <h3 className={styles.sectionTitle}>{t('pages:infrastructure.nodeInfo')}</h3>
+              <Card>
+                <dl className={styles.infoGrid}>
+                  <InfoRow label={t('pages:infrastructure.hostname')} value={node.hostname || node.name} />
+                  <InfoRow label={t('pages:infrastructure.thingId')} value={<code className={styles.mono}>{node.id}</code>} />
+                  {node.physicalId && (
+                    <InfoRow label={t('pages:infrastructure.physicalIdFull')} value={<code className={styles.mono}>{node.physicalId}</code>} />
+                  )}
+                  <InfoRow label={t('pages:infrastructure.primaryIp')} value={node.primaryIp ? <code className={styles.mono}>{node.primaryIp}</code> : null} />
+                  {node.boundUserDisplayName && (
+                    <InfoRow
+                      label={t('pages:infrastructure.boundUser')}
+                      value={
+                        <span>
+                          {node.boundUserDisplayName}
+                          {node.boundUserEmail && <span style={{ color: 'var(--color-text-muted)' }}> · {node.boundUserEmail}</span>}
+                        </span>
+                      }
+                    />
+                  )}
+                  <InfoRow label={t('pages:infrastructure.os')} value={node.os ? `${node.os}${node.osVersion ? ' ' + node.osVersion : ''}` : null} />
+                  <InfoRow label={t('pages:infrastructure.nodeType')} value={node.type} />
+                  <InfoRow label={t('pages:infrastructure.status')} value={<Badge variant={thingStatusVariant(node.status)}>{node.status}</Badge>} />
+                  <InfoRow label={t('pages:infrastructure.version')} value={node.version} />
+                  <InfoRow label={t('pages:infrastructure.role')} value={node.role} />
+                  <InfoRow label={t('pages:infrastructure.listenAddress')} value={node.listen_address} />
+                  <InfoRow label={t('pages:infrastructure.metricsUrl')} value={node.metrics_url} />
+                  <InfoRow label={t('pages:infrastructure.authType')} value={node.auth_type} />
+                  <InfoRow label={t('pages:infrastructure.connProtocol')} value={node.conn_protocol} />
+                  <InfoRow label={t('pages:infrastructure.createdAt')} value={new Date(node.created_at).toLocaleString()} />
+                  <InfoRow label={t('pages:infrastructure.lastSeen')} value={node.last_seen_at ? new Date(node.last_seen_at).toLocaleString() : null} />
+                  <InfoRow
+                    label={t('pages:infrastructure.processStartedAt')}
+                    value={node.processStartedAt ? new Date(node.processStartedAt).toLocaleString() : null}
+                  />
+                  <InfoRow
+                    label={t('pages:infrastructure.uptime')}
+                    value={<span title={node.processStartedAt ?? undefined}>{formatUptime(node.processStartedAt)}</span>}
+                  />
+                </dl>
+              </Card>
+            </section>
 
-          {/* Metadata — flexible JSONB labels written by selfreg
-              / enrollment / sysinfo; rendered below the core InfoRow grid
-              so the Overview tab keeps existing layout for repeat visitors. */}
-          <Card>
-            <MetadataPanel metadata={node.metadata ?? null} />
-          </Card>
+            {/* Metadata — flexible JSONB labels written by selfreg
+                / enrollment / sysinfo; rendered below the core InfoRow grid
+                so the Overview tab keeps existing layout for repeat visitors. */}
+            <section className={styles.contentSection}>
+              <h3 className={styles.sectionTitle}>
+                {t('pages:infrastructure.overview.metadata.title')}
+              </h3>
+              <Card>
+                <MetadataPanel metadata={node.metadata ?? null} />
+              </Card>
+            </section>
+          </div>
         </TabsContent>
 
         {/* Configuration — merged template / override / applied view */}
         <TabsContent value="configuration">
-          <Card>
-            <ConfigurationTab
-              thingId={id ?? ''}
-              thingType={node.type}
-              appliedOutcomes={node.appliedOutcomes ?? null}
-            />
-          </Card>
+          <ConfigurationTab
+            thingId={id ?? ''}
+            thingType={node.type}
+            appliedOutcomes={node.appliedOutcomes ?? null}
+          />
         </TabsContent>
 
         {/* Runtime introspection (e31-s7) — live in-memory snapshot from the
@@ -226,9 +239,7 @@ export default function InfraNodeDetailPage() {
             service instance). Hub / control-plane never emit traffic_event rows. */}
         {(node.type === 'agent' || node.type === 'ai-gateway' || node.type === 'compliance-proxy') && (
           <TabsContent value="traffic">
-            <Card>
-              <NodeTrafficTab nodeId={id ?? ''} nodeType={node.type} nodeName={node.name} />
-            </Card>
+            <NodeTrafficTab nodeId={id ?? ''} nodeType={node.type} nodeName={node.name} />
           </TabsContent>
         )}
 
@@ -238,9 +249,7 @@ export default function InfraNodeDetailPage() {
             "rollup disabled" banner when Hub's enableAgentRollup toggle is OFF. */}
         {isThingStatsType(node.type) && (
           <TabsContent value="stats">
-            <Card>
-              <ThingStatsTab thingId={id ?? ''} thingType={node.type} />
-            </Card>
+            <ThingStatsTab thingId={id ?? ''} thingType={node.type} />
           </TabsContent>
         )}
       </Tabs>

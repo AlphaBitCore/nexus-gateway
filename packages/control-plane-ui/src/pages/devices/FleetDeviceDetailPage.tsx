@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
@@ -8,8 +8,8 @@ import { devicesApi, fleetApi, diagModeApi } from '@/api/services';
 import type { AgentDevice, AgentAuditEvent } from '@/api/types';
 import type { AdminListPageSize } from '@/components/ui';
 import {
-  PageHeader, Badge, Button, Stack,
-  Skeleton, ErrorBanner, Breadcrumb,
+  Badge, Button, Stack,
+  Skeleton, ErrorBanner,
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
   DEFAULT_ADMIN_LIST_PAGE_SIZE,
 } from '@/components/ui';
@@ -177,16 +177,24 @@ export function FleetDeviceDetailPage() {
 
   return (
     <Stack gap="md">
-      <Breadcrumb items={[
-        { label: t('pages:devices.title'), to: '/devices' },
-        { label: device.hostname },
-      ]} />
-      <PageHeader
-        title={device.hostname}
-        subtitle={`${device.os === 'darwin' ? 'macOS' : device.os} ${device.osVersion} — ${device.agentVersion}`}
-        action={
-          <Stack direction="horizontal" gap="sm" align="center">
-            <Badge variant={thingStatusVariant(device.status)}>{device.status}</Badge>
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/devices" className={styles.backLink} aria-label={t('common:back', 'Back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <div className={styles.titleRow}>
+              <h1 className={styles.detailTitle}>{device.hostname}</h1>
+              <Badge className={styles.statusBadge} variant={thingStatusVariant(device.status)}>{device.status}</Badge>
+            </div>
+            <p className={styles.detailSubtitle}>
+              {`${device.os === 'darwin' ? 'macOS' : device.os} ${device.osVersion} — ${device.agentVersion}`}
+            </p>
+          </div>
+          <Stack direction="horizontal" gap="sm" align="center" className={styles.headerActions}>
             {activeDiagWindow && (
               <Badge variant="warning">
                 {t('pages:fleet.diagModeActive')} {diagActiveUntil ? `(${t('pages:fleet.diagModeUntil', { time: diagActiveUntil })})` : ''}
@@ -200,7 +208,7 @@ export function FleetDeviceDetailPage() {
             {(canDiag || canRotateCert || canRevoke) && (
               <DropdownMenu>
                 <DropdownMenuTrigger>
-                  <Button variant="secondary" size="sm">{t('common:actions', 'Actions')} ▾</Button>
+                  <Button variant="primary" size="sm">{t('common:actions', 'Actions')} ▾</Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   {canDiag && [
@@ -246,8 +254,8 @@ export function FleetDeviceDetailPage() {
               </DropdownMenu>
             )}
           </Stack>
-        }
-      />
+        </div>
+      </section>
 
       <IdentityCard
         device={device}

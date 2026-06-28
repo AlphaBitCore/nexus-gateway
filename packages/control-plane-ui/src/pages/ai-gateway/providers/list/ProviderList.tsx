@@ -7,10 +7,11 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useMutation } from '@/hooks/useMutation';
 import { usePermission } from '@/hooks/usePermission';
 import {
-  PageHeader, DataTable, ListFilterToolbar,
+  PageHeader, DataTable,
   AlertDialog, Skeleton, ErrorBanner, Button, Stack, Card,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
   ListEnabledSwitchCell,
+  Input,
   RowActions, RowActionIconButton, RowDeleteAction, OpenActionIcon,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
@@ -114,7 +115,7 @@ export function ConfigProvidersPage() {
   ];
 
   return (
-    <Stack gap="lg">
+    <Stack gap="lg" className={styles.pageStack}>
       <PageHeader
         title={t('pages:providers.title')}
         subtitle={t('pages:providers.subtitle')}
@@ -125,28 +126,49 @@ export function ConfigProvidersPage() {
         }
       />
 
-      <ListFilterToolbar
-        variant="boxed"
-        searchPlaceholder={t('pages:providers.searchPlaceholder')}
-        searchValue={search}
-        onSearchChange={onSearchChange}
-        meta={
-          total === 0
+      <div className={styles.filterToolbar} role="search">
+        <div className={styles.filterRow}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon} aria-hidden="true" />
+            <Input
+              type="text"
+              enterKeyHint="search"
+              autoComplete="off"
+              aria-label={t('pages:providers.searchPlaceholder')}
+              placeholder={t('pages:providers.searchPlaceholder')}
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              className={styles.searchInput}
+            />
+            {search.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className={styles.clearSearchButton}
+                aria-label={t('common:clear')}
+                title={t('common:clear')}
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <select
+            aria-label={t('pages:providers.filterByStatus')}
+            value={statusFilter}
+            onChange={onStatusFilterChange}
+            className={styles.filterSelect}
+          >
+            <option value="">{t('pages:providers.allStatuses', 'All statuses')}</option>
+            <option value="enabled">{t('common:enabled')}</option>
+            <option value="disabled">{t('common:disabled')}</option>
+          </select>
+        </div>
+        <div className={styles.filterMeta}>
+          {total === 0
             ? t('pages:providers.noMatch', 'No providers match the current filters')
-            : t('pages:providers.showingMeta', 'Showing {{count}} provider(s) on this page · {{total}} total matching', { count: rows.length, total: total.toLocaleString() })
-        }
-      >
-        <select
-          aria-label={t('pages:providers.filterByStatus')}
-          value={statusFilter}
-          onChange={onStatusFilterChange}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:providers.allStatuses', 'All statuses')}</option>
-          <option value="enabled">{t('common:enabled')}</option>
-          <option value="disabled">{t('common:disabled')}</option>
-        </select>
-      </ListFilterToolbar>
+            : t('pages:providers.showingMeta', 'Showing {{count}} provider(s) on this page · {{total}} total matching', { count: rows.length, total: total.toLocaleString() })}
+        </div>
+      </div>
 
       <Card data-testid="providers-table" padding="none">
         <DataTable

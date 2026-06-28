@@ -7,7 +7,7 @@ import { formatDateTime } from '@/lib/format';
 import styles from './adminAuditLogShared.module.css';
 
 export const DRAWER_MS = 240;
-export const DRAWER_WIDTH = 'min(480px, 100vw)';
+export const DRAWER_WIDTH = 'min(560px, 100vw)';
 
 export function relativeTime(dateStr: string): string {
   const now = Date.now();

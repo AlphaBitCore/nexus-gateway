@@ -75,6 +75,9 @@ export function SemanticCacheCard({
         <p className={styles.cardSubtitle}>
           {t('pages:aiGateway.cache.semantic.cardSubtitle')}
         </p>
+        <p className={styles.perfTip} role="note">
+          {t('pages:aiGateway.cache.perfTip')}
+        </p>
       </div>
 
       <Card>
@@ -351,7 +354,7 @@ export function SemanticCacheCard({
         </div>
       </div>
 
-      {/* Actions — right-aligned at the bottom of the Semantic cache card */}
+      {/* Actions — right-aligned */}
         <div className={styles.settingsActions}>
           {data?.enabled && (
             <Button

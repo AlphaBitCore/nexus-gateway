@@ -1,0 +1,40 @@
+.detailToolbar {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: calc(var(--g-space-2) * -1);
+  margin-bottom: calc(var(--g-space-3) * -1);
+}
+
+.detailToolbar :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+}
+
+.detailGrid > * {
+  min-width: 0;
+}
+
+.targetTypeValue {
+  color: var(--color-text);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+}

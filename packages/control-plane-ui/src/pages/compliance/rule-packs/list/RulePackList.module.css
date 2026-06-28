@@ -1,35 +1,26 @@
 .page {
   display: grid;
-  gap: 1rem;
+  gap: var(--g-space-6);
 }
 
 .header {
-  display: grid;
-  gap: 0.35rem;
+  margin-bottom: calc(20px - var(--g-space-6));
 }
 
-.title {
-  margin: 0;
-  font-size: 1.85rem;
-  line-height: 1.1;
-}
-
-.subtitle {
-  margin: 0;
-  max-width: 56rem;
-  color: var(--color-text-secondary);
+.headerSubtitle {
+  max-width: none !important;
+  white-space: nowrap;
 }
 
 .toolbar {
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1rem;
-  border: 1px solid var(--color-border-light);
-  border-radius: 16px;
-  background:
-    var(--color-surface-raised);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .filterField {
@@ -44,18 +35,31 @@
   align-items: center;
 }
 
-.filterLabel {
-  font-size: 0.9rem;
-  font-weight: 600;
+.toolbarActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.importButtonContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.importIcon {
+  flex-shrink: 0;
 }
 
 .select {
-  min-height: 2.5rem;
-  padding: 0.55rem 0.75rem;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 var(--g-space-3);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
   color: inherit;
+  font-size: var(--g-font-size-sm);
+  font-family: var(--g-font-sans);
 }
 
 .tableWrap {
@@ -69,6 +73,7 @@
 .table {
   width: 100%;
   border-collapse: collapse;
+  font-size: var(--g-font-size-sm);
 }
 
 .table th,
@@ -79,11 +84,11 @@
 }
 
 .table th {
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: var(--g-font-weight-semibold);
   letter-spacing: 0;
   text-transform: uppercase;
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
   background: var(--color-muted);
 }
 
@@ -97,7 +102,8 @@
 
 .link {
   color: var(--color-info);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
+  font-size: var(--g-font-size-sm);
   text-decoration: none;
 }
 
@@ -126,10 +132,6 @@
 
   .filterField {
     min-width: 0;
-  }
-
-  .title {
-    font-size: 1.45rem;
   }
 }
 

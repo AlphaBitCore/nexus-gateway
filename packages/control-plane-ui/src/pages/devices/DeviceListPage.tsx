@@ -9,13 +9,16 @@ import { devicesApi } from '@/api/services';
 import type { AgentDevice } from '@/api/types';
 import type { DataTableColumn, AdminListPageSize } from '@/components/ui';
 import {
-  PageHeader, DataTable, ListFilterToolbar, Badge,
-  Stack, Card, Skeleton, ErrorBanner, ListPagination, Button,
+  PageHeader, DataTable, Badge,
+  Stack, Skeleton, ErrorBanner, ListPagination, Button,
+  Input,
+  RowActions, RowActionIconButton, OpenActionIcon,
   DEFAULT_ADMIN_LIST_PAGE_SIZE,
 } from '@/components/ui';
 import { EnrollTokenDialog } from './EnrollTokenDialog';
 import { thingStatusVariant } from '@/lib/thingStatus';
 import { cn } from '@/lib/utils';
+import styles from './DeviceListPage.module.css';
 
 export function DeviceListPage() {
   const { t } = useTranslation();
@@ -94,6 +97,18 @@ export function DeviceListPage() {
     { key: 'agentVersion', label: t('pages:devices.agentVersion') },
     { key: 'status', label: t('pages:devices.status'), render: (r) => <Badge variant={thingStatusVariant(r.status)}>{r.status}</Badge> },
     { key: 'lastHeartbeat', label: t('pages:devices.lastHeartbeat'), render: (r) => r.lastHeartbeat ? new Date(r.lastHeartbeat).toLocaleString() : '\u2014' },
+    {
+      key: 'actions',
+      label: t('common:actions', 'Actions'),
+      sortable: false,
+      render: (r) => (
+        <RowActions>
+          <RowActionIconButton label={t('common:view', 'View')} onAction={() => navigate(`/devices/${r.id}`)}>
+            <OpenActionIcon />
+          </RowActionIconButton>
+        </RowActions>
+      ),
+    },
   ];
 
   return (
@@ -116,8 +131,32 @@ export function DeviceListPage() {
           )}
         </div>
       )}
-      <Card>
-        <ListFilterToolbar searchPlaceholder={t('common:search')} searchValue={search} onSearchChange={onSearchChange}>
+      <div className={styles.filterToolbar} role="search">
+        <div className={styles.filterRow}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon} aria-hidden="true" />
+            <Input
+              type="text"
+              enterKeyHint="search"
+              autoComplete="off"
+              aria-label={t('common:search')}
+              placeholder={t('common:search')}
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              className={styles.searchInput}
+            />
+            {search.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className={styles.clearSearchButton}
+                aria-label={t('common:clear')}
+                title={t('common:clear')}
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
+          </div>
           <select
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setOffset(0); }}
@@ -126,10 +165,10 @@ export function DeviceListPage() {
             )}
           >
             <option value="">{t('pages:devices.allStatuses')}</option>
-            <option value="ACTIVE">ACTIVE</option>
-            <option value="ENROLLED">ENROLLED</option>
-            <option value="OFFLINE">OFFLINE</option>
-            <option value="REVOKED">REVOKED</option>
+            <option value="ACTIVE">{t('pages:devices.statusActive')}</option>
+            <option value="ENROLLED">{t('pages:devices.statusEnrolled')}</option>
+            <option value="OFFLINE">{t('pages:devices.statusOffline')}</option>
+            <option value="REVOKED">{t('pages:devices.statusRevoked')}</option>
           </select>
           <select
             value={osFilter}
@@ -139,13 +178,15 @@ export function DeviceListPage() {
             )}
           >
             <option value="">{t('pages:devices.allOS')}</option>
-            <option value="darwin">macOS</option>
-            <option value="windows">Windows</option>
+            <option value="darwin">{t('pages:devices.osMacOS')}</option>
+            <option value="windows">{t('pages:devices.osWindows')}</option>
           </select>
-        </ListFilterToolbar>
-        <DataTable columns={columns} data={items} onRowClick={(r) => navigate(`/devices/${r.id}`)} hideSearch />
+        </div>
+      </div>
+      <div className={styles.tableSection}>
+        <DataTable className={styles.deviceTable} columns={columns} data={items} onRowClick={(r) => navigate(`/devices/${r.id}`)} hideSearch />
         <ListPagination total={total} offset={offset} limit={pageLimit} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
-      </Card>
+      </div>
       <EnrollTokenDialog open={enrollOpen} onOpenChange={setEnrollOpen} />
     </Stack>
   );

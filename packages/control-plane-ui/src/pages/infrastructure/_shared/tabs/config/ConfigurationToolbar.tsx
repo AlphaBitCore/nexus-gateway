@@ -61,6 +61,7 @@ export function ConfigurationToolbar({
         <Button
           variant="primary"
           size="sm"
+          className={styles.toolbarButton}
           loading={resyncingAll}
           disabled={resyncingKey !== null}
           onClick={handleResyncAll}
@@ -72,13 +73,14 @@ export function ConfigurationToolbar({
             <Button
               variant="secondary"
               size="sm"
+              className={styles.toolbarButton}
               disabled={addableKeys.length === 0}
             >
               {t('pages:infrastructure.configuration.addOverride')}
               {' ▾'}
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="start">
             {addableKeys.map((k) => (
               <DropdownMenuItem
                 key={k}

@@ -43,7 +43,7 @@
 .table th {
   background: var(--color-muted);
   font-size: 0.8rem;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-secondary);

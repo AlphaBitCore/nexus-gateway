@@ -712,9 +712,10 @@ export interface TrafficEvent {
   /**
    * Request body captured by the data plane (when payload capture is
    * enabled). Populated only on detail responses; omitted from list
-   * payloads to keep them light. Stored as jsonb on the server but the
-   * UI renders it generically — could be a JSON object/array, a
-   * string, or anything else jsonb accepts.
+   * payloads to keep them light. Stored as raw bytes (BYTEA) on the
+   * server and surfaced through the detail API; the UI renders it
+   * generically — could be a JSON object/array, a string, or anything
+   * else the API returns.
    */
   requestBody?: unknown;
   /** Response body — same semantics as requestBody. */
@@ -755,15 +756,20 @@ export interface TrafficEvent {
   requestHooksMs?: number | null;
   responseHooksMs?: number | null;
   /**
-   * Long-tail phase durations (ms). Closed key set per `source`:
+   * Long-tail phase durations. Values are milliseconds EXCEPT keys ending in
+   * `_us`, which are microseconds (the sub-millisecond hook framing segments,
+   * recorded in µs so they keep resolution instead of flooring to 0/1).
+   * Closed key set per `source`:
    *   ai-gateway       — auth_ms / quota_ms / routing_ms / cache_lookup_ms /
    *                       req_adapter_ms / resp_adapter_ms /
    *                       body_read_ms / norm_upstream_ms /
-   *                       upstream_body_ms / audit_emit_ms
+   *                       upstream_body_ms / audit_emit_ms /
+   *                       hook_extract_us / hook_build_us /
+   *                       hook_pipeline_us / hook_rewrite_us
    *   compliance-proxy — conn_setup_ms / tls_handshake_ms
    *   agent            — intercept_ms
    * Plus a transient `stream_aborted: 1` marker when the upstream stream
-   * was closed by client-side abort. Sub-millisecond phases are floored
+   * was closed by client-side abort. Sub-resolution phases are floored
    * to 1 only when ai-gateway is started with
    * `observability.latencyDetail: true` (yaml-only).
    */
@@ -1545,7 +1551,7 @@ export interface NormalizedPayload {
   /** rule IDs that triggered the drop-content storage policy. */
   ruleIds?: string[];
   /** Normalizer-reported confidence in [0,1]. Absent/0 on
-   *  pre-S11 rows is interpreted as fully confident (1.0). */
+   *  older rows is interpreted as fully confident (1.0). */
   confidence?: number;
   /** Which spec the normalizer matched. Examples:
    *  "openai-chat" (Tier 1 AI builtin), "chatgpt-web" (Tier 1
@@ -1566,7 +1572,7 @@ export interface NormalizedPayload {
   /** Text input strings for kind=ai-embedding requests.
    *  Nil/absent when the input was a binary token array (not stored)
    *  or when this is a response payload (embedding vectors are never
-   *  stored per SDD §T2.3). */
+   *  stored). */
   inputs?: string[] | null;
 }
 

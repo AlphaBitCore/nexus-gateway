@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { UseFormReturn } from 'react-hook-form';
-import { Card, Switch, Tooltip, Stack, FormField, Select, Textarea } from '@/components/ui';
+import { Switch, Tooltip, Stack, FormField, Select, Textarea } from '@/components/ui';
 import { FormInput } from '@/lib/forms';
 import { JsonSchemaHookConfigForm } from '@/components/config/JsonSchemaHookConfigForm';
 import { HelpIconButton } from '@nexus-gateway/ui-shared';
@@ -8,6 +8,20 @@ import { HOOK_ROW_TYPE } from '@/constants/hooks';
 import { ImplementationSelector } from './ImplementationSelector';
 import type { HookFormValues, WebhookTargetOption } from './hookFormModel';
 import styles from './HookForm.module.css';
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function omitSchemaProperty(schema: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
+  if (!schema || !isPlainObject(schema.properties) || !isPlainObject(schema.properties[key])) return schema;
+  const properties = { ...schema.properties };
+  delete properties[key];
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((item) => String(item) !== key)
+    : schema.required;
+  return { ...schema, properties, required };
+}
 
 interface ConfigSectionProps {
   form: UseFormReturn<HookFormValues>;
@@ -47,19 +61,56 @@ export function ConfigSection({
   setManualConfigJson,
 }: ConfigSectionProps) {
   const { t } = useTranslation();
+  const detectRefusalsSchema = isPlainObject(schema?.properties) && isPlainObject(schema.properties.detectRefusals)
+    ? schema.properties.detectRefusals
+    : null;
+  const configSchema = omitSchemaProperty(schema, 'detectRefusals');
+  const detectRefusalsLabel = detectRefusalsSchema && typeof detectRefusalsSchema.title === 'string'
+    ? detectRefusalsSchema.title
+    : 'detectRefusals';
+  const detectRefusalsHelp = detectRefusalsSchema && typeof detectRefusalsSchema.description === 'string'
+    ? detectRefusalsSchema.description
+    : undefined;
 
   return (
-    <Card>
+    <section className={styles.configSection}>
       <div className={styles.sectionTitle}>{t('pages:hooks.configurationSection')}</div>
       {registryError ? (
         <p className={styles.registryError}>{registryError}</p>
       ) : null}
 
-      <ImplementationSelector
-        implSelectOptions={implSelectOptions}
-        selectedImplementationId={selectedImplementationId}
-        onImplementationChange={onImplementationChange}
-      />
+      <div className={styles.configTopGrid}>
+        <ImplementationSelector
+          implSelectOptions={implSelectOptions}
+          selectedImplementationId={selectedImplementationId}
+          onImplementationChange={onImplementationChange}
+        />
+
+        <div className={styles.switchField}>
+          <Stack direction="horizontal" gap="sm" className={styles.enabledRow}>
+            <label className={styles.enabledLabel}>{t('pages:hooks.manualJsonLabel')}</label>
+            <Tooltip content={t('pages:hooks.manualJsonTooltip')}>
+              <HelpIconButton aria-label={t('pages:hooks.manualJsonLabel')} />
+            </Tooltip>
+          </Stack>
+          <Switch
+            checked={useManualConfigEditor}
+            onCheckedChange={(c) => {
+              setUseManualConfigEditor(c);
+              if (c) setManualConfigJson(JSON.stringify(configObject, null, 2));
+            }}
+          />
+        </div>
+
+        {detectRefusalsSchema ? (
+          <FormField label={detectRefusalsLabel} helpText={detectRefusalsHelp}>
+            <Switch
+              checked={configObject.detectRefusals === true}
+              onCheckedChange={(checked) => setConfigObject({ ...configObject, detectRefusals: checked })}
+            />
+          </FormField>
+        ) : null}
+      </div>
 
       {type === HOOK_ROW_TYPE.WEBHOOK ? (
         <Stack gap="sm">
@@ -89,22 +140,8 @@ export function ConfigSection({
         </Stack>
       ) : null}
 
-      <Stack direction="horizontal" gap="sm" className={styles.configRow}>
-        <label className={styles.enabledLabel}>{t('pages:hooks.manualJsonLabel')}</label>
-        <Tooltip content={t('pages:hooks.manualJsonTooltip')}>
-          <HelpIconButton aria-label={t('pages:hooks.manualJsonLabel')} />
-        </Tooltip>
-        <Switch
-          checked={useManualConfigEditor}
-          onCheckedChange={(c) => {
-            setUseManualConfigEditor(c);
-            if (c) setManualConfigJson(JSON.stringify(configObject, null, 2));
-          }}
-        />
-      </Stack>
-
-      {schema && !useManualConfigEditor ? (
-        <JsonSchemaHookConfigForm schema={schema} value={configObject} onChange={setConfigObject} />
+      {configSchema && !useManualConfigEditor ? (
+        <JsonSchemaHookConfigForm schema={configSchema} value={configObject} onChange={setConfigObject} />
       ) : (
         <FormField label={t('pages:hooks.configJsonLabel')}>
           <Textarea
@@ -115,6 +152,6 @@ export function ConfigSection({
           />
         </FormField>
       )}
-    </Card>
+    </section>
   );
 }

@@ -16,20 +16,34 @@ export function SystemTab({ sysinfo }: SystemTabProps) {
       {sysinfo ? (
         <Stack gap="md">
           <div className={styles.kvGrid}>
-            <span className={styles.kvLabel}>{t('pages:fleet.machineId')}</span>
-            <span className={styles.kvValue}>{sysinfo.machineId ?? '—'}</span>
-            <span className={styles.kvLabel}>{t('pages:fleet.osName')}</span>
-            <span className={styles.kvValue}>{sysinfo.osName} {sysinfo.osVersion}</span>
-            <span className={styles.kvLabel}>{t('pages:fleet.cpuModel')}</span>
-            <span className={styles.kvValue}>{sysinfo.cpuModel ?? '—'}</span>
-            <span className={styles.kvLabel}>{t('pages:fleet.cpuCores')}</span>
-            <span className={styles.kvValue}>{sysinfo.cpuCores}</span>
-            <span className={styles.kvLabel}>{t('pages:fleet.totalMemMB')}</span>
-            <span className={styles.kvValue}>{sysinfo.totalMemMB?.toLocaleString() ?? '—'}</span>
-            <span className={styles.kvLabel}>{t('pages:fleet.serialNumber')}</span>
-            <span className={styles.kvValue}>{sysinfo.serialNumber ?? '—'}</span>
-            <span className={styles.kvLabel}>{t('pages:fleet.modelName')}</span>
-            <span className={styles.kvValue}>{sysinfo.modelName ?? '—'}</span>
+            <div>
+              <div className={styles.kvLabel}>{t('pages:fleet.machineId')}</div>
+              <div className={styles.kvValue}>{sysinfo.machineId ?? '—'}</div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('pages:fleet.osName')}</div>
+              <div className={styles.kvValue}>{sysinfo.osName} {sysinfo.osVersion}</div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('pages:fleet.cpuModel')}</div>
+              <div className={styles.kvValue}>{sysinfo.cpuModel ?? '—'}</div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('pages:fleet.cpuCores')}</div>
+              <div className={styles.kvValue}>{sysinfo.cpuCores}</div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('pages:fleet.totalMemMB')}</div>
+              <div className={styles.kvValue}>{sysinfo.totalMemMB?.toLocaleString() ?? '—'}</div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('pages:fleet.serialNumber')}</div>
+              <div className={styles.kvValue}>{sysinfo.serialNumber ?? '—'}</div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('pages:fleet.modelName')}</div>
+              <div className={styles.kvValue}>{sysinfo.modelName ?? '—'}</div>
+            </div>
           </div>
           {sysinfo.networkInterfaces?.length > 0 && (
             <>

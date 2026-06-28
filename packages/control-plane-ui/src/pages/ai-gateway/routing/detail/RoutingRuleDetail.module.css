@@ -2,13 +2,17 @@
 
 .kvGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--g-space-4);
 }
 
+.kvGrid > * {
+  min-width: 0;
+}
+
 .kvLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -17,7 +21,7 @@
 
 .kvValue {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   word-break: break-all;
 }
@@ -32,8 +36,8 @@
   background: transparent;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: all var(--g-transition-fast);
@@ -53,7 +57,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   box-shadow: var(--shadow-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-size: var(--g-font-size-sm);
   cursor: pointer;
   transition: all var(--g-transition-fast);
@@ -85,7 +89,7 @@
   border: none;
   border-radius: var(--g-radius-md);
   box-shadow: var(--shadow-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-size: var(--g-font-size-sm);
   cursor: pointer;
   transition: background var(--g-transition-fast);
@@ -107,13 +111,50 @@
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   padding: var(--g-space-6);
-  margin-bottom: var(--g-space-4);
+  margin-bottom: 0;
+}
+
+.conditionalEditSection {
+  background: var(--color-bg);
+}
+
+.editSectionTitleOutside {
+  margin-top: var(--g-space-2);
+  margin-bottom: calc(var(--g-space-1) * -1);
 }
 
 .editSectionTitle {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: var(--g-space-4);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  margin-bottom: var(--g-space-3);
+}
+
+.threeColumnInputGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.threeColumnInputGrid > * {
+  min-width: 0;
+}
+
+.basicInfoGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.basicInfoGrid > * {
+  min-width: 0;
+}
+
+.enabledSwitchField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
 }
 
 /* ── Row / input / select ───────────────────────────────────────── */
@@ -127,19 +168,22 @@
 
 .nativeInput {
   width: 100%;
+  height: 36px;
   padding: var(--g-space-2) var(--g-space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--g-radius-sm);
+  border-radius: var(--g-radius-md);
   font-size: var(--g-font-size-sm);
+  background: var(--color-bg);
 }
 
 .nativeSelect {
   width: 100%;
+  height: 36px;
   padding: var(--g-space-2) var(--g-space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--g-radius-sm);
+  border-radius: var(--g-radius-md);
   font-size: var(--g-font-size-sm);
-  background: var(--color-surface);
+  background: var(--color-bg);
   cursor: pointer;
 }
 
@@ -156,6 +200,7 @@
 
 .removeBtn {
   composes: smallBtn;
+  height: 36px;
   color: var(--color-danger);
   border-color: var(--color-danger);
 }
@@ -181,9 +226,9 @@
   padding: 2px 8px;
   background: var(--color-primary);
   color: var(--color-primary-foreground);
-  border-radius: 12px;
+  border-radius: var(--g-radius-xl);
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .tagRemove {
@@ -192,7 +237,7 @@
   color: var(--color-primary-foreground);
   cursor: pointer;
   padding: 0 2px;
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   line-height: 1;
   opacity: 0.8;
 }
@@ -213,7 +258,7 @@
 
 .mutedLabel {
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -230,7 +275,7 @@
   padding: 8px 12px;
   text-align: left;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   border-bottom: 2px solid var(--color-border);
   text-transform: uppercase;
@@ -248,7 +293,7 @@
 .codeBlock {
   margin: 0;
   padding: 12px;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   overflow: auto;
   background: var(--color-muted);
   border-radius: var(--g-radius-sm);
@@ -263,6 +308,8 @@
 .systemPromptPre {
   composes: codeBlock;
   margin: 8px 0 0 0;
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -270,15 +317,23 @@
 /* ── Widget title ────────────────────────────────────────────────── */
 
 .widgetTitle {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
-  margin: 0 0 var(--g-space-4) 0;
+  margin: 0 0 var(--g-space-3) 0;
+}
+
+.widgetTitle:first-child {
+  margin-top: 0;
+}
+
+.editTopTitle {
+  margin: var(--g-space-2) 0 calc(var(--g-space-1) * -1);
 }
 
 .widgetSubtitle {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   margin: 0;
 }
@@ -291,7 +346,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 /* ── Smart routing system prompt textarea ────────────────────────── */
@@ -301,18 +356,57 @@
   font-family: var(--g-font-mono);
   font-size: var(--g-font-size-xs);
   padding: var(--g-space-2);
-  border-radius: var(--g-radius-sm);
+  border-radius: var(--g-radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-input-bg);
+  background: var(--color-bg);
   color: var(--color-text);
   resize: vertical;
+}
+
+.smartFieldTitle {
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.editSection :global(input:not([type="checkbox"]):not([type="radio"])),
+.editSection :global(select),
+.editSection :global(button[role="combobox"]),
+.editSection :global(button[aria-haspopup="listbox"]) {
+  min-height: 36px;
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
+.editSection :global(textarea) {
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
+.routingEditActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  justify-content: flex-start;
+  min-height: 80px;
+  padding: var(--g-space-4) 0;
+  margin-top: 0;
+  background: var(--color-surface-raised);
+  border-top: 1px solid var(--color-border);
+}
+
+.routingEditActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 /* ── Strategy label row (with required asterisk) ─────────────────── */
 
 .strategyLabel {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   cursor: pointer;
 }
@@ -325,7 +419,7 @@
   border: none;
   cursor: pointer;
   padding: 0;
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
 }
 
@@ -351,8 +445,8 @@
 
 /* Form field label (policy / smart routing) */
 .fieldLabel {
-  font-weight: 500;
-  font-size: 13px;
+  font-weight: var(--g-font-weight-medium);
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
   display: block;
   margin-bottom: 6px;
@@ -366,7 +460,7 @@
 
 /* Inline "Enabled" text next to the switch */
 .enabledLabel {
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   color: var(--color-text);
 }
 
@@ -379,7 +473,7 @@
 .entryRowHeader {
   composes: row;
   margin-bottom: var(--g-space-1);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
 }
@@ -434,12 +528,36 @@
 
 /* Fallback chain entry label (view) */
 .fallbackViewLabel {
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
+}
+
+.titleActionRow {
+  justify-content: space-between;
+}
+
+.addInlineTextButton {
+  padding: 0;
+  border: none;
+  background: transparent !important;
+  color: var(--color-primary);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
+  cursor: pointer;
+}
+
+.addInlineTextButton:hover,
+.addInlineTextButton:active {
+  color: var(--color-primary-hover);
+  background: transparent !important;
 }
 
 /* Section block with standard top spacing (read-only sections) */
 .sectionBlock {
-  margin-top: var(--g-space-6);
+  margin-top: var(--g-space-2);
+}
+
+.sectionBlock + .sectionBlock {
+  margin-top: var(--g-space-2);
 }
 
 /* Section header row (subtitle + help icon) */
@@ -476,12 +594,17 @@
 .simDescription {
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
-  margin-bottom: var(--g-space-3);
+  margin: calc(var(--g-space-2) * -1) 0 var(--g-space-3);
 }
 
 /* Simulation input row */
 .simInputRow {
   margin-bottom: var(--g-space-3);
+}
+
+.simModelField :global(label) {
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-xs);
 }
 
 /* Input + button on the same row inside the FormField.
@@ -495,6 +618,22 @@
 
 .simInputGroup > :first-child {
   flex: 1;
+}
+
+.simInputGroup :global(input) {
+  padding-right: var(--g-space-3);
+}
+
+.simInlineButton {
+  height: 36px;
+  min-width: 96px;
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-medium) !important;
+}
+
+.simInlineButton:hover:not(:disabled),
+.simInlineButton:active:not(:disabled) {
+  font-size: var(--g-font-size-sm) !important;
 }
 
 /* Provider + model cascading selector wrapper */
@@ -522,7 +661,30 @@
 
 /* Match conditions field group spacing */
 .matchFieldGroup {
-  margin-bottom: 20px;
+  margin-bottom: 0;
+}
+
+.matchConditionsSection {
+  margin-bottom: calc(var(--g-space-1) * -1);
+}
+
+.matchControlField {
+  min-height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
+.matchControlField > :global(label) {
+  display: none;
+}
+
+.matchControlField > :global(button) {
+  min-height: 36px;
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
 }
 
 /* Label row with small gap (used in match conditions, smart routing) */
@@ -550,4 +712,20 @@
 
 .fieldLabelNoMargin {
   margin-bottom: 0;
+}
+
+@media (max-width: 1100px) {
+  .kvGrid,
+  .basicInfoGrid,
+  .threeColumnInputGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .kvGrid,
+  .basicInfoGrid,
+  .threeColumnInputGrid {
+    grid-template-columns: 1fr;
+  }
 }

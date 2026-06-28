@@ -6,10 +6,11 @@ export interface PageHeaderProps {
   title: string;
   subtitle?: string;
   action?: ReactNode;
+  subtitleClassName?: string;
 }
 
 /** Page title block aligned with the prime-console text hierarchy. */
-export function PageHeader({ title, subtitle, action }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, action, subtitleClassName }: PageHeaderProps) {
   return (
     <div
       className={cn(
@@ -31,6 +32,7 @@ export function PageHeader({ title, subtitle, action }: PageHeaderProps) {
             className={cn(
               'm-0 mt-1.5 max-w-3xl text-sm leading-normal',
               'text-[var(--color-text-tertiary)]',
+              subtitleClassName,
             )}
           >
             {subtitle}

@@ -266,6 +266,7 @@ export function TrafficTab({ source }: TrafficTabProps) {
 
       {total > 0 ? (
         <ListPagination
+          variant="plain"
           offset={offset}
           limit={pageLimit}
           total={total}

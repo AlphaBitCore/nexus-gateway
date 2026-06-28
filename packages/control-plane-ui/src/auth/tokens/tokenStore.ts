@@ -2,9 +2,8 @@
  * localStorage-backed token store for the cp-ui OAuth flow.
  *
  * Tokens live in localStorage so they survive navigation and are captured by
- * Playwright's storageState for E2E testing. The XSS tradeoff is accepted for
- * Phase 2 — Phase 4 adds refresh-token revocation so a stolen refresh can be
- * cut server-side.
+ * Playwright's storageState for E2E testing. The XSS tradeoff is accepted
+ * because a stolen refresh token can be revoked server-side.
  *
  * Every accessor guards against `localStorage` being absent (node / SSR)
  * and against quota-exceeded / private-mode write failures.

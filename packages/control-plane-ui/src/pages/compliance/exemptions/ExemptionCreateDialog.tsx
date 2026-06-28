@@ -3,8 +3,7 @@
  * Owns the create form state (source IP, target host, duration, reason,
  * submit-as-pending), the `creating` busy flag, validation, and the
  * create-grant / create-pending-request mutation. Resets the form whenever the
- * dialog closes (both via the dialog scrim/escape and the Cancel button), which
- * matches the original page behavior verbatim.
+ * dialog closes (both via the dialog scrim/escape and the Cancel button).
  */
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -22,6 +21,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { useToast } from '@/context/ToastContext';
+import styles from './ExemptionCreateDialog.module.css';
 
 interface ExemptionCreateDialogProps {
   open: boolean;
@@ -130,18 +130,20 @@ export function ExemptionCreateDialog({ open, onOpenChange, refetch }: Exemption
         'pages:compliance.exemptions.createDesc',
         'Exempted traffic will still be TLS-bumped but will skip compliance hooks.',
       )}
+      className={styles.dialog}
     >
-      <Stack gap="md">
-        <FormField label={t('pages:compliance.exemptions.sourceIpLabel', 'Source IP or CIDR')}>
-          <Input
-            value={formSourceIp}
-            onChange={(e) => setFormSourceIp(e.target.value)}
-            placeholder={t(
-              'pages:compliance.exemptions.placeholder.sourceIp',
-              'e.g. 10.0.0.0/24 or 10.0.0.5',
-            )}
-          />
-        </FormField>
+      <div className={styles.formShell}>
+        <Stack gap="md" className={styles.formContent}>
+          <FormField label={t('pages:compliance.exemptions.sourceIpLabel', 'Source IP or CIDR')}>
+            <Input
+              value={formSourceIp}
+              onChange={(e) => setFormSourceIp(e.target.value)}
+              placeholder={t(
+                'pages:compliance.exemptions.placeholder.sourceIp',
+                'e.g. 10.0.0.0/24 or 10.0.0.5',
+              )}
+            />
+          </FormField>
 
         <FormField label={t('pages:compliance.exemptions.targetHostLabel', 'Target host')}>
           <Input
@@ -187,9 +189,10 @@ export function ExemptionCreateDialog({ open, onOpenChange, refetch }: Exemption
           />
         </FormField>
 
-        <Stack direction="horizontal" gap="sm" justify="end">
+        </Stack>
+        <Stack direction="horizontal" gap="sm" justify="end" className={styles.actions}>
           <Button
-            variant="ghost"
+            variant="secondary"
             onClick={() => {
               onOpenChange(false);
               resetForm();
@@ -208,7 +211,7 @@ export function ExemptionCreateDialog({ open, onOpenChange, refetch }: Exemption
               : t('pages:compliance.exemptions.createBtn', 'Create')}
           </Button>
         </Stack>
-      </Stack>
+      </div>
     </Dialog>
   );
 }

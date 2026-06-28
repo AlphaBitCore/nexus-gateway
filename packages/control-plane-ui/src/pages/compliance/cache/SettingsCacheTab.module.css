@@ -30,7 +30,7 @@
   text-align: left;
   padding: 8px 12px;
   border-bottom: 1px solid var(--color-border);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-primary);
 }
 
@@ -44,7 +44,7 @@
 /* Section heading rows inside the rules table — one per adapter family. */
 .rulesTable tbody tr.adapterGroup td {
   background: var(--color-bg-secondary);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-primary);
   padding: 10px 12px;
   border-bottom: 1px solid var(--color-border);

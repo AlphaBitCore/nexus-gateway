@@ -2,8 +2,7 @@
  * useExemptionDialogs — owns the open/selected/note/busy state for the Delete,
  * Approve, and Reject dialogs of ExemptionsPage, plus their submit handlers.
  * The page threads the hook's setters into the DataTable actions column and the
- * hook's state + handlers into the co-located dialog components. Behavior is
- * preserved verbatim from the original inline page state.
+ * hook's state + handlers into the co-located dialog components.
  */
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';

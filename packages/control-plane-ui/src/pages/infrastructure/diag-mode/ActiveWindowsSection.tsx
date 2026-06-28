@@ -25,10 +25,13 @@ export function ActiveWindowsSection({
 
   return (
     /* ── Active windows ── */
-    <Card>
-      <Stack gap="sm">
-        <div className={styles.actionRow} style={{ justifyContent: 'space-between' }}>
-          <h3 className={styles.sectionTitle}>{t('infrastructure.diagMode.activeWindows')}</h3>
+    <section className={styles.contentSection}>
+      <div className={styles.actionRow} style={{ justifyContent: 'space-between' }}>
+        <h3 className={styles.sectionTitle}>{t('infrastructure.diagMode.activeWindows')}</h3>
+        <div className={styles.activeWindowActions}>
+          <span className={styles.previewBanner}>
+            {t('infrastructure.diagMode.autoRefresh')}
+          </span>
           <Button
             type="button"
             variant="secondary"
@@ -38,56 +41,57 @@ export function ActiveWindowsSection({
             {t('infrastructure.diagMode.refresh')}
           </Button>
         </div>
-        {error ? (
-          <ErrorBanner
-            message={error.message}
-            onRetry={refetch}
-          />
-        ) : loading && windows.length === 0 ? (
-          <LoadingSpinner />
-        ) : windows.length === 0 ? (
-          <div className={styles.empty}>
-            {t('infrastructure.diagMode.activeEmpty')}
-          </div>
-        ) : (
-          <table className={styles.dataTable}>
-            <thead>
-              <tr>
-                <th>{t('infrastructure.diagMode.colThing')}</th>
-                <th>{t('infrastructure.diagMode.colStarted')}</th>
-                <th>{t('infrastructure.diagMode.colEndsIn')}</th>
-                <th>{t('infrastructure.diagMode.colSetBy')}</th>
-                <th>{t('infrastructure.diagMode.colReason')}</th>
-                <th>{t('infrastructure.diagMode.colActions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {windows.map((w) => (
-                <tr key={w.id}>
-                  <td className={styles.codeCell}>{w.nodeId}</td>
-                  <td>{fmtTime(w.startedAt)}</td>
-                  <td>{fmtEndsIn(w.endedAt)}</td>
-                  <td>{w.setBy ?? '—'}</td>
-                  <td>{w.reason ?? '—'}</td>
-                  <td>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setConfirmDisable(w)}
-                    >
-                      {t('infrastructure.diagMode.disable')}
-                    </Button>
-                  </td>
+      </div>
+      <Card>
+        <Stack gap="sm">
+          {error ? (
+            <ErrorBanner
+              message={error.message}
+              onRetry={refetch}
+            />
+          ) : loading && windows.length === 0 ? (
+            <LoadingSpinner />
+          ) : windows.length === 0 ? (
+            <div className={styles.empty}>
+              {t('infrastructure.diagMode.activeEmpty')}
+            </div>
+          ) : (
+            <table className={styles.dataTable}>
+              <thead>
+                <tr>
+                  <th>{t('infrastructure.diagMode.colThing')}</th>
+                  <th>{t('infrastructure.diagMode.colStarted')}</th>
+                  <th>{t('infrastructure.diagMode.colEndsIn')}</th>
+                  <th>{t('infrastructure.diagMode.colSetBy')}</th>
+                  <th>{t('infrastructure.diagMode.colReason')}</th>
+                  <th>{t('infrastructure.diagMode.colActions')}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <p className={styles.previewBanner}>
-          {t('infrastructure.diagMode.autoRefresh')}
-        </p>
-      </Stack>
-    </Card>
+              </thead>
+              <tbody>
+                {windows.map((w) => (
+                  <tr key={w.id}>
+                    <td className={styles.codeCell}>{w.nodeId}</td>
+                    <td>{fmtTime(w.startedAt)}</td>
+                    <td>{fmtEndsIn(w.endedAt)}</td>
+                    <td>{w.setBy ?? '—'}</td>
+                    <td>{w.reason ?? '—'}</td>
+                    <td>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setConfirmDisable(w)}
+                      >
+                        {t('infrastructure.diagMode.disable')}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Stack>
+      </Card>
+    </section>
   );
 }

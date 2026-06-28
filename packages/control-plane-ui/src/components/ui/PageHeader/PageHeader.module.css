@@ -1,6 +1,6 @@
 .action :global(button) {
-  font-size: 14px !important;
-  font-weight: 400 !important;
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }
 
 .action :global(button[class*="primary"]:hover) {

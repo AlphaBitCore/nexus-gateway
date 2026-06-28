@@ -227,6 +227,14 @@
     "cachedInputReadPriceHelp": "Per-million price for cached input tokens (cache HIT). Optional. Falls back to Input $/M when unset. Typical multipliers: Anthropic ~0.1×, OpenAI ~0.5×, Gemini ~0.25×.",
     "cachedInputWritePriceHelp": "Per-million price for cache creation tokens (cache WRITE). Optional. Falls back to Input $/M when unset. Typical multiplier: Anthropic ~1.25×.",
     "addAnotherModel": "+ Add another model",
+    "wizardModelsFetchHint": "Model fetch is available for OpenAI / OpenAI-compatible providers.",
+    "wizardModelsFetchButton": "Fetch from /v1/models",
+    "wizardModelsFetching": "Fetching…",
+    "wizardModelsFetchDisabledHint": "Provide a Base URL and API key first",
+    "wizardModelsFetchOpenAIOnly": "Model fetch from /v1/models is available for OpenAI / OpenAI-compatible providers only. Add models manually below.",
+    "wizardModelsFetchError": "Failed to fetch models",
+    "wizardModelsFetchCount": "Fetched {{count}} models — select the ones to add.",
+    "wizardModelsTypeGuessHint": "Model types are guessed from the id — verify before saving.",
     "emptyModelsHint": "No models in this flow yet. You can add them now or from the provider page after creation.",
     "review": "Review",
     "reviewProvider": "Provider",
@@ -292,6 +300,7 @@
     "modelTableFeatures": "Features",
     "modelTableInputPrice": "Input $/M",
     "modelTableOutputPrice": "Output $/M",
+    "pricingNotSet": "Pricing not set",
     "modelTableCachedInputReadPrice": "Cache Read $/M",
     "modelTableCachedInputWritePrice": "Cache Write $/M",
     "modelTableContext": "Context",
@@ -833,10 +842,10 @@
       "importButton": "Import",
       "importWarnings": "Warnings",
       "importErrors": "Errors",
-      "bindSuccess": "Rule pack installed",
-      "bindTitle": "Bind Rule Pack",
-      "bindSubtitle": "Attach a pack version to the selected hook and control whether it starts enabled.",
-      "bindPack": "Pack",
+      "bindSuccess": "Rule packs installed",
+      "bindTitle": "Bind Rule Packs",
+      "bindSubtitle": "Search and select one or more rule packs to install onto the current hook (each is bound at its latest version).",
+      "bindPack": "Rule packs",
       "bindChooseVersion": "Select a version",
       "bindEnabled": "Enabled",
       "bindButton": "Bind",
@@ -898,26 +907,48 @@
       "overridesPerInstallScope": "Overrides apply only to this install. Other installs on the same hook, or the same pack bound elsewhere, keep their own override rows.",
       "addRule": "Add rule",
       "colFlags": "Flags",
+      "perfTest": {
+        "label": "Vectorscan performance",
+        "test": "Test performance",
+        "testing": "Testing…",
+        "clean": "clean",
+        "adversarial": "adversarial",
+        "unreachable": "AI Gateway unreachable",
+        "failed": "Performance test failed",
+        "verdict": {
+          "ok": "Fast",
+          "slow": "Slow",
+          "invalid": "Invalid"
+        }
+      },
       "colLabels": "Labels (comma-separated)",
       "formMode": "Form mode",
       "jsonMode": "JSON mode",
-      "ruleItemTitle": "Rule"
+      "ruleItemTitle": "Rule",
+      "bindOptionMulti": "{{name}} · latest {{version}} ({{count}} versions)",
+      "bindOptionSingle": "{{name}} · {{version}}",
+      "bindSearchPlaceholder": "Search rule packs…",
+      "bindEmptyLabel": "Select rule packs",
+      "bindButtonMulti": "Bind {{count}} pack(s)",
+      "importLintTitle": "Engine compatibility & performance",
+      "severityTip": "Severity is a classification signal, not the enforced action. The bound hook’s onMatch Action policy decides whether a match blocks, redacts, or is flagged.",
+      "severityHard": "hard — critical",
+      "severitySoft": "soft — elevated",
+      "severityWarn": "warn — advisory",
+      "upgradeButton": "Upgrade to latest",
+      "upgradeSuccess": "Upgraded {{name}} from {{from}} to {{to}}",
+      "upgradeNoop": "{{name}} is already on the latest version ({{to}})"
     },
     "form": {
       "placeholderName": "Name",
       "placeholderValue": "Value",
       "placeholderOneValuePerLine": "One value per line",
       "onMatchSection": "Action policy",
-      "onMatchHelp": "Controls what happens when this hook matches. Inflight action shapes what the upstream provider receives; storage action shapes what the audit log persists. The two are independent.",
-      "inflightAction": "Inflight action",
-      "inflightApprove": "Approve (forward original)",
-      "inflightBlockHard": "Block hard (HTTP 403)",
-      "inflightBlockSoft": "Block soft (HTTP 246)",
-      "inflightRedact": "Redact (forward sanitized)",
-      "storageAction": "Storage action",
-      "storageKeep": "Keep (store original in audit log)",
-      "storageRedact": "Redact (store sanitized copy)",
-      "storageDropContent": "Drop content (audit metadata only)",
+      "onMatchHelp": "Controls what happens when this hook matches. Approve forwards and stores the traffic unchanged; redact rewrites the payload (the same sanitized copy is forwarded, returned, and stored); block rejects the request and stores the sanitized copy.",
+      "action": "Action",
+      "actionApprove": "Approve (forward and store unchanged)",
+      "actionRedact": "Redact (rewrite and store sanitized)",
+      "actionBlock": "Block (reject; store sanitized copy)",
       "replacement": "Replacement template",
       "replacementHelp": "Placeholder used in redacted spans. Supports the <RULE_ID> token.",
       "applicableTrafficKinds": "Applies to traffic kinds",
@@ -956,6 +987,7 @@
     "backToList": "Back to List",
     "goToDetail": "Go to Virtual Key Detail",
     "modelAccess": "Model Access",
+    "selectModels": "Select Models",
     "searchModels": "Search models...",
     "selectAll": "Select All",
     "deselectAll": "Deselect All",
@@ -1022,8 +1054,8 @@
     "virtualKeyCreatedMsg": "Virtual Key Created Msg",
     "nameHelpText": "Human-readable label for this virtual key. Used as the display name in dashboards and audit logs.",
     "namePlaceholder": "engineering-openai",
-    "projectTooltip": "Project Tooltip",
-    "expirationTooltip": "Expiration Tooltip",
+    "projectTooltip": "Project this virtual key belongs to. Used for traffic attribution and quota calculation.",
+    "expirationTooltip": "Application virtual keys require an expiration date capped at 3 months from now. The key cannot be used after it expires.",
     "disabledKeysTooltip": "Disabled Keys Tooltip",
     "vkType": "Type",
     "vkStatus": "Status",
@@ -1041,7 +1073,8 @@
     "deleted": "Virtual key deleted",
     "rejectVk": "Reject Virtual Key",
     "rejectConfirm": "Are you sure you want to reject virtual key \"{{name}}\"?",
-    "rejectReason": "Reason"
+    "rejectReason": "Reason",
+    "selectProject": "Select a project"
   },
   "credentials": {
     "title": "Credentials",
@@ -1802,19 +1835,7 @@
       },
       "ruleDesc": {
         "claudeCodeCchStrip": "Strip Claude Code's billing nonce (cch=<hex>) from Anthropic system prompts so cache keys stay stable across consecutive sessions that share an identical system prompt.",
-        "bedrockClaudeCchStrip": "Same nonce stripper for Bedrock-wire Claude requests — Bedrock uses the Anthropic Messages format, so the cch token appears in the same location.",
-        "openaiFieldOrder": "Canonicalise top-level JSON field order for OpenAI-wire bodies so cache keys are stable across SDKs (Python / Go / TypeScript emit different orderings).",
-        "azureOpenaiFieldOrder": "Field-order canonicalisation for Azure OpenAI, which uses the identical OpenAI wire format.",
-        "deepseekFieldOrder": "Field-order canonicalisation for DeepSeek's OpenAI-compatible API.",
-        "glmFieldOrder": "Field-order canonicalisation for GLM (Zhipu) OpenAI-compatible API.",
-        "moonshotFieldOrder": "Field-order canonicalisation for Moonshot's OpenAI-compatible API.",
-        "mistralFieldOrder": "Field-order canonicalisation for Mistral's OpenAI-compatible API.",
-        "xaiFieldOrder": "Field-order canonicalisation for xAI (Grok)'s OpenAI-compatible API.",
-        "groqFieldOrder": "Field-order canonicalisation for Groq's OpenAI-compatible API.",
-        "perplexityFieldOrder": "Field-order canonicalisation for Perplexity's OpenAI-compatible API.",
-        "togetherFieldOrder": "Field-order canonicalisation for Together AI's OpenAI-compatible API.",
-        "fireworksFieldOrder": "Field-order canonicalisation for Fireworks AI's OpenAI-compatible API.",
-        "minimaxFieldOrder": "Field-order canonicalisation for MiniMax's OpenAI-compatible API."
+        "bedrockClaudeCchStrip": "Same nonce stripper for Bedrock-wire Claude requests — Bedrock uses the Anthropic Messages format, so the cch token appears in the same location."
       },
       "overridesTitle": "Active Provider Overrides",
       "overridesSubtitle": "Providers with at least one cache knob overridden from the adapter default. Click a provider to manage its overrides.",
@@ -2769,7 +2790,10 @@
         "requestBody": "Request Body",
         "responseBody": "Response Body",
         "routingTrace": "Routing Trace",
-        "details": "Details"
+        "details": "Details",
+        "errorBadge": "Error",
+        "errorTitle": "Gateway / provider error — HTTP {{status}} · {{code}}",
+        "errorHint": "This row is an error envelope, not chat content."
       },
       "tabs": {
         "overview": "Overview",
@@ -3564,6 +3588,12 @@
     "certExpiresAt": "Cert Expires",
     "allStatuses": "All Statuses",
     "allOS": "All Platforms",
+    "statusActive": "Active",
+    "statusEnrolled": "Enrolled",
+    "statusOffline": "Offline",
+    "statusRevoked": "Revoked",
+    "osMacOS": "macOS",
+    "osWindows": "Windows",
     "certSerial": "Cert Serial",
     "enrollDevice": "Enroll Device",
     "hostnameHint": "Hostname (optional)",
@@ -4338,7 +4368,7 @@
     "jobsTitle": "Scheduled Jobs",
     "jobsDescription": "Background job status and management",
     "killSwitchTitle": "Fleet Kill Switch",
-    "killSwitchDescription": "Immediately stop TLS bumping on ALL Compliance Proxies and Agents in the fleet. Use only for emergency: a bad provider rollout, a hook regression blocking legitimate traffic, or a NetworkExtension panic.",
+    "killSwitchDescription": "Emergency control to stop TLS bumping across all proxies and agents.",
     "killSwitchEngaged": "ENGAGED — TLS bumping disabled fleet-wide",
     "killSwitchDisengaged": "Normal operation — TLS bumping active",
     "killSwitchStatusComplianceProxy": "Compliance Proxies",
@@ -5062,7 +5092,7 @@
     "agentSetup": {
       "downloadTitle": "1. Download the installer",
       "downloadHintMacOS": "Distribute the signed + notarized .pkg via your software-distribution channel (Jamf, Kandji, an internal share, GitHub Releases, etc.). End users install with a double-click.",
-      "downloadHintWindows": "WiX v4 MSI installer (signed once Authenticode cert is provisioned). Double-click runs a standard Windows wizard: registers Nexus Agent as a Windows Service, installs WinDivert kernel driver, sets system-wide env vars NEXUS_DEVICE_CA_PEM + NODE_EXTRA_CA_CERTS + REQUESTS_CA_BUNDLE + SSL_CERT_FILE so Node.js / Python / Go / curl trust the agent's intercepted TLS. Suitable for GPO / SCCM / Intune distribution.",
+      "downloadHintWindows": "WiX v4 MSI installer (signed once Authenticode cert is provisioned). Double-click runs a standard Windows wizard: registers Nexus Agent as a Windows Service, installs the signed NexusWFP Windows Filtering Platform (WFP) kernel callout driver via pnputil, sets system-wide env vars NEXUS_DEVICE_CA_PEM + NODE_EXTRA_CA_CERTS + REQUESTS_CA_BUNDLE + SSL_CERT_FILE so Node.js / Python / Go / curl trust the agent's intercepted TLS. Suitable for GPO / SCCM / Intune distribution.",
       "downloadHintLinux": "Cross-compiled raw Go binary (no .deb/.rpm packaging yet). Operators install it manually under a systemd unit — see Step 2. Suitable for headless servers and dev workstations alike.",
       "downloadFilenameMacOS": "NexusAgent-<VERSION>.pkg",
       "downloadFilenameWindows": "NexusAgent-<VERSION>.msi",
@@ -5075,9 +5105,9 @@
       "installMacOSStep3": "macOS shows a 'System Extension Blocked' notification on first launch. Open System Settings → General → Login Items & Extensions → Network Extensions and approve com.nexus-gateway.agent.extension from YOUR ORG NAME. (For MDM-managed fleets, deploy the .mobileconfig template that ships with the agent to pre-approve.)",
       "installMacOSStep4": "On first launch the postinstall step generates a device CA and installs it into the System Keychain as a trusted root anchor — this is what makes the agent's intercepted TLS connections trusted by every local HTTPS client.",
       "installWindowsStep1": "Double-click NexusAgent-<VERSION>.msi. Windows shows the standard installer wizard (Welcome → License → Install Location → Confirm → Install → Finish). Click through; UAC will prompt for elevation once because the MSI registers a system service and a kernel driver.",
-      "installWindowsStep2": "The wizard installs: nexus-agent.exe (service) + nexus-agent-tray.exe (login auto-start) + nexus-dashboard.exe (start-menu shortcut) under C:\\Program Files\\Nexus Agent\\; WinDivert64.sys + WinDivert.dll for kernel packet capture; %ProgramData%\\NexusAgent\\ for device CA + config + logs.",
+      "installWindowsStep2": "The wizard installs: nexus-agent.exe (service) + nexus-agent-tray.exe (login auto-start) + nexus-dashboard.exe (start-menu shortcut) under C:\\Program Files\\Nexus Agent\\; the signed NexusWFP callout driver (nexus-wfp.sys + nexus-wfp.inf + .cat catalog, per-arch amd64 + arm64) staged into the Windows driver store via `pnputil /add-driver nexus-wfp.inf /install` — pnputil owns the driver store, so the driver is not copied into System32\\drivers; %ProgramData%\\NexusAgent\\ for device CA + config + logs.",
       "installWindowsStep3": "On first service start the daemon mints the device CA at %ProgramData%\\NexusAgent\\device-ca.pem and imports it into the Windows LocalMachine Root store via certutil. The MSI also sets system-wide env vars NEXUS_DEVICE_CA_PEM / NODE_EXTRA_CA_CERTS / REQUESTS_CA_BUNDLE / SSL_CERT_FILE so Node.js (Claude CLI, Cursor, Electron apps), Python (requests, boto3, pip), Go, and curl all trust the agent's intercepted TLS without per-app config. Log out and log back in (or run `refreshenv` in any cmd / pwsh session) for already-running processes to pick the env vars up.",
-      "installWindowsStep4": "Verify: in an elevated PowerShell run `sc.exe query NexusAgent` (expect STATE: 4 RUNNING) and `Get-Item Env:NEXUS_DEVICE_CA_PEM` (expect C:\\ProgramData\\NexusAgent\\device-ca.pem). The tray icon turns green within a few seconds. If WinDivert refused to load (rare, mostly SecureBoot / corporate-EDR conflicts), the tray turns yellow and the agent degrades to system-proxy fallback — see the Dashboard's Diagnostics page for the Win32 error code.",
+      "installWindowsStep4": "Verify: in an elevated PowerShell run `sc.exe query NexusAgent` (expect STATE: 4 RUNNING), `sc.exe query NexusWFP` (the kernel driver service — expect RUNNING) and `Get-Item Env:NEXUS_DEVICE_CA_PEM` (expect C:\\ProgramData\\NexusAgent\\device-ca.pem). The tray icon turns green within a few seconds. If the NexusWFP driver refused to load (rare, mostly SecureBoot / corporate-EDR conflicts), the tray turns yellow and the agent degrades to system-proxy fallback (HTTP CONNECT) — most TCP traffic still flows but UDP / QUIC capture is unavailable; see the Dashboard's Diagnostics page for the error.",
       "installLinuxStep1Deb": "curl -L -o /usr/local/bin/nexus-agent {{downloadBase}}/downloads/nexus-agent-linux-latest && sudo chmod +x /usr/local/bin/nexus-agent",
       "installLinuxStep1Rpm": "# Same binary works on every glibc Linux (Debian / Ubuntu / RHEL / Fedora / SUSE / Amazon Linux). No distro-specific packaging today.",
       "installLinuxStep2": "Create a systemd unit at /etc/systemd/system/nexus-agent.service: [Unit] After=network.target / [Service] ExecStart=/usr/local/bin/nexus-agent run --config /etc/nexus-agent/agent.yaml User=root Restart=always / [Install] WantedBy=multi-user.target. Then sudo systemctl daemon-reload && sudo systemctl enable --now nexus-agent.",
@@ -5184,13 +5214,13 @@
             }
           },
           "windows": {
-            "windivertFailed": {
-              "q": "WinDivert refused to load — tray turned yellow",
-              "a": "Most common causes: (1) SecureBoot is enforcing strict cross-cert policy and rejects WinDivert64.sys's signature chain — disable SecureBoot or have IT push the cross-cert via GPO. (2) A corporate EDR (CrowdStrike, SentinelOne, Defender for Endpoint) is blocking unknown kernel-mode drivers — request a per-vendor allow rule for WinDivert v2.2.2 published by basil00. (3) Another packet-capture tool (Wireshark/npcap, Sysmon) already holds the same kernel slot. While WinDivert is unavailable the agent runs in system-proxy fallback mode (HTTP CONNECT) — most traffic still flows but UDP / QUIC capture is unavailable."
+            "wfpDriverFailed": {
+              "q": "The NexusWFP driver refused to load — tray turned yellow",
+              "a": "Most common causes: (1) SecureBoot is rejecting the signed NexusWFP driver's signature chain — have IT trust or deploy the signing certificate (for example via GPO). (2) A corporate EDR (CrowdStrike, SentinelOne, Defender for Endpoint) is blocking unknown kernel-mode drivers — request an allow rule for the signed NexusWFP driver. (3) Another WFP / packet-capture tool (Wireshark/npcap, Sysmon) is holding a conflicting filter slot. While the driver is unavailable the agent runs in system-proxy fallback mode (HTTP CONNECT) — most TCP traffic still flows but UDP / QUIC capture is unavailable. Check the driver state with `sc.exe queryex NexusWFP`."
             },
             "msiHang": {
               "q": "MSI install or uninstall hangs at “Starting services” / “Stopping services”",
-              "a": "Two known causes: (1) the agent service is still running and WinDivert holds a divert handle — open Services.msc, stop NexusAgent first, then re-run the uninstaller. (2) WinDivert SCM service got stuck in STOP_PENDING — `sc.exe queryex WinDivert` shows PID 0 if so; a reboot is the clean recovery. Never force-delete the kernel service with `sc delete` while it is STOP_PENDING — risks DRIVER_POWER_STATE_FAILURE BSOD on next boot."
+              "a": "Two known causes: (1) the agent service is still running and the NexusWFP driver is still active — open Services.msc, stop NexusAgent first, then re-run the uninstaller (it stops the NexusWFP service then removes the driver with `pnputil /delete-driver /uninstall /force`). (2) The NexusWFP kernel service got stuck in STOP_PENDING — `sc.exe queryex NexusWFP` shows PID 0 if so; a reboot is the clean recovery. Never force-delete the kernel service with `sc delete` while it is STOP_PENDING — risks DRIVER_POWER_STATE_FAILURE BSOD on next boot."
             }
           },
           "linux": {
@@ -5854,7 +5884,7 @@
   },
   "identityProvider": {
     "title": "Identity Provider",
-    "subtitle": "External identity providers (Okta, Azure AD, Google Workspace, ...) the platform trusts for single sign-on and SCIM user/group provisioning. Nexus is the Service Provider; configure each IdP at the IdP vendor first, then register it here.",
+    "subtitle": "Manage trusted external IdPs for SSO and SCIM provisioning; configure each provider first, then register it here.",
     "localIdpNote": "Built-in local user store. Does not receive SCIM pushes and has no external group mappings.",
     "addIdp": "Add Identity Provider",
     "testConnection": "Test",
@@ -6217,7 +6247,7 @@
         "disableConfirmButton": "Disable Now",
         "disableSuccess": "Semantic cache disabled fleet-wide",
         "disableError": "Failed to disable semantic cache",
-        "disableMenuTrigger": "Disable caches…",
+        "disableMenuTrigger": "Disable caches",
         "disableSemanticItem": "Disable semantic cache",
         "disableExtractItem": "Disable extract cache",
         "disableAllItem": "Disable all gateway cache",
@@ -6242,7 +6272,8 @@
         "ttlHelp": "How long a cached response stays valid. Range 60–604800 (1 minute to 7 days). Default 3600 (1 hour). Tune higher for static FAQs, lower for time-sensitive answers.",
         "ttlOutOfRange": "TTL must be between 60 and 604800 seconds when enabled.",
         "saved": "Extract cache settings saved."
-      }
+      },
+      "perfTip": "Performance note: caching is opt-in and every request pays a lookup cost. When the hit rate is low that overhead outweighs the savings and can slow the gateway — enable only when your traffic repeats prompts often."
     }
   },
   "cache": {

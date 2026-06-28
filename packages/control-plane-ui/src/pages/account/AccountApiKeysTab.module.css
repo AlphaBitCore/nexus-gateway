@@ -2,6 +2,11 @@
 
 .descriptionText {
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   margin: 0;
+}
+
+.createKeyButton,
+.createKeyButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
 }

@@ -10,7 +10,7 @@ import type { AdminListPageSize, DataTableColumn } from '@/components/ui';
 import { DEFAULT_ADMIN_LIST_PAGE_SIZE } from '@/constants/admin-api';
 import {
   PageHeader, DataTable, Badge, Button, Stack, Card, Skeleton, ErrorBanner,
-  Tabs, TabsList, TabsTrigger, TabsContent, ListPagination, ListFilterToolbar,
+  Tabs, TabsList, TabsTrigger, TabsContent, ListPagination, ListFilterToolbar, Tooltip,
 } from '@/components/ui';
 import styles from './InfraNodesPage.module.css';
 
@@ -19,8 +19,6 @@ const NODE_TYPES = ['all', 'ai-gateway', 'compliance-proxy', 'control-plane', 'n
 const STATUS_OPTIONS = [
   'online', 'offline', 'enrolled', 'revoked', 'drift',
 ] as const;
-
-const TYPE_OPTIONS = ['ai-gateway', 'compliance-proxy', 'control-plane', 'nexus-hub', 'agent'] as const;
 
 function statusKey(s: string): string {
   return s.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
@@ -106,14 +104,11 @@ export default function InfraNodesPage() {
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebouncedValue(searchInput, 300);
   const [statusFilter, setStatusFilter] = useState('');
-  // Type filter — only active on the "all" tab
-  const [typeFilter, setTypeFilter] = useState('');
 
   const resetPage = useCallback(() => setPage(1), []);
 
   const handleTypeChange = useCallback((type: string) => {
     setSelectedType(type);
-    setTypeFilter('');
     setPage(1);
   }, []);
 
@@ -122,22 +117,16 @@ export default function InfraNodesPage() {
     setPage(1);
   }, []);
 
-  // When a specific type tab is active it takes precedence; the inline type
-  // filter is only relevant on the "all" tab.
-  const typeParam = selectedType !== 'all'
-    ? selectedType
-    : (typeFilter || undefined);
-
   const { data, loading, error, refetch } = useApi(
     () => hubApi.listNodes({
-      type: typeParam,
+      type: selectedType !== 'all' ? selectedType : undefined,
       status: statusFilter || undefined,
       search: debouncedSearch || undefined,
       hasOverrides: hasOverrides ? true : undefined,
       page,
       pageSize,
     }),
-    ['admin', 'nodes', selectedType, typeFilter, statusFilter, debouncedSearch, page, pageSize, hasOverrides],
+    ['admin', 'nodes', selectedType, statusFilter, debouncedSearch, page, pageSize, hasOverrides],
   );
 
   const onRowClick = useCallback(
@@ -198,6 +187,30 @@ export default function InfraNodesPage() {
       label: t('pages:infrastructure.colLastSeen'),
       render: (r) => r.last_seen_at ? new Date(r.last_seen_at).toLocaleString() : '\u2014',
     },
+    {
+      key: 'details',
+      label: t('common:actions'),
+      sortable: false,
+      cellClassName: styles.detailActionCell,
+      cellStyle: { width: 56 },
+      render: (r) => (
+        <Tooltip content={t('pages:infrastructure.nodeDetail')} side="left" delayDuration={200}>
+          <button
+            type="button"
+            className={styles.detailActionButton}
+            aria-label={t('pages:infrastructure.nodeDetail')}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRowClick(r);
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+        </Tooltip>
+      ),
+    },
   ];
 
   if (loading && !data) return <Skeleton.ListPageSkeleton />;
@@ -208,20 +221,18 @@ export default function InfraNodesPage() {
         title={t('pages:infrastructure.nodesTitle')}
         subtitle={t('pages:infrastructure.nodesDescription')}
         action={
-          <Stack direction="horizontal" gap="sm" align="center">
-            <span className={styles.totalBadge}>
-              {t('pages:infrastructure.totalNodes', { count: total })}
-            </span>
-            <Button variant="secondary" size="sm" onClick={refetch}>
-              {t('pages:infrastructure.refresh')}
-            </Button>
-          </Stack>
+          <Button variant="primary" size="sm" className={styles.refreshButton} onClick={refetch}>
+            {t('pages:infrastructure.refresh')}
+          </Button>
         }
       />
 
       {error && <ErrorBanner error={error} onRetry={refetch} />}
 
       <ListFilterToolbar
+        variant="boxed"
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('pages:infrastructure.searchNodesPlaceholder')}
         searchValue={searchInput}
         onSearchChange={(v) => { setSearchInput(v); resetPage(); }}
@@ -248,37 +259,26 @@ export default function InfraNodesPage() {
         </button>
       </ListFilterToolbar>
 
-      <Card padding="none">
-        <Tabs value={selectedType} onValueChange={handleTypeChange}>
-          <div className={styles.tabBar}>
-            <TabsList>
-              {NODE_TYPES.map((tp) => (
-                <TabsTrigger key={tp} value={tp}>
-                  {tp === 'all' ? t('pages:infrastructure.filterAll') : tp}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            {/* Type filter — only shown on the "all" tab */}
-            {selectedType === 'all' && (
-              <div className={styles.tabBarRight}>
-                <select
-                  aria-label={t('pages:infrastructure.filterType')}
-                  value={typeFilter}
-                  onChange={(e) => { setTypeFilter(e.target.value); resetPage(); }}
-                  className={styles.filterSelect}
-                >
-                  <option value="">{t('pages:infrastructure.filterAllTypes')}</option>
-                  {TYPE_OPTIONS.map((tp) => (
-                    <option key={tp} value={tp}>{tp}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
+      <Tabs value={selectedType} onValueChange={handleTypeChange}>
+        <div className={styles.tabBar}>
+          <TabsList className={styles.tabsList}>
+            {NODE_TYPES.map((tp) => (
+              <TabsTrigger key={tp} value={tp}>
+                {tp === 'all' ? t('pages:infrastructure.filterAll') : tp}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
-          {NODE_TYPES.map((tp) => (
-            <TabsContent key={tp} value={tp}>
+        <div className={styles.listCount}>
+          {t('pages:infrastructure.totalNodes', { count: total })}
+        </div>
+
+        {NODE_TYPES.map((tp) => (
+          <TabsContent key={tp} value={tp} className={styles.tabContent}>
+            <Card padding="none">
               <DataTable
+                className={styles.nodesTable}
                 columns={columns}
                 data={nodes}
                 onRowClick={onRowClick}
@@ -293,10 +293,10 @@ export default function InfraNodesPage() {
                     : {}
                 }
               />
-            </TabsContent>
-          ))}
-        </Tabs>
-      </Card>
+            </Card>
+          </TabsContent>
+        ))}
+      </Tabs>
 
       {total > 0 ? (
         <ListPagination

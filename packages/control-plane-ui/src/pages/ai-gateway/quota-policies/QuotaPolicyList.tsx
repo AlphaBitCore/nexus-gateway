@@ -8,9 +8,10 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useMutation } from '@/hooks/useMutation';
 import { usePermission } from '@/hooks/usePermission';
 import {
-  PageHeader, DataTable, ListFilterToolbar, AlertDialog,
+  PageHeader, DataTable, AlertDialog,
   Skeleton, ErrorBanner, Button, Stack, Card,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
+  Input,
   RowActions, RowActionIconButton, RowDeleteAction, OpenActionIcon,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
@@ -116,10 +117,9 @@ export function QuotaPolicyListPage() {
       render: (r) => {
         const main = scopeLabel[r.scope] ?? r.scope;
         const period = periodLabel[r.periodType] ?? r.periodType;
-        // Compose the sub-label from the scope's natural qualifier
-        // (org name for organization scope, vk type for vk scope, etc.)
-        // followed by the period. We always show period because it's
-        // a critical reading-the-policy signal that doesn't fit in main.
+        // Sub-label: the scope's qualifier (org name for organization scope,
+        // vk type for vk scope) plus the period. Period is always shown — it's
+        // critical to reading the policy and doesn't fit in main.
         let qualifier = '';
         if (r.scope === 'organization') {
           qualifier = r.organizationId
@@ -173,7 +173,7 @@ export function QuotaPolicyListPage() {
   ];
 
   return (
-    <Stack gap="lg">
+    <Stack gap="lg" className={styles.pageStack}>
       <PageHeader
         title={t('pages:quotaPolicies.title')}
         subtitle={t('pages:quotaPolicies.subtitle')}
@@ -184,40 +184,61 @@ export function QuotaPolicyListPage() {
         }
       />
 
-      <ListFilterToolbar
-        variant="boxed"
-        searchPlaceholder={t('pages:quotaPolicies.searchPlaceholder')}
-        searchValue={search}
-        onSearchChange={onSearchChange}
-        meta={
-          total === 0
+      <div className={styles.filterToolbar} role="search">
+        <div className={styles.filterRow}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon} aria-hidden="true" />
+            <Input
+              type="text"
+              enterKeyHint="search"
+              autoComplete="off"
+              aria-label={t('pages:quotaPolicies.searchPlaceholder')}
+              placeholder={t('pages:quotaPolicies.searchPlaceholder')}
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              className={styles.searchInput}
+            />
+            {search.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className={styles.clearSearchButton}
+                aria-label={t('common:clear')}
+                title={t('common:clear')}
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <select
+            aria-label={t('pages:quotaPolicies.filterByScope')}
+            value={scopeFilter}
+            onChange={onScopeFilterChange}
+            className={styles.filterSelect}
+          >
+            <option value="">{t('pages:quotaPolicies.allScopes')}</option>
+            <option value="user">{t('pages:quotaPolicies.scopeUser')}</option>
+            <option value="vk">{t('pages:quotaPolicies.scopeVk')}</option>
+            <option value="project">{t('pages:quotaPolicies.scopeProject')}</option>
+            <option value="organization">{t('pages:quotaPolicies.scopeOrganization')}</option>
+          </select>
+          <select
+            aria-label={t('pages:quotaPolicies.filterByEnabled')}
+            value={enabledFilter}
+            onChange={onEnabledFilterChange}
+            className={styles.filterSelect}
+          >
+            <option value="">{t('pages:quotaPolicies.allStatuses')}</option>
+            <option value="true">{t('common:enabled')}</option>
+            <option value="false">{t('common:disabled')}</option>
+          </select>
+        </div>
+        <div className={styles.filterMeta}>
+          {total === 0
             ? t('pages:quotaPolicies.noPoliciesMatch')
-            : t('pages:quotaPolicies.showingPolicies', { count: rows.length, total: total.toLocaleString() })
-        }
-      >
-        <select
-          aria-label={t('pages:quotaPolicies.filterByScope')}
-          value={scopeFilter}
-          onChange={onScopeFilterChange}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:quotaPolicies.allScopes')}</option>
-          <option value="user">{t('pages:quotaPolicies.scopeUser')}</option>
-          <option value="vk">{t('pages:quotaPolicies.scopeVk')}</option>
-          <option value="project">{t('pages:quotaPolicies.scopeProject')}</option>
-          <option value="organization">{t('pages:quotaPolicies.scopeOrganization')}</option>
-        </select>
-        <select
-          aria-label={t('pages:quotaPolicies.filterByEnabled')}
-          value={enabledFilter}
-          onChange={onEnabledFilterChange}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:quotaPolicies.allStatuses')}</option>
-          <option value="true">{t('common:enabled')}</option>
-          <option value="false">{t('common:disabled')}</option>
-        </select>
-      </ListFilterToolbar>
+            : t('pages:quotaPolicies.showingPolicies', { count: rows.length, total: total.toLocaleString() })}
+        </div>
+      </div>
 
       <Card padding="none">
         <DataTable

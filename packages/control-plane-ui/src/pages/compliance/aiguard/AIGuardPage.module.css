@@ -10,6 +10,63 @@
   gap: 1rem;
 }
 
+.configHeader {
+  margin-top: var(--g-space-2);
+  margin-bottom: calc(12px - var(--g-space-4));
+}
+
+.configTitle {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 24px;
+}
+
+.configSubtitle {
+  margin: 4px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-xs);
+  line-height: 20px;
+}
+
+.headerSubtitle {
+  max-width: none !important;
+  white-space: nowrap;
+}
+
+.twoColumnGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.twoColumnGrid > * {
+  min-width: 0;
+}
+
+.providerModelGrid :global(label) {
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: flex-start !important;
+  flex-direction: column !important;
+  gap: var(--g-space-2) !important;
+}
+
+.providerModelGrid :global(label > span) {
+  min-width: max-content;
+  padding-top: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: 20px;
+}
+
+.providerModelGrid :global(label > button) {
+  width: 100%;
+}
+
 .radioRow {
   display: flex;
   align-items: center;
@@ -33,7 +90,7 @@
   background: var(--color-danger-light);
   color: var(--color-danger-text);
   padding: 0.75rem 1rem;
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   font-size: 0.875rem;
   line-height: 1.4;
 }
@@ -57,10 +114,12 @@
   min-height: 180px;
   width: 100%;
   resize: vertical;
+  background: var(--color-bg);
 }
 
 .numberField {
-  max-width: 180px;
+  width: 100%;
+  max-width: none;
 }
 
 .headerRow {
@@ -97,6 +156,7 @@
 
 .copyButton {
   flex-shrink: 0;
+  height: 36px;
   white-space: nowrap;
 }
 
@@ -106,9 +166,17 @@
   margin-top: 0.5rem;
 }
 
+.actions :global(button),
+.copyButton,
+.copyButton :global(*),
+.promptFieldHeader :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
 .subheading {
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0.5rem 0 0;
 }
 
@@ -116,4 +184,14 @@
   font-size: 0.8125rem;
   color: var(--color-text-secondary);
   margin: 0 0 0.5rem;
+}
+
+@media (max-width: 720px) {
+  .headerSubtitle {
+    white-space: normal;
+  }
+
+  .twoColumnGrid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -25,6 +25,7 @@ export {
   RowActionTextLinkButton,
   RowActionTerminal,
   RowDeleteAction,
+  EditActionIcon,
   OpenActionIcon,
   RevokeActionIcon,
   DeleteActionIcon,

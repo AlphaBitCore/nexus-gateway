@@ -69,7 +69,9 @@ export function useVirtualKeyDetail() {
     setEditRateLimitRpm(vk.rateLimitRpm != null ? String(vk.rateLimitRpm) : '');
     setEditSelectedModels(Array.isArray(vk.allowedModels) ? vk.allowedModels : []);
     setEditExpiresAt(vk.expiresAt ? vk.expiresAt.split('T')[0] : '');
-    setEditNeverExpires(!vk.expiresAt);
+    // Application VKs always have an expiry; never-expires is only valid for
+    // personal VKs and is not shown on this admin surface.
+    setEditNeverExpires(false);
     setIsEditing(true);
   };
 
@@ -83,7 +85,10 @@ export function useVirtualKeyDetail() {
         enabled: editEnabled,
         rateLimitRpm: editRateLimitRpm ? Number(editRateLimitRpm) : undefined,
         allowedModels: editSelectedModels,
-        expiresAt: editNeverExpires ? null : editExpiresAt || undefined,
+        // Application VKs always require an expiry; stamp end-of-day UTC so the
+        // date is usable through the full calendar day and satisfies the backend's
+        // RFC3339 parser. Never send null (never-expire) for application VKs.
+        expiresAt: editExpiresAt ? `${editExpiresAt}T23:59:59Z` : undefined,
       },
     });
   };

@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
-  DataTable, Button, Stack, Card, AlertDialog,
+  DataTable, Button, Stack, AlertDialog,
+  RowActions, RowActionIconButton, OpenActionIcon, DeleteActionIcon,
 } from '@/components/ui';
 import type { IamPolicyAttachment } from '@/api/types';
 import type { UseIamUserDetailReturn } from './useIamUserDetail';
@@ -71,20 +72,28 @@ export function UserPermissionsTab({
   detachPolicyLoading,
 }: Props) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   return (
     <Stack gap="lg">
       {/* ── Section 1: Effective Policies ── */}
-      <Card>
-        <Stack direction="horizontal" justify="between" align="center" className={styles.sectionTitleRow}>
-          <h3 className={styles.sectionTitleText}>{t('pages:iam.effectivePolicies')}</h3>
-          <Button onClick={() => setShowAttachPolicy(!showAttachPolicy)}>
+      <section className={styles.permissionSection}>
+        <div className={styles.permissionHeader}>
+          <div className={styles.permissionTitleBlock}>
+            <h3 className={styles.sectionTitleText}>{t('pages:iam.effectivePolicies')}</h3>
+            <p className={styles.rolesSectionDesc}>
+              {t('pages:iam.effectivePoliciesDesc')}
+            </p>
+          </div>
+          <button
+            type="button"
+            className={styles.linkActionButton}
+            onClick={() => setShowAttachPolicy(!showAttachPolicy)}
+          >
+            <span className={styles.linkActionIcon} aria-hidden="true">+</span>
             {t('pages:iam.attachPolicy')}
-          </Button>
-        </Stack>
-        <p className={styles.rolesSectionDesc}>
-          {t('pages:iam.effectivePoliciesDesc')}
-        </p>
+          </button>
+        </div>
 
         {showAttachPolicy && (
           <div className={styles.inlineForm}>
@@ -130,38 +139,53 @@ export function UserPermissionsTab({
             },
             {
               key: 'actions',
-              label: '',
-              render: (r: IamPolicyAttachment) =>
-                r.source === 'direct' ? (
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDetachingPolicy({ attachmentId: r.id, policyName: r.policyName ?? r.policyId });
-                    }}
+              label: t('common:actions', 'Actions'),
+              render: (r: IamPolicyAttachment) => (
+                <RowActions>
+                  <RowActionIconButton
+                    label={t('common:view', 'View')}
+                    onAction={() => navigate(`/iam/policies/${r.policyId}`)}
                   >
-                    {t('pages:iam.detach')}
-                  </Button>
-                ) : null,
+                    <OpenActionIcon />
+                  </RowActionIconButton>
+                  {r.source === 'direct' && (
+                    <RowActionIconButton
+                      label={t('pages:iam.detach')}
+                      tone="danger"
+                      onAction={() => {
+                        setDetachingPolicy({ attachmentId: r.id, policyName: r.policyName ?? r.policyId });
+                      }}
+                    >
+                      <DeleteActionIcon />
+                    </RowActionIconButton>
+                  )}
+                </RowActions>
+              ),
             },
           ]}
           data={allPolicies}
           emptyMessage={t('pages:iam.noPoliciesAttached')}
         />
-      </Card>
+      </section>
 
       {/* ── Section 2: Role Memberships ── */}
-      <Card>
-        <Stack direction="horizontal" justify="between" align="center" className={styles.sectionTitleRow}>
-          <h3 className={styles.sectionTitleText}>{t('pages:iam.roleMemberships')}</h3>
-          <Button onClick={() => setShowAddRole(!showAddRole)}>
+      <section className={styles.permissionSection}>
+        <div className={styles.permissionHeader}>
+          <div className={styles.permissionTitleBlock}>
+            <h3 className={styles.sectionTitleText}>{t('pages:iam.roleMemberships')}</h3>
+            <p className={styles.rolesSectionDesc}>
+              {t('pages:iam.rolesSectionDesc')}
+            </p>
+          </div>
+          <button
+            type="button"
+            className={styles.linkActionButton}
+            onClick={() => setShowAddRole(!showAddRole)}
+          >
+            <span className={styles.linkActionIcon} aria-hidden="true">+</span>
             {t('pages:iam.attachRole')}
-          </Button>
-        </Stack>
-        <p className={styles.rolesSectionDesc}>
-          {t('pages:iam.rolesSectionDesc')}
-        </p>
+          </button>
+        </div>
 
         {showAddRole && (
           <div className={styles.inlineForm}>
@@ -199,25 +223,32 @@ export function UserPermissionsTab({
             },
             {
               key: 'actions',
-              label: '',
+              label: t('common:actions', 'Actions'),
               render: (r: RoleRow) => (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setRemovingRole({ groupId: r.groupId, groupName: r.groupName });
-                  }}
-                >
-                  {t('pages:iam.detach')}
-                </Button>
+                <RowActions>
+                  <RowActionIconButton
+                    label={t('common:view', 'View')}
+                    onAction={() => navigate(`/iam/roles/${r.groupId}`)}
+                  >
+                    <OpenActionIcon />
+                  </RowActionIconButton>
+                  <RowActionIconButton
+                    label={t('pages:iam.detach')}
+                    tone="danger"
+                    onAction={() => {
+                      setRemovingRole({ groupId: r.groupId, groupName: r.groupName });
+                    }}
+                  >
+                    <DeleteActionIcon />
+                  </RowActionIconButton>
+                </RowActions>
               ),
             },
           ]}
           data={currentRoles}
           emptyMessage={t('pages:iam.noRoleMemberships')}
         />
-      </Card>
+      </section>
 
       {/* Confirm dialogs */}
       <AlertDialog

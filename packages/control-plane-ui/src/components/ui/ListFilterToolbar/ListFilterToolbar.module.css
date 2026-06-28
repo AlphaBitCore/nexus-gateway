@@ -44,7 +44,7 @@
   bottom: -4px;
   width: 7px;
   height: 2px;
-  border-radius: 2px;
+  border-radius: var(--g-radius-xs);
   background: var(--color-text-secondary);
   transform: rotate(45deg);
 }
@@ -67,14 +67,14 @@
 }
 
 .boxed .searchBox {
-  width: min(100%, 420px);
+  width: min(100%, var(--list-filter-search-width, 420px));
   max-width: 100%;
-  flex: 0 1 420px;
+  flex: 0 1 var(--list-filter-search-width, 420px);
   display: flex;
   align-items: center;
   height: 38px;
   border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   background: var(--color-surface);
   overflow: hidden;
 }
@@ -108,11 +108,15 @@
   flex: 1 1 auto;
   border: 0;
   border-radius: 0;
-  padding: 0;
+  padding: 0 10px 0 0;
   background: transparent;
   box-shadow: none;
   color: var(--color-text);
   font-size: var(--g-font-size-sm);
+}
+
+.boxed .searchInput::-webkit-search-cancel-button {
+  margin-right: 6px;
 }
 
 .boxed .searchInput::placeholder {
@@ -136,7 +140,7 @@
   height: 38px;
   padding: 0 36px 0 14px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   background-color: var(--color-surface);
   background-image: url('/icons/chevron-down.svg');
   background-position: calc(100% - 12px) 50%;
@@ -144,7 +148,7 @@
   background-size: 16px 16px;
   color: var(--color-text-secondary);
   font-family: var(--g-font-sans);
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   line-height: 24px;
   cursor: pointer;
 }
@@ -161,7 +165,7 @@
   background: transparent;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
   cursor: pointer;
   white-space: nowrap;
@@ -173,7 +177,7 @@
 }
 
 .meta {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
   margin-top: var(--g-space-2);
   padding-top: 0;

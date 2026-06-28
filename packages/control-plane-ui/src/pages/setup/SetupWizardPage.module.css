@@ -2,14 +2,16 @@
 
 /* -- Wizard Root --------------------------------------------------- */
 .wizardRoot {
-  max-width: 780px;
-  margin: 0 auto;
-  padding: 2rem 1rem;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 .wizardTitle {
   font-size: 1.5rem;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   margin: 0 0 0.25rem;
   color: var(--color-text);
 }
@@ -21,15 +23,20 @@
 }
 
 /* -- Step Bar ------------------------------------------------------ */
+.stepBarCard {
+  margin-bottom: 1.5rem;
+}
+
 .stepBar {
   display: flex;
   gap: 2px;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 
 .stepBarItem {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -42,6 +49,26 @@
   cursor: pointer;
   border-radius: var(--g-radius-md);
   transition: background 0.15s;
+}
+
+.stepBarItem:not(:first-child)::before,
+.stepBarItem:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 22px;
+  height: 1px;
+  background: var(--color-border);
+  pointer-events: none;
+}
+
+.stepBarItem:not(:first-child)::before {
+  right: calc(50% + 14px);
+  left: 0;
+}
+
+.stepBarItem:not(:last-child)::after {
+  right: 0;
+  left: calc(50% + 14px);
 }
 
 .stepBarItem:hover:not(:disabled) {
@@ -63,14 +90,16 @@
 }
 
 .stepBarCircle {
+  position: relative;
+  z-index: 1;
   width: 28px;
   height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   background: var(--color-border);
   color: var(--color-text);
   flex-shrink: 0;
@@ -90,7 +119,7 @@
 
 .stepBarItemCurrent .stepBarLabel {
   color: var(--color-text);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 /* -- Step Panel ---------------------------------------------------- */
@@ -106,7 +135,7 @@
 
 .stepTitle {
   font-size: 1.25rem;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0;
   color: var(--color-text);
 }
@@ -118,10 +147,31 @@
   line-height: 1.5;
 }
 
+.complianceHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.complianceTitle {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 24px;
+}
+
+.complianceDesc {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 /* -- Detected Data / Summary --------------------------------------- */
 .detectedLabel {
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   color: var(--color-success);
@@ -157,7 +207,7 @@
 
 .formLabel {
   font-size: 0.8125rem;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
 }
 
@@ -167,7 +217,7 @@
   padding: 0 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   font-family: var(--g-font-sans);
   color: var(--color-text);
   background: var(--color-surface);
@@ -186,7 +236,7 @@
   padding: 0 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   font-family: var(--g-font-sans);
   color: var(--color-text);
   background: var(--color-surface);
@@ -240,8 +290,18 @@
   border-top: 1px solid var(--color-border);
 }
 
+.navBar :global(button),
+.navBar :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
 .complianceActions {
   margin-top: 1rem;
+}
+
+.complianceActions :global(button),
+.complianceActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
 }
 
 .summaryActions {

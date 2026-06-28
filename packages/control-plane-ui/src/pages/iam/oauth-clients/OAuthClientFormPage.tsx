@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   oauthClientApi,
@@ -11,10 +11,11 @@ import {
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 import {
-  PageHeader, Breadcrumb, Stack, Card, Button, Input, FormField, Select, Checkbox,
+  PageHeader, Stack, Card, Button, Input, FormField, Select, Switch,
   Skeleton, ErrorBanner, SecretDialog,
 } from '@/components/ui';
 import { ChipInput } from '../_shared/ChipInput';
+import detailStyles from '../_shared/Iam.module.css';
 import styles from './OAuthClientFormPage.module.css';
 
 const ID_REGEX = /^[a-z][a-z0-9-]{2,63}$/;
@@ -234,26 +235,34 @@ export function OAuthClientFormPage() {
   if (isEdit && error) return <ErrorBanner message={error.message} onRetry={refetch} />;
 
   const submitting = creating || updating;
+  const title = isEdit ? data?.data?.name ?? '' : t('pages:iam.oauthClients.createButton');
 
   return (
-    <Stack gap="lg">
-      <Breadcrumb items={[
-        { label: t('pages:iam.oauthClients.pageTitle'), to: '/iam/oauth-clients' },
-        ...(isEdit && data?.data
-          ? [
-              { label: data.data.name, to: `/iam/oauth-clients/${editId}` },
-              { label: t('common:edit') },
-            ]
-          : [{ label: t('pages:iam.oauthClients.createButton') }]),
-      ]} />
+    <Stack gap="lg" className={styles.page}>
+      {isEdit ? (
+        <section className={detailStyles.detailHeader}>
+          <div className={detailStyles.detailHeaderRow}>
+            <Link to={`/iam/oauth-clients/${editId}`} className={detailStyles.detailBackLink} aria-label={t('common:back')}>
+              <svg className={detailStyles.detailBackIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Link>
+            <div className={detailStyles.detailHeaderText}>
+              <h1 className={detailStyles.detailTitle}>{title}</h1>
+              <div className={detailStyles.detailMeta}>
+                <span>{t('common:edit')}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <PageHeader title={title} />
+      )}
 
-      <PageHeader
-        title={isEdit ? data?.data?.name ?? '' : t('pages:iam.oauthClients.createButton')}
-      />
-
-      <Card>
+      <Card className={styles.formCard}>
         <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }}>
-          <Stack gap="md">
+          <div className={styles.formGrid}>
             <FormField
               label={t('pages:iam.oauthClients.formIdLabel')}
               required={!isEdit}
@@ -293,12 +302,24 @@ export function OAuthClientFormPage() {
               />
             </FormField>
 
-            <FormField
-              label={t('pages:iam.oauthClients.formRedirectUrisLabel')}
-              required
-              helpText={t('pages:iam.oauthClients.formRedirectUrisHint')}
-              error={fieldErrors.redirectUris}
-            >
+            <div className={`${styles.redirectField} ${styles.fullWidthField}`}>
+              <div className={styles.redirectTitleRow}>
+                <div>
+                  <span className={styles.fieldLabel}>
+                    {t('pages:iam.oauthClients.formRedirectUrisLabel')} <span aria-hidden="true">*</span>
+                  </span>
+                  <p className={styles.fieldHint}>{t('pages:iam.oauthClients.formRedirectUrisHint')}</p>
+                  {fieldErrors.redirectUris && <p className={styles.fieldError}>{fieldErrors.redirectUris}</p>}
+                </div>
+                <button
+                  type="button"
+                  className={styles.addRedirectButton}
+                  onClick={() => updateField('redirectUris', [...form.redirectUris, ''])}
+                  disabled={form.redirectUris.length >= 20}
+                >
+                  + {t('pages:iam.oauthClients.formAddRedirectUri')}
+                </button>
+              </div>
               <Stack gap="sm">
                 {form.redirectUris.map((uri, i) => (
                   <Stack key={i} direction="horizontal" gap="sm" className={styles.redirectRow}>
@@ -329,37 +350,31 @@ export function OAuthClientFormPage() {
                     </Button>
                   </Stack>
                 ))}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => updateField('redirectUris', [...form.redirectUris, ''])}
-                  disabled={form.redirectUris.length >= 20}
-                >
-                  + {t('pages:iam.oauthClients.formAddRedirectUri')}
-                </Button>
               </Stack>
-            </FormField>
+            </div>
 
             <FormField
+              className={styles.fullWidthField}
               label={t('pages:iam.oauthClients.formAllowedScopesLabel')}
               required
               helpText={t('pages:iam.oauthClients.formAllowedScopesHint')}
               error={fieldErrors.allowedScopes}
             >
-              <ChipInput
-                value={form.allowedScopes}
-                onChange={(v) => updateField('allowedScopes', v)}
-                suggestions={KNOWN_SCOPES}
-                validate={(chip) => SCOPE_REGEX.test(chip)}
-                placeholder="openid"
-                ariaLabel={t('pages:iam.oauthClients.formAllowedScopesLabel')}
-              />
+              <div className={styles.scopesInput}>
+                <ChipInput
+                  value={form.allowedScopes}
+                  onChange={(v) => updateField('allowedScopes', v)}
+                  suggestions={KNOWN_SCOPES}
+                  validate={(chip) => SCOPE_REGEX.test(chip)}
+                  placeholder="openid"
+                  ariaLabel={t('pages:iam.oauthClients.formAllowedScopesLabel')}
+                />
+              </div>
             </FormField>
 
             <FormField label={t('pages:iam.oauthClients.formRequirePkceLabel')}>
-              <label className={styles.checkboxRow}>
-                <Checkbox
+              <div className={styles.switchRow}>
+                <Switch
                   checked={form.requirePkce}
                   onCheckedChange={(c) => updateField('requirePkce', c === true)}
                   disabled={form.type === 'public'}
@@ -374,7 +389,7 @@ export function OAuthClientFormPage() {
                     </span>
                   )}
                 </span>
-              </label>
+              </div>
             </FormField>
 
             <FormField
@@ -408,11 +423,9 @@ export function OAuthClientFormPage() {
                 max={REFRESH_TTL_MAX}
               />
             </FormField>
+          </div>
 
-            <Stack direction="horizontal" gap="sm" className={styles.formActions}>
-              <Button type="button" variant="secondary" onClick={onCancel}>
-                {t('pages:iam.oauthClients.formCancel')}
-              </Button>
+          <Stack direction="horizontal" gap="sm" className={styles.formActions}>
               <Button type="submit" disabled={!canSubmit || submitting}>
                 {submitting
                   ? '...'
@@ -420,7 +433,9 @@ export function OAuthClientFormPage() {
                     ? t('pages:iam.oauthClients.formSubmitSave')
                     : t('pages:iam.oauthClients.formSubmitCreate')}
               </Button>
-            </Stack>
+              <Button type="button" variant="secondary" onClick={onCancel}>
+                {t('pages:iam.oauthClients.formCancel')}
+              </Button>
           </Stack>
         </form>
       </Card>

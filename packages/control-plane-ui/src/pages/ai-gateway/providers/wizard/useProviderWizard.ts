@@ -8,6 +8,9 @@ import { useApi } from '@/hooks/useApi';
 import type { ApiProviderTemplate, WizardModel } from './types';
 import { FEATURED_PROVIDER_TEMPLATE_NAMES } from './types';
 import { featuredTemplatesFirst } from './helpers';
+import { useFetchModels } from './useFetchModels';
+
+const DEFAULT_VISIBLE_TEMPLATE_COUNT = 16;
 
 export function useProviderWizard() {
   const { t } = useTranslation();
@@ -42,8 +45,8 @@ export function useProviderWizard() {
 
   const defaultCollapsedTemplates = useMemo(() => {
     const featured = featuredTemplatesFirst(filteredTemplates);
-    if (featured.length > 0) return featured;
-    return filteredTemplates.slice(0, FEATURED_PROVIDER_TEMPLATE_NAMES.length);
+    const ordered = featured.length > 0 ? featured : filteredTemplates;
+    return ordered.slice(0, DEFAULT_VISIBLE_TEMPLATE_COUNT);
   }, [filteredTemplates]);
 
   const templatesForGrid = useMemo(() => {
@@ -162,6 +165,12 @@ export function useProviderWizard() {
 
   const [models, setModels] = useState<WizardModel[]>([]);
   const [manualMode, setManualMode] = useState(false);
+
+  // Fetch-from-/v1/models capability — isolated in its own hook to keep
+  // this file within the line-count ratchet (500 lines).
+  const { fetchModels, fetchingModels, fetchModelsError, fetchModelsUnsupported, fetchModelsCount } =
+    useFetchModels({ adapterType, baseUrl, apiKey, setModels });
+
   const [newModelId, setNewModelId] = useState('');
   const [newModelName, setNewModelName] = useState('');
   const [newModelDescription, setNewModelDescription] = useState('');
@@ -325,8 +334,7 @@ export function useProviderWizard() {
       // inline. Backend wraps provider + models + credential inserts in
       // one transaction — a duplicate provider name or a duplicate
       // (providerId, providerModelId) triggers a rollback and the DB
-      // stays clean. Wizard no longer has to loop over models or make
-      // three separate requests.
+      // stays clean.
       const selectedModels = models.filter((m) => m.selected);
       const payloadModels = selectedModels.map((m) => ({
         providerModelId: m.modelId,
@@ -443,6 +451,11 @@ export function useProviderWizard() {
     existingModelCodes,
     modelCodeConflicts,
     updateModelId,
+    fetchModels,
+    fetchingModels,
+    fetchModelsError,
+    fetchModelsUnsupported,
+    fetchModelsCount,
 
     /* navigation */
     canNext,

@@ -4273,10 +4273,22 @@ def phase6_db_crosscheck(db: DBClient, t0_iso: str, db_poll_timeout: int):
     log_info(f"DB cross-check: {found} matched, {missing} missing, {len(warn_list)} warnings")
 
 
-def phase6b_normalize_check(db: DBClient, t0_iso: str):
-    """E46 traffic_event_normalized verification (sidecar table).
+def phase6b_normalize_check(db: DBClient, cp: CPClient, t0_iso: str):
+    """Normalized-payload verification — the canonical request/response projection.
 
-    For every t0+ ai-gateway row, confirm:
+    Two storage architectures are validated transparently:
+
+      - sidecar (legacy): the traffic_event_normalized table holds the
+        projection, written at audit time. Read via a flat SQL join.
+      - view-time (lazy normalize): the projection is NEVER persisted — the
+        control plane recomputes it on demand from the stored raw body via
+        GET /api/admin/traffic/:id/normalized. When the sidecar is empty for
+        the whole window the deployment is on this path, so P6b validates the
+        endpoint instead (the same recompute the UI's Normalized tab runs),
+        sampling one event per model. Asserting the absent sidecar would be a
+        false failure; this exercises the path that actually serves users.
+
+    For every validated event, confirm:
       - request_status == 'ok' AND response_status == 'ok'
       - content array is present (NOT JSON null — Message.MarshalJSON
         should always emit `[]` at minimum even when the model produced
@@ -4290,7 +4302,7 @@ def phase6b_normalize_check(db: DBClient, t0_iso: str):
     Surface every flagged row so the user can inspect via the UI's
     Normalized | Raw tabs.
     """
-    log_step("P6b Normalized payload verification (traffic_event_normalized)")
+    log_step("P6b Normalized payload verification")
 
     if db.is_remote and not db.has_ssh:
         log_info("  Remote environment without ssh-host — P6b skipped")
@@ -4303,6 +4315,143 @@ def phase6b_normalize_check(db: DBClient, t0_iso: str):
         rec("P6b", "normalize-check").warning("no rows")
         return
 
+    # Architecture detection: the sidecar carries request_status ONLY when the
+    # projection was persisted at audit time. If no row in the window has it, the
+    # deployment recomputes at view time and the sidecar is empty by design —
+    # validate the endpoint rather than false-fail on an intentionally-absent table.
+    # Require EVERY row to carry a persisted projection before trusting the
+    # sidecar: on the lazy-normalize path most rows have no sidecar (only the
+    # embedding / smart-routing-reuse artifacts do), so any() would wrongly pick
+    # sidecar mode off a handful of artifact rows and then fail every lazy chat
+    # row. all() picks sidecar mode only for a genuine write-time-normalize
+    # deployment where the whole window is persisted.
+    sidecar_present = all(r.get("request_status") for r in rows)
+    if sidecar_present:
+        _eval_normalize_rows(rows, "sidecar")
+        return
+
+    log_info(
+        "  Sidecar empty for the whole window — lazy-normalize deployment; "
+        "validating view-time recompute via /api/admin/traffic/:id/normalized"
+    )
+    sampled = _viewtime_normalize_rows(cp, rows)
+    if not sampled:
+        log_warn("  View-time endpoint returned no usable rows — P6b skipped")
+        rec("P6b", "normalize-check").warning("view-time: no rows")
+        return
+    _eval_normalize_rows(sampled, "view-time")
+
+
+def _viewtime_normalize_rows(cp: CPClient, base_rows: list[dict]) -> list[dict]:
+    """Fetch the view-time-recomputed normalized projection for a sample of
+    events and map each into the SAME flat shape fetch_normalized_rows emits, so
+    the shared evaluator runs unchanged.
+
+    Samples one (most-recent) 200-status event per distinct model: the recompute
+    is deterministic per codec path, so one event per model covers every model's
+    normalize shape without a per-event HTTP storm. Models covered and any
+    fetch/HTTP errors are logged — no silent caps.
+    """
+
+    def _i(s) -> int:
+        try:
+            return int(s) if s else 0
+        except (ValueError, TypeError):
+            return 0
+
+    def _jtype(v) -> str:
+        if isinstance(v, list):
+            return "array"
+        if isinstance(v, dict):
+            return "object"
+        if isinstance(v, str):
+            return "string"
+        return ""  # None / absent → '' (matches the SQL COALESCE default)
+
+    # base_rows are ordered timestamp DESC, so the first seen per model is latest.
+    by_model: dict[str, dict] = {}
+    for r in base_rows:
+        if _i(r.get("status_code")) != 200:
+            continue
+        by_model.setdefault(r["model_name"], r)
+
+    out: list[dict] = []
+    errors = 0
+    for model, base in by_model.items():
+        eid = base["id"]
+        try:
+            status, payload = cp.get(f"/api/admin/traffic/{eid}/normalized")
+        except Exception as exc:  # noqa: BLE001 — network/JSON failures are real findings
+            log_fail(f"  [{model} {eid[:8]}] view-time normalize fetch error: {exc}")
+            rec("P6b", f"{model}/{eid[:8]}/viewtime-fetch").failed(str(exc)[:60])
+            errors += 1
+            continue
+        if status != 200:
+            log_fail(f"  [{model} {eid[:8]}] view-time normalize HTTP {status}")
+            rec("P6b", f"{model}/{eid[:8]}/viewtime-http").failed(f"HTTP {status}")
+            errors += 1
+            continue
+        rn = payload.get("responseNormalized")
+        has_resp = isinstance(rn, dict) and len(rn) > 0
+        rn = rn or {}
+        req_status = payload.get("requestStatus", "") or ""
+        resp_status = payload.get("responseStatus", "") or ""
+        kind = rn.get("kind", "") or ""
+        if not has_resp:
+            # Request-only event: embeddings return a vector, not a chat
+            # projection, so the endpoint omits responseNormalized entirely. The
+            # only projection that exists is the request — mirror its status so
+            # the shared gate validates the recompute that actually ran, and mark
+            # the row ai-embedding so the chat-shape assertions are skipped.
+            kind = "ai-embedding"
+            resp_status = req_status
+        msgs = rn.get("messages") or []
+        m0 = msgs[0] if msgs else {}
+        content = m0.get("content")
+        blocks = content if isinstance(content, list) else []
+        u = rn.get("usage") or {}
+
+        def _blk(i: int, k: str, _blocks=blocks):
+            return _blocks[i].get(k) if i < len(_blocks) and isinstance(_blocks[i], dict) else None
+
+        def _us(k: str, _u=u) -> str:
+            v = _u.get(k)
+            return str(v) if v is not None else ""
+
+        out.append({
+            "id": eid,
+            "model_name": model,
+            "status_code": base["status_code"],
+            "request_status": req_status,
+            "response_status": resp_status,
+            "request_error_reason": payload.get("requestError", "") or "",
+            "response_error_reason": payload.get("responseError", "") or "",
+            "content_type": _jtype(content),
+            "content_len": str(len(blocks)),
+            "finish_reason": m0.get("finishReason", "") or "",
+            "prompt_tokens": _us("promptTokens"),
+            "completion_tokens": _us("completionTokens"),
+            "total_tokens": _us("totalTokens"),
+            "reasoning_tokens": _us("reasoningTokens"),
+            "cache_read_tokens": _us("cacheReadTokens"),
+            "cache_creation_tokens": _us("cacheCreationTokens"),
+            "b0_type": _blk(0, "type") or "",
+            "b0_len": str(len(_blk(0, "text") or "")),
+            "b1_type": _blk(1, "type") or "",
+            "b1_len": str(len(_blk(1, "text") or "")),
+            "kind": kind,
+        })
+    log_info(
+        f"  View-time sample: {len(out)} model(s) validated"
+        + (f", {errors} fetch/HTTP error(s)" if errors else "")
+        + f" (of {len(by_model)} distinct models in window)"
+    )
+    return out
+
+
+def _eval_normalize_rows(rows: list[dict], source: str):
+    """Run the per-row normalize assertions over a flat row set (sidecar SQL join
+    OR view-time endpoint — identical shape). Records P6b pass/warn/fail per row."""
     ok_count, fail_count, warn_count = 0, 0, 0
     failures: list[str] = []
     warnings: list[str] = []
@@ -4424,7 +4573,7 @@ def phase6b_normalize_check(db: DBClient, t0_iso: str):
         ok_count += 1
 
     log_info(
-        f"Normalize check: {ok_count} ok, {warn_count} warnings, "
+        f"Normalize check [{source}]: {ok_count} ok, {warn_count} warnings, "
         f"{fail_count} failures across {len(rows)} rows"
     )
     if failures:
@@ -5689,10 +5838,10 @@ and Redis cache flushing are skipped automatically.
         # P6
         phase6_db_crosscheck(db, t0_iso, args.db_poll_timeout)
 
-        # P6b — E46 normalize verification (sidecar table). Gives the
-        # full per-row analysis the user asked for: extracted text,
-        # reasoning tokens, cache breakdown, usage math sanity.
-        phase6b_normalize_check(db, t0_iso)
+        # P6b — normalize verification: full per-row analysis (extracted text,
+        # reasoning tokens, cache breakdown, usage math sanity). Auto-selects the
+        # sidecar table or the view-time recompute endpoint per deployment.
+        phase6b_normalize_check(db, cp, t0_iso)
 
         # P7
         t1_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

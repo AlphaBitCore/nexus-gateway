@@ -32,8 +32,8 @@
 }
 
 .fieldLabel {
-  font-weight: 500;
-  font-size: 13px;
+  font-weight: var(--g-font-weight-medium);
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
   line-height: 1.5;
 }
@@ -48,7 +48,7 @@
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
@@ -60,14 +60,14 @@
   padding: var(--g-space-2) var(--g-space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   font-family: var(--g-font-mono);
   resize: vertical;
 }
 
 .sectionLabel {
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -91,12 +91,12 @@
   padding: var(--g-space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
-  background: var(--color-muted);
+  background: var(--color-bg);
 }
 
 .branchTitle {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-semibold);
   margin-bottom: var(--g-space-2);
   color: var(--color-text-secondary);
 }
@@ -164,7 +164,7 @@
 
 .thenLabel {
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -194,7 +194,7 @@
 
 .noModelsHint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
 }
 

@@ -1,5 +1,5 @@
 /**
- * S46 — Top-level i18n language picker.
+ * Top-level i18n language picker.
  *
  * A small dropdown that lets the operator switch the Dashboard UI language
  * between the three supported locales (en / zh / es). Mounted in the Shell

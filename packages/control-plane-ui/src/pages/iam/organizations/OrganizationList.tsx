@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../../hooks/useApi';
@@ -9,11 +9,12 @@ import { usePermission } from '../../../hooks/usePermission';
 import {
   PageHeader, ListFilterToolbar, Badge, statusToVariant,
   AlertDialog, Skeleton, ErrorBanner, Button, Stack, Card,
+  RowActions, RowActionIconButton, OpenActionIcon, DeleteActionIcon,
 } from '@/components/ui';
 import type { Organization } from '../../../api/types';
 import styles from './OrganizationList.module.css';
 
-function OrgTreeNode({ org, level = 0, searchHighlight, onDelete, onTip }: { org: Organization; level?: number; searchHighlight: string; onDelete: (o: Organization) => void; onTip: (text: string, e: React.MouseEvent) => void }) {
+function OrgTreeNode({ org, level = 0, searchHighlight, onDelete }: { org: Organization; level?: number; searchHighlight: string; onDelete: (o: Organization) => void }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(level < 2);
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ function OrgTreeNode({ org, level = 0, searchHighlight, onDelete, onTip }: { org
   const projectCount = org.projectCount ?? org._count?.projects ?? 0;
   const matchesHighlight = !searchHighlight || org.name.toLowerCase().includes(searchHighlight) || org.code.toLowerCase().includes(searchHighlight);
   const canDeleteOrg = !hasChildren && projectCount === 0;
+  const cannotDeleteDetail = [hasChildren ? t('pages:organizations.subOrgsCount', { count: org.children?.length ?? 0 }) : '', projectCount > 0 ? t('pages:organizations.projectsCount', { count: projectCount }) : ''].filter(Boolean).join(t('pages:organizations.and'));
 
   return (
     <>
@@ -49,27 +51,27 @@ function OrgTreeNode({ org, level = 0, searchHighlight, onDelete, onTip }: { org
         <td className={styles.tableCell}>
           <Badge variant={statusToVariant(org.enabled ? 'active' : 'disabled')}>{org.enabled ? t('pages:organizations.active') : t('pages:organizations.disabled')}</Badge>
         </td>
-        <td className={styles.tableCell}>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (canDeleteOrg) { onDelete(org); }
-              else {
-                    const detail = [hasChildren ? t('pages:organizations.subOrgsCount', { count: org.children?.length ?? 0 }) : '', projectCount > 0 ? t('pages:organizations.projectsCount', { count: projectCount }) : ''].filter(Boolean).join(t('pages:organizations.and'));
-                    onTip(t('pages:organizations.cannotDeleteTip', { detail }), e);
-                  }
-            }}
-            title={canDeleteOrg ? t('pages:organizations.deleteTitle') : t('pages:organizations.cannotDeleteTitle', { detail: [hasChildren ? 'sub-orgs' : '', projectCount > 0 ? 'projects' : ''].filter(Boolean).join(' and ') })}
-            className={canDeleteOrg ? undefined : styles.disabledDelete}
-          >
-            {t('pages:organizations.delete')}
-          </Button>
+        <td className={`${styles.tableCell} ${styles.actionsCell}`}>
+          <RowActions>
+            <RowActionIconButton
+              label={t('common:view', 'View')}
+              onAction={() => navigate(`/iam/organizations/${org.id}`)}
+            >
+              <OpenActionIcon />
+            </RowActionIconButton>
+            <RowActionIconButton
+              label={canDeleteOrg ? t('pages:organizations.deleteTitle') : t('pages:organizations.cannotDeleteTip', { detail: cannotDeleteDetail })}
+              tone="danger"
+              disabled={!canDeleteOrg}
+              onAction={() => onDelete(org)}
+            >
+              <DeleteActionIcon />
+            </RowActionIconButton>
+          </RowActions>
         </td>
       </tr>
       {expanded && org.children?.map(child => (
-        <OrgTreeNode key={child.id} org={child} level={level + 1} searchHighlight={searchHighlight} onDelete={onDelete} onTip={onTip} />
+        <OrgTreeNode key={child.id} org={child} level={level + 1} searchHighlight={searchHighlight} onDelete={onDelete} />
       ))}
     </>
   );
@@ -89,14 +91,7 @@ export function OrganizationList() {
   );
   const [enabledFilter, setEnabledFilter] = useState('');
   const [deletingOrg, setDeletingOrg] = useState<Organization | null>(null);
-  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const canCreate = usePermission('organization:create');
-
-  const showTip = useCallback((text: string, e: React.MouseEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setTip({ text, x: rect.left, y: rect.top - 6 });
-    setTimeout(() => setTip(null), 3000);
-  }, []);
 
   const { mutate: deleteOrg } = useMutation(
     (orgId: string) => organizationApi.delete(orgId),
@@ -134,10 +129,13 @@ export function OrganizationList() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
+        className={styles.filterToolbar}
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('pages:organizations.searchPlaceholder')}
         searchValue={search}
         onSearchChange={setSearch}
-        meta={t('pages:organizations.topLevelOrgCount', { count: filtered.length })}
       >
         <select aria-label={t('pages:organizations.filterByStatus')} value={enabledFilter} onChange={e => setEnabledFilter(e.target.value)} className={styles.filterSelect}>
           <option value="">{t('pages:organizations.allStatuses')}</option>
@@ -145,6 +143,10 @@ export function OrganizationList() {
           <option value="disabled">{t('common:disabled')}</option>
         </select>
       </ListFilterToolbar>
+
+      <div className={styles.listCount}>
+        {t('pages:organizations.topLevelOrgCount', { count: filtered.length })}
+      </div>
 
       <Card padding="none">
         <div className={styles.scrollWrapper}>
@@ -167,19 +169,13 @@ export function OrganizationList() {
                 </tr>
               ) : (
                 filtered.map(org => (
-                  <OrgTreeNode key={org.id} org={org} searchHighlight={highlight} onDelete={setDeletingOrg} onTip={showTip} />
+                  <OrgTreeNode key={org.id} org={org} searchHighlight={highlight} onDelete={setDeletingOrg} />
                 ))
               )}
             </tbody>
           </table>
         </div>
       </Card>
-
-      {tip && (
-        <div className={styles.tip} style={{ left: tip.x, top: tip.y }}>
-          {tip.text}
-        </div>
-      )}
 
       <AlertDialog
         open={!!deletingOrg}

@@ -25,22 +25,25 @@ import {
   passthroughApi,
   validatePassthroughPayload,
   type PassthroughSnapshot,
-  type PassthroughTier,
 } from '@/api/services';
 import { providerApi } from '@/api/services';
-import { PROVIDER_ADAPTER_TYPES } from '@/pages/ai-gateway/providers/_shared/adapterTypes';
 import type { Provider } from '@/api/types';
 import {
   PageHeader,
   Card,
   Stack,
   Button,
-  Badge,
-  Dialog,
   Skeleton,
   ErrorBanner,
-  FormField,
-  Select,
+  AlertDialog,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  RowActions,
+  RowActionIconButton,
+  RowDeleteAction,
+  EditActionIcon,
 } from '@/components/ui';
 import {
   emptyTier,
@@ -53,12 +56,14 @@ import { ActiveBanner } from './ActiveBanner';
 import { Countdown } from './Countdown';
 import { TierEditor } from './TierEditor';
 import { EnableConfirmDialog } from './EnableConfirmDialog';
+import { AdapterEditorDialog, ProviderEditorDialog } from './PassthroughEditorDialogs';
 import styles from './PassthroughPage.module.css';
 
 export function PassthroughPage() {
   const { t } = useTranslation();
   const canEmergencyEnable = usePermission('passthrough:emergencyEnable');
   const canDelete = usePermission('passthrough:write');
+  const [activeTierTab, setActiveTierTab] = useState('global');
 
   const { data: snapshot, loading, error, refetch } = useApi<PassthroughSnapshot>(
     () => passthroughApi.getSnapshot(),
@@ -77,9 +82,22 @@ export function PassthroughPage() {
       </div>
       <Stack gap="lg" className={styles.contentStack}>
         <ActiveBanner snapshot={snap} />
-        <GlobalPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} />
-        <AdapterOverridesPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} canDelete={canDelete} />
-        <ProviderOverridesPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} canDelete={canDelete} />
+        <Tabs value={activeTierTab} onValueChange={setActiveTierTab} className={styles.tierTabs}>
+          <TabsList>
+            <TabsTrigger value="global">{t('pages:passthrough.global.title')}</TabsTrigger>
+            <TabsTrigger value="adapter">{t('pages:passthrough.adapter.title')}</TabsTrigger>
+            <TabsTrigger value="provider">{t('pages:passthrough.provider.title')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="global" className={styles.tierTabContent}>
+            <GlobalPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} />
+          </TabsContent>
+          <TabsContent value="adapter" className={styles.tierTabContent}>
+            <AdapterOverridesPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} canDelete={canDelete} />
+          </TabsContent>
+          <TabsContent value="provider" className={styles.tierTabContent}>
+            <ProviderOverridesPanel snapshot={snap} onChange={refetch} canEnable={canEmergencyEnable} canDelete={canDelete} />
+          </TabsContent>
+        </Tabs>
       </Stack>
     </>
   );
@@ -130,7 +148,7 @@ function GlobalPanel({ snapshot, onChange, canEnable }: { snapshot: PassthroughS
         )}
         <Stack direction="horizontal" gap="sm" className={styles.globalActions}>
           <Button className={styles.saveButton} onClick={onSave} disabled={saving || !canEnable || (form.enabled && !valid)} variant={form.enabled ? 'danger' : 'primary'}>
-            {saving ? t('common:saving') : form.enabled ? t('pages:passthrough.global.saveEnableBtn') : t('pages:passthrough.global.saveDisableBtn')}
+            {saving ? t('common:saving') : t('common:save')}
           </Button>
           {!canEnable && (
             <span className={styles.subtitle}>{t('pages:passthrough.noPermissionToEnable')}</span>
@@ -154,6 +172,7 @@ function GlobalPanel({ snapshot, onChange, canEnable }: { snapshot: PassthroughS
 function AdapterOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { snapshot: PassthroughSnapshot; onChange: () => void; canEnable: boolean; canDelete: boolean }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState<string | null>(null);
+  const [deletingAdapter, setDeletingAdapter] = useState<string | null>(null);
 
   const adapters = Object.entries(snapshot.adapters).sort(([a], [b]) => a.localeCompare(b));
 
@@ -169,7 +188,7 @@ function AdapterOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { s
           <span>{t('pages:passthrough.adapter.addBtn')}</span>
         </Button>
       </div>
-      <Card>
+      <Card padding="none">
         <Stack gap="md">
         {adapters.length === 0 ? (
           <p className={styles.emptyState}>{t('pages:passthrough.adapter.empty')}</p>
@@ -189,26 +208,25 @@ function AdapterOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { s
               {adapters.map(([adapter, tier]) => (
                 <tr key={adapter}>
                   <td><code>{adapter}</code></td>
-                  <td>{tier.enabled ? <Badge variant="danger">{t('pages:passthrough.state.enabled')}</Badge> : <Badge variant="default">{t('pages:passthrough.state.disabled')}</Badge>}</td>
+                  <td>
+                    <span className={tier.enabled ? styles.statusEnabled : styles.statusDisabled}>
+                      {tier.enabled ? t('pages:passthrough.state.enabled') : t('pages:passthrough.state.disabled')}
+                    </span>
+                  </td>
                   <td>{bypassSummary(tier) || <span className={styles.empty}>—</span>}</td>
                   <td>{tier.enabled ? <Countdown expiresAt={tier.expiresAt} /> : '—'}</td>
                   <td>{tier.enabledBy ?? '—'}</td>
                   <td>
-                    <Stack direction="horizontal" gap="xs">
-                      <Button variant="secondary" size="sm" onClick={() => setEditing(adapter)}>{t('common:edit')}</Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
+                    <RowActions>
+                      <RowActionIconButton label={t('common:edit')} onAction={() => setEditing(adapter)}>
+                        <EditActionIcon />
+                      </RowActionIconButton>
+                      <RowDeleteAction
+                        label={t('common:delete')}
                         disabled={!canDelete}
-                        onClick={async () => {
-                          if (!window.confirm(t('pages:passthrough.adapter.deleteConfirm', { adapter }))) return;
-                          await passthroughApi.deleteAdapter(adapter);
-                          onChange();
-                        }}
-                      >
-                        {t('common:delete')}
-                      </Button>
-                    </Stack>
+                        onAction={() => setDeletingAdapter(adapter)}
+                      />
+                    </RowActions>
                   </td>
                 </tr>
               ))}
@@ -225,88 +243,45 @@ function AdapterOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { s
             onSaved={() => { setEditing(null); onChange(); }}
           />
         )}
+        <AlertDialog
+          open={!!deletingAdapter}
+          onOpenChange={(open) => { if (!open) setDeletingAdapter(null); }}
+          title={t('common:deleteConfirmTitle')}
+          description={t('pages:passthrough.adapter.deleteConfirm', { adapter: deletingAdapter ?? '' })}
+          confirmLabel={t('common:delete')}
+          cancelLabel={t('common:cancel')}
+          variant="danger"
+          onConfirm={() => {
+            if (!deletingAdapter) return;
+            void passthroughApi.deleteAdapter(deletingAdapter).then(() => {
+              setDeletingAdapter(null);
+              onChange();
+            });
+          }}
+        />
       </Card>
     </section>
-  );
-}
-
-function AdapterEditorDialog({
-  adapterType,
-  existing,
-  onClose,
-  onSaved,
-}: {
-  adapterType: string;
-  existing?: PassthroughTier;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { t } = useTranslation();
-  const isNew = adapterType === '';
-  const [selectedAdapter, setSelectedAdapter] = useState<string>(adapterType);
-  const [form, setForm] = useState<TierFormState>(() => tierToForm(existing));
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const code = validatePassthroughPayload(formToPayload(form));
-  const valid = code === null && (!isNew || !!selectedAdapter);
-
-  const { mutate: save, loading: saving } = useMutation(
-    () => passthroughApi.putAdapter(selectedAdapter, formToPayload(form)),
-    {
-      invalidateQueries: [['admin', 'passthrough', 'snapshot']],
-      onSuccess: () => { setConfirmOpen(false); onSaved(); },
-      successMessage: t('pages:passthrough.toasts.savedAdapter'),
-      errorMessage: t('pages:passthrough.toasts.saveError'),
-    },
-  );
-
-  const onSave = () => { if (form.enabled) setConfirmOpen(true); else save(undefined); };
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
-      title={isNew ? t('pages:passthrough.adapter.addBtn') : t('pages:passthrough.adapter.editTitle', { adapter: selectedAdapter })}
-    >
-      <Stack gap="md">
-        {isNew && (
-          <FormField label={t('pages:passthrough.adapter.colAdapter')} helpText={t('pages:passthrough.adapter.adapterTypeHint')}>
-            <Select
-              value={selectedAdapter}
-              onValueChange={setSelectedAdapter}
-              options={[{ value: '', label: t('common:choose') }, ...PROVIDER_ADAPTER_TYPES.map(a => ({ value: a, label: a }))]}
-            />
-          </FormField>
-        )}
-        <TierEditor form={form} setForm={setForm} showEnabledByline enabledBy={existing?.enabledBy} />
-        {!valid && form.enabled && code && (
-          <div className={styles.validation}>{t(`pages:passthrough.validation.${code}`)}</div>
-        )}
-        <Stack direction="horizontal" gap="sm" justify="end">
-          <Button variant="secondary" onClick={onClose}>{t('common:cancel')}</Button>
-          <Button onClick={onSave} disabled={saving || (form.enabled && !valid) || (isNew && !selectedAdapter)} variant={form.enabled ? 'danger' : 'primary'}>
-            {saving ? t('common:saving') : form.enabled ? t('pages:passthrough.global.saveEnableBtn') : t('pages:passthrough.global.saveDisableBtn')}
-          </Button>
-        </Stack>
-      </Stack>
-      <EnableConfirmDialog
-        open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        onConfirm={() => save(undefined)}
-        scope="adapter"
-        scopeKey={selectedAdapter}
-        form={form}
-      />
-    </Dialog>
   );
 }
 
 function ProviderOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { snapshot: PassthroughSnapshot; onChange: () => void; canEnable: boolean; canDelete: boolean }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState<string | null>(null);
+  const [deletingProvider, setDeletingProvider] = useState<string | null>(null);
 
   const providers = Object.entries(snapshot.providers).sort(([a], [b]) => a.localeCompare(b));
-  const providerName = (id: string) => snapshot.providerNames?.[id] ?? id.slice(0, 8) + '…';
+  const { data: providersResp } = useApi<{ data: Provider[]; total: number }>(
+    () => providerApi.list({ limit: '500' }),
+    ['admin', 'providers', 'list', 'passthrough-table'],
+  );
+  const providerNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of providersResp?.data ?? []) {
+      map.set(p.id, p.displayName?.trim() || p.name);
+    }
+    return map;
+  }, [providersResp]);
+  const providerName = (id: string) => snapshot.providerNames?.[id] ?? providerNameMap.get(id) ?? id.slice(0, 8) + '…';
 
   return (
     <section className={styles.panelSection}>
@@ -320,7 +295,7 @@ function ProviderOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { 
           <span>{t('pages:passthrough.provider.addBtn')}</span>
         </Button>
       </div>
-      <Card>
+      <Card padding="none">
         <Stack gap="md">
         {providers.length === 0 ? (
           <p className={styles.emptyState}>{t('pages:passthrough.provider.empty')}</p>
@@ -339,27 +314,31 @@ function ProviderOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { 
             <tbody>
               {providers.map(([pid, tier]) => (
                 <tr key={pid}>
-                  <td><strong>{providerName(pid)}</strong> <code className={styles.muted}>{pid.slice(0, 8)}…</code></td>
-                  <td>{tier.enabled ? <Badge variant="danger">{t('pages:passthrough.state.enabled')}</Badge> : <Badge variant="default">{t('pages:passthrough.state.disabled')}</Badge>}</td>
+                  <td>
+                    <div className={styles.providerCell}>
+                      <strong>{providerName(pid)}</strong>
+                      <span className={styles.providerIdLine}>ID: {pid}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span className={tier.enabled ? styles.statusEnabled : styles.statusDisabled}>
+                      {tier.enabled ? t('pages:passthrough.state.enabled') : t('pages:passthrough.state.disabled')}
+                    </span>
+                  </td>
                   <td>{bypassSummary(tier) || <span className={styles.empty}>—</span>}</td>
                   <td>{tier.enabled ? <Countdown expiresAt={tier.expiresAt} /> : '—'}</td>
                   <td>{tier.enabledBy ?? '—'}</td>
                   <td>
-                    <Stack direction="horizontal" gap="xs">
-                      <Button variant="secondary" size="sm" onClick={() => setEditing(pid)}>{t('common:edit')}</Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
+                    <RowActions>
+                      <RowActionIconButton label={t('common:edit')} onAction={() => setEditing(pid)}>
+                        <EditActionIcon />
+                      </RowActionIconButton>
+                      <RowDeleteAction
+                        label={t('common:delete')}
                         disabled={!canDelete}
-                        onClick={async () => {
-                          if (!window.confirm(t('pages:passthrough.provider.deleteConfirm', { provider: providerName(pid) }))) return;
-                          await passthroughApi.deleteProvider(pid);
-                          onChange();
-                        }}
-                      >
-                        {t('common:delete')}
-                      </Button>
-                    </Stack>
+                        onAction={() => setDeletingProvider(pid)}
+                      />
+                    </RowActions>
                   </td>
                 </tr>
               ))}
@@ -375,84 +354,23 @@ function ProviderOverridesPanel({ snapshot, onChange, canEnable, canDelete }: { 
             onSaved={() => { setEditing(null); onChange(); }}
           />
         )}
+        <AlertDialog
+          open={!!deletingProvider}
+          onOpenChange={(open) => { if (!open) setDeletingProvider(null); }}
+          title={t('common:deleteConfirmTitle')}
+          description={t('pages:passthrough.provider.deleteConfirm', { provider: deletingProvider ? providerName(deletingProvider) : '' })}
+          confirmLabel={t('common:delete')}
+          cancelLabel={t('common:cancel')}
+          variant="danger"
+          onConfirm={() => {
+            if (!deletingProvider) return;
+            void passthroughApi.deleteProvider(deletingProvider).then(() => {
+              setDeletingProvider(null);
+              onChange();
+            });
+          }}
+        />
       </Card>
     </section>
-  );
-}
-
-function ProviderEditorDialog({
-  providerId,
-  existing,
-  onClose,
-  onSaved,
-}: {
-  providerId: string;
-  existing?: PassthroughTier;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { t } = useTranslation();
-  const isNew = providerId === '';
-  const [selectedProvider, setSelectedProvider] = useState<string>(providerId);
-  const [form, setForm] = useState<TierFormState>(() => tierToForm(existing));
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  // Load provider list for the dropdown (only when adding a new override).
-  const { data: providersResp } = useApi<{ data: Provider[]; total: number }>(
-    () => providerApi.list({ limit: '200' }),
-    ['admin', 'providers', 'list', 'passthrough-picker'],
-  );
-  const providers = useMemo(() => providersResp?.data ?? [], [providersResp]);
-
-  const code = validatePassthroughPayload(formToPayload(form));
-  const valid = code === null && (!isNew || !!selectedProvider);
-
-  const { mutate: save, loading: saving } = useMutation(
-    () => passthroughApi.putProvider(selectedProvider, formToPayload(form)),
-    {
-      invalidateQueries: [['admin', 'passthrough', 'snapshot']],
-      onSuccess: () => { setConfirmOpen(false); onSaved(); },
-      successMessage: t('pages:passthrough.toasts.savedProvider'),
-      errorMessage: t('pages:passthrough.toasts.saveError'),
-    },
-  );
-  const onSave = () => { if (form.enabled) setConfirmOpen(true); else save(undefined); };
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
-      title={isNew ? t('pages:passthrough.provider.addBtn') : t('pages:passthrough.provider.editTitle', { provider: selectedProvider.slice(0, 8) })}
-    >
-      <Stack gap="md">
-        {isNew && (
-          <FormField label={t('pages:passthrough.provider.colProvider')} helpText={t('pages:passthrough.provider.providerHint')}>
-            <Select
-              value={selectedProvider}
-              onValueChange={setSelectedProvider}
-              options={[{ value: '', label: t('common:choose') }, ...providers.map(p => ({ value: p.id, label: `${p.name} (${p.adapterType})` }))]}
-            />
-          </FormField>
-        )}
-        <TierEditor form={form} setForm={setForm} showEnabledByline enabledBy={existing?.enabledBy} />
-        {!valid && form.enabled && code && (
-          <div className={styles.validation}>{t(`pages:passthrough.validation.${code}`)}</div>
-        )}
-        <Stack direction="horizontal" gap="sm" justify="end">
-          <Button variant="secondary" onClick={onClose}>{t('common:cancel')}</Button>
-          <Button onClick={onSave} disabled={saving || (form.enabled && !valid) || (isNew && !selectedProvider)} variant={form.enabled ? 'danger' : 'primary'}>
-            {saving ? t('common:saving') : form.enabled ? t('pages:passthrough.global.saveEnableBtn') : t('pages:passthrough.global.saveDisableBtn')}
-          </Button>
-        </Stack>
-      </Stack>
-      <EnableConfirmDialog
-        open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        onConfirm={() => save(undefined)}
-        scope="provider"
-        scopeKey={selectedProvider}
-        form={form}
-      />
-    </Dialog>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
@@ -35,10 +36,15 @@ describe('InfraAgentSetupPage', () => {
     expect(screen.getByText('/downloads/NexusAgent-latest.pkg')).toBeInTheDocument();
   });
 
-  it('switching to Linux swaps in the Linux download artifact', () => {
+  it('switching to Linux swaps in the Linux download artifact', async () => {
     wrap();
-    fireEvent.click(screen.getByRole('button', { name: /linux/i }));
-    expect(screen.getByText('/downloads/nexus-agent-linux-latest')).toBeInTheDocument();
+    // Platform selector is a Radix Tabs trigger (role "tab"); activating it
+    // requires the full pointer sequence, so use userEvent over fireEvent.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: /linux/i }));
+    await waitFor(() =>
+      expect(screen.getByText('/downloads/nexus-agent-linux-latest')).toBeInTheDocument(),
+    );
   });
 
   it('renders the live device table with one row per enrolled device', () => {

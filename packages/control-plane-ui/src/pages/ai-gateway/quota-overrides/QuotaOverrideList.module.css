@@ -18,7 +18,7 @@
   min-height: 38px;
   padding: 0 14px;
   border-color: var(--color-border-strong);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   color: var(--color-text);
   font-size: var(--g-font-size-sm);
 }
@@ -39,14 +39,14 @@
   width: 100%;
   padding: 0 36px 0 14px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: var(--g-radius-md);
   background-color: var(--color-surface);
   background-image: url('/icons/chevron-down.svg');
   background-position: calc(100% - 12px) 50%;
   background-repeat: no-repeat;
   background-size: 16px 16px;
   color: var(--color-text-secondary);
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
   line-height: 24px;
   cursor: pointer;
@@ -60,8 +60,8 @@
 
 .filterLabel {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   margin-bottom: 4px;
   color: var(--color-text);
 }

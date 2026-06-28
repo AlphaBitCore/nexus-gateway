@@ -2,8 +2,7 @@
  * ExemptionRejectDialog — reject dialog for a PENDING exemption request,
  * collecting a required reject note. Controlled by useExemptionDialogs (the page
  * owns the selected row, note text, busy flag, and reject handler); this
- * component is a thin render of that state, preserving the original page markup
- * verbatim.
+ * component is a thin render of that state.
  */
 import { useTranslation } from 'react-i18next';
 import { Button, Dialog, FormField, Stack, Textarea } from '@/components/ui';

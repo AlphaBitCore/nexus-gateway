@@ -1,10 +1,54 @@
 /* ── InfraKillSwitchPage ──────────────────────────────────────────── */
 
-.toggleSection {
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.headerText {
+  min-width: 0;
+}
+
+.titleRow {
   display: flex;
   align-items: center;
-  gap: var(--g-space-4);
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.pageTitle {
+  width: fit-content;
+  margin: 0;
+  background-image: var(--color-title-gradient);
+  background-clip: text;
+  color: transparent;
+  font-size: 28px;
+  font-weight: var(--g-font-weight-bold);
+  line-height: 36px;
+  letter-spacing: normal;
+  -webkit-text-fill-color: transparent;
+}
+
+.pageSubtitle {
+  max-width: none;
+  margin: 6px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: var(--g-line-height-normal);
+  white-space: nowrap;
+}
+
+.headerActionButton,
+.headerActionButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .statusGrid {
@@ -14,8 +58,8 @@
 }
 
 .kvLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -24,12 +68,12 @@
 
 .kvValue {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
 .sectionTitle {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: var(--g-space-3);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  margin: 0;
 }

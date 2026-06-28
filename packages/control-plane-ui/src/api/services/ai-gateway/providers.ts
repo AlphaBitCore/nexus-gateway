@@ -3,6 +3,7 @@
  * Single source of truth for URLs, request shapes, and response types.
  */
 import { api } from '../../client';
+import { withPrefix } from '@/lib/deploymentPrefix';
 import type {
   ApiProviderTemplate,
   Provider,
@@ -21,6 +22,17 @@ export interface ProviderConnectivityResult {
   error?: string;
   body?: string;
 }
+
+/** A single model entry returned by the discover-models endpoint. */
+export interface DiscoveredModel {
+  id: string;
+  suggestedType: 'chat' | 'embedding' | 'image' | 'audio';
+}
+
+/** Response shape for POST /admin/providers/discover-models. */
+export type DiscoverModelsResult =
+  | { success: true; models: DiscoveredModel[] }
+  | { success: false; error: string; code?: string };
 
 export interface CreateProviderInput {
   name: string;
@@ -117,14 +129,14 @@ export const providerApi = {
   // and `<name>.json` for the selected template's full detail (meta + models).
   // No backend round-trip — adding a template is "drop a JSON file".
   getTemplates: async (): Promise<{ data: ApiProviderTemplate[] }> => {
-    const res = await fetch('/provider-templates/index.json', { cache: 'no-cache' });
+    const res = await fetch(withPrefix('/provider-templates/index.json'), { cache: 'no-cache' });
     if (!res.ok) throw new Error(`load provider templates index: ${res.status}`);
     const json = await res.json() as { templates: ApiProviderTemplate[] };
     return { data: json.templates };
   },
 
   getTemplateDetail: async (name: string): Promise<ApiProviderTemplate> => {
-    const res = await fetch(`/provider-templates/${encodeURIComponent(name)}.json`, { cache: 'no-cache' });
+    const res = await fetch(withPrefix(`/provider-templates/${encodeURIComponent(name)}.json`), { cache: 'no-cache' });
     if (!res.ok) throw new Error(`load provider template ${name}: ${res.status}`);
     return await res.json() as ApiProviderTemplate;
   },
@@ -134,4 +146,12 @@ export const providerApi = {
 
   testConnection: (data: { name: string; adapterType: string; baseUrl: string; apiKey: string }) =>
     api.post<ProviderConnectivityResult>('/api/admin/providers/test-connection', data),
+
+  /**
+   * Discover models from a provider's /v1/models endpoint.
+   * Only supported for OpenAI / OpenAI-compatible adapters.
+   * Returns the parsed success/failure result — callers must check `success`.
+   */
+  discoverModels: (data: { adapterType: string; baseUrl: string; apiKey: string }) =>
+    api.post<DiscoverModelsResult>('/api/admin/providers/discover-models', data),
 };

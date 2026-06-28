@@ -10,6 +10,7 @@ import {
   PageHeader, DataTable, ListFilterToolbar, Badge, statusToVariant,
   AlertDialog, Skeleton, ErrorBanner, Button, Stack, Card,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
+  RowActions, RowActionIconButton, OpenActionIcon, DeleteActionIcon,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import type { Project } from '../../../api/types';
@@ -37,15 +38,8 @@ export function ProjectList() {
     ['admin', 'projects', 'list', debouncedSearch, statusFilter, offset, pageLimit],
   );
   const [deleting, setDeleting] = useState<Project | null>(null);
-  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const canCreate = usePermission('project:create');
   const canDelete = usePermission('project:delete');
-
-  const showTip = useCallback((text: string, e: React.MouseEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setTip({ text, x: rect.left, y: rect.top - 6 });
-    setTimeout(() => setTip(null), 3000);
-  }, []);
 
   const { mutate: deleteProject } = useMutation(
     (id: string) => projectApi.delete(id),
@@ -80,33 +74,28 @@ export function ProjectList() {
     { key: 'status', label: t('pages:projects.status'), render: (r) => <Badge variant={statusToVariant(r.status)}>{r.status}</Badge> },
     {
       key: 'actions', label: '', render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={e => e.stopPropagation()}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => navigate(`/iam/projects/${r.id}`)}
+        <RowActions>
+          <RowActionIconButton
+            label={t('common:view', 'View')}
+            onAction={() => navigate(`/iam/projects/${r.id}`)}
           >
-            {t('pages:projects.edit')}
-          </Button>
+            <OpenActionIcon />
+          </RowActionIconButton>
           {canDelete && (() => {
             const vkCount = r._count?.virtualKeys ?? 0;
             const canDel = vkCount === 0;
             return (
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={(e) => {
-                  if (canDel) { setDeleting(r); }
-                  else { showTip(t('pages:projects.cannotDeleteTip', { count: vkCount }), e); }
-                }}
-                title={canDel ? t('pages:projects.deleteTitle') : t('pages:projects.cannotDeleteTitle', { count: vkCount })}
-                className={canDel ? undefined : styles.disabledDelete}
+              <RowActionIconButton
+                label={canDel ? t('pages:projects.deleteTitle') : t('pages:projects.cannotDeleteTitle', { count: vkCount })}
+                tone="danger"
+                disabled={!canDel}
+                onAction={() => setDeleting(r)}
               >
-                {t('pages:projects.delete')}
-              </Button>
+                <DeleteActionIcon />
+              </RowActionIconButton>
             );
           })()}
-        </Stack>
+        </RowActions>
       ),
     },
   ];
@@ -126,14 +115,12 @@ export function ProjectList() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('pages:projects.searchPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}
-        meta={
-          total === 0
-            ? t('pages:projects.noProjectsMatch')
-            : t('pages:projects.showingProjects', { count: projects.length, total: total.toLocaleString() })
-        }
       >
         <select aria-label={t('pages:projects.filterByStatus')} value={statusFilter} onChange={onStatusFilterChange} className={styles.filterSelect}>
           <option value="">{t('pages:projects.allStatuses')}</option>
@@ -142,17 +129,24 @@ export function ProjectList() {
         </select>
       </ListFilterToolbar>
 
-      <Card padding="none">
-        <DataTable<Project>
-          hideSearch
-          frameless
-          pageSize={pageLimit}
-          onRowClick={(row) => navigate(`/iam/projects/${row.id}`)}
-          columns={columns}
-          data={projects}
-          emptyMessage={t('pages:projects.noProjectsFound')}
-        />
-      </Card>
+      <div className={styles.tableSection}>
+        <div className={styles.resultMeta}>
+          {total === 0
+            ? t('pages:projects.noProjectsMatch')
+            : t('pages:projects.showingProjects', { count: projects.length, total: total.toLocaleString() })}
+        </div>
+        <Card padding="none">
+          <DataTable<Project>
+            hideSearch
+            frameless
+            pageSize={pageLimit}
+            onRowClick={(row) => navigate(`/iam/projects/${row.id}`)}
+            columns={columns}
+            data={projects}
+            emptyMessage={t('pages:projects.noProjectsFound')}
+          />
+        </Card>
+      </div>
 
       <ListPagination offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
 
@@ -166,11 +160,6 @@ export function ProjectList() {
         variant="danger"
       />
 
-      {tip && (
-        <div className={styles.tip} style={{ left: tip.x, top: tip.y }}>
-          {tip.text}
-        </div>
-      )}
     </Stack>
   );
 }

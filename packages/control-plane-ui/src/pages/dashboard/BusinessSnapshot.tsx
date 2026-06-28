@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { Grid, Card, ExpandableWrapper, Sparkline, AnimatedNumber } from '@/components/ui';
 import type { CacheROISummary } from '@/api/services/overview/analytics';
-import { formatTokens } from '@/lib/format';
+import { formatTokens, formatUsd } from '@/lib/format';
 import styles from './DashboardPage.module.css';
 import { InfoIcon } from './dashboardShared';
 
@@ -57,7 +57,7 @@ export function BusinessSnapshot({
               <InfoIcon description={t('pages:dashboard.totalCostDesc')} />
             </div>
             <div className={styles.metricValueRow}>
-              <span className={styles.metricValue}>${(animCost100x / 100).toFixed(2)}</span>
+              <span className={styles.metricValue}>{formatUsd(animCost100x / 100)}</span>
               <Sparkline data={sparkData.cost} color="var(--color-success)" />
             </div>
             <span className={styles.metricSubtitle}>{t('pages:dashboard.estimated')}</span>
@@ -123,7 +123,7 @@ export function BusinessSnapshot({
                     <AnimatedNumber
                       value={combinedSavings}
                       precision={2}
-                      format={(n) => n >= 0 ? `$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`}
+                      format={(n) => formatUsd(n)}
                     />
                   </span>
                   <Sparkline data={sparkData.cacheSavings} color={combinedSavings >= 0 ? 'var(--color-success)' : 'var(--color-danger)'} />

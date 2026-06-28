@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useParams, useNavigate, Navigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { oauthClientApi, type OAuthClient, type OAuthClientRotateResponse } from '@/api/services';
 import { useApi } from '@/hooks/useApi';
@@ -8,11 +8,12 @@ import { usePermission } from '@/hooks/usePermission';
 import { useToast } from '@/context/ToastContext';
 import { formatRelativeTime } from '@/lib/format';
 import {
-  PageHeader, Breadcrumb, Stack, Card, Button, Skeleton, ErrorBanner,
+  Stack, Card, Button, Skeleton, ErrorBanner,
   AlertDialog, SecretDialog, Tooltip,
 } from '@/components/ui';
 import { ScopeChip } from './components/ScopeChip';
 import { DeleteClientConfirmDialog } from './components/DeleteClientConfirmDialog';
+import detailStyles from '../_shared/Iam.module.css';
 import styles from './OAuthClientDetailPage.module.css';
 
 /**
@@ -112,15 +113,30 @@ export function OAuthClientDetailPage() {
 
   return (
     <Stack gap="lg">
-      <Breadcrumb items={[
-        { label: t('pages:iam.oauthClients.pageTitle'), to: '/iam/oauth-clients' },
-        { label: client.name },
-      ]} />
-
-      <PageHeader
-        title={client.name}
-        action={
-          <Stack direction="horizontal" gap="sm">
+      <section className={detailStyles.detailHeader}>
+        <div className={detailStyles.detailHeaderRow}>
+          <Link to="/iam/oauth-clients" className={detailStyles.detailBackLink} aria-label={t('common:back')}>
+            <svg className={detailStyles.detailBackIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={detailStyles.detailHeaderText}>
+            <h1 className={detailStyles.detailTitle}>{client.name}</h1>
+            <div className={detailStyles.detailMeta}>
+              <span className={styles.idMono}>{client.id}</span>
+              <CopyButton value={client.id} ariaLabel={t('common:copy')} />
+              <span className={isPublic ? styles.typeBadgePublic : styles.typeBadgeConfidential}>
+                {isPublic
+                  ? t('pages:iam.oauthClients.typePublic')
+                  : t('pages:iam.oauthClients.typeConfidential')}
+              </span>
+              <span className={styles.createdAt}>
+                {new Date(client.createdAt).toLocaleDateString()}
+              </span>
+            </div>
+          </div>
+          <Stack direction="horizontal" gap="sm" className={detailStyles.detailHeaderActions}>
             {canEdit && (
               <Button variant="secondary" onClick={() => navigate(`/iam/oauth-clients/${client.id}/edit`)}>
                 {t('common:edit')}
@@ -137,59 +153,50 @@ export function OAuthClientDetailPage() {
               </Button>
             )}
           </Stack>
-        }
-      />
-
-      <div className={styles.subtitle}>
-        <span className={styles.idMono}>{client.id}</span>
-        <CopyButton value={client.id} ariaLabel={t('common:copy')} />
-        <span className={isPublic ? styles.typeBadgePublic : styles.typeBadgeConfidential}>
-          {isPublic
-            ? t('pages:iam.oauthClients.typePublic')
-            : t('pages:iam.oauthClients.typeConfidential')}
-        </span>
-        <span className={styles.createdAt}>
-          {new Date(client.createdAt).toLocaleDateString()}
-        </span>
-      </div>
+        </div>
+      </section>
 
       {/* Card 1 — Authentication */}
-      <Card>
-        <Stack gap="md">
-          <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardAuthentication')}</h2>
-          <div className={styles.fieldRow}>
-            <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.clientIdLabel')}</span>
-            <span className={styles.fieldValueMono}>{client.id}</span>
-            <CopyButton value={client.id} ariaLabel={t('common:copy')} />
+      <section className={styles.contentSection}>
+        <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardAuthentication')}</h2>
+        <Card>
+          <div className={styles.fieldGrid}>
+            <div className={styles.fieldItem}>
+              <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.clientIdLabel')}</span>
+              <span className={styles.fieldValueInline}>
+                <span className={styles.fieldValueMono}>{client.id}</span>
+                <CopyButton value={client.id} ariaLabel={t('common:copy')} />
+              </span>
+            </div>
+            <div className={styles.fieldItem}>
+              <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.clientSecretLabel')}</span>
+              {isPublic ? (
+                <Tooltip content={t('pages:iam.oauthClients.publicClientNoSecretTooltip')}>
+                  <span className={styles.publicNoSecret}>
+                    {t('pages:iam.oauthClients.publicClientNoSecret')}
+                  </span>
+                </Tooltip>
+              ) : (
+                <span className={styles.fieldValueInline}>
+                  <span className={styles.secretMask} aria-label="masked secret">
+                    {t('pages:iam.oauthClients.secretMasked')}
+                  </span>
+                  <span className={styles.lastRotated}>
+                    {client.lastSecretRotatedAt
+                      ? t('pages:iam.oauthClients.lastRotated', { relative: formatRelativeTime(client.lastSecretRotatedAt) })
+                      : t('pages:iam.oauthClients.neverRotated')}
+                  </span>
+                </span>
+              )}
+            </div>
           </div>
-          <div className={styles.fieldRow}>
-            <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.clientSecretLabel')}</span>
-            {isPublic ? (
-              <Tooltip content={t('pages:iam.oauthClients.publicClientNoSecretTooltip')}>
-                <span className={styles.publicNoSecret}>
-                  {t('pages:iam.oauthClients.publicClientNoSecret')}
-                </span>
-              </Tooltip>
-            ) : (
-              <Stack direction="horizontal" gap="sm">
-                <span className={styles.secretMask} aria-label="masked secret">
-                  {t('pages:iam.oauthClients.secretMasked')}
-                </span>
-                <span className={styles.lastRotated}>
-                  {client.lastSecretRotatedAt
-                    ? t('pages:iam.oauthClients.lastRotated', { relative: formatRelativeTime(client.lastSecretRotatedAt) })
-                    : t('pages:iam.oauthClients.neverRotated')}
-                </span>
-              </Stack>
-            )}
-          </div>
-        </Stack>
-      </Card>
+        </Card>
+      </section>
 
       {/* Card 2 — Redirect URIs */}
-      <Card>
-        <Stack gap="md">
-          <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardRedirectUris')}</h2>
+      <section className={styles.contentSection}>
+        <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardRedirectUris')}</h2>
+        <Card>
           <ul className={styles.uriList}>
             {client.redirectUris.map((uri) => (
               <li key={uri} className={styles.uriRow}>
@@ -198,69 +205,73 @@ export function OAuthClientDetailPage() {
               </li>
             ))}
           </ul>
-        </Stack>
-      </Card>
+        </Card>
+      </section>
 
       {/* Card 3 — Allowed scopes */}
-      <Card>
-        <Stack gap="md">
-          <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardAllowedScopes')}</h2>
+      <section className={styles.contentSection}>
+        <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardAllowedScopes')}</h2>
+        <Card>
           <div className={styles.scopeGrid}>
             {client.allowedScopes.map((scope) => (
               <ScopeChip key={scope} scope={scope} />
             ))}
           </div>
-        </Stack>
-      </Card>
+        </Card>
+      </section>
 
       {/* Card 4 — Security */}
-      <Card>
-        <Stack gap="md">
-          <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardSecurity')}</h2>
-          <div className={styles.fieldRow}>
-            <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.requirePkceLabel')}</span>
-            <span className={styles.fieldValue}>
-              {client.requirePkce ? t('common:yes') : t('common:no')}
-              {isPublic && (
-                <span className={styles.fieldHint}>
-                  {' '}{t('pages:iam.oauthClients.requirePkceForcedByType')}
-                </span>
-              )}
-            </span>
+      <section className={styles.contentSection}>
+        <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardSecurity')}</h2>
+        <Card>
+          <div className={styles.fieldGrid}>
+            <div className={styles.fieldItem}>
+              <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.requirePkceLabel')}</span>
+              <span className={styles.fieldValue}>
+                {client.requirePkce ? t('common:yes') : t('common:no')}
+                {isPublic && (
+                  <span className={styles.fieldHint}>
+                    {' '}{t('pages:iam.oauthClients.requirePkceForcedByType')}
+                  </span>
+                )}
+              </span>
+            </div>
+            <div className={styles.fieldItem}>
+              <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.accessTtlLabel')}</span>
+              <span className={styles.fieldValue}>
+                {formatSeconds(client.accessTtlSeconds)}
+                <span className={styles.fieldHint}>{' '}({client.accessTtlSeconds}s)</span>
+              </span>
+            </div>
+            <div className={styles.fieldItem}>
+              <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.refreshTtlLabel')}</span>
+              <span className={styles.fieldValue}>
+                {formatSeconds(client.refreshTtlSeconds)}
+                <span className={styles.fieldHint}>{' '}({client.refreshTtlSeconds}s)</span>
+              </span>
+            </div>
           </div>
-          <div className={styles.fieldRow}>
-            <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.accessTtlLabel')}</span>
-            <span className={styles.fieldValue}>
-              {formatSeconds(client.accessTtlSeconds)}
-              <span className={styles.fieldHint}>{' '}({client.accessTtlSeconds}s)</span>
-            </span>
-          </div>
-          <div className={styles.fieldRow}>
-            <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.refreshTtlLabel')}</span>
-            <span className={styles.fieldValue}>
-              {formatSeconds(client.refreshTtlSeconds)}
-              <span className={styles.fieldHint}>{' '}({client.refreshTtlSeconds}s)</span>
-            </span>
-          </div>
-        </Stack>
-      </Card>
+        </Card>
+      </section>
 
       {/* Card 5 — Activity */}
-      <Card>
-        <Stack gap="md">
-          <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardActivity')}</h2>
-          <div className={styles.fieldRow}>
-            <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.activeRefreshTokensLabel')}</span>
-            <Tooltip content={t('pages:iam.oauthClients.activeRefreshTokensTooltip')}>
-              <span className={styles.fieldValue}>{activeRefreshTokenCount}</span>
-            </Tooltip>
+      <section className={styles.contentSection}>
+        <h2 className={styles.cardTitle}>{t('pages:iam.oauthClients.cardActivity')}</h2>
+        <Card>
+          <div className={styles.fieldGrid}>
+            <div className={styles.fieldItem}>
+              <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.activeRefreshTokensLabel')}</span>
+              <Tooltip content={t('pages:iam.oauthClients.activeRefreshTokensTooltip')}>
+                <span className={styles.fieldValue}>{activeRefreshTokenCount}</span>
+              </Tooltip>
+            </div>
+            <div className={styles.fieldItem}>
+              <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.lastUpdatedLabel')}</span>
+              <span className={styles.fieldValue}>{formatRelativeTime(client.updatedAt)}</span>
+            </div>
           </div>
-          <div className={styles.fieldRow}>
-            <span className={styles.fieldLabel}>{t('pages:iam.oauthClients.lastUpdatedLabel')}</span>
-            <span className={styles.fieldValue}>{formatRelativeTime(client.updatedAt)}</span>
-          </div>
-        </Stack>
-      </Card>
+        </Card>
+      </section>
 
       {/* Rotate confirm — plain AlertDialog (interpolated body, no custom input). */}
       <AlertDialog

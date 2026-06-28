@@ -5,6 +5,7 @@ import { AccountProfileTab } from './AccountProfileTab';
 import { AccountApiKeysTab } from './AccountApiKeysTab';
 import { AccountActivityTab } from './AccountActivityTab';
 import { PersonalVKList } from '../account/personal-vks/PersonalVKList';
+import styles from './Account.module.css';
 
 const VALID_TABS = ['profile', 'apiKeys', 'virtualKeys', 'activity'];
 
@@ -18,7 +19,7 @@ export function MyAccountPage() {
     <>
       <PageHeader title={t('pages:account.title')} />
 
-      <Tabs defaultValue={defaultTab} onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}>
+      <Tabs className={styles.accountTabs} defaultValue={defaultTab} onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}>
         <TabsList>
           <TabsTrigger value="profile">{t('pages:account.tabProfile')}</TabsTrigger>
           <TabsTrigger value="apiKeys">{t('pages:account.tabApiKeys')}</TabsTrigger>

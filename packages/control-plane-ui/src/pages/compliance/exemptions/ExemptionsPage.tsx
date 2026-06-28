@@ -17,13 +17,15 @@ import type {
 import {
   Badge,
   Button,
-  Card,
   DataTable,
   ErrorBanner,
   ListPagination,
   DEFAULT_ADMIN_LIST_PAGE_SIZE,
   LoadingSpinner,
   PageHeader,
+  RevokeActionIcon,
+  RowActionIconButton,
+  RowActions,
   Select,
   Stack,
 } from '@/components/ui';
@@ -34,6 +36,7 @@ import { ExemptionDeleteDialog } from './ExemptionDeleteDialog';
 import { ExemptionApproveDialog } from './ExemptionApproveDialog';
 import { ExemptionRejectDialog } from './ExemptionRejectDialog';
 import { useExemptionDialogs } from './useExemptionDialogs';
+import styles from './ExemptionsPage.module.css';
 
 const EM_DASH = '—';
 
@@ -43,6 +46,15 @@ const STATUS_BADGE_VARIANT: Record<UnifiedExemptionRow['status'], 'success' | 'i
   pending: 'warning',
   expired: 'outline',
 };
+
+function EnableActionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <path d="m8 12 2.5 2.5L16 9" />
+    </svg>
+  );
+}
 
 export function ExemptionsPage() {
   const { t } = useTranslation();
@@ -152,7 +164,7 @@ export function ExemptionsPage() {
     () => [
       {
         key: 'id',
-        label: 'ID',
+        label: t('common:id'),
         render: (row) => <code style={{ fontSize: 'var(--g-font-size-xs)' }}>{row.id.slice(0, 8)}</code>,
       },
       {
@@ -215,7 +227,7 @@ export function ExemptionsPage() {
       },
       {
         key: 'actions',
-        label: '',
+        label: t('common:actions', 'Actions'),
         sortable: false,
         render: (row) => {
           if (row.kind === 'pending') {
@@ -240,19 +252,30 @@ export function ExemptionsPage() {
           // Grant row
           return (
             <Stack direction="horizontal" gap="sm" onClick={(e) => e.stopPropagation()}>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={patchBusyId === row.id}
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  void handleToggleInactive(row);
-                }}
-              >
-                {row.inactive
-                  ? t('pages:compliance.exemptions.enableBtn')
-                  : t('pages:compliance.exemptions.disableBtn')}
-              </Button>
+              <RowActions>
+                {row.inactive ? (
+                  <RowActionIconButton
+                    label={t('pages:compliance.exemptions.enableBtn')}
+                    disabled={patchBusyId === row.id}
+                    onAction={() => {
+                      void handleToggleInactive(row);
+                    }}
+                  >
+                    <EnableActionIcon />
+                  </RowActionIconButton>
+                ) : (
+                  <RowActionIconButton
+                    label={t('pages:compliance.exemptions.disableBtn')}
+                    tone="danger"
+                    disabled={patchBusyId === row.id}
+                    onAction={() => {
+                      void handleToggleInactive(row);
+                    }}
+                  >
+                    <RevokeActionIcon />
+                  </RowActionIconButton>
+                )}
+              </RowActions>
               {row.activatedAt === null ? (
                 <Button
                   size="sm"
@@ -288,7 +311,7 @@ export function ExemptionsPage() {
   }
 
   return (
-    <>
+    <div className={styles.page}>
       <PageHeader
           title={t('pages:compliance.exemptions.title', 'Temporary Exemptions')}
           subtitle={t(
@@ -302,40 +325,29 @@ export function ExemptionsPage() {
           }
         />
 
-      <Card>
-        <Stack gap="md">
-          <Stack direction="horizontal" gap="sm" align="center">
-            <label
-              htmlFor="exemption-status-filter"
-              style={{ fontSize: 'var(--g-font-size-sm)', color: 'var(--color-text-secondary)' }}
-            >
-              {t('pages:compliance.exemptions.statusFilterLabel')}
-            </label>
-            <div style={{ minWidth: '180px' }}>
-              <Select
-                value={statusFilter}
-                onValueChange={onStatusChange}
-                options={statusOptions}
-              />
-            </div>
-          </Stack>
+      <div className={styles.statusFilter}>
+        <Select
+          value={statusFilter}
+          onValueChange={onStatusChange}
+          options={statusOptions}
+        />
+      </div>
 
-          <DataTable
-            columns={columns}
-            data={rows}
-            hideSearch
-            onRowClick={(r) => navigate(`/compliance/exemptions/${r.id}`)}
-            emptyMessage={t('pages:compliance.exemptions.noRows')}
-          />
-          <ListPagination
-            offset={offset}
-            limit={pageLimit}
-            total={total}
-            onOffsetChange={setOffset}
-            onLimitChange={(v) => { setPageLimit(v); setOffset(0); }}
-          />
-        </Stack>
-      </Card>
+      <DataTable
+        className={styles.exemptionsTable}
+        columns={columns}
+        data={rows}
+        hideSearch
+        onRowClick={(r) => navigate(`/compliance/exemptions/${r.id}`)}
+        emptyMessage={t('pages:compliance.exemptions.noRows')}
+      />
+      <ListPagination
+        offset={offset}
+        limit={pageLimit}
+        total={total}
+        onOffsetChange={setOffset}
+        onLimitChange={(v) => { setPageLimit(v); setOffset(0); }}
+      />
 
       <ExemptionCreateDialog
         open={showCreate}
@@ -364,6 +376,6 @@ export function ExemptionsPage() {
         rejectBusy={rejectBusy}
         onConfirm={handleReject}
       />
-    </>
+    </div>
   );
 }

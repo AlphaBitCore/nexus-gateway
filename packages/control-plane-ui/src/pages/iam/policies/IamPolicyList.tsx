@@ -9,10 +9,12 @@ import {
   PageHeader, DataTable, ListFilterToolbar, Badge, statusToVariant,
   AlertDialog, Skeleton, ErrorBanner, Button, Stack, Card,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
+  RowActions, RowActionIconButton, OpenActionIcon, EditActionIcon, DeleteActionIcon,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import type { IamPolicy } from '../../../api/types';
-import styles from '../_shared/Iam.module.css';
+import iamStyles from '../_shared/Iam.module.css';
+import styles from './IamPolicyList.module.css';
 
 export function IamPolicyList() {
   const { t } = useTranslation();
@@ -75,7 +77,7 @@ export function IamPolicyList() {
     {
       key: 'type', label: t('pages:iam.type'),
       render: (r) => (
-        <span className={r.type === 'managed' ? styles.typeBadgeManaged : styles.typeBadgeCustom}>
+        <span className={r.type === 'managed' ? iamStyles.typeBadgeManaged : iamStyles.typeBadgeCustom}>
           {r.type}
         </span>
       ),
@@ -90,33 +92,39 @@ export function IamPolicyList() {
       render: (r) => <Badge variant={statusToVariant(r.enabled ? 'enabled' : 'disabled')}>{r.enabled ? t('common:enabled') : t('common:disabled')}</Badge>,
     },
     {
-      key: 'actions', label: t('pages:iam.actions'),
+      key: 'actions', label: t('common:actions', 'Actions'),
       render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={e => e.stopPropagation()}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); navigate(`/iam/policies/${r.id}/edit`); }}
-            disabled={r.type === 'managed'}
+        <RowActions>
+          <RowActionIconButton
+            label={t('common:view', 'View')}
+            onAction={() => navigate(`/iam/policies/${r.id}`)}
           >
-            {t('common:edit')}
-          </Button>
+            <OpenActionIcon />
+          </RowActionIconButton>
           {r.type !== 'managed' && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={(e) => { e.stopPropagation(); setDeleting(r); }}
-            >
-              {t('common:delete')}
-            </Button>
+            <>
+              <RowActionIconButton
+                label={t('common:edit')}
+                onAction={() => navigate(`/iam/policies/${r.id}/edit`)}
+              >
+                <EditActionIcon />
+              </RowActionIconButton>
+              <RowActionIconButton
+                label={t('common:delete')}
+                tone="danger"
+                onAction={() => setDeleting(r)}
+              >
+                <DeleteActionIcon />
+              </RowActionIconButton>
+            </>
           )}
-        </Stack>
+        </RowActions>
       ),
     },
   ];
 
   return (
-    <Stack gap="lg">
+    <Stack gap="md">
       <PageHeader
         title={t('pages:iam.policies')}
         subtitle={t('pages:iam.policiesSubtitle')}
@@ -126,38 +134,44 @@ export function IamPolicyList() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
+        className={styles.filterToolbar}
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('pages:iam.searchPoliciesPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}
-        meta={
-          total === 0
-            ? t('pages:iam.noPoliciesMatch')
-            : t('pages:iam.showingPolicies', { count: rows.length, total: total.toLocaleString() })
-        }
       >
-        <select aria-label={t('pages:iam.filterByType')} value={typeFilter} onChange={onTypeFilterChange} className={styles.filterSelect}>
+        <select aria-label={t('pages:iam.filterByType')} value={typeFilter} onChange={onTypeFilterChange} className={iamStyles.filterSelect}>
           <option value="">{t('pages:iam.allTypes')}</option>
           <option value="managed">{t('pages:iam.managed')}</option>
           <option value="custom">{t('pages:iam.custom')}</option>
         </select>
-        <select aria-label={t('pages:iam.filterByState')} value={enabledFilter} onChange={onEnabledFilterChange} className={styles.filterSelect}>
+        <select aria-label={t('pages:iam.filterByState')} value={enabledFilter} onChange={onEnabledFilterChange} className={iamStyles.filterSelect}>
           <option value="">{t('pages:iam.allStates')}</option>
           <option value="enabled">{t('pages:iam.enabledOnly')}</option>
           <option value="disabled">{t('pages:iam.disabledOnly')}</option>
         </select>
       </ListFilterToolbar>
 
-      <Card padding="none">
-        <DataTable
-          hideSearch
-          frameless
-          pageSize={pageLimit}
-          onRowClick={(row) => navigate(`/iam/policies/${row.id}`)}
-          columns={columns}
-          data={rows}
-          emptyMessage={t('pages:iam.noPoliciesConfigured')}
-        />
-      </Card>
+      <div className={styles.tableSection}>
+        <div className={styles.resultMeta}>
+          {total === 0
+            ? t('pages:iam.noPoliciesMatch')
+            : t('pages:iam.showingPolicies', { count: rows.length, total: total.toLocaleString() })}
+        </div>
+        <Card padding="none">
+          <DataTable
+            hideSearch
+            frameless
+            pageSize={pageLimit}
+            onRowClick={(row) => navigate(`/iam/policies/${row.id}`)}
+            columns={columns}
+            data={rows}
+            emptyMessage={t('pages:iam.noPoliciesConfigured')}
+          />
+        </Card>
+      </div>
 
       <ListPagination offset={offset} limit={pageLimit} total={total} onOffsetChange={setOffset} onLimitChange={setPageLimit} />
 

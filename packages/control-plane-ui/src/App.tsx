@@ -9,9 +9,14 @@ import { reportReactError } from './lib/errorReporting';
 import { LazyCallbackPage, LazyForgotPasswordPage, LazyLoginPage, LazyNotFoundPage, LazySsoErrorPage } from './routes/lazyPages';
 import { shellRoutes } from './routes/ShellRoutes';
 
+// Derive the router basename from the <base href> tag injected by nginx at
+// serve time. Direct access at '/' → href="/". Sub-path proxy at '/nexus/'
+// → href="/nexus/". Local dev (no tag) falls back to '/'.
+const routerBasename = document.querySelector('base')?.getAttribute('href') ?? '/';
+
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename}>
       <AuthProvider>
         <TimeRangeProvider>
         <ErrorBoundary level="route" onError={reportReactError}>

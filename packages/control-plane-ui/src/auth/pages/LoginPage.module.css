@@ -97,7 +97,7 @@
 .title {
   font-family: var(--g-font-display);
   font-size: clamp(1.875rem, 5vw, 2.25rem);
-  font-weight: 800;
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: 0;
   color: var(--color-text);
   line-height: 1.1;

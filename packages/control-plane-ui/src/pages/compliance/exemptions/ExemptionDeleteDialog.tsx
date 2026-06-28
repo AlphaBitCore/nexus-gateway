@@ -2,7 +2,7 @@
  * ExemptionDeleteDialog — confirmation AlertDialog for deleting a
  * pre-activation exemption grant. Controlled by useExemptionDialogs (the page
  * owns the selected row + delete handler); this component is a thin render of
- * that state, preserving the original page markup verbatim.
+ * that state.
  */
 import { useTranslation } from 'react-i18next';
 import { AlertDialog } from '@/components/ui';

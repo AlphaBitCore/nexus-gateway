@@ -70,6 +70,7 @@ export function RoutingRuleDetailPage() {
                   placeholder={t('pages:routing.simModelIdPlaceholder')}
                 />
                 <Button
+                  className={styles.simInlineButton}
                   disabled={simLoading || !simModelId.trim()}
                   onClick={runSimulation}
                 >

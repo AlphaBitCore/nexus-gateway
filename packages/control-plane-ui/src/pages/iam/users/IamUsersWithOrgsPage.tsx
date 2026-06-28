@@ -8,6 +8,7 @@ import {
   PageHeader, DataTable, ListFilterToolbar, Badge, statusToVariant,
   Skeleton, ErrorBanner, Button, Card, OrgTreeSelect,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE, type AdminListPageSize,
+  RowActions, RowActionIconButton, OpenActionIcon,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
 import type { AdminUser } from '@/api/types';
@@ -193,15 +194,16 @@ export function IamUsersWithOrgsPage() {
     },
     {
       key: 'actions',
-      label: '',
+      label: t('common:actions', 'Actions'),
       render: (r) => (
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={(e) => { e.stopPropagation(); navigate(`/iam/users/${r.id}`); }}
-        >
-          {t('pages:iam.view')}
-        </Button>
+        <RowActions>
+          <RowActionIconButton
+            label={t('pages:iam.view')}
+            onAction={() => navigate(`/iam/users/${r.id}`)}
+          >
+            <OpenActionIcon />
+          </RowActionIconButton>
+        </RowActions>
       ),
     },
   ];
@@ -219,14 +221,13 @@ export function IamUsersWithOrgsPage() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
+        className={styles.filterToolbar}
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('pages:iam.searchUsersPlaceholder')}
         searchValue={search}
         onSearchChange={onSearchChange}
-        meta={
-          total === 0
-            ? t('pages:iam.noUsersMatch')
-            : t('pages:iam.showingUsers', { count: rows.length, total: total.toLocaleString() })
-        }
       >
         <div className={styles.orgFilter}>
           <OrgTreeSelect
@@ -234,6 +235,7 @@ export function IamUsersWithOrgsPage() {
             value={selectedOrgId}
             onChange={handleOrgChange}
             allowClear
+            inlineSearch
             placeholder={t('pages:usersOrgs.filterByOrg')}
           />
         </div>
@@ -264,18 +266,25 @@ export function IamUsersWithOrgsPage() {
 
       {!usersLoading && !usersError && (
         <>
-          <Card padding="none">
-            <DataTable
-              hideSearch
-              frameless
-              serverPaginated
-              pageSize={pageLimit}
-              columns={columns}
-              data={rows}
-              onRowClick={(r) => navigate(`/iam/users/${r.id}`)}
-              emptyMessage={t('pages:iam.noUsersFound')}
-            />
-          </Card>
+          <div className={styles.tableSection}>
+            <div className={styles.resultMeta}>
+              {total === 0
+                ? t('pages:iam.noUsersMatch')
+                : t('pages:iam.showingUsers', { count: rows.length, total: total.toLocaleString() })}
+            </div>
+            <Card padding="none">
+              <DataTable
+                hideSearch
+                frameless
+                serverPaginated
+                pageSize={pageLimit}
+                columns={columns}
+                data={rows}
+                onRowClick={(r) => navigate(`/iam/users/${r.id}`)}
+                emptyMessage={t('pages:iam.noUsersFound')}
+              />
+            </Card>
+          </div>
 
           <ListPagination
             offset={offset}

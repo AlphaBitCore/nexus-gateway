@@ -53,14 +53,15 @@ export function BulkEnableSection({
 
   return (
     /* ── Bulk enable ── */
-    <Card>
-      <Stack gap="md">
-        <h3 className={styles.sectionTitle}>{t('infrastructure.diagMode.bulkTitle')}</h3>
-
+    <section className={styles.contentSection}>
+      <h3 className={styles.sectionTitle}>{t('infrastructure.diagMode.bulkTitle')}</h3>
+      <Card>
+        <Stack gap="md">
         <div className={styles.formGrid}>
           <FormField
             label={t('infrastructure.diagMode.filterAgentVersion')}
             helpText={t('infrastructure.diagMode.filterAgentVersionHelp')}
+            className={styles.formHalf}
           >
             <Input
               type="text"
@@ -74,6 +75,7 @@ export function BulkEnableSection({
           <FormField
             label={t('infrastructure.diagMode.filterOs')}
             helpText={t('infrastructure.diagMode.filterOsHelp')}
+            className={styles.formHalf}
           >
             <Select
               value={os || ANY_VALUE}
@@ -81,9 +83,9 @@ export function BulkEnableSection({
               disabled={parsedThingIds.length > 0}
               options={[
                 { value: ANY_VALUE, label: t('infrastructure.diagMode.osAny') },
-                { value: 'darwin', label: 'macOS (darwin)' },
-                { value: 'linux', label: 'Linux' },
-                { value: 'windows', label: 'Windows' },
+                { value: 'darwin', label: t('infrastructure.diagMode.osDarwin', 'macOS (darwin)') },
+                { value: 'linux', label: t('infrastructure.diagMode.osLinux', 'Linux') },
+                { value: 'windows', label: t('infrastructure.diagMode.osWindows', 'Windows') },
               ]}
             />
           </FormField>
@@ -95,13 +97,14 @@ export function BulkEnableSection({
           >
             <Textarea
               rows={3}
+              className={styles.nodeIdsTextarea}
               placeholder={t('infrastructure.diagMode.filterThingIdsPlaceholder')}
               value={thingIdsRaw}
               onChange={(e) => setThingIdsRaw(e.target.value)}
             />
           </FormField>
 
-          <FormField label={t('infrastructure.diagMode.window')}>
+          <FormField label={t('infrastructure.diagMode.window')} className={styles.windowField}>
             <Select
               value={windowKey}
               onValueChange={setWindowKey}
@@ -116,7 +119,7 @@ export function BulkEnableSection({
             label={t('infrastructure.diagMode.reason')}
             required
             error={!validReason && reason.length > 0 ? t('infrastructure.diagMode.reasonRequired') : undefined}
-            className={styles.formGridFull}
+            className={styles.reasonField}
           >
             <Input
               type="text"
@@ -166,6 +169,7 @@ export function BulkEnableSection({
             type="button"
             variant="primary"
             size="md"
+            className={styles.enableButton}
             disabled={!canSubmit}
             loading={bulkLoading}
             onClick={handleBulkEnable}
@@ -178,7 +182,8 @@ export function BulkEnableSection({
             </span>
           )}
         </div>
-      </Stack>
-    </Card>
+        </Stack>
+      </Card>
+    </section>
   );
 }

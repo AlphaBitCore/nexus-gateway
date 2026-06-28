@@ -3,7 +3,24 @@
 }
 
 .radioGroup {
-  margin-bottom: var(--g-space-4);
+  margin-bottom: var(--g-space-0);
+}
+
+.radioGroup + .warning,
+.radioGroup + .oidcForm {
+  margin-top: var(--g-space-4);
+}
+
+.radioOption {
+  padding: var(--g-space-3) var(--g-space-0);
+}
+
+.radioOption:first-child {
+  padding-top: var(--g-space-0);
+}
+
+.radioOption + .radioOption {
+  border-top: 1px solid var(--color-border);
 }
 
 .radioLabel {
@@ -11,7 +28,7 @@
   align-items: center;
   gap: var(--g-space-2);
   font-size: var(--g-font-size-base);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   cursor: pointer;
   margin-bottom: var(--g-space-1);
 }
@@ -25,7 +42,7 @@
 .radioAdvisory {
   font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
-  margin: 0 0 var(--g-space-3) 24px;
+  margin: 0 0 0 24px;
   font-style: italic;
 }
 
@@ -38,7 +55,7 @@
 
 .sectionTitle {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: 0 0 var(--g-space-3) 0;
 }
 
@@ -47,7 +64,7 @@
   flex-direction: column;
   gap: var(--g-space-1);
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
 }
 
@@ -76,7 +93,7 @@
 }
 
 .providerName {
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .providerType {
@@ -96,5 +113,10 @@
 
 .actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
+}
+
+.actionButton,
+.actionButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
 }

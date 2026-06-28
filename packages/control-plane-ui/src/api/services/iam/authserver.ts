@@ -4,6 +4,7 @@
  * admin API client, so we issue plain fetch calls and parse the typed
  * error codes defined by docs/users/api/openapi/auth/authserver-login.yaml.
  */
+import { withPrefix } from '@/lib/deploymentPrefix';
 
 export type AuthserverErrorCode =
   | 'invalid_credentials'
@@ -54,7 +55,7 @@ async function parseError(res: Response): Promise<never> {
 
 export const authApi = {
   async listIdps(authctx: string): Promise<IdpListResponse> {
-    const url = new URL('/authserver/idps', window.location.origin);
+    const url = new URL(withPrefix('/authserver/idps'), window.location.origin);
     url.searchParams.set('authctx', authctx);
     const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
     if (!res.ok) await parseError(res);
@@ -66,7 +67,7 @@ export const authApi = {
     email: string,
     password: string,
   ): Promise<PasswordSubmitResponse> {
-    const res = await fetch(new URL('/authserver/password', window.location.origin).toString(), {
+    const res = await fetch(new URL(withPrefix('/authserver/password'), window.location.origin).toString(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ authctx, email, password }),
@@ -83,7 +84,7 @@ export const authApi = {
    * navigate to "/" and the CLI's loopback listener would hang.
    */
   async approveAuthctx(authctx: string, accessToken: string): Promise<PasswordSubmitResponse> {
-    const res = await fetch(new URL('/authserver/approve', window.location.origin).toString(), {
+    const res = await fetch(new URL(withPrefix('/authserver/approve'), window.location.origin).toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

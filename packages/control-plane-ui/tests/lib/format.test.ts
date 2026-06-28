@@ -151,5 +151,10 @@ describe('count formatters', () => {
     expect(formatTokens(45_600)).toBe('45.6K');
     expect(formatTokens(2_000_000)).toBe('2M');
     expect(formatTokens(1_930_000)).toBe('1.93M');
+    // B/T tiers: a 130.66-billion aggregate previously rendered as "130656.64M"
+    // (neither scaled nor separated) — the dashboard "Total Tokens" bug.
+    expect(formatTokens(5_000_000_000)).toBe('5B');
+    expect(formatTokens(130_656_640_000)).toBe('130.66B');
+    expect(formatTokens(1_310_000_000_000)).toBe('1.31T');
   });
 });

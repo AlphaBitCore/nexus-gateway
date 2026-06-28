@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 import { systemApi, type PayloadCaptureConfig } from '@/api/services/infrastructure/misc/system';
+import styles from './SettingsPayloadCaptureTab.module.css';
 import {
   AlertDialog,
   Button,
@@ -103,98 +104,87 @@ export function SettingsPayloadCaptureTab() {
   if (!data) return null;
 
   return (
-    <Card>
-      <Stack gap="md">
-        <h2>{t('pages:settingsPayloadCapture.title')}</h2>
-        <p style={{ fontSize: 'var(--g-font-size-base)', color: 'var(--color-text-secondary)' }}>
+    <Stack gap="md">
+      <div className={styles.sectionHeader}>
+        <h2 className={styles.sectionTitle}>{t('pages:settingsPayloadCapture.title')}</h2>
+        <p className={styles.sectionSubtitle}>
           {t('pages:settingsPayloadCapture.subtitle')}
         </p>
+      </div>
 
-        <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-          <Switch
-            checked={storeRequestBody}
-            onCheckedChange={handleToggleRequest}
-            aria-label={t('pages:settingsPayloadCapture.storeRequest')}
-          />
-          <span style={{ fontSize: 'var(--g-font-size-base)' }}>
-            {t('pages:settingsPayloadCapture.storeRequest')}
-          </span>
-        </Stack>
+      <Card>
+        <Stack gap="md">
+          <div className={styles.formGrid}>
+            <div className={styles.switchField}>
+              <div className={styles.switchTitle}>{t('pages:settingsPayloadCapture.storeRequest')}</div>
+              <div className={styles.switchRow}>
+                <Switch
+                  checked={storeRequestBody}
+                  onCheckedChange={handleToggleRequest}
+                  aria-label={t('pages:settingsPayloadCapture.storeRequest')}
+                />
+              </div>
+            </div>
 
-        <Stack gap="xs">
-          <Stack direction="horizontal" gap="sm" style={{ alignItems: 'center' }}>
-            <Switch
-              checked={storeResponseBody}
-              onCheckedChange={handleToggleResponse}
-              aria-label={t('pages:settingsPayloadCapture.storeResponse')}
-            />
-            <span style={{ fontSize: 'var(--g-font-size-base)' }}>
-              {t('pages:settingsPayloadCapture.storeResponse')}
-            </span>
+            <div className={styles.switchField}>
+              <div className={styles.switchTitle}>{t('pages:settingsPayloadCapture.storeResponse')}</div>
+              <div className={styles.switchRow}>
+                <Switch
+                  checked={storeResponseBody}
+                  onCheckedChange={handleToggleResponse}
+                  aria-label={t('pages:settingsPayloadCapture.storeResponse')}
+                />
+              </div>
+              <p className={styles.switchHelp}>{t('pages:settingsPayloadCapture.streamingNote')}</p>
+            </div>
+
+            <FormField
+              label={t('pages:settingsPayloadCapture.maxBytes')}
+              helpText={t('pages:settingsPayloadCapture.maxBytesHelp')}
+            >
+              <Input
+                type="number"
+                value={maxInlineBodyBytes}
+                onChange={e => setMaxInlineBodyBytes(e.target.value)}
+                min={0}
+                step={1024}
+              />
+            </FormField>
+
+            <FormField
+              label={t('pages:settingsPayloadCapture.maxRequestBytes')}
+              helpText={t('pages:settingsPayloadCapture.maxRequestBytesHelp')}
+            >
+              <Input
+                type="number"
+                value={maxRequestBytes}
+                onChange={e => setMaxRequestBytes(e.target.value)}
+                min={0}
+                step={1024 * 1024}
+              />
+            </FormField>
+
+            <FormField
+              label={t('pages:settingsPayloadCapture.maxResponseBytes')}
+              helpText={t('pages:settingsPayloadCapture.maxResponseBytesHelp')}
+            >
+              <Input
+                type="number"
+                value={maxResponseBytes}
+                onChange={e => setMaxResponseBytes(e.target.value)}
+                min={0}
+                step={1024 * 1024}
+              />
+            </FormField>
+          </div>
+
+          <Stack direction="horizontal" gap="sm">
+            <Button className={styles.saveButton} onClick={() => save(undefined)} loading={saving}>
+              {t('common:save')}
+            </Button>
           </Stack>
-          <p
-            style={{
-              fontSize: 'var(--g-font-size-xs)',
-              color: 'var(--color-text-secondary)',
-              margin: 'var(--g-space-0)',
-              paddingLeft: 'var(--g-space-12)',
-            }}
-          >
-            {t('pages:settingsPayloadCapture.streamingNote')}
-          </p>
         </Stack>
-
-        <div style={{ maxWidth: 260 }}>
-          <FormField
-            label={t('pages:settingsPayloadCapture.maxBytes')}
-            helpText={t('pages:settingsPayloadCapture.maxBytesHelp')}
-          >
-            <Input
-              type="number"
-              value={maxInlineBodyBytes}
-              onChange={e => setMaxInlineBodyBytes(e.target.value)}
-              min={0}
-              step={1024}
-            />
-          </FormField>
-        </div>
-
-        <div style={{ maxWidth: 260 }}>
-          <FormField
-            label={t('pages:settingsPayloadCapture.maxRequestBytes')}
-            helpText={t('pages:settingsPayloadCapture.maxRequestBytesHelp')}
-          >
-            <Input
-              type="number"
-              value={maxRequestBytes}
-              onChange={e => setMaxRequestBytes(e.target.value)}
-              min={0}
-              step={1024 * 1024}
-            />
-          </FormField>
-        </div>
-
-        <div style={{ maxWidth: 260 }}>
-          <FormField
-            label={t('pages:settingsPayloadCapture.maxResponseBytes')}
-            helpText={t('pages:settingsPayloadCapture.maxResponseBytesHelp')}
-          >
-            <Input
-              type="number"
-              value={maxResponseBytes}
-              onChange={e => setMaxResponseBytes(e.target.value)}
-              min={0}
-              step={1024 * 1024}
-            />
-          </FormField>
-        </div>
-
-        <Stack direction="horizontal" gap="sm">
-          <Button onClick={() => save(undefined)} loading={saving}>
-            {t('common:save')}
-          </Button>
-        </Stack>
-      </Stack>
+      </Card>
 
       <AlertDialog
         open={pendingFlip !== 'none'}
@@ -208,6 +198,6 @@ export function SettingsPayloadCaptureTab() {
         variant="danger"
         onConfirm={confirmFlip}
       />
-    </Card>
+    </Stack>
   );
 }

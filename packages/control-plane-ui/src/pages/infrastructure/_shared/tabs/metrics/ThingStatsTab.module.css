@@ -18,9 +18,9 @@
   margin-bottom: var(--g-space-3);
 }
 
-.headerLabel {
-  font-size: var(--g-font-size-sm);
-  color: var(--color-text-muted);
+.rangeSelect {
+  width: 320px;
+  max-width: 100%;
 }
 
 .granuleBadge {
@@ -40,7 +40,7 @@
 
 .kpiGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--g-space-3);
 }
 
@@ -61,7 +61,7 @@
 
 .kpiValue {
   font-size: var(--g-font-size-xl);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   line-height: 1.2;
 }
@@ -71,10 +71,31 @@
   color: var(--color-text-muted);
 }
 
-.sectionTitle {
+.kpiTitle,
+.trendsTitle,
+.breakdownsTitle {
   font-size: var(--g-font-size-md);
-  font-weight: 600;
-  margin: var(--g-space-4) 0 var(--g-space-2) 0;
+  font-weight: var(--g-font-weight-semibold);
+  margin: 0;
+}
+
+.kpiSection,
+.trendsSection,
+.breakdownsSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.kpiSection {
+  gap: 8px;
+}
+
+.trendsSection {
+  gap: 12px;
+}
+
+.breakdownsSection {
+  gap: 8px;
 }
 
 .trendGrid {
@@ -110,4 +131,10 @@
   font-style: italic;
   padding: var(--g-space-4);
   text-align: center;
+}
+
+@media (max-width: 1200px) {
+  .kpiGrid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
 }

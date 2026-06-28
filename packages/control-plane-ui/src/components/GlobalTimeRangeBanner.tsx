@@ -5,7 +5,7 @@ import type { TimeRangePreset } from '../context/TimeRangeContext';
 import styles from './GlobalTimeRangeBanner.module.css';
 
 /**
- * Slim global time-range picker (S45, M5-12).
+ * Slim global time-range picker.
  *
  * Mounted in the Shell content area above the page outlet. Every page
  * that opts into the `useTimeRange` hook stays in sync with this picker.

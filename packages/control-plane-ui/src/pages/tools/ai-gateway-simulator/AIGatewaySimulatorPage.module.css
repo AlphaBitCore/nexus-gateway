@@ -23,10 +23,11 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 8px 12px;
+}
+
+.toolbar :global(button),
+.toolbar :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
 }
 
 .toolbarSelect {
@@ -42,7 +43,7 @@
   gap: 12px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   padding: 16px;
   /* Fixed-ish height keeps the composer + usage strip pinned at the
      bottom of the page on tall screens; small screens scroll within
@@ -65,14 +66,14 @@
 
 .emptyTitle {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
 .emptyHint {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
 }
 
 /* ---- Message bubbles ------------------------------------------------ */
@@ -92,12 +93,12 @@
 
 .bubble {
   max-width: 78%;
-  border-radius: 12px;
+  border-radius: var(--g-radius-xl);
   padding: 10px 14px;
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
 }
 
 .bubbleUser {
@@ -133,7 +134,7 @@
   gap: 8px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   padding: 10px 12px;
 }
 
@@ -142,7 +143,7 @@
   min-height: 64px;
   width: 100%;
   font-family: var(--g-font-sans);
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
 }
 
 .composerActions {
@@ -152,8 +153,13 @@
   gap: 12px;
 }
 
+.composerActions :global(button),
+.composerActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
 .streamLabel {
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
 }
 
@@ -165,9 +171,14 @@
   gap: 16px;
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
+}
+
+.usageStrip :global(button),
+.usageStrip :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
 }
 
 .usageBlock {
@@ -188,7 +199,7 @@
 .usageValue {
   color: var(--color-text);
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -214,7 +225,7 @@
 
 .paramsSectionTitle {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   color: var(--color-text-muted);
@@ -234,7 +245,7 @@
 }
 
 .paramLabel {
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
   font-family: var(--g-font-mono);
 }
@@ -251,10 +262,10 @@
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   line-height: 1;
   padding: 4px;
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
 }
 .deleteCustomParam:hover {
   background: var(--color-surface-2);

@@ -112,7 +112,7 @@ function QuotaOverrideEditForm({ id, override }: { id: string; override: QuotaOv
     (data: CreateQuotaOverrideInput) => quotaOverrideApi.update(id!, data),
     {
       invalidateQueries: [['api', 'admin', 'quota-overrides']],
-      onSuccess: () => navigate('/ai-gateway/quota-overrides'),
+      onSuccess: () => navigate(`/ai-gateway/quota-overrides/${id}`),
       successMessage: t('pages:quotaOverrides.overrideUpdated'),
     },
   );
@@ -150,82 +150,87 @@ function QuotaOverrideEditForm({ id, override }: { id: string; override: QuotaOv
       <form onSubmit={form.handleSubmit(onSubmit)}>
         <Stack gap="md">
           {/* Section 1: Target */}
-          <Card>
+          <section className={styles.formSection}>
             <h3 className={styles.sectionTitle}>{t('pages:quotaOverrides.targetSection')}</h3>
-            <div className={styles.formGrid}>
-              <FormSelect
-                form={form}
-                name="targetType"
-                label={t('pages:quotaOverrides.targetType')}
-                tooltip={t('pages:quotaOverrides.targetTypeTooltip')}
-                required
-                options={[
-                  { value: 'user', label: t('pages:quotaOverrides.scopeUser') },
-                  { value: 'vk', label: t('pages:quotaOverrides.scopeVk') },
-                  { value: 'project', label: t('pages:quotaOverrides.scopeProject') },
-                  { value: 'organization', label: t('pages:quotaOverrides.scopeOrganization') },
-                ]}
-              />
-              <div>
-                <label className={styles.fieldLabel}>{t('pages:quotaOverrides.target')}</label>
-                <SearchableCombobox
-                  ariaLabel={t('pages:quotaOverrides.target')}
-                  placeholder={t('pages:quotaOverrides.selectTarget')}
-                  valueId={form.watch('targetId')}
-                  valueLabel={targetLabel}
-                  allowEmptyQueryFetch
-                  fetchOptions={fetchTargets}
-                  onSelect={(opt) => {
-                    form.setValue('targetId', opt?.id ?? '', { shouldDirty: true, shouldValidate: true });
-                    setTargetLabel(opt?.label ?? '');
-                  }}
+            <Card>
+              <div className={styles.formGrid}>
+                <FormSelect
+                  form={form}
+                  name="targetType"
+                  label={t('pages:quotaOverrides.targetType')}
+                  tooltip={t('pages:quotaOverrides.targetTypeTooltip')}
+                  required
+                  options={[
+                    { value: 'user', label: t('pages:quotaOverrides.scopeUser') },
+                    { value: 'vk', label: t('pages:quotaOverrides.scopeVk') },
+                    { value: 'project', label: t('pages:quotaOverrides.scopeProject') },
+                    { value: 'organization', label: t('pages:quotaOverrides.scopeOrganization') },
+                  ]}
                 />
+                <div>
+                  <label className={styles.fieldLabel}>{t('pages:quotaOverrides.target')}</label>
+                  <SearchableCombobox
+                    ariaLabel={t('pages:quotaOverrides.target')}
+                    placeholder={t('pages:quotaOverrides.selectTarget')}
+                    valueId={form.watch('targetId')}
+                    valueLabel={targetLabel}
+                    allowEmptyQueryFetch
+                    fetchOptions={fetchTargets}
+                    className={styles.targetCombobox}
+                    onSelect={(opt) => {
+                      form.setValue('targetId', opt?.id ?? '', { shouldDirty: true, shouldValidate: true });
+                      setTargetLabel(opt?.label ?? '');
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-          </Card>
+            </Card>
+          </section>
 
           {/* Section 2: Override Settings */}
-          <Card>
+          <section className={styles.formSection}>
             <h3 className={styles.sectionTitle}>{t('pages:quotaOverrides.targetSettings')}</h3>
-            <div className={styles.formGrid}>
-              <FormInput form={form} name="costLimitUsd" label={t('pages:quotaOverrides.costLimit')} tooltip={t('pages:quotaOverrides.costLimitTooltip')} type="number" placeholder={t('pages:quotaOverrides.optional')} />
-              <FormInput form={form} name="tokenLimit" label={t('pages:quotaOverrides.tokenLimit')} tooltip={t('pages:quotaOverrides.tokenLimitTooltip')} type="number" placeholder={t('pages:quotaOverrides.optional')} />
-              <FormSelect
-                form={form}
-                name="enforcementMode"
-                label={t('pages:quotaOverrides.enforcementMode')}
-                tooltip={t('pages:quotaOverrides.enforcementModeTooltip')}
-                options={[
-                  { value: '_inherit', label: inheritLabel },
-                  { value: 'reject', label: t('pages:quotaOverrides.reject') },
-                  { value: 'downgrade', label: t('pages:quotaOverrides.downgrade') },
-                  { value: 'notify-and-proceed', label: t('pages:quotaOverrides.notifyAndProceed') },
-                  { value: 'track-only', label: t('pages:quotaOverrides.trackOnly') },
-                ]}
-              />
-              <FormSelect
-                form={form}
-                name="periodType"
-                label={t('pages:quotaOverrides.periodType')}
-                tooltip={t('pages:quotaOverrides.periodTypeTooltip')}
-                options={[
-                  { value: '_inherit', label: inheritLabel },
-                  { value: 'daily', label: t('pages:quotaOverrides.daily') },
-                  { value: 'weekly', label: t('pages:quotaOverrides.weekly') },
-                  { value: 'monthly', label: t('pages:quotaOverrides.monthly') },
-                ]}
-              />
-              <div className={styles.formGridFull}>
-                <FormTextarea form={form} name="reason" label={t('pages:quotaOverrides.reason')} tooltip={t('pages:quotaOverrides.reasonTooltip')} placeholder={t('pages:quotaOverrides.optional')} />
+            <Card>
+              <div className={styles.formGrid}>
+                <FormInput form={form} name="costLimitUsd" label={t('pages:quotaOverrides.costLimit')} tooltip={t('pages:quotaOverrides.costLimitTooltip')} type="number" placeholder={t('pages:quotaOverrides.optional')} />
+                <FormInput form={form} name="tokenLimit" label={t('pages:quotaOverrides.tokenLimit')} tooltip={t('pages:quotaOverrides.tokenLimitTooltip')} type="number" placeholder={t('pages:quotaOverrides.optional')} />
+                <FormSelect
+                  form={form}
+                  name="enforcementMode"
+                  label={t('pages:quotaOverrides.enforcementMode')}
+                  tooltip={t('pages:quotaOverrides.enforcementModeTooltip')}
+                  options={[
+                    { value: '_inherit', label: inheritLabel },
+                    { value: 'reject', label: t('pages:quotaOverrides.reject') },
+                    { value: 'downgrade', label: t('pages:quotaOverrides.downgrade') },
+                    { value: 'notify-and-proceed', label: t('pages:quotaOverrides.notifyAndProceed') },
+                    { value: 'track-only', label: t('pages:quotaOverrides.trackOnly') },
+                  ]}
+                />
+                <FormSelect
+                  form={form}
+                  name="periodType"
+                  label={t('pages:quotaOverrides.periodType')}
+                  tooltip={t('pages:quotaOverrides.periodTypeTooltip')}
+                  options={[
+                    { value: '_inherit', label: inheritLabel },
+                    { value: 'daily', label: t('pages:quotaOverrides.daily') },
+                    { value: 'weekly', label: t('pages:quotaOverrides.weekly') },
+                    { value: 'monthly', label: t('pages:quotaOverrides.monthly') },
+                  ]}
+                />
+                <div className={`${styles.formGridFull} ${styles.reasonField}`}>
+                  <FormTextarea form={form} name="reason" label={t('pages:quotaOverrides.reason')} tooltip={t('pages:quotaOverrides.reasonTooltip')} placeholder={t('pages:quotaOverrides.optional')} />
+                </div>
               </div>
-            </div>
-          </Card>
+            </Card>
+          </section>
 
-          <Stack direction="horizontal" gap="sm" className={styles.justifyEnd}>
-            <Button type="button" variant="secondary" onClick={() => navigate('/ai-gateway/quota-overrides')}>{t('common:cancel')}</Button>
+          <Stack direction="horizontal" gap="sm" className={styles.stickyActions}>
             <Button type="submit" disabled={loading}>
               {loading ? t('pages:quotaOverrides.saving') : t('common:save')}
             </Button>
+            <Button type="button" variant="secondary" onClick={() => navigate('/ai-gateway/quota-overrides')}>{t('common:cancel')}</Button>
           </Stack>
         </Stack>
       </form>

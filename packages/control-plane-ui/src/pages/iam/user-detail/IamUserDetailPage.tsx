@@ -1,17 +1,17 @@
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
-  PageHeader, Skeleton, ErrorBanner, AlertDialog, Breadcrumb, Button, Stack,
+  Skeleton, ErrorBanner, AlertDialog, Button, Stack, Badge, statusToVariant,
   Tabs, TabsList, TabsTrigger, TabsContent, Dialog, FormField, Input,
 } from '@/components/ui';
 import { useIamUserDetail } from './useIamUserDetail';
 import { UserInfoTab } from './UserInfoTab';
 import { UserPermissionsTab } from './UserPermissionsTab';
 import { UserDevicesTab } from './UserDevicesTab';
+import styles from '../_shared/Iam.module.css';
 
 export function IamUserDetailPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const state = useIamUserDetail();
 
   const {
@@ -22,8 +22,6 @@ export function IamUserDetailPage() {
     deletingUser,
     setDeletingUser,
     deleteUser,
-    isEditing,
-    startEditing,
     isResettingPassword,
     setIsResettingPassword,
     resetPassword,
@@ -46,26 +44,23 @@ export function IamUserDetailPage() {
 
   return (
     <Stack gap="lg">
-      <Stack direction="horizontal" gap="sm" align="center">
-        <Button variant="secondary" size="sm" onClick={() => navigate(-1)}>
-          ← {t('common:back')}
-        </Button>
-        <Breadcrumb items={[
-          { label: t('pages:iam.users'), to: '/iam/users' },
-          { label: user.displayName },
-        ]} />
-      </Stack>
-
-      <PageHeader
-        title={user.displayName}
-        subtitle={user.email || undefined}
-        action={
-          <Stack direction="horizontal" gap="sm" align="center">
-            {!isEditing && (
-              <Button variant="secondary" onClick={startEditing}>
-                {t('common:edit')}
-              </Button>
-            )}
+      <section className={styles.detailHeader}>
+        <div className={styles.detailHeaderRow}>
+          <Link to="/iam/users" className={styles.detailBackLink} aria-label={t('common:back')}>
+            <svg className={styles.detailBackIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.detailHeaderText}>
+            <h1 className={styles.detailTitle}>{user.displayName}</h1>
+            <div className={styles.detailMeta}>
+              {user.email && <Badge variant="outline">{user.email}</Badge>}
+              <Badge variant={statusToVariant(user.status)}>{user.status}</Badge>
+              {user.source && user.source !== 'local' && <Badge variant="info">{user.source.toUpperCase()}</Badge>}
+            </div>
+          </div>
+          <Stack direction="horizontal" gap="sm" align="center" className={styles.detailHeaderActions}>
             <Button variant="secondary" onClick={() => setIsResettingPassword(true)}>
               {t('pages:iam.resetPassword')}
             </Button>
@@ -73,10 +68,10 @@ export function IamUserDetailPage() {
               {t('common:delete')}
             </Button>
           </Stack>
-        }
-      />
+        </div>
+      </section>
 
-      <Tabs defaultValue="info">
+      <Tabs defaultValue="info" className={styles.detailTabs}>
         <TabsList>
           <TabsTrigger value="info">{t('pages:iam.info')}</TabsTrigger>
           <TabsTrigger value="permissions">{t('pages:iam.permissions')}</TabsTrigger>
@@ -88,6 +83,7 @@ export function IamUserDetailPage() {
             user={state.user}
             isEditing={state.isEditing}
             setIsEditing={state.setIsEditing}
+            startEditing={state.startEditing}
             editDisplayName={state.editDisplayName}
             setEditDisplayName={state.setEditDisplayName}
             editEmail={state.editEmail}

@@ -20,16 +20,15 @@
  *
  * Route params: `/alerts/channels/:id` where `id === 'new'` means create.
  */
-import { useCallback, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 import { alertsApi } from '@/api/services';
 import type { AlertChannel, AlertSeverity } from '@/api/services';
 import {
-  PageHeader,
-  Breadcrumb,
+  AlertDialog,
   Button,
   Stack,
   Card,
@@ -43,10 +42,7 @@ import {
 } from '@/components/ui';
 import { CHANNEL_TYPES, SEVERITIES, SOURCE_TYPES } from './channelMasking';
 import { useChannelForm } from './useChannelForm';
-import { WebhookConfig } from './WebhookConfig';
-import { SlackConfig } from './SlackConfig';
-import { EmailConfig } from './EmailConfig';
-import { PagerDutyConfig } from './PagerDutyConfig';
+import { AlertChannelConfigPanel } from './AlertChannelEditPage.ConfigPanel';
 import styles from './AlertChannelEditPage.module.css';
 
 export { MASK_PREFIX } from './channelMasking';
@@ -57,6 +53,7 @@ export function AlertChannelEditPage() {
   const isNew = id === 'new' || id === '';
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const { data: channel, loading, error, refetch } = useApi<AlertChannel>(
     () => alertsApi.getChannel(id),
@@ -76,36 +73,6 @@ export function AlertChannelEditPage() {
     setSeverities,
     sourceTypes,
     setSourceTypes,
-    webhookUrl,
-    setWebhookUrl,
-    headers,
-    setHeaders,
-    slackWebhookUrl,
-    setSlackWebhookUrl,
-    slackBotToken,
-    setSlackBotToken,
-    slackBotTokenMasked,
-    setSlackBotTokenMasked,
-    slackChannel,
-    setSlackChannel,
-    smtpHost,
-    setSmtpHost,
-    smtpPort,
-    setSmtpPort,
-    smtpFrom,
-    setSmtpFrom,
-    smtpTo,
-    setSmtpTo,
-    smtpUsername,
-    setSmtpUsername,
-    smtpPassword,
-    setSmtpPassword,
-    smtpPasswordMasked,
-    setSmtpPasswordMasked,
-    routingKey,
-    setRoutingKey,
-    routingKeyMasked,
-    setRoutingKeyMasked,
     buildConfig,
   } = form;
 
@@ -124,8 +91,12 @@ export function AlertChannelEditPage() {
       return alertsApi.updateChannel(id, body);
     },
     {
-      onSuccess: () => {
-        navigate('/alerts/channels');
+      onSuccess: (saved) => {
+        if (isNew) {
+          navigate(`/alerts/channels/${encodeURIComponent(saved.id)}`);
+        } else {
+          refetch();
+        }
       },
       successMessage: isNew
         ? t('pages:alerts.channels.edit.createSuccess')
@@ -137,6 +108,21 @@ export function AlertChannelEditPage() {
     void saveChannel();
   }, [saveChannel]);
   const onCancel = useCallback(() => navigate('/alerts/channels'), [navigate]);
+
+  const { mutate: deleteChannel, loading: deleting } = useMutation<void, void>(
+    () => alertsApi.deleteChannel(id),
+    {
+      onSuccess: () => {
+        setDeleteOpen(false);
+        navigate('/alerts/channels');
+      },
+      successMessage: t('pages:alerts.channels.deleteSuccess'),
+    },
+  );
+
+  const onDeleteConfirm = useCallback(() => {
+    void deleteChannel();
+  }, [deleteChannel]);
 
   /* ── Options for selects ───────────────────────────────────────────────── */
   const typeOptions = useMemo(
@@ -171,128 +157,101 @@ export function AlertChannelEditPage() {
 
   return (
     <Stack gap="md">
-      <Breadcrumb
-        items={[
-          { label: t('pages:alerts.channels.title'), to: '/alerts/channels' },
-          { label: isNew ? t('pages:alerts.channels.edit.createTitle') : channel?.name ?? '' },
-        ]}
-      />
-
-      <PageHeader
-        title={title}
-        subtitle={t('pages:alerts.channels.edit.subtitle')}
-      />
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/alerts/channels" className={styles.backLink} aria-label={t('common:back', 'Back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{title}</h1>
+            <p className={styles.detailSubtitle}>{t('pages:alerts.channels.edit.subtitle')}</p>
+          </div>
+          {!isNew && (
+            <Button variant="danger" className={styles.headerDeleteButton} onClick={() => setDeleteOpen(true)}>
+              {t('common:delete')}
+            </Button>
+          )}
+        </div>
+      </section>
 
       {/* Common fields */}
-      <Card>
+      <section className={styles.contentSection}>
         <h3 className={styles.sectionTitle}>
           {t('pages:alerts.channels.edit.generalSection')}
         </h3>
-        <Stack gap="md">
-          <FormField label={t('pages:alerts.channels.edit.nameLabel')}>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t('pages:alerts.channels.edit.namePlaceholder')}
+        <Card>
+          <div className={styles.generalGrid}>
+            <FormField label={t('pages:alerts.channels.edit.nameLabel')}>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('pages:alerts.channels.edit.namePlaceholder')}
+              />
+            </FormField>
+            <FormField label={t('pages:alerts.channels.edit.typeLabel')}>
+              <Select
+                value={type}
+                onValueChange={(v) => setType(v as AlertChannel['type'])}
+                options={typeOptions}
+              />
+            </FormField>
+            <div className={styles.switchRow}>
+              <label>{t('pages:alerts.channels.edit.enabledLabel')}</label>
+              <Switch checked={enabled} onCheckedChange={setEnabled} />
+            </div>
+            <MultiSelectDropdown
+              className={styles.fullWidthField}
+              label={t('pages:alerts.channels.edit.severitiesLabel')}
+              emptyLabel={t('pages:alerts.channels.edit.severitiesAll')}
+              options={severityOptions}
+              value={severities}
+              onChange={(next) => setSeverities(next as AlertSeverity[])}
             />
-          </FormField>
-          <FormField label={t('pages:alerts.channels.edit.typeLabel')}>
-            <Select
-              value={type}
-              onValueChange={(v) => setType(v as AlertChannel['type'])}
-              options={typeOptions}
+            <MultiSelectDropdown
+              className={styles.fullWidthField}
+              label={t('pages:alerts.channels.edit.sourceTypesLabel')}
+              emptyLabel={t('pages:alerts.channels.edit.sourceTypesAll')}
+              options={sourceTypeOptions}
+              value={sourceTypes}
+              onChange={setSourceTypes}
             />
-          </FormField>
-          <div className={styles.switchRow}>
-            <label>{t('pages:alerts.channels.edit.enabledLabel')}</label>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
+            <p className={styles.hint}>
+              {t('pages:alerts.channels.edit.sourceTypesHelp')}
+            </p>
           </div>
-          <MultiSelectDropdown
-            label={t('pages:alerts.channels.edit.severitiesLabel')}
-            emptyLabel={t('pages:alerts.channels.edit.severitiesAll')}
-            options={severityOptions}
-            value={severities}
-            onChange={(next) => setSeverities(next as AlertSeverity[])}
-          />
-          <MultiSelectDropdown
-            label={t('pages:alerts.channels.edit.sourceTypesLabel')}
-            emptyLabel={t('pages:alerts.channels.edit.sourceTypesAll')}
-            options={sourceTypeOptions}
-            value={sourceTypes}
-            onChange={setSourceTypes}
-          />
-          <p className={styles.hint}>
-            {t('pages:alerts.channels.edit.sourceTypesHelp')}
-          </p>
-        </Stack>
-      </Card>
+        </Card>
+      </section>
 
       {/* Per-type config panel */}
-      <Card>
-        <h3 className={styles.sectionTitle}>
-          {t(`pages:alerts.channelEditors.${type}.sectionTitle`)}
-        </h3>
-
-        {type === 'webhook' && (
-          <WebhookConfig
-            webhookUrl={webhookUrl}
-            setWebhookUrl={setWebhookUrl}
-            headers={headers}
-            setHeaders={setHeaders}
-          />
-        )}
-
-        {type === 'slack' && (
-          <SlackConfig
-            slackWebhookUrl={slackWebhookUrl}
-            setSlackWebhookUrl={setSlackWebhookUrl}
-            slackBotToken={slackBotToken}
-            setSlackBotToken={setSlackBotToken}
-            slackBotTokenMasked={slackBotTokenMasked}
-            setSlackBotTokenMasked={setSlackBotTokenMasked}
-            slackChannel={slackChannel}
-            setSlackChannel={setSlackChannel}
-          />
-        )}
-
-        {type === 'email' && (
-          <EmailConfig
-            smtpHost={smtpHost}
-            setSmtpHost={setSmtpHost}
-            smtpPort={smtpPort}
-            setSmtpPort={setSmtpPort}
-            smtpFrom={smtpFrom}
-            setSmtpFrom={setSmtpFrom}
-            smtpTo={smtpTo}
-            setSmtpTo={setSmtpTo}
-            smtpUsername={smtpUsername}
-            setSmtpUsername={setSmtpUsername}
-            smtpPassword={smtpPassword}
-            setSmtpPassword={setSmtpPassword}
-            smtpPasswordMasked={smtpPasswordMasked}
-            setSmtpPasswordMasked={setSmtpPasswordMasked}
-          />
-        )}
-
-        {type === 'pagerduty' && (
-          <PagerDutyConfig
-            routingKey={routingKey}
-            setRoutingKey={setRoutingKey}
-            routingKeyMasked={routingKeyMasked}
-            setRoutingKeyMasked={setRoutingKeyMasked}
-          />
-        )}
-      </Card>
+      <AlertChannelConfigPanel form={form} />
 
       {/* Footer */}
       <Stack direction="horizontal" gap="sm" className={styles.footerActions}>
-        <Button variant="secondary" onClick={onCancel}>
+        <Button className={styles.footerButton} variant="secondary" onClick={onCancel}>
           {t('common:cancel')}
         </Button>
-        <Button onClick={onSave} disabled={saving} loading={saving}>
+        <Button className={styles.footerButton} onClick={onSave} disabled={saving} loading={saving}>
           {t('common:save')}
         </Button>
       </Stack>
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={t('pages:alerts.channels.deleteChannel', 'Delete channel')}
+        description={t(
+          'pages:alerts.channels.deleteConfirm',
+          'Are you sure you want to delete channel "{{name}}"? This action cannot be undone.',
+          { name: channel?.name ?? name },
+        )}
+        confirmLabel={t('common:delete')}
+        cancelLabel={t('common:cancel')}
+        onConfirm={onDeleteConfirm}
+        loading={deleting}
+        variant="danger"
+      />
     </Stack>
   );
 }

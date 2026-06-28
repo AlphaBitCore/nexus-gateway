@@ -10,6 +10,7 @@ import {
   PageHeader, Stack, Button, Badge, Tooltip,
   DataTable, LoadingSpinner, ErrorBanner, ListFilterToolbar,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE,
+  RowActions, RowActionIconButton, OpenActionIcon,
 } from '@/components/ui';
 import type { AdminListPageSize, DataTableColumn } from '@/components/ui';
 import { jobStatusVariant } from './jobStatus';
@@ -29,6 +30,28 @@ function formatNsDuration(ns: number | null | undefined): string {
   const hours = Math.floor(totalMin / 60);
   const minRem = totalMin % 60;
   return minRem ? `${hours}h${minRem}m` : `${hours}h`;
+}
+
+function TriggerJobIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polygon points="6 4 20 12 6 20 6 4" />
+    </svg>
+  );
+}
+
+function ToggleJobIcon({ enabled }: { enabled: boolean }) {
+  return enabled ? (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" />
+      <line x1="12" y1="2" x2="12" y2="12" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12.5l2.5 2.5L16 9" />
+    </svg>
+  );
 }
 
 export default function InfraJobsPage() {
@@ -163,32 +186,34 @@ export default function InfraJobsPage() {
       label: t('infrastructure.actions', 'Actions'),
       sortable: false,
       render: (row) => (
-        <Stack direction="horizontal" gap="xs">
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={busyJob === `trigger:${row.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
+        <RowActions>
+          <RowActionIconButton
+            label={t('common:view', 'View')}
+            onAction={() => navigate(`/infrastructure/jobs/${row.id}`)}
+          >
+            <OpenActionIcon />
+          </RowActionIconButton>
+          <RowActionIconButton
+            label={t('infrastructure.triggerJob')}
+            disabled={busyJob === `trigger:${row.id}`}
+            onAction={() => {
               setBusyJob(`trigger:${row.id}`);
               trigger.mutate(row.id).catch(() => setBusyJob(null));
             }}
           >
-            {t('infrastructure.triggerJob')}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            loading={busyJob === `toggle:${row.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
+            <TriggerJobIcon />
+          </RowActionIconButton>
+          <RowActionIconButton
+            label={row.enabled ? t('infrastructure.disable', 'Disable') : t('infrastructure.enable', 'Enable')}
+            disabled={busyJob === `toggle:${row.id}`}
+            onAction={() => {
               setBusyJob(`toggle:${row.id}`);
               toggle.mutate({ id: row.id, enabled: !row.enabled }).catch(() => setBusyJob(null));
             }}
           >
-            {row.enabled ? t('infrastructure.disable', 'Disable') : t('infrastructure.enable', 'Enable')}
-          </Button>
-        </Stack>
+            <ToggleJobIcon enabled={row.enabled} />
+          </RowActionIconButton>
+        </RowActions>
       ),
     },
   ];
@@ -205,14 +230,12 @@ export default function InfraJobsPage() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('infrastructure.searchJobsPlaceholder', 'Search by name or description…')}
         searchValue={searchInput}
         onSearchChange={(v) => { setSearchInput(v); resetPage(); }}
-        meta={
-          (data?.total ?? 0) === 0
-            ? undefined
-            : t('infrastructure.showingJobs', 'Showing {{count}} job(s) on this page · {{total}} total matching', { count: (data?.jobs ?? []).length, total: data?.total ?? 0 })
-        }
       >
         <select
           aria-label={t('infrastructure.enabled', 'Enabled')}
@@ -226,14 +249,21 @@ export default function InfraJobsPage() {
         </select>
       </ListFilterToolbar>
 
-      <DataTable<ScheduledJob>
-        columns={columns}
-        data={data?.jobs ?? []}
-        hideSearch
-        emptyMessage={t('infrastructure.noJobs')}
-        loading={loading}
-        onRowClick={(row) => navigate(`/infrastructure/jobs/${row.id}`)}
-      />
+      <div className={styles.tableSection}>
+        {(data?.total ?? 0) > 0 ? (
+          <div className={styles.resultMeta}>
+            {t('infrastructure.showingJobs', 'Showing {{count}} job(s) on this page · {{total}} total matching', { count: (data?.jobs ?? []).length, total: data?.total ?? 0 })}
+          </div>
+        ) : null}
+        <DataTable<ScheduledJob>
+          columns={columns}
+          data={data?.jobs ?? []}
+          hideSearch
+          emptyMessage={t('infrastructure.noJobs')}
+          loading={loading}
+          onRowClick={(row) => navigate(`/infrastructure/jobs/${row.id}`)}
+        />
+      </div>
       <ListPagination
         offset={offset}
         limit={pageLimit}

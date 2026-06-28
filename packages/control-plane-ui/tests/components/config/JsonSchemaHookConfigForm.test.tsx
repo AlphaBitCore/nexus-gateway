@@ -94,6 +94,8 @@ describe('JsonSchemaHookConfigForm', () => {
     const repl = document.querySelector('input[name="onMatch-replacement"]') as HTMLInputElement;
     expect(repl).toBeTruthy();
     fireEvent.change(repl, { target: { value: '[REDACTED]' } });
-    expect(onChange).toHaveBeenCalledWith({ onMatch: { inflightAction: 'redact', replacement: '[REDACTED]' } });
+    // The editor canonicalizes onMatch to the single-action shape, dropping the
+    // legacy inflightAction/storageAction pair (mirrors backend ActionFromLegacy).
+    expect(onChange).toHaveBeenCalledWith({ onMatch: { action: 'redact', replacement: '[REDACTED]' } });
   });
 });
