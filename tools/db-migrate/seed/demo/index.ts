@@ -191,6 +191,16 @@ export async function seedDemo(prisma: PrismaClient): Promise<void> {
     console.log(`[seed:demo] ${fixture}: ${n} rows`)
   }
 
+  // The reference catalog ships a default application-VK monthly quota policy (a
+  // sane production default). The demo playground drives quotas via the
+  // QuotaOverride fixtures above instead, so drop that reference default here.
+  const removedDefaultQuota = await prisma.quotaPolicy.deleteMany({
+    where: { scope: 'virtual_key', vkType: 'application' },
+  })
+  if (removedDefaultQuota.count) {
+    console.log(`[seed:demo] removed ${removedDefaultQuota.count} default app-VK quota policy`)
+  }
+
   // ── Banner ────────────────────────────────────────────────────────────────
   // Find the super-admin user (id = 'nexus-user-super-admin') for the banner.
   const superAdmin = JSON.parse(

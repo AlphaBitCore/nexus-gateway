@@ -61,10 +61,6 @@ own dependency wiring (RDS / ElastiCache / managed MQ).
 9.  nexus-gateway.service     →  After=nexus-hub
 10. nexus-proxy.service       →  After=nexus-hub
 11. nginx.service             →  After=nexus-control-plane (reverse proxy)
-12. nexus-reconcile-url.service → every boot (NOT marker-gated), After=first-boot
-                                  + postgresql + the four nexus services; re-syncs
-                                  all IP-derived config to the CURRENT public IP
-                                  (see §4a) and restarts services only on change
 ```
 
 `/etc/nexus/.initialized` is the idempotency marker. Removing it triggers a
@@ -131,51 +127,6 @@ tokens with this issuer and the Hub pins the same value via
 stamped, every remote agent enrollment would fail with an issuer-mismatch
 401). `DATABASE_URL` is appended to all four env files by
 `first-boot-db.sh` once the role + database exist.
-
-## 4a. Public-IP reconciliation (`reconcile-public-url.sh`)
-
-`first-boot.sh` detects the instance's public IP **once** (it is gated by the
-`.initialized` marker). EC2 hands out a **new** public IPv4 on every stop/start,
-and again when an Elastic IP is associated — so after any address change the
-once-baked values go stale. **Four** artifacts are IP-derived:
-
-| # | Artifact | Stamped by (first boot) | Symptom when stale |
-|---|---|---|---|
-| 1 | `publicURL:` in the four service yamls | `first-boot.sh` (sed) | service config / advertised URLs wrong |
-| 2 | `AUTH_SERVER_ISSUER=` in `control-plane.env` | `first-boot.sh` | token `iss` / OIDC discovery mismatch |
-| 3 | `cp-ui` `OAuthClient.redirectUris` (Postgres) | `first-boot.sh` (SQL) | `/oauth/authorize` → `redirect_uri not registered`; login page never proceeds |
-| 4 | nginx TLS cert SAN (`/etc/nexus/tls.crt`) — covers **public IP + inner/private IP + loopback** | `first-boot-ca.sh` | CP's JWKS fetch fails `x509: valid for <old>, not <new>` → `/api/admin/me` 401 → **SPA bounces back to /login after a successful password submit** |
-
-`reconcile-public-url.sh` (installed as `/usr/local/sbin/nexus-reconcile-url`)
-is the single operation that re-syncs all four to the **current** IP. It is run
-on **every boot** by `nexus-reconcile-url.service` (NOT marker-gated) and is also
-runnable by hand. Properties:
-
-- **No-op fast path** — exits without touching anything only when the public IP
-  is unchanged **and** the cert SAN already covers every current IP (so a normal
-  reboot causes no restart blip).
-- **Two independent triggers** — the public-facing config (1–3) reconciles on a
-  **public-IP** change; the **cert (4)** reconciles on **SAN coverage** (the
-  desired set = public IP + inner IP + loopback). Coverage-based detection means
-  a changed **inner/private IP** re-issues the cert even when the public IP is
-  unchanged.
-- **Fail-safe** — if the IP cannot be resolved, or resolves only to loopback
-  while a real address is baked, it does nothing (never downgrades a working
-  config to `127.0.0.1`).
-- **Change path** — sed the old IP → new in the four yamls + `control-plane.env`,
-  `array_replace` the `cp-ui` redirect, regenerate the nginx cert with the new
-  SAN + re-anchor it in the system CA trust store, then restart hub / CP /
-  gateway / proxy and reload nginx. The compliance-proxy MITM CA is **not**
-  re-issued (CN-based, not IP-bound; re-issuing would break enrolled agents).
-
-Commands: `nexus-reconcile-url` (reconcile if changed), `--status` (print baked
-vs current, no change), `--force` (re-stamp even if unchanged).
-
-> **Operational guidance — Elastic IP.** Attaching an EIP changes the public IP
-> *without a reboot*, so the boot-time service will not pick it up until the next
-> reboot. After associating an EIP either reboot, or run `sudo nexus-reconcile-url`
-> once. For production, attach the EIP (or a DNS name + real cert) **first** so
-> the OIDC issuer / redirect address is stable and this churn stops entirely.
 
 ## 5. Database initialisation (`first-boot-db.sh`)
 
@@ -293,11 +244,25 @@ Scan and is rejected on submission.
 ## 8. AMI build pipeline (`nexus-ami/build.sh` → `nexus.pkr.hcl`)
 
 ```
-make build-all                          → dist/bin/<svc>/<svc> (4 Go binaries)
-make control-plane-ui-build             → packages/control-plane-ui/dist/
+git archive HEAD                        → nexus-ami/artifacts/nexus-src.tar.gz (built ON instance)
+make control-plane-ui-build             → packages/control-plane-ui/dist/ (portable, built locally)
 build.sh stages → nexus-ami/artifacts/  → flatten + copy + tar
 packer init . && packer build           → AMI ID in us-east-1
 ```
+
+**The four Go services are compiled ON the build instance with the Vectorscan
+(Hyperscan) content-scanning engine — not cross-compiled locally.** The services
+link `libhs` via cgo; a `CGO_ENABLED=0` cross-compile silently selects the
+pure-Go RE2 fallback matcher, and libhs is C++ that cannot cross-compile from a
+macOS arm64 control host. So `build.sh` ships the committed source tree
+(`git archive HEAD` — commit first) and `scripts/build-binaries.sh` builds it
+natively on the linux/amd64 instance, the same on-instance-compile model
+`install-valkey.sh` already uses. The runtime needs `libstdc++` (installed by
+`install.sh`); libhs itself is statically linked, built **`FAT_RUNTIME=OFF`** (a
+`FAT_RUNTIME=ON` archive resolves its CPU-dispatch IFUNCs to a no-op stub in a Go
+cgo binary, silently disabling `hs_scan` — `build-binaries.sh` runs a firing
+self-test to gate that). The Go toolchain + libhs/ragel build trees **and the
+Nexus source tree are deleted** after the build, so neither ships in the AMI.
 
 Packer steps:
 
@@ -324,10 +289,12 @@ Packer steps:
    (a problem we hit on China → us-east-1 at ~250 KB/s). A single-file
    transfer is atomic and fails loudly.
 3. `shell` provisioner runs `scripts/install.sh`. The script first extracts
-   the tarball to `/tmp/nexus/`, then (~10 minutes total) installs
-   Postgres, builds Valkey from source, installs NATS, installs Node +
-   Prisma, places binaries + configs + systemd units + the cross-compiled
-   CLI download artifacts.
+   the tarball to `/tmp/nexus/`, then (~15 minutes total) runs
+   `build-binaries.sh` (installs a transient Go + libhs `FAT_RUNTIME=OFF` +
+   ragel toolchain, compiles the 4 Go services `-tags vectorscan`, self-tests
+   that Vectorscan fires, then deletes the toolchain + Nexus source), installs
+   Postgres, builds Valkey from source, installs NATS, installs Node + Prisma,
+   and places the binaries + configs + systemd units.
 4. `shell` provisioner runs `scripts/harden.sh` (~30 seconds).
 5. Packer snapshots the EBS root volume → registers the AMI.
 
@@ -384,6 +351,7 @@ values and where each is set:
 | Service DB pools | `database.maxConns` | hub 40 · ai-gateway 25 · control-plane 15 · compliance-proxy 4 (config-only) | per-service yaml |
 | systemd | `LimitNOFILE` / `LimitNPROC` | 1048576 / 65535 | the four `nexus-*.service` units |
 | Go runtime | `GOMEMLIMIT` | per-service share of ~40% RAM | `first-boot.sh` → `/etc/nexus/<svc>.env` |
+| Audit stream | `NEXUS_EVENTS_STORAGE` | `file` (durable; overrides the in-memory code default) | `first-boot.sh` → `/etc/nexus/nexus-hub.env` |
 | Kernel | `somaxconn` / `tcp_max_syn_backlog` / `nr_open` / `file-max` | 65535 / 65535 / 2097152 / 2097152 | `/etc/sysctl.d/99-nexus.conf` (`install.sh`) |
 | NATS | `max_payload` | 16 MB | `install-nats.sh` |
 | Valkey | `maxmemory` | ~15% RAM, `allkeys-lru` | `first-boot.sh` |

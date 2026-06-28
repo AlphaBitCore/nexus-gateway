@@ -178,13 +178,56 @@ A normalized `ProviderError` is never serialized in one hardcoded shape. `packag
 
 An Anthropic caller receives an Anthropic-shaped error even when the upstream error and its normalization were OpenAI-internal. Hand-building an OpenAI-shape error frame regardless of caller is the recurring gap this rule closes. The streaming framing details are in [sse-streaming-compliance-architecture.md](../../cross-cutting/safety/sse-streaming-compliance-architecture.md).
 
-## 4. Request backstops & protocol defaults
+## 4. Provider model discovery
+
+The AI Gateway exposes an internal endpoint for listing the upstream models a provider supports. This is a read-only admin-path probe used by the create-provider wizard, not part of the traffic dispatch path.
+
+### Transport capability: `ListModels`
+
+The OpenAI transport (`packages/ai-gateway/internal/providers/specs/openai/transport.go`) implements the optional `transportModelLister` interface:
+
+```go
+ListModels(ctx context.Context, target CallTarget) ([]string, error)
+```
+
+The method issues a `GET {BaseURL}/v1/models`, parses the standard OpenAI list envelope (`{"data":[{"id":"..."},...]}`), and returns the id strings. It shares the probe HTTP client (same timeout as `Probe`) so the call is bounded and does not block traffic.
+
+The `specAdapter` wraps this capability in `ListModels(ctx, target) ([]string, bool, error)`. The boolean `supported` return is `true` when the underlying transport implements `transportModelLister` (OpenAI and all OpenAI-compatible adapters that reuse `openai.NewTransport()`), and `false` otherwise. Callers use the boolean to distinguish "adapter does not expose a model list" from an upstream error without branching on format names.
+
+**OpenAI-family scope.** Only adapters that reuse the OpenAI transport implement `ListModels`. Adapters with their own transport (Anthropic, Gemini, Vertex, Bedrock, Cohere, etc.) do not — they speak a wire that either has no standard model-listing endpoint or uses a provider-specific shape that is not covered by this heuristic. Adding `ListModels` to a non-OpenAI transport requires a separate adapter PR.
+
+### Internal endpoint: `POST /internal/provider-discover-models`
+
+`packages/ai-gateway/internal/ingress/debug/provider_discover_models_endpoint.go` exposes this route alongside the existing `ProviderTestHandler`. It is `INTERNAL_SERVICE_TOKEN`-gated (same trust boundary as all `/internal/*` routes) and does not appear in the public or admin API.
+
+**Request.** JSON body: `adapterType`, `baseUrl`, `apiKey` (all strings; `baseUrl` required).
+
+**Response.** On success: `{"success": true, "models": [{"id": "<upstream-id>", "suggestedType": "<type>"}]}`. On upstream error: `{"success": false, "error": "..."}` at HTTP 200 so the caller (Control Plane BFF) can surface a readable message. On unsupported adapter: `{"success": false, "error": "...", "code": "discovery_unsupported"}` at HTTP 400.
+
+### `SuggestModelType` heuristic
+
+`debug.SuggestModelType(id string) string` maps a model id to one of four Nexus model types using lowercase substring matching:
+
+| Substring match | Suggested type |
+|---|---|
+| `"embed"` | `embedding` |
+| `"whisper"`, `"tts"`, `"audio"`, `"transcribe"` | `audio` |
+| `"dall-e"`, `"image"` | `image` |
+| (none of the above) | `chat` |
+
+The heuristic is best-effort; the OpenAI `/v1/models` response carries no type field. Admins can override the suggested type per row in the create-provider wizard before saving.
+
+### No traffic-path impact
+
+Discovery is a pre-flight probe. It does not affect routing, caching, cost stamping, or the `traffic_event` pipeline. It does not change any persisted row. The smoke test therefore does not cover discovery (it covers the traffic path only). Unit tests for `SuggestModelType` and the `ProviderDiscoverModelsHandler` live in `packages/ai-gateway/internal/ingress/debug/`.
+
+## 5. Request backstops & protocol defaults
 
 A codec fills protocol-required fields the caller omitted, so an OpenAI-shaped request reaches a stricter upstream without a 400. The canonical example is Anthropic's `max_tokens`: Anthropic rejects a request that omits it, while OpenAI treats it as optional. When a caller forwards an OpenAI-shape body with neither `max_tokens` nor `max_completion_tokens`, the Anthropic codec synthesizes one from `AnthropicModelMaxOutput(model)` — the published per-model output ceiling, matched by model-name prefix, with a conservative floor for unrecognized models (`specs/anthropic/codec/codec.go`).
 
 This is the adapter-fill pattern: the adapter that owns the wire supplies the protocol default rather than forcing the caller — or an admin config knob — to know each provider's required fields. Backstops live in the codec (Rule 3) and apply to streaming and non-streaming alike (Rule 6). Both the parameter-removal rewrites (temperature / top_p / top_k) and the synthesized `max_tokens` fill are recorded in the `rewrites` list, so the handler stamps `x-nexus-coerced` and the applied cap is observable in `traffic_event`.
 
-## 5. Usage parsing & translation
+## 6. Usage parsing & translation
 
 Every codec's `DecodeResponse` returns canonical token accounting in `DecodeResult.Usage`. Extraction is centralized: `core.ExtractUsage(raw, wireFormat)` (`packages/ai-gateway/internal/providers/core/usage_extractor.go`) parses the upstream body through the shared Tier-1 normalizer for that wire format and returns the canonical `Usage`. Codecs delegate here instead of each carrying their own alias-chain logic.
 
@@ -196,19 +239,19 @@ Usage is normalized to the OpenAI convention so downstream cost, analytics, and 
 
 Cache-token detail also rides in `nexus.ext.<provider>.<key>` (Rule 4) — the Anthropic codec stores `cache_creation_input_tokens` there — and surfaces as `CacheReadTokens` / `CacheCreationTokens` on the normalized usage. The full normalize contract is in [normalization-architecture.md](normalization-architecture.md).
 
-## 6. Prompt-cache handling
+## 7. Prompt-cache handling
 
-Anthropic `cache_control` is not a separate canonical field. On the passthrough path it rides inside the `messages` content; on the cache-prep path the gateway can inject cache markers before upstream dispatch. On the response side, the cache token counts the upstream reports are parsed by the usage path (§5) and preserved both on canonical usage (`CacheReadTokens` / `CacheCreationTokens`) and in `nexus.ext`. The marker mechanism, cache semantics, hit classification, and cost impact are owned by [prompt-cache-architecture.md](prompt-cache-architecture.md); an adapter's obligation is to preserve cache markers and report the cache tokens accurately.
+Anthropic `cache_control` is not a separate canonical field. On the passthrough path it rides inside the `messages` content; on the cache-prep path the gateway can inject cache markers before upstream dispatch. On the response side, the cache token counts the upstream reports are parsed by the usage path (§6) and preserved both on canonical usage (`CacheReadTokens` / `CacheCreationTokens`) and in `nexus.ext`. The marker mechanism, cache semantics, hit classification, and cost impact are owned by [prompt-cache-architecture.md](prompt-cache-architecture.md); an adapter's obligation is to preserve cache markers and report the cache tokens accurately.
 
-Because cache classification depends on the usage parse, every ingress (chat, responses, messages, gemini) must exercise prompt-cache in the gateway smoke — a cross-ingress asymmetry, where one ingress reports cache tokens and another silently drops them, is the failure this guards against (§10).
+Because cache classification depends on the usage parse, every ingress (chat, responses, messages, gemini) must exercise prompt-cache in the gateway smoke — a cross-ingress asymmetry, where one ingress reports cache tokens and another silently drops them, is the failure this guards against (§11).
 
-## 7. Reuse across services
+## 8. Reuse across services
 
 The provider adapter (codec) handles the gateway's outbound provider calls. The request/response **parsing** it relies on for usage and normalized text is not gateway-specific: it lives in `packages/shared/transport/normalize`, and the AI Gateway, Compliance Proxy, Agent, and Hub audit pipeline all import the same `normalize/core` + `normalize/codecs`. `core.ExtractUsage` is the gateway's entry into that shared layer.
 
 The consequence: the same upstream response yields byte-identical canonical usage whether the gateway saw it on a forwarded call, the compliance proxy saw it on intercepted HTTPS, or the agent saw it on a client's outbound traffic. Adding a usage or text field for a provider means extending the shared normalizer once, not per service. The interception-side detail (Tier-1 traffic adapters, Tier-2 detectors) lives in the compliance-proxy architecture docs; the shared normalize contract is in [normalization-architecture.md](normalization-architecture.md).
 
-## 8. Per-adapter walkthrough
+## 9. Per-adapter walkthrough
 
 `specs/anthropic/` is the full example of an own-wire adapter:
 
@@ -231,7 +274,7 @@ Adapters fall into three structural tiers:
 
 A family-reuse adapter exists because the provider speaks an existing wire and only differs in endpoint and auth — it either supplies its own `Transport` (and borrows the family codec) or reuses the family transport outright, rather than writing a codec of its own.
 
-## 9. Adding a new adapter
+## 10. Adding a new adapter
 
 Use the `add-provider-adapter` skill for the full procedure. The wiring touch points:
 
@@ -243,14 +286,14 @@ Use the `add-provider-adapter` skill for the full procedure. The wiring touch po
 
 Run `/adapter-conformance-check` before completion to verify the adapter against Rules 1-8.
 
-## 10. Testing an adapter
+## 11. Testing an adapter
 
 A new or changed adapter is validated at four levels:
 
-- **Unit tests** — table-driven codec tests for `EncodeRequest` / `DecodeResponse`: canonical↔wire round-trips, each prefix-list rule, the backstop fill (§4), and usage extraction (§5). Each Go package holds ≥95% statement coverage.
+- **Unit tests** — table-driven codec tests for `EncodeRequest` / `DecodeResponse`: canonical↔wire round-trips, each prefix-list rule, the backstop fill (§5), and usage extraction (§6). Each Go package holds ≥95% statement coverage.
 - **Round-trip equivalence** — the shape-conversion test of record (§3): the double round-trip `A → canonical → B → canonical → A` must return a semantically-equal `A` for every routable shape pair (`TestShapeRoundTripIdentity`). A new ingress/target adapter adds itself to the standard's shape list in the same PR.
 - **Conformance** — `/adapter-conformance-check` audits the codec against §3a Rules 1-8 (per-adapter logic that leaked into the dispatcher, missing canonicalize-before-encode, error envelopes that bypass the helper, prefix-lists without observed-400 evidence, missing `PassthroughRewrite` wiring).
-- **Full-surface smoke** — `tests/scripts/smoke-gateway.py --all-ingress` exercises every model across all ingresses (chat / responses / messages / gemini), non-stream + SSE + a two-turn cache arm. It cross-checks each `traffic_event` row (cost, tokens, cache classification, normalized text) and diffs Prometheus counters. The prompt-cache arm is mandatory on every ingress (§6).
+- **Full-surface smoke** — `tests/scripts/smoke-gateway.py --all-ingress` exercises every model across all ingresses (chat / responses / messages / gemini), non-stream + SSE + a two-turn cache arm. It cross-checks each `traffic_event` row (cost, tokens, cache classification, normalized text) and diffs Prometheus counters. The prompt-cache arm is mandatory on every ingress (§7).
 - **Usage / cost cross-check** — the smoke compares the parsed canonical usage against the persisted `traffic_event` row, catching a codec that parses usage but fails to stamp it.
 
 Any change under `packages/ai-gateway/internal/providers/specs/<name>/` requires a gateway smoke run before the work is considered done.
@@ -258,11 +301,13 @@ Any change under `packages/ai-gateway/internal/providers/specs/<name>/` requires
 ## References
 
 - `packages/ai-gateway/internal/providers/core/spec.go` — AdapterSpec + Transport / SchemaCodec / StreamDecoder / ErrorNormalizer interfaces
-- `packages/ai-gateway/internal/providers/dispatch/spec_adapter.go` — generic specAdapter, PrepareBody, passthrough vs codec path
+- `packages/ai-gateway/internal/providers/dispatch/spec_adapter.go` — generic specAdapter, PrepareBody, passthrough vs codec path; ListModels capability delegation
 - `packages/ai-gateway/internal/execution/canonicalbridge/` — Bridge, IngressChatToCanonical, WireShape-for-Format helpers
 - `packages/ai-gateway/internal/providers/canonicalext/` — `nexus.ext.<provider>.<key>` Get / Set / ScanUnsupported / WarnOnce
 - `packages/ai-gateway/internal/providers/core/usage_extractor.go` — centralized canonical usage extraction
 - `packages/ai-gateway/internal/ingress/envelope/error_envelope.go` — ingress-format error envelope encoders (unary + SSE)
+- `packages/ai-gateway/internal/ingress/debug/provider_discover_models_endpoint.go` — ProviderDiscoverModelsHandler + SuggestModelType heuristic
+- `packages/ai-gateway/internal/providers/specs/openai/transport.go` — ListModels transport capability (OpenAI and OpenAI-compatible transports)
 - `packages/ai-gateway/internal/providers/specs/` — per-adapter implementations
 - `packages/shared/transport/normalize/` — shared usage / text normalizer reused by gateway, compliance proxy, agent, and Hub
 - `packages/shared/transport/typology/` — WireShape constants + ingress default rules

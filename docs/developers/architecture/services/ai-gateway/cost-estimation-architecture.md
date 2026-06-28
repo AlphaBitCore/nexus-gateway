@@ -83,6 +83,17 @@ The usage extractor delegates to the shared normalize codecs (`packages/shared/t
 - **Reasoning tokens**: a wire-explicit count (`output_tokens_details.thinking_tokens` on Anthropic; `completion_tokens_details.reasoning_tokens` on OpenAI-compatible wires) always wins; the character-based derivation is only a fallback when the wire omits the count. The OpenAI-compatible `reasoning` field is an accepted wire alias of `reasoning_content` and feeds the same reasoning text accounting.
  See [`sse-streaming-compliance-architecture.md`](../../cross-cutting/safety/sse-streaming-compliance-architecture.md) for the streaming dispatch contract.
 
+### Audit normalize reuse (Phase E) — cost/field neutral
+
+When `NEXUS_LAZY_CANONICAL` is on, the audit emitter reuses the request-path
+canonical (marshaled once on the request goroutine in `finalizeAudit`) for
+`request_normalized` instead of re-`Normalize`-ing the captured body. This is a
+pure allocation/latency optimization — the reused bytes are byte-identical to a
+fresh re-`Normalize`, so every cost/token/cache field on the row (and the
+persisted `traffic_event_normalized`) is unchanged. The usage extractor and
+pricing path above are untouched. Default off; off is the legacy re-`Normalize`
+path. See [`normalization-architecture.md`](normalization-architecture.md) §5.2.
+
 ## References
 
 - `packages/ai-gateway/internal/execution/estimator/` — cost formula registry + heuristic tokenizer.

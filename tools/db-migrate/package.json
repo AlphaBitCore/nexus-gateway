@@ -8,13 +8,15 @@
     "generate": "prisma generate",
     "seed": "prisma generate && tsx seed/seed.ts",
     "seed:prod": "SEED_DEMO=false npm run seed",
-    "test": "tsx --test seed/__tests__/*.test.ts"
+    "test": "tsx --test seed/__tests__/*.test.ts",
+    "gen:rulepacks": "tsx seed/gen-rulepacks.ts",
+    "check:rulepacks": "tsx seed/gen-rulepacks.ts -- --check"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "dotenv": "^17.4.2",
-    "pg": "^8.21.0",
+    "pg": "^8.22.0",
     "prisma": "^7.8.0",
     "tsx": "^4.22.4",
     "yaml": "^2.9.0"

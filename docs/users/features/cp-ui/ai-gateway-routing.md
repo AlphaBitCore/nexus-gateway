@@ -14,7 +14,13 @@ These five pages form a setup chain: register a **Provider**, attach a **Credent
 
 **Key concepts.** `adapterType` identifies the provider's wire spec (which in-tree codec talks to it). A provider with no enabled credential cannot serve traffic.
 
-**Where the data comes from.** `providerApi` — `list`, `get`, `create`, `update`, `delete`, `getHealth`, `getModels`, `addModel`, `getAnalytics`, `getTemplates`, `getTemplateDetail`, `testExisting`, `testConnection`.
+**Fetching models from the provider (OpenAI-compatible only).** On the Models step of the create-provider wizard, a "Fetch from /v1/models" button is shown for custom providers. Clicking it calls `POST /api/admin/providers/discover-models` with the base URL, adapter type, and API key entered in the earlier wizard steps. The response pre-fills the model table with the ids returned by the upstream provider's model-listing endpoint. Each row also receives a suggested model type (chat, embedding, audio, or image) derived by a best-effort heuristic from the model id; the admin can change the type before saving. The button is disabled until both a base URL and an API key (or "skip credential") are provided.
+
+This feature is limited to providers whose adapter type speaks the OpenAI wire format — `openai`, `deepseek`, and all OpenAI-compatible adapters (Groq, Mistral, Fireworks, Together, xAI, Perplexity, HuggingFace, Moonshot). If the selected adapter does not support the standard `/v1/models` endpoint, the wizard shows an inline message that model fetch is not available for that adapter and prompts the admin to add models manually. Pricing fields are always left blank after a fetch — the `/v1/models` endpoint carries no pricing data — and must be filled manually before saving.
+
+**Pricing not set reminder.** On a provider's models tab, any model whose input price is not configured shows a "Pricing not set" warning badge alongside its type badge. This is a reminder that cost stamping for that model will not produce a dollar amount until pricing is filled in; the badge disappears once `inputPricePerMillion` is set.
+
+**Where the data comes from.** `providerApi` — `list`, `get`, `create`, `update`, `delete`, `getHealth`, `getModels`, `addModel`, `getAnalytics`, `getTemplates`, `getTemplateDetail`, `testExisting`, `testConnection`, `discoverModels`.
 
 ## Credentials
 
@@ -77,5 +83,9 @@ These five pages form a setup chain: register a **Provider**, attach a **Credent
 - `packages/control-plane-ui/src/pages/ai-gateway/virtual-keys/VirtualKeyList.tsx` — Virtual Keys list
 - `packages/control-plane-ui/src/pages/ai-gateway/virtual-keys/detail/` — virtual key detail tabs
 - `packages/ai-gateway/internal/routing/strategies/` — the routing strategy implementations
-- `packages/control-plane-ui/src/api/` — `providerApi`, `credentialApi`, `reliabilitySettingsApi`, `routingApi`, `virtualKeyApi`
+- `packages/control-plane-ui/src/api/` — `providerApi` (including `discoverModels`), `credentialApi`, `reliabilitySettingsApi`, `routingApi`, `virtualKeyApi`
+- `packages/control-plane-ui/src/pages/ai-gateway/providers/wizard/StepModels.tsx` — Fetch from /v1/models button and model table
+- `packages/control-plane-ui/src/pages/ai-gateway/providers/detail/ProviderModelsTab.tsx` — "Pricing not set" badge on the models tab
+- `packages/control-plane/internal/ai/providers/handler/provider_discover.go` — CP admin handler for discover-models (IAM: provider:create)
+- `docs/users/api/openapi/control-plane/providers.yaml` — OpenAPI spec for `POST /api/admin/providers/discover-models`
 - `tools/db-migrate/schema/` — `Provider`, `Credential` (`providers.prisma`); `RoutingRule`, `VirtualKey` (`gateway.prisma`)

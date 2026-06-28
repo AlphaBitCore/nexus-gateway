@@ -113,7 +113,7 @@ h.audit.LogObserved(c.Request().Context(), ae)
 
 On any failure (Begin / Insert / Commit), the entire batch is NAK'd back to the queue and the failure breaks out by stage in the `mq.admin_errors_total` counter (`db_begin` / `db_insert` / `db_commit`).
 
-A message that **fails to deserialize** (the Control Plane is the sole producer, so this is a permanent error redelivery cannot fix) is not silently ack-dropped — that would lose a ledger row. The raw bytes are persisted to a DB-independent on-disk dead-letter file (`admin-audit-dlq.jsonl`, `mq.admin_disk_dlq_inserted_total`) and only then acked; if the on-disk write itself fails the message is NAK'd so the broker retries and the disk sink gets another chance (audit defect F-0198).
+A message that **fails to deserialize** (the Control Plane is the sole producer, so this is a permanent error redelivery cannot fix) is not silently ack-dropped — that would lose a ledger row. The raw bytes are persisted to a DB-independent on-disk dead-letter file (`admin-audit-dlq.jsonl`, `mq.admin_disk_dlq_inserted_total`) and only then acked; if the on-disk write itself fails the message is NAK'd so the broker retries and the disk sink gets another chance.
 
 ### 5.2 Hub direct in-transaction writer (override path)
 

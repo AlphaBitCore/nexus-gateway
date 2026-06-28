@@ -49,7 +49,7 @@ A successful enrollment hands the agent three credentials:
 | mTLS client certificate | Transport identity (P-256, `ClientAuth`) | Agent holds the private key; Hub stores the cert serial + expiry on `thing_agent` |
 | Attestation certificate (optional) | Per-request traffic attestation | Ed25519, 90-day validity; the public-key bytes **and** the cert `NotAfter` (`certExpiresAt`) are stamped into `thing_agent.sysinfo` and served via `GET /api/internal/things/:id/attestation-pubkey` for the Compliance Proxy to verify signed attestation headers |
 
-**Attestation cert expiry is enforced at verify time (SEC-M4-01 / SEC-C2-02).**
+**Attestation cert expiry is enforced at verify time.**
 The `GET /api/internal/things/:id/attestation-pubkey` response carries
 `certExpiresAt` alongside `publicKey`; the Compliance Proxy's
 `AttestationVerifier` rejects a key once `now > certExpiresAt` (outcome
@@ -59,9 +59,9 @@ inspection forever. The expiry rides through the CP key cache as
 `AttestationKey.CertExpiresAt`; a legacy stamp with no expiry on record is
 treated as non-expiring (fail-open).
 
-**Revocation (SEC-M4-01).** The `GET /attestation-pubkey` query joins `thing` and
+**Revocation.** The `GET /attestation-pubkey` query joins `thing` and
 excludes `status = 'revoked'`, so a revoked (unenrolled) device's attestation key
-is no longer served — the row is filtered out → `404` → CP `unknown_agent` → MITM
+is not served — the row is filtered out → `404` → CP `unknown_agent` → MITM
 fallback. This makes `UnenrollDevice` (which sets `thing.status = 'revoked'`) the
 single revocation lever: unenrolling a decommissioned or known-compromised device
 immediately stops its attested traffic from bypassing inspection. Because the
@@ -110,8 +110,8 @@ the request headers:
    mode).
 2. `X-Enrollment-Token: <opaque-token>` → token enrollment (mtls-only mode).
 
-**The minted Thing's *type* is authoritative per path, never caller-controlled
-(SEC-C2-03 / F-0200).** The enrollment-token path pins `thingType` from the
+**The minted Thing's *type* is authoritative per path, never caller-controlled.**
+The enrollment-token path pins `thingType` from the
 operator-issued token row — a token cut for an `agent` cannot enroll an
 `ai-gateway`. The SSO/JWT path is a *device-enrollment* grant (authorized by the
 device verb `admin:device-enrollment.enroll`, which a normal user holds to enroll
@@ -169,7 +169,7 @@ RSA-signing-method check and the following pinned claims:
 - `purpose` must equal `enrollment`.
 - `exp` is required, and `jti` must be present.
 
-The `jti` feeds a two-layer replay guard (SEC-M4-03). **L1** is an in-process map:
+The `jti` feeds a two-layer replay guard. **L1** is an in-process map:
 each JTI is recorded with its `exp`, rejected on reuse, and swept after it
 expires. **L2** is the shared Redis SETNX dedup (`nexus:enroll:jti:<jti>` with
 TTL = `exp − now`, the same primitive the spill-upload flow uses), wired from

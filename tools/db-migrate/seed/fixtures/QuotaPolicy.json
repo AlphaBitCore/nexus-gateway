@@ -1,0 +1,19 @@
+[
+  {
+    "id": "5e1f0000-0000-4000-a000-000000050000",
+    "name": "Default application VK monthly quota",
+    "description": "Default monthly spend cap for application virtual keys ($50,000). A sane production default; adjust or disable per deployment. Removed by the demo seed (demo manages quotas via QuotaOverride).",
+    "scope": "virtual_key",
+    "organizationId": null,
+    "vkType": "application",
+    "periodType": "monthly",
+    "costLimitUsd": 50000,
+    "enforcementMode": "reject",
+    "alertThresholds": [80, 90],
+    "priority": 0,
+    "enabled": true,
+    "createdBy": null,
+    "createdAt": "2026-06-24T00:00:00.000+00:00",
+    "updatedAt": "2026-06-24T00:00:00.000+00:00"
+  }
+]

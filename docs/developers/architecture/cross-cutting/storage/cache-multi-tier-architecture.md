@@ -72,7 +72,7 @@ The body that's hashed is the output of the provider adapter's `PrepareBody`, no
 
 The proxy also runs an optional `Normaliser.NormalizeKey` step on the prepared body before hashing. This strips volatile fields (e.g. provider billing nonces) that would otherwise force every request to miss. The mutation is key-only; the upstream call still receives the unmodified prepared body.
 
-**L1 skip reason `GatewayCacheSkipReasonNoEmbeddableText`** (updated label): the L2-eligibility check in `proxy_l2.go` uses this reason for all cases where no embeddable text can be extracted from the request (previously mislabeled `OversizeForEmbedding`, which only covered one sub-case). See `platform/audit/enums.go`.
+**L1 skip reason `GatewayCacheSkipReasonNoEmbeddableText`**: the L2-eligibility check in `proxy_l2.go` uses this reason for all cases where no embeddable text can be extracted from the request. See `platform/audit/enums.go`.
 
 ## L2 — semantic vector cache
 

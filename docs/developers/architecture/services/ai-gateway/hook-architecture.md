@@ -22,12 +22,21 @@ Hooks never receive raw provider JSON. The `HookInput` carries the canonical `No
 
 ## 3. Decision vocabulary and onMatch
 
-A hook returns one of five decisions — `Approve`, `RejectHard`, `BlockSoft`, `Modify`, `Abstain`. Content-touching hooks do not hardcode that decision; they read it from an `onMatch` block in their config, which has two independent axes:
+Internally a hook returns one of five decisions — `Approve`, `RejectHard`, `BlockSoft`, `Modify`, `Abstain`. Content-touching hooks do not hardcode that decision; they read it from an `onMatch` block in their config, which carries a **single `action` axis**:
 
-- **`inflightAction`** — `approve` / `block-hard` / `block-soft` / `redact`, mapped to a decision by `DecisionForInflight` (`block-hard` → `RejectHard`, `redact` → `Modify`, and so on).
-- **`storageAction`** — `keep` / `redact` / `drop-content`, controlling what the audit record persists.
+- **`action`** — `approve` / `redact` / `block`. `DecisionForAction` maps it onto the internal decision enum (`approve → Approve`, `redact → Modify`, `block → RejectHard`); `ActionFromDecision` is the inverse used at the pipeline boundary so the aggregated result carries one action that drives both the in-flight disposition and what the audit record persists.
 
-When the `onMatch` block is absent the defaults are `block-hard` inflight, `redact` storage, and a `[REDACTED_<RULE_ID>]` replacement template — a match blocks the request and the content is not persisted unless an operator opts in. The `webhook-forward` hook re-derives its inflight default to `approve`, because the webhook's reply is itself the decision rather than a fixed block. Where multiple hooks disagree, the framework aggregates by strictness: `drop-content > redact > keep` for storage, and `RejectHard > BlockSoft > Modify > Approve > Abstain` for decisions.
+The single action is the one axis an operator configures; its three values mean:
+
+- **`approve`** — forward / return the body unchanged, and store it as-is.
+- **`redact`** — rewrite the payload (`Modify`); the *same* masked body is forwarded upstream, returned to the client, and persisted to the audit store.
+- **`block`** — reject the transaction (`RejectHard`); persist the redacted copy so an auditor can still review what tripped the policy.
+
+`redact` and `block` share the same payload-redaction operation (mask matched spans inline with `[REDACTED_<RULE_ID>]`) and differ only in disposition (rewrite-and-forward vs reject). Storage therefore has only two states — as-is (`approve`) or redacted (`redact` / `block`) — driven entirely by the action; there is no separate storage choice and no "store a redacted copy while forwarding the original" combination.
+
+When the `onMatch` block is absent the defaults are `action = block` and a `[REDACTED_<RULE_ID>]` replacement template — a match rejects the request and the persisted copy is redacted. The `webhook-forward` hook re-derives its action default to `approve`, because the webhook's reply is itself the decision rather than a fixed block. Where multiple hooks disagree, the framework aggregates by strictness: `StrictestAction` ranks `block > redact > approve` for the operator-facing action, and the internal decision merge ranks `RejectHard > BlockSoft > Modify > Approve > Abstain`.
+
+For backward compatibility, the prior two-key shape (`inflightAction` + `storageAction`) is also accepted: when `action` is absent but a prior key is present, `ActionFromLegacy` folds the pair to a single action (`block-hard`/`block-soft → block`, `redact → redact`, `approve + keep → approve`, `approve + redact`/`drop-content → redact`) and logs a one-shot warning pointing the operator at the single `action`. A one-time data migration rewrites stored rows; the schema drops the two-key form once the compatibility window closes.
 
 ## 4. Resolving the pipeline
 
@@ -51,7 +60,7 @@ The runner has two modes:
 - **Sequential** (the AI Gateway) — hooks run in priority order, short-circuiting on the first `RejectHard`. When a hook returns `Modify`, its transform spans are applied to the normalized payload before the next hook runs, so later hooks see the redacted content; emitted tags accumulate across hooks.
 - **Parallel** (the Compliance Proxy) — hooks run concurrently and cancel the rest on a `RejectHard`. Because parallel hooks cannot share evolving state, they neither apply MODIFY between hooks nor accumulate tags.
 
-`mergeResults` aggregates by priority order: the first `RejectHard` wins outright; otherwise any `BlockSoft` produces a soft block; otherwise a `Modify`; otherwise `Approve`. Tags are unioned, and the strictest storage action across hooks is carried onto the result. The AI Gateway enables two flags on its pipeline: `allowModify` (MODIFY passes through instead of being downgraded to APPROVE) and `clearSoftOnApprove` (a later APPROVE clears a pending soft block).
+`mergeResults` aggregates by priority order: the first `RejectHard` wins outright; otherwise a `BlockSoft` (e.g. a soft AI-Guard verdict folded into the merge); otherwise a `Modify`; otherwise `Approve`. Tags are unioned, and the strictest action across hooks (`StrictestAction`) is carried onto the result. A merged `BlockSoft` carries no distinct client-facing response — `ActionFromDecision` folds it to the `block` action, so dispatch treats it identically to `RejectHard` (reject; see §3). The AI Gateway enables two flags on its pipeline: `allowModify` (MODIFY passes through instead of being downgraded to APPROVE) and `clearSoftOnApprove` (a later APPROVE clears a pending soft block).
 
 ## 6. Config flow
 
@@ -61,7 +70,7 @@ The AI Gateway invokes the pipeline at both the request and response stages: it 
 
 ## 7. Relationship to AI-Guard
 
-A policy can defer a decision to the judge-model AI-Guard pipeline through the `webhook-forward` hook pointed at the AI Gateway's AI-Guard webhook endpoint. The webhook reply (`decision` / `reason` / `redactions`) is the suggestion, which `webhook-forward` reconciles against the hook's `onMatch.InflightAction` policy ceiling by strictness — an admin `block-hard` ceiling cannot be undercut by a permissive judge, and a judge reject cannot be undercut by a permissive ceiling; a mismatch stamps `ReasonAIGuardSuggestedVsPolicy`. Because this is an ordinary HTTP call from a hook, it works on every data plane, including the Agent. The AI-Guard classifier itself — its endpoints, backends, cache, and cost accounting — is covered in [aiguard-architecture.md](aiguard-architecture.md).
+A policy can defer a decision to the judge-model AI-Guard pipeline through the `webhook-forward` hook pointed at the AI Gateway's AI-Guard webhook endpoint. The webhook reply (`decision` / `reason` / `redactions`) is the suggestion, which `webhook-forward` reconciles against the hook's `onMatch.Action` policy ceiling by strictness — an admin `block` ceiling cannot be undercut by a permissive judge, and a judge reject cannot be undercut by a permissive ceiling; a mismatch stamps `ReasonAIGuardSuggestedVsPolicy`. Because this is an ordinary HTTP call from a hook, it works on every data plane, including the Agent. The AI-Guard classifier itself — its endpoints, backends, cache, and cost accounting — is covered in [aiguard-architecture.md](aiguard-architecture.md).
 
 ## References
 

@@ -1,0 +1,272 @@
+name: nexus/cloud-misconfig
+version: v1.0.0
+maintainer: nexus
+description: >-
+  Insecure cloud / infrastructure-as-code configuration detection for text and
+  code flowing through the gateway — model-generated or user-pasted Terraform,
+  CloudFormation, Kubernetes manifests, Docker run/compose, and cloud CLI/JSON.
+  Six subcategories:
+  public_access (world-readable/writable buckets, AllUsers/AllAuthenticatedUsers
+  grants, CloudFormation public canned ACLs, 0.0.0.0/0 ingress including
+  sensitive admin/database ports, GCP allUsers bindings, disabled S3 public
+  access blocks, publicly-accessible databases), iam (wildcard Action/Resource,
+  Principal "*" trust policies, administrator-tier policy attach, service-wide
+  wildcards, Allow+NotAction, "*:*" full wildcard), encryption (encryption-at-rest
+  disabled, anonymous blob access, public Azure containers, weak TLS, disabled
+  TLS verification), iac_secret (hardcoded cloud access keys, passwords, private
+  keys, Terraform provider creds, GCP service-account key JSON, and Azure client
+  secrets embedded in IaC), k8s (privileged containers, host namespaces,
+  hostPath, run-as-root, privilege escalation, dangerous Linux capabilities,
+  automounted service-account tokens), and container (Docker --privileged,
+  --cap-add of dangerous capabilities, host networking). Grounded in CIS
+  Benchmarks and the tfsec/checkov/kube-score
+  misconfig catalogs. Distinct from nexus/insecure-code (application-code
+  weaknesses) and nexus/secret-leak (raw credential strings): this pack flags
+  misconfigured cloud INFRASTRUCTURE. Every rule emits `detector:cloud-misconfig`
+  plus a `cloud:<platform>` label and a `severity:<tier>` data-classification
+  label so downstream policies can filter by platform and exposure class.
+rules:
+  # --- Public access (open buckets, grants, ingress, public DB) ---
+  - id: cm-pub-001
+    category: cloud_misconfig.public_access
+    severity: hard
+    pattern: '(?i)\bacl\s*[:=]\s*["'']public-read-write["'']'
+    description: Object-store canned ACL set to public-read-write; world-writable bucket.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-pub-002
+    category: cloud_misconfig.public_access
+    severity: soft
+    pattern: '(?i)\bacl\s*[:=]\s*["'']public-read["'']'
+    description: Object-store canned ACL set to public-read; world-readable bucket.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:confidential]
+  - id: cm-pub-003
+    category: cloud_misconfig.public_access
+    severity: hard
+    pattern: '(?i)(?:acs\.amazonaws\.com/groups/global/(?:AllUsers|AuthenticatedUsers)|["'']all(?:Users|AuthenticatedUsers)["''])'
+    description: IAM/ACL grant to the AllUsers or AllAuthenticatedUsers global group exposes the resource to the public internet.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-pub-004
+    category: cloud_misconfig.public_access
+    severity: soft
+    pattern: '(?i)(?:ingress|source_ranges|source_address_prefix)[\s\S]{0,60}(?:0\.0\.0\.0/0|::/0)'
+    description: 'Security-group or firewall ingress rule open to the entire internet (0.0.0.0/0 or ::/0).'
+    labels: [detector:cloud-misconfig, cloud:iac, severity:confidential]
+  - id: cm-pub-005
+    category: cloud_misconfig.public_access
+    severity: soft
+    pattern: '(?i)\bpublicly_accessible\s*[:=]\s*true\b'
+    description: RDS or database instance marked publicly_accessible = true; reachable from the public internet.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:confidential]
+  # --- IAM (wildcard actions/resources, open principals, admin grants) ---
+  - id: cm-iam-001
+    category: cloud_misconfig.iam
+    severity: hard
+    pattern: '(?i)"Action"\s*:\s*"\*"|\bactions\s*=\s*\[\s*["'']\*["'']'
+    description: 'IAM policy statement grants Action "*" (all actions); equivalent to administrator access.'
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-iam-002
+    category: cloud_misconfig.iam
+    severity: soft
+    pattern: '(?i)"Resource"\s*:\s*"\*"|\bresources\s*=\s*\[\s*["'']\*["'']'
+    description: 'IAM policy statement grants Resource "*" (all resources); scope to specific ARNs.'
+    labels: [detector:cloud-misconfig, cloud:aws, severity:confidential]
+  - id: cm-iam-003
+    category: cloud_misconfig.iam
+    severity: hard
+    pattern: '(?i)"Principal"\s*:\s*(?:"\*"|\{\s*"AWS"\s*:\s*"\*"\s*\})'
+    description: 'Trust or resource policy Principal set to "*"; anyone can assume the role or access the resource.'
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-iam-004
+    category: cloud_misconfig.iam
+    severity: soft
+    pattern: '(?i)arn:aws:iam::aws:policy/(?:AdministratorAccess|IAMFullAccess|PowerUserAccess)\b'
+    description: Attaches an AWS-managed administrator-tier policy (AdministratorAccess / IAMFullAccess / PowerUserAccess).
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-iam-005
+    category: cloud_misconfig.iam
+    severity: soft
+    pattern: '(?i)["''](?:iam|s3|ec2|sts|kms|lambda|secretsmanager|dynamodb):\*["'']'
+    description: IAM policy grants a service-wide wildcard action (for example s3:*); prefer least-privilege specific actions.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:confidential]
+  # --- Encryption (at-rest disabled, anonymous blob, weak TLS) ---
+  - id: cm-enc-001
+    category: cloud_misconfig.encryption
+    severity: soft
+    pattern: '(?i)\bencrypted\s*[:=]\s*false\b'
+    description: Encryption-at-rest disabled (encrypted = false) on a volume, snapshot, or database.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:confidential]
+  - id: cm-enc-002
+    category: cloud_misconfig.encryption
+    severity: soft
+    pattern: '(?i)(?:server_side_encryption|encrypt_at_rest|storage_encrypted|encryption_enabled|enable_encryption)\s*[:=]\s*false\b'
+    description: Server-side or at-rest encryption explicitly disabled on a storage or database resource.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:confidential]
+  - id: cm-enc-003
+    category: cloud_misconfig.encryption
+    severity: warn
+    pattern: '(?i)\ballow_blob_public_access\s*[:=]\s*true\b'
+    description: Azure storage account allows anonymous public blob access (allow_blob_public_access = true).
+    labels: [detector:cloud-misconfig, cloud:azure, severity:internal]
+  - id: cm-enc-004
+    category: cloud_misconfig.encryption
+    severity: soft
+    pattern: '(?i)(?:min_tls_version\s*[:=]\s*["'']?TLS1_[01]\b|enable_https_traffic_only\s*[:=]\s*false\b)'
+    description: Storage or service permits weak TLS (1.0/1.1) or cleartext HTTP transport.
+    labels: [detector:cloud-misconfig, cloud:azure, severity:confidential]
+  # --- IaC hardcoded secrets (keys, passwords, private keys in templates) ---
+  - id: cm-sec-001
+    category: cloud_misconfig.iac_secret
+    severity: hard
+    pattern: '(?i)\baccess_key\s*[:=]\s*["'']AKIA[0-9A-Z]{16}["'']'
+    description: Hardcoded AWS access key ID (AKIA prefix) in an IaC manifest or template.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-sec-002
+    category: cloud_misconfig.iac_secret
+    severity: hard
+    pattern: '(?i)\bsecret_key\s*[:=]\s*["''][A-Za-z0-9/+=]{40}["'']'
+    description: Hardcoded AWS secret access key literal in an IaC manifest or template.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-sec-003
+    category: cloud_misconfig.iac_secret
+    severity: hard
+    pattern: '(?i)\b(?:password|master_password|admin_password|root_password)\s*[:=]\s*["''][^"''${}\s]{6,64}["'']'
+    description: Hardcoded password literal in an IaC manifest or template (not a variable reference).
+    labels: [detector:cloud-misconfig, cloud:iac, severity:restricted]
+  - id: cm-sec-004
+    category: cloud_misconfig.iac_secret
+    severity: hard
+    pattern: '(?i)-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----'
+    description: Private key PEM block embedded directly in an IaC manifest or template.
+    labels: [detector:cloud-misconfig, cloud:iac, severity:restricted]
+  # --- Kubernetes pod security (privileged, host ns, caps, root) ---
+  - id: cm-k8s-001
+    category: cloud_misconfig.k8s
+    severity: hard
+    pattern: '(?i)\bprivileged\s*:\s*true\b'
+    description: Kubernetes container securityContext privileged set to true; grants full host access.
+    labels: [detector:cloud-misconfig, cloud:k8s, severity:restricted]
+  - id: cm-k8s-002
+    category: cloud_misconfig.k8s
+    severity: soft
+    pattern: '(?i)\b(?:hostNetwork|hostPID|hostIPC)\s*:\s*true\b'
+    description: Pod shares the host network, PID, or IPC namespace (hostNetwork/hostPID/hostIPC true).
+    labels: [detector:cloud-misconfig, cloud:k8s, severity:confidential]
+  - id: cm-k8s-003
+    category: cloud_misconfig.k8s
+    severity: soft
+    pattern: '(?i)\bhostPath\s*:[\s\S]{0,40}\bpath\s*:'
+    description: Pod mounts a hostPath volume from the node filesystem; enables container escape.
+    labels: [detector:cloud-misconfig, cloud:k8s, severity:confidential]
+  - id: cm-k8s-004
+    category: cloud_misconfig.k8s
+    severity: soft
+    pattern: '(?i)\b(?:runAsNonRoot\s*:\s*false|runAsUser\s*:\s*0)\b'
+    description: Container allowed to run as root (runAsNonRoot false or runAsUser 0).
+    labels: [detector:cloud-misconfig, cloud:k8s, severity:confidential]
+  - id: cm-k8s-005
+    category: cloud_misconfig.k8s
+    severity: soft
+    pattern: '(?i)\ballowPrivilegeEscalation\s*:\s*true\b'
+    description: Container permits privilege escalation (allowPrivilegeEscalation true).
+    labels: [detector:cloud-misconfig, cloud:k8s, severity:confidential]
+  - id: cm-k8s-006
+    category: cloud_misconfig.k8s
+    severity: hard
+    pattern: '(?i)(?:[-"'']\s*(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|SYS_MODULE|DAC_READ_SEARCH)\b|\badd\b[\s\S]{0,30}["'']?ALL["'']?\b)'
+    description: Linux capability add of SYS_ADMIN, NET_ADMIN, ALL, or similar; grants near-root kernel privileges.
+    labels: [detector:cloud-misconfig, cloud:k8s, severity:restricted]
+  - id: cm-k8s-007
+    category: cloud_misconfig.k8s
+    severity: warn
+    pattern: '(?i)\bautomountServiceAccountToken\s*:\s*true\b'
+    description: Pod or service account automounts the Kubernetes API token (automountServiceAccountToken true); exposes cluster credentials to a compromised container.
+    labels: [detector:cloud-misconfig, cloud:k8s, severity:internal]
+  # --- Public access (CloudFormation ACL, sensitive-port ingress, GCP/SQL public) ---
+  - id: cm-pub-006
+    category: cloud_misconfig.public_access
+    severity: soft
+    pattern: '(?i)\bAccessControl\s*:\s*(?:PublicReadWrite|PublicRead|AuthenticatedRead)\b'
+    description: CloudFormation S3 bucket AccessControl set to a public canned ACL (PublicRead/PublicReadWrite); world-readable or world-writable bucket.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-pub-007
+    category: cloud_misconfig.public_access
+    severity: hard
+    pattern: '(?i)(?:0\.0\.0\.0/0|::/0)[\s\S]{0,80}(?:\bto_port\s*[:=]\s*(?:22|23|3389|3306|5432|6379|27017|9200|1433|5984)\b|\bports?\s*[:=]\s*\[?\s*["'']?(?:22|3389|3306|5432|6379|27017|9200|1433)\b)'
+    description: 'Ingress rule opens a sensitive admin/database port (SSH 22, RDP 3389, MySQL 3306, Postgres 5432, Redis 6379, Mongo 27017, etc.) to the entire internet (0.0.0.0/0).'
+    labels: [detector:cloud-misconfig, cloud:iac, severity:restricted]
+  - id: cm-pub-008
+    category: cloud_misconfig.public_access
+    severity: hard
+    pattern: '(?i)["''](?:allUsers|allAuthenticatedUsers)["'']'
+    description: GCP IAM binding grants a role to allUsers or allAuthenticatedUsers; exposes the resource to anonymous or any-Google-account access.
+    labels: [detector:cloud-misconfig, cloud:gcp, severity:restricted]
+  - id: cm-pub-009
+    category: cloud_misconfig.public_access
+    severity: soft
+    pattern: '(?i)\b(?:block_public_acls|block_public_policy|ignore_public_acls|restrict_public_buckets)\s*[:=]\s*false\b'
+    description: S3 public access block control disabled (block_public_acls / restrict_public_buckets = false); removes the account/bucket guard against public exposure.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:confidential]
+  # --- IAM (broad Allow shapes, full wildcard service:action) ---
+  - id: cm-iam-006
+    category: cloud_misconfig.iam
+    severity: hard
+    pattern: '(?i)"Effect"\s*:\s*"Allow"[\s\S]{0,120}"NotAction"\s*:'
+    description: 'IAM statement combines Effect "Allow" with NotAction; grants every action except the listed few, an easily-overlooked over-permission.'
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-iam-007
+    category: cloud_misconfig.iam
+    severity: hard
+    pattern: '(?i)["'']\*:\*["'']'
+    description: 'IAM policy action set to "*:*" (all services, all actions); equivalent to full administrator access.'
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  # --- Encryption / transport (insecure TLS verify, Azure public container) ---
+  - id: cm-enc-005
+    category: cloud_misconfig.encryption
+    severity: soft
+    pattern: '(?i)\binsecure_skip_verify\s*[:=]\s*true\b'
+    description: TLS certificate verification disabled (insecure_skip_verify = true); enables man-in-the-middle interception of the connection.
+    labels: [detector:cloud-misconfig, cloud:iac, severity:confidential]
+  - id: cm-enc-006
+    category: cloud_misconfig.encryption
+    severity: soft
+    pattern: '(?i)\b(?:container_access_type|public_access)\s*[:=]\s*["''](?:container|blob)["'']'
+    description: Azure blob container access level set to container or blob; allows anonymous public read of the container contents.
+    labels: [detector:cloud-misconfig, cloud:azure, severity:confidential]
+  # --- IaC hardcoded secrets (Terraform provider creds, GCP SA key, Azure SP) ---
+  - id: cm-sec-005
+    category: cloud_misconfig.iac_secret
+    severity: hard
+    pattern: '(?i)\bprovider\s+["'']aws["''][\s\S]{0,120}\b(?:access_key|secret_key)\s*=\s*["''][^"''${}\s]{8,}["'']'
+    description: Terraform aws provider block with a hardcoded access_key or secret_key literal; credentials must come from env or a credential file, not the manifest.
+    labels: [detector:cloud-misconfig, cloud:aws, severity:restricted]
+  - id: cm-sec-006
+    category: cloud_misconfig.iac_secret
+    severity: hard
+    pattern: '(?i)"type"\s*:\s*"service_account"[\s\S]{0,200}"private_key"\s*:'
+    description: Inline GCP service-account key JSON (type service_account with an embedded private_key) hardcoded in an IaC manifest.
+    labels: [detector:cloud-misconfig, cloud:gcp, severity:restricted]
+  - id: cm-sec-007
+    category: cloud_misconfig.iac_secret
+    severity: hard
+    pattern: '(?i)\bclient_secret\s*[:=]\s*["''][^"''${}\s]{8,}["'']'
+    description: Hardcoded Azure / OAuth client_secret literal in an IaC manifest (not a variable or env reference).
+    labels: [detector:cloud-misconfig, cloud:azure, severity:restricted]
+  # --- Docker (privileged container, dangerous caps, host networking) ---
+  - id: cm-dok-001
+    category: cloud_misconfig.container
+    severity: hard
+    pattern: '(?i)(?:--privileged\b|\bprivileged\s*[:=]\s*true\b)'
+    description: Docker container run with --privileged (or compose privileged true); disables container isolation and grants full host device access.
+    labels: [detector:cloud-misconfig, cloud:docker, severity:restricted]
+  - id: cm-dok-002
+    category: cloud_misconfig.container
+    severity: hard
+    pattern: '(?i)--cap-add[\s=]+["'']?(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|SYS_MODULE|ALL)\b'
+    description: Docker --cap-add grants a dangerous Linux capability (SYS_ADMIN, NET_ADMIN, ALL, etc.); near-root kernel privileges inside the container.
+    labels: [detector:cloud-misconfig, cloud:docker, severity:restricted]
+  - id: cm-dok-003
+    category: cloud_misconfig.container
+    severity: soft
+    pattern: '(?i)(?:--net(?:work)?[\s=]+host\b|\bnetwork_mode\s*:\s*["'']?host\b)'
+    description: Docker container shares the host network namespace (--network host or network_mode host); removes network isolation from the host.
+    labels: [detector:cloud-misconfig, cloud:docker, severity:confidential]

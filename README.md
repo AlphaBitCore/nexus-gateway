@@ -1,12 +1,21 @@
 # Nexus Gateway
 
-[![CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](.github/workflows/ci.yml)
-[![Go CI](https://github.com/AlphaBitCore/nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](.github/workflows/go-ci.yml)
+[![CI](https://github.com/itechchoice/abc-nexus-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](.github/workflows/ci.yml)
+[![Go CI](https://github.com/itechchoice/abc-nexus-gateway/actions/workflows/go-ci.yml/badge.svg?branch=main)](.github/workflows/go-ci.yml)
 [![Coverage gate](https://img.shields.io/badge/coverage-%E2%89%A595%25%20per%20package-brightgreen)](./scripts/check-go-coverage.sh)
-[![Status: 1.0 GA](https://img.shields.io/badge/status-1.0%20GA-brightgreen)](./CHANGELOG.md)
+[![Status: 1.1.0](https://img.shields.io/badge/status-1.1.0-brightgreen)](./CHANGELOG.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 
 > **Make AI safe to use across the enterprise.**
+
+> [!IMPORTANT]
+> **Upgrading from 1.0.x?** This **1.1.0** release changes how captured traffic
+> bodies are stored — `traffic_event_payload.inline_*_body` is now raw `BYTEA`
+> — and collapses the hook `onMatch` model. Fresh installs (the AMI appliance, or `prisma db push` on an empty
+> database) need nothing. **Existing deployments that retain traffic history
+> must run the one-time body re-encode migration, and direct `traffic_event`
+> database consumers must update their readers.** Full migration steps:
+> **[CHANGELOG → 1.1.0](./CHANGELOG.md)**.
 
 Nexus Gateway intercepts enterprise LLM traffic at three layers and runs all of it through one compliance engine, one audit pipeline, and one control plane.
 
@@ -14,11 +23,11 @@ Nexus Gateway intercepts enterprise LLM traffic at three layers and runs all of 
 |---|---|---|
 | 🔑 **AI Gateway** | SDK layer — virtual keys on `/v1/chat/*`, `/v1/responses`, `/v1/embeddings`, `/v1/messages` | `packages/ai-gateway/` |
 | 🌐 **Compliance Proxy** | Network layer — transparent TLS bump (`CONNECT` + MITM) | `packages/compliance-proxy/` |
-| 💻 **Desktop Agent** | OS layer — macOS + Linux GA; Windows experimental | `packages/agent/platform/{darwin,linux,windows}/` |
+| 💻 **Desktop Agent** | OS layer — macOS, Linux, and Windows GA | `packages/agent/platform/{darwin,linux,windows}/` |
 
 The three pipes are independent: AI Gateway, Compliance Proxy, and Agent each run the **full hooks pipeline on their own traffic** (`packages/shared/policy/hooks/`, plus the per-service compliance pipeline — e.g. `packages/agent/internal/compliance/pipeline.go`). The Agent always egresses directly to the upstream provider — it does **not** care whether enterprise network policy then routes that traffic through the Compliance Proxy.
 
-When it does — Agent stamps an Ed25519-signed `X-Nexus-Attestation` header on the outbound request (E60, `packages/agent/internal/identity/attestation/`). The Compliance Proxy peeks this header *before* the TLS bump (`packages/shared/transport/tlsbump/forward_handler.go:119`); if the signature verifies, the CONNECT becomes pure passthrough — no MITM, no hooks, no audit on that flow, since the Agent already ran them.
+When it does — Agent stamps an Ed25519-signed `X-Nexus-Attestation` header on the outbound request (`packages/agent/internal/identity/attestation/`). The Compliance Proxy peeks this header *before* the TLS bump (`packages/shared/transport/tlsbump/forward_handler.go`); if the signature verifies, the CONNECT becomes pure passthrough — no MITM, no hooks, no audit on that flow, since the Agent already ran them.
 
 ---
 
@@ -68,7 +77,7 @@ PII detection · data classification · keyword filtering · content safety · r
 
 ### 🎨 Modalities
 
-Chat · Embeddings · Structured outputs · Function / tool calling · Vision input · Reasoning tokens. Multimodal (epic E62) in development.
+Chat · Embeddings · Structured outputs · Function / tool calling · Vision input · Reasoning tokens. Multimodal in development.
 
 ### 🏢 Enterprise governance
 
@@ -78,6 +87,20 @@ Chat · Embeddings · Structured outputs · Function / tool calling · Vision in
 - **Organization / project hierarchy** with per-org quota.
 - **Credential vault** — AES-256-GCM (`packages/control-plane/internal/platform/crypto/aes_gcm.go`, `packages/ai-gateway/internal/credentials/decrypt/decrypt.go`) with key rotation.
 - **Agent fleet management** — Hub CA, Thing-based config sync, drift detection.
+
+---
+
+## Performance
+
+Nexus is designed so that the compliance layer adds as little latency as possible to the request path. The key architectural decisions that make this work:
+
+**Audit pipeline is fully async.** Request/response bodies are queued in-memory, shipped to NATS JetStream, and bulk-inserted into Postgres via `COPY` — none of this blocks the response to the caller. Captured bodies are stored as raw `BYTEA`, so PostgreSQL skips per-row parse and validation overhead and avoids base64 size inflation. Under load, the audit pipeline runs at ~0% throughput cost even with full body capture enabled.
+
+**Compliance scanning uses Vectorscan.** The hook pipeline runs a SIMD-accelerated multi-pattern scanner (Vectorscan) instead of sequential regex evaluation. All 423 rules scan in a single pass over the payload. Scan cost scales with payload size — roughly 30% overhead at short context (128 tokens), up to 55% at long context (12k tokens). For applications where compliance scanning overhead is a concern, the scan pipeline is configurable per-route.
+
+**Upstream connection pool is sized for throughput.** The default pool is 5,000 connections per upstream target, eliminating connection establishment as a bottleneck under sustained load.
+
+**Quota accounting is write-behind.** Per-request quota costs accumulate in-process and flush to Redis on a 250ms interval, removing the synchronous Redis round-trip from the hot path. Configurable back to synchronous mode (`NEXUS_QUOTA_WRITE_BEHIND=0`) for strict accounting requirements.
 
 ---
 
@@ -108,7 +131,7 @@ flowchart TB
     Agent -. "X-Nexus-Attestation verified<br/>→ passthrough" .-> CPProxy
 ```
 
-The lateral dotted arrow is the **attestation handoff**: the Agent always egresses directly, but when enterprise network policy happens to route Agent traffic through the Compliance Proxy, the Agent's Ed25519-signed `X-Nexus-Attestation` header (E60, `packages/agent/internal/identity/attestation/`) is verified at TLS-bump time (`packages/shared/transport/tlsbump/forward_handler.go:119`); on success the CONNECT becomes pure passthrough — no MITM, no hooks, no audit on that flow, since the Agent already ran them on its end.
+The lateral dotted arrow is the **attestation handoff**: the Agent always egresses directly, but when enterprise network policy happens to route Agent traffic through the Compliance Proxy, the Agent's Ed25519-signed `X-Nexus-Attestation` header (`packages/agent/internal/identity/attestation/`) is verified at TLS-bump time (`packages/shared/transport/tlsbump/forward_handler.go`); on success the CONNECT becomes pure passthrough — no MITM, no hooks, no audit on that flow, since the Agent already ran them on its end.
 
 **Control plane (out-of-band).** All four Go services register with **Nexus Hub** as Things via `packages/shared/transport/thingclient/` (WebSocket primary, HTTP fallback) and pull configuration from the Hub's device shadow on boot and on change-signal — the Hub never pushes full state. The Control Plane admin API (`:3001`) and the React UI (`:3000`) sit alongside, talking to the Hub the same way.
 
@@ -118,7 +141,7 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 | **Control Plane** | 3001 | `packages/control-plane/` (Echo) — admin API / BFF, IAM, SSO, analytics |
 | **AI Gateway** | 3050 | `packages/ai-gateway/` — `/v1` AI traffic, provider adapters, routing, quota |
 | **Compliance Proxy** | 3128 | `packages/compliance-proxy/` — CONNECT, MITM, compliance pipeline |
-| **Agent** | local | `packages/agent/` — macOS intercepts via the `NETransparentProxyProvider` system extension (`packages/agent/platform/darwin/NexusAgent/NexusAgentExtension/`), the sole macOS intercept path (the experimental pf-only alternative was retired before shipping); Linux uses `iptables`; Windows (experimental) uses `WinDivert`. macOS + Linux are GA; Windows is experimental. |
+| **Agent** | local | `packages/agent/` — macOS intercepts via the `NETransparentProxyProvider` system extension (`packages/agent/platform/darwin/NexusAgent/NexusAgentExtension/`), the sole macOS intercept path; Linux uses `iptables`; Windows uses the `NexusWFP` kernel driver (Windows Filtering Platform, transparent TCP connect-redirect). macOS, Linux, and Windows are GA. |
 | **Control Plane UI** | 3000 | `packages/control-plane-ui/` — React + Vite + TypeScript |
 
 **Storage stack**
@@ -126,6 +149,13 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 - **PostgreSQL 16** — durable storage. Prisma schema in `tools/db-migrate/` is the source of truth for dev-time migrations; runtime code reads via hand-written SQL + `pgx` (no `sqlc`).
 - **Valkey 8** — Redis-wire-compatible, pinned to `valkey/valkey-bundle:8-trixie` in `docker-compose.yml` for BSD-license parity; the `valkey-search` module ships in the bundle image and backs the semantic vector cache. Pure cache only — no pub/sub.
 - **NATS JetStream** — event streaming and Hub coordination via `packages/shared/transport/mq/`.
+
+> **Roadmap — pluggable traffic storage.** The traffic / observability storage
+> layer is being reworked into an operator-selectable backend. The first step
+> makes the high-frequency `traffic_event` store switchable between
+> **PostgreSQL and ClickHouse**, so the audit firehose can move off the
+> single-box disk-write wall at high request rates while transactional OLTP
+> state stays on PostgreSQL. In active development; not yet shipped.
 
 ---
 
@@ -137,6 +167,26 @@ The lateral dotted arrow is the **attestation handoff**: the Agent always egress
 | **Local development** | docker-compose + `./scripts/dev-start.sh` (Postgres + Valkey + NATS) and per-service `go run ./cmd/<svc>/` | See **Quick start** below |
 | **VMware / KVM image / bare-metal appliance** | Reuses the same `install.sh` + `harden.sh` from `nexus-ami/scripts/` under a different Packer builder | Future |
 | **Container / Kubernetes** | Out of scope for the appliance form factor — separate product line | Future |
+
+> **⚠ Building from source — Vectorscan binaries are CPU-microarchitecture-specific.**
+> The compliance scanner links **libhs (Vectorscan) statically with `FAT_RUNTIME=OFF`** —
+> a single-microarchitecture build with no runtime CPU dispatch (this sidesteps a
+> known `hs_alloc_scratch` IFUNC dispatch bug). One consequence: **a compiled binary
+> is not portable across CPU generations.**
+> - Building libhs with `-DBUILD_AVX512VBMI=ON` yields the fastest scanner, but the
+>   binary then runs **only** on CPUs with AVX512VBMI (Intel Ice Lake / Sapphire
+>   Rapids and newer). On an older CPU it **SIGILLs (illegal instruction)** at the
+>   first scan.
+> - For an older deployment target (e.g. Cascade Lake / Skylake-SP, no AVX512VBMI),
+>   build a **baseline** libhs with no `-DBUILD_AVX512*` flags.
+> - Match the target's glibc too — compile on, or in a container matching, the
+>   deployment OS (e.g. `amazonlinux:2023`, glibc 2.34).
+> - Verify a build: `strings nexus-ai-gateway | grep -c hs_alloc_scratch` (>0 →
+>   Vectorscan linked) and `ldd nexus-ai-gateway | grep libhs` (empty → statically
+>   linked, correct).
+>
+> `nexus-ami/build.sh` already builds libhs matched to the AMI's target ISA — this
+> only matters when you compile the binaries yourself for a specific host.
 
 ---
 
@@ -226,18 +276,6 @@ docker exec $(docker ps --filter "name=postgres" -q | head -1) \
 
 ---
 
-## 🧪 …and one more thing: this repo is also an AI vibe-coding workbench
-
-You came for an AI gateway. You also get the disciplined AI pair-programming setup that built it. [`CLAUDE.md`](./CLAUDE.md), [`.cursor/rules/`](./.cursor/rules/), [`.claude/skills/`](./.claude/skills/), and the [`scripts/check-*`](./scripts/) lint suite form a fork-adoptable methodology:
-
-- **Binding rules** in `CLAUDE.md` plus **35 `.cursor/rules/`** entries (`ls .cursor/rules/`).
-- **33 invocable skills** under `.claude/skills/` — `/prod-deploy`, `/smoke-gateway`, `/spec-writing`, `/add-provider-adapter`, hardened runbooks for repeatable procedures.
-- **25 `scripts/check-*` lint scripts** — every binding rule has a mechanical gate; pre-commit + CI dual layer.
-- **95% per-package coverage gate** enforced by `scripts/check-go-coverage.sh` + `scripts/.coverage-allowlist`.
-- **2-round completion self-audit** before claiming "done" (see `CLAUDE.md` → Mandatory rules → Workflow discipline → Self-audit).
-
----
-
 ## Repository layout
 
 ```
@@ -246,8 +284,8 @@ packages/
   control-plane/     Go + Echo — admin API / BFF, IAM, SSO, analytics
   ai-gateway/        Go — /v1 AI traffic, provider adapters, routing, quota
   compliance-proxy/  Go — transparent TLS proxy, CONNECT, compliance pipeline
-  agent/             Go — desktop traffic interception (macOS + Linux GA;
-                     Windows experimental)
+  agent/             Go — desktop traffic interception
+                     (macOS + Linux + Windows GA)
   shared/            Go — cross-service business logic (hooks, traffic, configtypes,
                      mq, thingclient, cache, …)
   control-plane-ui/  React + Vite + TypeScript — admin dashboard

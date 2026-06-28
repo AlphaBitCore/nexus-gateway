@@ -43,6 +43,9 @@ export const REFERENCE_TABLES: { fixture: string; delegate: keyof PrismaClient; 
   { fixture: 'gateway_passthrough_config_global', delegate: 'gatewayPassthroughConfigGlobal', key: 'id' },
   { fixture: 'ai_guard_config', delegate: 'aIGuardConfig', key: 'id' },
   { fixture: 'AlertRule', delegate: 'alertRule', key: 'id' },
+  // Default application-VK monthly spend cap ($50k). Production default; the demo
+  // seed deletes it (demo manages quotas via QuotaOverride fixtures).
+  { fixture: 'QuotaPolicy', delegate: 'quotaPolicy', key: 'id' },
   { fixture: 'semantic_cache_config', delegate: 'semanticCacheConfig', key: 'id' },
   // Standard routing rules (only smart-auto-routing enabled; default route off).
   { fixture: 'RoutingRule', delegate: 'routingRule', key: 'id' },

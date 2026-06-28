@@ -98,6 +98,33 @@ The AI Gateway audit emitter (`internal/platform/audit`) feeds captured request/
 
 So a non-Gemini model (e.g. OpenAI `o1`) served over the Gemini `:generateContent` ingress records its response in Gemini `candidates[]` shape and is keyed on `gemini` → the Gemini normalizer claims it at Tier 1 (`kind=ai-chat`). Cross-format ingresses whose format has no adapter-only registration (`/v1/responses`, where the ingress format is `openai-responses`) resolve through the registry's path-keyed fallback (`::/v1/responses`); SSE that no Tier-1 key folds is claimed by the matching codec through the Tier-1.5 sniff pass, and only shapes no sniffer recognizes reach the Tier-2 SSE walker. The single key source is `audit.normalizeAdapterType`, which returns `rec.IngressFormat` lower-cased.
 
+### 5.2 AI Gateway lazy canonical + audit reuse (compute-at-most-once)
+
+The request-path canonical (`buildRequestContext` → `Registry.Normalize`) and the
+async audit normalize are the **same** computation over the **same** ingress
+bytes. To avoid doing it twice, the gateway computes it at most once:
+
+- **Lazy compute.** `buildRequestContext` runs `Normalize` only when a synchronous
+  consumer needs the canonical — the response cache (freshness detector + L2
+  semantic write-back) or a `smart` routing rule (the only strategy that reads
+  `rctx.Request.Messages`). The gate (`Handler.needCanonical`) is a fail-safe
+  superset: `cacheEnabled OR anyEnabledRuleHasSmartStrategy` (recursive over the
+  strategy tree), computing the canonical on any uncertainty. When no consumer
+  needs it, the request path leaves it nil and the async audit writer derives the
+  normalized payload from the raw bytes as before.
+- **Audit reuse.** When the canonical *was* computed, the request goroutine
+  marshals it once (`finalizeAudit` → `RequestNormalizedReuse`) and the audit
+  writer reuses those bytes for `request_normalized` instead of re-`Normalize`-ing.
+  The request-path `Meta` is aligned to the audit `Meta` (`StripContentTypeParams`
+  + lower-cased `AdapterType`) so the reused bytes are **byte-identical** to a
+  fresh re-`Normalize` — `traffic_event_normalized` is unchanged. The reuse path
+  re-emits the same `normalize_total{direction="request",status="ok"}` /
+  `payload_bytes` series the bridge would.
+
+Both behaviors are behind `NEXUS_LAZY_CANONICAL` (default off, kill-switch on:
+always compute + always re-`Normalize` = legacy path). The gate decision is
+consumer-derived and independent of the ingress↔upstream spec relationship.
+
 ## 6. Adding a normalizer or detector
 
 - **Tier-1 normalizer** — implement `Normalizer` in `normalize/codecs`, register it in `codecs/register.go` under its `AdapterType` (and `AdapterType::EndpointPath`) keys, and stamp `Confidence` via `ScoreTier1Confidence` so a low-confidence parse can fall through to Tier 2. If the wire has a cheap protocol-distinctive prefix marker, also implement `core.Sniffer` and enroll it via `RegisterSniffer` so key-missed capture traffic reaches the codec; every new probe must keep the cross-corpus sniffer matrix (`codecs/sniffer_test.go`) clean.

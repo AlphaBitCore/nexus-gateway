@@ -196,8 +196,10 @@ export default [
         code: [
             'packages/ai-gateway/internal/platform/audit/**',
             'packages/nexus-hub/internal/observability/consumer/**',
+            'packages/shared/audit/ndjson/**',
         ],
         docs: [
+            'docs/developers/architecture/cross-cutting/observability/audit-pipeline-architecture.md',
             'docs/developers/architecture/services/ai-gateway/cost-estimation-architecture.md',
             'docs/developers/architecture/cross-cutting/observability/observability-architecture.md',
             'docs/developers/architecture/cross-cutting/observability/admin-audit-log-coverage.md',

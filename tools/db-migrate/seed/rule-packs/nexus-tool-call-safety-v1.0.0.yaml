@@ -108,3 +108,213 @@ rules:
     pattern: '(?i)(?:os\.environ|process\.env|getenv)\s*\[\s*["''](?:AWS_|OPENAI_|ANTHROPIC_|GITHUB_|STRIPE_)'
     description: Programmatic read of a credential-prefixed environment variable.
     labels: [detector:tool-call-safety, risk:exfiltration, severity:confidential]
+  # --- NoSQL injection ---
+  - id: tc-nosql-001
+    category: tool_call.nosqli
+    severity: soft
+    pattern: '(?i)["''{,]\s*\$(?:ne|gt|gte|lt|lte|regex|nin|in|exists)\b'
+    description: 'MongoDB operator injection ($ne/$gt/$regex) embedded in a JSON query object.'
+    labels: [detector:tool-call-safety, risk:nosqli, severity:confidential]
+  - id: tc-nosql-002
+    category: tool_call.nosqli
+    severity: hard
+    pattern: '(?i)\$where\b\s*[:=]'
+    description: 'MongoDB $where server-side JavaScript evaluation in a query.'
+    labels: [detector:tool-call-safety, risk:nosqli, severity:restricted]
+  # --- LDAP injection ---
+  - id: tc-ldap-001
+    category: tool_call.ldapi
+    severity: soft
+    pattern: '(?i)(?:\)\s*\(\s*[|&]\s*\(|\*\s*\)\s*\(\s*\w+\s*=)'
+    description: 'LDAP filter break-out using )(| boolean metacharacters.'
+    labels: [detector:tool-call-safety, risk:ldapi, severity:confidential]
+  # --- XXE ---
+  - id: tc-xxe-001
+    category: tool_call.xxe
+    severity: hard
+    pattern: '(?i)<!ENTITY\s+%?\s*\w{1,40}\s+(?:SYSTEM|PUBLIC)\b'
+    description: 'XML external entity declaration referencing a SYSTEM/PUBLIC resource.'
+    labels: [detector:tool-call-safety, risk:xxe, severity:restricted]
+  - id: tc-xxe-002
+    category: tool_call.xxe
+    severity: soft
+    pattern: '(?i)<!DOCTYPE[^>]{0,80}(?:SYSTEM|PUBLIC)\b'
+    description: 'DOCTYPE declaration pulling an external SYSTEM/PUBLIC DTD (XXE vector).'
+    labels: [detector:tool-call-safety, risk:xxe, severity:confidential]
+  # --- Server-side template injection ---
+  - id: tc-ssti-001
+    category: tool_call.ssti
+    severity: soft
+    pattern: '(?:\{\{|\$\{|#\{)\s*\d{1,5}\s*\*\s*\d{1,5}'
+    description: 'Server-side template injection arithmetic probe such as {{7*7}}.'
+    labels: [detector:tool-call-safety, risk:ssti, severity:confidential]
+  - id: tc-ssti-002
+    category: tool_call.ssti
+    severity: hard
+    pattern: '(?i)(?:\$\{\s*T\(|#\{|<%=)[^}>]{0,60}(?:Runtime|ProcessBuilder|getRuntime|java\.lang)'
+    description: 'Server-side template injection RCE marker (SpEL/OGNL/JSP Runtime access).'
+    labels: [detector:tool-call-safety, risk:ssti, severity:restricted]
+  # --- Command injection in arguments ---
+  - id: tc-cmdi-001
+    category: tool_call.command_injection
+    severity: hard
+    pattern: '(?i)(?:;|&&|\|\|)\s*(?:rm|curl|wget|nc|bash|sh|chmod|chown|kill|cat|nohup|telnet)\b'
+    description: 'Shell command chaining (; && ||) into a destructive or network verb.'
+    labels: [detector:tool-call-safety, risk:rce, severity:restricted]
+  - id: tc-cmdi-002
+    category: tool_call.command_injection
+    severity: hard
+    pattern: '(?i)(?:\$\(|`)\s*(?:curl|wget|rm|nc|cat|whoami|id|python|perl|eval|base64|bash|sh)\b'
+    description: 'Shell command substitution invoking a network or interpreter command.'
+    labels: [detector:tool-call-safety, risk:rce, severity:restricted]
+  # --- Encoded path traversal ---
+  - id: tc-trav-001
+    category: tool_call.traversal
+    severity: soft
+    pattern: '(?i)(?:%2e%2e[%/\\]|%252e%252e|\.\.%2f|\.\.%5c|\.{4,}/{2,})'
+    description: 'Encoded path traversal (%2e%2e%2f / ....// ) bypassing literal ../ filters.'
+    labels: [detector:tool-call-safety, risk:traversal, severity:confidential]
+  # --- Prototype pollution ---
+  - id: tc-proto-001
+    category: tool_call.prototype_pollution
+    severity: soft
+    pattern: '(?i)(?:\[\s*["'']__proto__["'']\s*\]|\.__proto__\b|constructor\s*\.\s*prototype\b|["'']__proto__["'']\s*:)'
+    description: 'Prototype pollution via __proto__ or constructor.prototype assignment.'
+    labels: [detector:tool-call-safety, risk:prototype-pollution, severity:confidential]
+  # --- Insecure temp / symlink ---
+  - id: tc-tmp-001
+    category: tool_call.insecure_temp
+    severity: soft
+    pattern: '(?i)ln\s+-s\s+/(?:etc|root|proc|boot|dev|sys)\b'
+    description: 'Symlink creation pointing at a sensitive system directory (symlink race).'
+    labels: [detector:tool-call-safety, risk:tampering, severity:confidential]
+  # --- GraphQL introspection abuse ---
+  - id: tc-gql-001
+    category: tool_call.graphql
+    severity: soft
+    pattern: '(?i)\b__schema\b|\b__type\s*\(|query\s+IntrospectionQuery\b'
+    description: 'GraphQL introspection abuse (__schema / __type enumeration).'
+    labels: [detector:tool-call-safety, risk:disclosure, severity:confidential]
+  # --- Destructive cloud CLI ---
+  - id: tc-cloud-001
+    category: tool_call.cloud
+    severity: hard
+    pattern: '(?i)(?:aws\s+s3\s+rb\s+[^\n]{0,40}--force|az\s+group\s+delete|gcloud\s+projects\s+delete|aws\s+ec2\s+terminate-instances|aws\s+iam\s+delete-)'
+    description: 'Destructive cloud CLI op (aws s3 rb --force, az group delete, gcloud projects delete).'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  - id: tc-cloud-002
+    category: tool_call.cloud
+    severity: hard
+    pattern: '(?i)\bterraform\s+destroy\b'
+    description: 'Terraform destroy tearing down managed infrastructure.'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  # --- Container escape ---
+  - id: tc-esc-001
+    category: tool_call.container_escape
+    severity: hard
+    pattern: '(?i)(?:docker\s+run[^\n]{0,80}(?:--privileged|-v\s*/:/|--pid[= ]\s*host|--net(?:work)?[= ]\s*host)|nsenter\s+[^\n]{0,40}--target\s+1\b|--cap-add[= ]\s*SYS_ADMIN)'
+    description: 'Container escape via privileged/host-mount docker run or nsenter into PID 1.'
+    labels: [detector:tool-call-safety, risk:container-escape, severity:restricted]
+  # --- Git history destruction ---
+  - id: tc-git-001
+    category: tool_call.git
+    severity: hard
+    pattern: '(?i)(?:git\s+filter-branch\b|git\s+filter-repo\b|rm\s+-rf\s+[^\n]{0,30}\.git\b|git\s+reflog\s+expire[^\n]{0,40}--all)'
+    description: 'Git history destruction (filter-branch / filter-repo / rm -rf .git).'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  # --- DNS rebinding / SSRF bypass ---
+  - id: tc-ssrf-004
+    category: tool_call.ssrf
+    severity: soft
+    pattern: '(?i)https?://(?:0x[0-9a-f]{6,8}\b|[0-9]{8,12}\b|0[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.|\[::1?\]|\[::ffff:)'
+    description: 'SSRF filter bypass using decimal/octal/hex IP or IPv6 [::] loopback.'
+    labels: [detector:tool-call-safety, risk:ssrf, severity:confidential]
+  # --- Archive traversal (zip slip) ---
+  - id: tc-zip-001
+    category: tool_call.archive
+    severity: soft
+    pattern: '(?i)(?:extractall|zipfile|tarfile|unzip|untar)[^\n]{0,60}\.\.[/\\]|(?:filename|entryname|name)\s*[:=]\s*["'']\.\.[/\\]'
+    description: 'Archive extraction traversal (zip-slip) via ../ in an entry name.'
+    labels: [detector:tool-call-safety, risk:traversal, severity:confidential]
+  # --- rm -rf against $HOME ---
+  - id: tc-sh-004
+    category: tool_call.shell
+    severity: hard
+    pattern: '(?i)\brm\s+-[a-z]*rf?[a-z]*\s+(?:~|\$HOME)(?:/\s|/\.|\s|\s*$)'
+    description: 'rm -rf against the entire home directory (~ or $HOME).'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  # --- Raw block-device overwrite (dd / redirect / mkfs) ---
+  - id: tc-disk-001
+    category: tool_call.disk
+    severity: hard
+    pattern: '(?i)\bdd\s+[^\n]{0,60}\bof=/dev/(?:sd[a-z]|nvme\d|vd[a-z]|hd[a-z]|disk\d|mmcblk\d)'
+    description: 'dd writing directly to a raw block device, destroying its contents.'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  - id: tc-disk-002
+    category: tool_call.disk
+    severity: hard
+    pattern: '(?i)\bmkfs(?:\.[a-z0-9]+)?\s+[^\n]{0,40}/dev/(?:sd[a-z]|nvme\d|vd[a-z]|hd[a-z]|disk\d|mmcblk\d)'
+    description: 'mkfs formatting a raw block device, erasing the existing filesystem.'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  - id: tc-disk-003
+    category: tool_call.disk
+    severity: hard
+    pattern: '(?i)>\s*/dev/(?:sd[a-z]|nvme\d|vd[a-z]|hd[a-z]|disk\d|mmcblk\d)'
+    description: 'Shell redirect overwriting a raw block device node (> /dev/sda).'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  # --- chmod -R 777 on root / system path ---
+  - id: tc-perm-001
+    category: tool_call.permissions
+    severity: hard
+    pattern: '(?i)\bchmod\s+-[a-z]*R[a-z]*\s+777\s+/(?:\s|\s*$|etc|usr|bin|var|root|home|boot)'
+    description: 'Recursive chmod 777 against the filesystem root or a system directory.'
+    labels: [detector:tool-call-safety, risk:tampering, severity:restricted]
+  # --- Remote download + make-executable + run chain ---
+  - id: tc-sh-005
+    category: tool_call.shell
+    severity: hard
+    pattern: '(?i)(?:curl|wget)\s+[^\n]{0,120}\bchmod\s+\+x\b'
+    description: 'Download-then-chmod +x staging of a remote payload for execution.'
+    labels: [detector:tool-call-safety, risk:rce, severity:restricted]
+  # --- DELETE without WHERE ---
+  - id: tc-db-002
+    category: tool_call.database
+    severity: hard
+    pattern: '(?i)\bdelete\s+from\s+[a-z_][\w."]*\s*(?:;|\s*$)'
+    description: 'DELETE FROM a table with no WHERE clause, wiping every row.'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  # --- git push --force to a protected branch ---
+  - id: tc-git-002
+    category: tool_call.git
+    severity: hard
+    pattern: '(?i)git\s+push\s+[^\n]{0,80}(?:--force\b|-f\b)[^\n]{0,40}\b(?:main|master|develop|production)\b'
+    description: 'git push --force targeting a protected branch (main/master/develop/production).'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  # --- terraform destroy -auto-approve (unattended teardown) ---
+  - id: tc-cloud-003
+    category: tool_call.cloud
+    severity: hard
+    pattern: '(?i)\bterraform\s+destroy\b[^\n]{0,40}-auto-approve\b'
+    description: 'terraform destroy -auto-approve tearing down infrastructure without confirmation.'
+    labels: [detector:tool-call-safety, risk:destructive, severity:restricted]
+  # --- System power-state change ---
+  - id: tc-power-001
+    category: tool_call.power
+    severity: hard
+    pattern: '(?i)(?:^|;|&&|\|\||\bsudo\s+)\s*(?:shutdown\b|reboot\b|halt\b|poweroff\b|init\s+0\b)'
+    description: 'System power-state change (shutdown / reboot / halt / poweroff).'
+    labels: [detector:tool-call-safety, risk:availability, severity:restricted]
+  # --- Shell-history wipe (audit evasion) ---
+  - id: tc-hist-001
+    category: tool_call.audit_evasion
+    severity: soft
+    pattern: '(?i)(?:history\s+-c\b|>\s*~?/?\.bash_history\b|unset\s+HISTFILE\b)'
+    description: 'Shell-history wipe to cover command tracks (history -c / clear .bash_history).'
+    labels: [detector:tool-call-safety, risk:audit-evasion, severity:restricted]
+  # --- Firewall flush (network exposure) ---
+  - id: tc-fw-001
+    category: tool_call.firewall
+    severity: hard
+    pattern: '(?i)(?:iptables|ip6tables|nft)\s+(?:-[a-z]*\s+)*(?:-F\b|--flush\b|flush\s+ruleset\b)'
+    description: 'Firewall ruleset flush (iptables -F) removing all network filtering.'
+    labels: [detector:tool-call-safety, risk:tampering, severity:restricted]

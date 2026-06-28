@@ -89,10 +89,10 @@ agent's tlsbump `UpstreamTransport` calls per request.
 **What attestation proves (v1).** The header proves that the signing agent holds
 the Ed25519 private key that was registered with Hub at enrollment time. It is
 **enrollment-key attestation** — not hardware-rooted device attestation. The key
-is a software Ed25519 key held in the platform keystore (SEC-M4-02 — macOS
+is a software Ed25519 key held in the platform keystore (macOS
 Keychain via Security.framework, Windows DPAPI, or on Linux a `0600` file under
 `~/.nexus/secrets`), written there by enrollment and read back by the signer; it
-is no longer a plaintext PEM on disk. There is no TPM or Secure Enclave binding
+is not a plaintext PEM on disk. There is no TPM or Secure Enclave binding
 in v1, so on Linux the key is still only filesystem-ACL protected. The
 header therefore proves "this request came from a process that enrolled and
 received this key", not "this request came from a specific managed device". A

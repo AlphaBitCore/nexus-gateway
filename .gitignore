@@ -17,6 +17,7 @@ nexus-ami/build.log*
 nexus-ami/packer_cache/
 nexus-ami/manifest.json
 nexus-ami/crash.log
+Untracked files:
 nexus-ami/.current-stage-ts
 nexus-ami/stage.log.*
 
@@ -101,6 +102,12 @@ packages/agent/agent
 packages/agent/agent.exe
 packages/agent/nexus-agent
 packages/agent/nexus-agent.rollback
+# Agent local dev state dir (agent.dev.yaml writes here): device cert +
+# private key + bearer token + SQLCipher audit.db. Must never be committed.
+packages/agent/.nexus-agent/
+# NexusWFP kernel driver build outputs (msbuild bin/obj).
+packages/agent/platform/windows/nexus-wfp-driver/bin/
+packages/agent/platform/windows/nexus-wfp-driver/obj/
 packages/ai-gateway/explicit-proxy
 packages/compliance-proxy/forward-proxy
 
@@ -170,14 +177,6 @@ packages/control-plane/.nexus/
 tests/.env.local
 tests/.env.dev
 tests/.env.prod
-benchmark/v2/.env.local
-# Benchmark runtime artifacts — regenerated on container/run start
-benchmark/v2/gateways/bifrost-data/*.db
-benchmark/v2/gateways/bifrost-data/*.db-wal
-benchmark/v2/gateways/bifrost-data/*.db-shm
-benchmark/v2/gateways/bifrost-data/logs/
-benchmark/v2/demo/pii_demo_evidence.json
-benchmark/**/.DS_Store
 /tmp/nexus-test/
 
 # Test program runtime artifacts

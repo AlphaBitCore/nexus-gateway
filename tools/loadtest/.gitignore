@@ -1,5 +1,0 @@
-runs/
-
-# built binary (this is its own Go module)
-/loadtest
-*.test
