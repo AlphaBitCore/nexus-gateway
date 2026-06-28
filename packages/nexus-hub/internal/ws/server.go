@@ -3,9 +3,9 @@ package ws
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -347,9 +347,9 @@ func (s *Server) handleMessage(thingID, thingType string, data []byte) {
 }
 
 // extractBearerToken returns the bearer token from either the Authorization
-// header or the Sec-WebSocket-Protocol subprotocol negotiation. The query-
-// parameter fallback was removed because URLs frequently appear in proxy
-// access logs.
+// header or the Sec-WebSocket-Protocol subprotocol negotiation. There is no
+// query-parameter fallback, because URLs frequently appear in proxy access
+// logs.
 func extractBearerToken(r *http.Request) string {
 	if auth := r.Header.Get("Authorization"); auth != "" {
 		const prefix = "Bearer "

@@ -2,8 +2,8 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"os"
@@ -580,7 +580,7 @@ func TestManager_ForceResyncAll_FanOut(t *testing.T) {
 			t.Errorf("call[%d] force = %v, want true", i, msg["force"])
 		}
 		// desired_ver was 5 on seed; ForceResyncAll bumps it to 6 before the
-		// push so an HTTP-fallback Thing's heartbeat compare fires (F-0116).
+		// push so an HTTP-fallback Thing's heartbeat compare fires.
 		if msg["desiredVer"].(float64) != 6 {
 			t.Errorf("call[%d] desiredVer = %v, want 6 (bumped)", i, msg["desiredVer"])
 		}

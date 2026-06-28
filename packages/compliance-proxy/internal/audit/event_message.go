@@ -1,7 +1,7 @@
 package audit
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"strings"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
@@ -143,7 +143,7 @@ func toMessage(e AuditEvent, thingID, thingName string) mq.TrafficEventMessage {
 // The emitter-supplied normalized copies (e.RequestNormalized /
 // e.ResponseNormalized) are authoritative when present: they are the
 // payloads the hook pipeline actually saw, already governed by the
-// stage's storageAction (span-redacted, or replaced by the drop-content
+// stage's resolved action (span-redacted, or replaced by the drop-content
 // placeholder), with the relocated span offsets riding alongside on
 // e.*RedactionSpans. Re-deriving from raw bytes would discard that
 // governance and mis-align the span offsets.

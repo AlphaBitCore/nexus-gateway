@@ -402,8 +402,8 @@ func TestRefreshActiveDeviceAssignmentIP_ExecError(t *testing.T) {
 	}
 }
 
-// The ValidateEnrollmentToken / MarkEnrollmentTokenUsed two-step was removed
-// in F-0204 (replaced by the atomic ConsumeEnrollmentToken +
+// The ValidateEnrollmentToken / MarkEnrollmentTokenUsed two-step is gone
+// (replaced by the atomic ConsumeEnrollmentToken +
 // LinkEnrollmentTokenThing pair, covered in enrollment_token_consume_test.go).
 
 func TestRevokeEnrollmentToken_HappyPath(t *testing.T) {

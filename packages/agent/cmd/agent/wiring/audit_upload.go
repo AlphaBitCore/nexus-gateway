@@ -1,7 +1,7 @@
 package wiring
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	auditclassify "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/classify"
 	auditevent "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/event"
@@ -118,7 +118,7 @@ func AuditEventToMap(e auditevent.Event) map[string]any {
 	if e.ResponseSpillRef != nil {
 		m["responseSpillRef"] = e.ResponseSpillRef
 	}
-	// V2 (#58) — pre-computed NormalizedPayload JSON. Hub-side
+	// Pre-computed NormalizedPayload JSON. Hub-side
 	// AgentAuditAPI.Normalize is also available; sending the agent
 	// pre-normalized lets Hub skip the redundant work for AI traffic
 	// the agent already understood.

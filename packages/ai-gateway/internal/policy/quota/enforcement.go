@@ -216,6 +216,20 @@ func (e *Engine) Check(ctx context.Context, chain []CheckLevel, estimate CostEst
 
 	estimatedCents := int64(estimate.EstimatedCost() * 100)
 
+	// Pass 1: resolve override/policy per level and collect ONLY the levels that
+	// actually enforce a cost limit. Levels with no policy / no limit / track-only
+	// are skipped here so the batch usage read (pass 2) touches just the enforced
+	// keys.
+	type enforcedLevel struct {
+		chainIdx        int
+		targetType      string
+		targetID        string
+		periodKey       string
+		limitCents      int64
+		enforcementMode string
+		quotaID         string
+	}
+	var enforced []enforcedLevel
 	for i, level := range chain {
 		// 1. Resolve limit: override takes precedence, then policy.
 		override := e.policyCache.GetOverride(level.TargetType, level.TargetID)
@@ -269,37 +283,57 @@ func (e *Engine) Check(ctx context.Context, chain []CheckLevel, estimate CostEst
 		if decision.PeriodKey == "" {
 			decision.PeriodKey = periodKey
 		}
+		enforced = append(enforced, enforcedLevel{
+			chainIdx:        i,
+			targetType:      level.TargetType,
+			targetID:        level.TargetID,
+			periodKey:       periodKey,
+			limitCents:      limitCents,
+			enforcementMode: enforcementMode,
+			quotaID:         quotaID,
+		})
+	}
 
-		// 2. Get current usage from cache.
-		currentCents, err := e.usageCache.GetUsage(ctx, level.TargetType, level.TargetID, periodKey)
-		if err != nil {
+	// Batch-read current usage for all enforced levels in ONE Redis MGET (was one
+	// GET per level, sequential). Per-level (target, periodKey) is preserved so a
+	// mixed-period chain (e.g. VK monthly + org daily) reads each level's own key.
+	queries := make([]UsageQuery, len(enforced))
+	for k, lv := range enforced {
+		queries[k] = UsageQuery{TargetType: lv.targetType, TargetID: lv.targetID, PeriodKey: lv.periodKey}
+	}
+	usages, usageErrs := e.usageCache.GetUsageMulti(ctx, queries)
+
+	// Pass 2: stamp + over-limit check, per level, with per-level fail-open.
+	for k, lv := range enforced {
+		if usageErrs[k] != nil {
 			// Fail open on cache errors (deliberate — see the package-level
 			// FAIL-OPEN POSTURE note on Engine). Metered via the counter so the
 			// unenforced window is alertable instead of silent.
 			e.metrics.observeCheckFailOpen("redis_error")
 			e.logger.Error("get usage cache",
-				"error", err,
-				"target", level.TargetType+":"+level.TargetID)
+				"error", usageErrs[k],
+				"target", lv.targetType+":"+lv.targetID)
 			continue
 		}
+		currentCents := usages[k]
 
 		// Stamp the resolved limit + current usage onto the level so callers
 		// (e.g. proxy header emit) can read it from Decision.Levels without
 		// a second usage-cache round-trip.
-		chain[i].HasLimit = true
-		chain[i].CurrentCents = currentCents
-		chain[i].LimitCents = limitCents
-		chain[i].PeriodKey = periodKey
+		chain[lv.chainIdx].HasLimit = true
+		chain[lv.chainIdx].CurrentCents = currentCents
+		chain[lv.chainIdx].LimitCents = lv.limitCents
+		chain[lv.chainIdx].PeriodKey = lv.periodKey
 
 		// 3. Check if over limit.
-		if currentCents+estimatedCents > limitCents {
-			if actionPriority(enforcementMode) > actionPriority(decision.Action) {
-				decision.Action = enforcementMode
-				decision.QuotaID = quotaID
+		if currentCents+estimatedCents > lv.limitCents {
+			if actionPriority(lv.enforcementMode) > actionPriority(decision.Action) {
+				decision.Action = lv.enforcementMode
+				decision.QuotaID = lv.quotaID
 				decision.Message = fmt.Sprintf("%s quota exceeded: %s (%.2f / %.2f USD)",
-					level.TargetType, level.TargetID,
-					float64(currentCents)/100, float64(limitCents)/100)
-				if enforcementMode == "reject" || enforcementMode == "downgrade" {
+					lv.targetType, lv.targetID,
+					float64(currentCents)/100, float64(lv.limitCents)/100)
+				if lv.enforcementMode == "reject" || lv.enforcementMode == "downgrade" {
 					decision.Allowed = false
 				}
 			}

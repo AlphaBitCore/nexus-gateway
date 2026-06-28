@@ -19,8 +19,8 @@ package selfshadow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"sync/atomic"

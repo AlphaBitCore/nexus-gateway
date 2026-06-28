@@ -7,8 +7,8 @@ package cache
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,16 +126,13 @@ func TestBuildPreviewConfig_ForcesDryRunTrue(t *testing.T) {
 }
 
 func TestBuildPreviewConfig_EnsuresBundledRules(t *testing.T) {
-	// Even with no operator rules, bundled anthropic+openai rules must appear.
+	// Even with no operator rules, the bundled anthropic strip rule must appear.
 	cfg := wirerewrite.Config{
 		Rules: map[string]map[string]wirerewrite.RuleOverride{},
 	}
 	preview := buildPreviewConfig(cfg)
 	if _, ok := preview.Rules["anthropic"][wirerewrite.RuleAnthropicCchStrip]; !ok {
 		t.Error("anthropic strip rule should be ensured")
-	}
-	if _, ok := preview.Rules["openai"][wirerewrite.RuleOpenAIFieldOrderNormalize]; !ok {
-		t.Error("openai normalize rule should be ensured")
 	}
 }
 
@@ -263,8 +260,8 @@ func TestGetTrafficEventForPreview_Happy(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT COALESCE`).
 		WithArgs("evt-1").
-		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body"}).
-			AddRow("anthropic", "prov-1", json.RawMessage(`{"model":"claude-3"}`)))
+		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body", "inline_request_encoding"}).
+			AddRow("anthropic", "prov-1", []byte(`{"model":"claude-3"}`), "text"))
 
 	got, err := h.getTrafficEventForPreview(context.Background(), "evt-1")
 	if err != nil {
@@ -302,8 +299,8 @@ func TestGetTrafficEventForPreview_EmptyPayload_ReturnsNil(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT COALESCE`).
 		WithArgs("evt-2").
-		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body"}).
-			AddRow("openai", "prov-1", json.RawMessage(nil)))
+		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body", "inline_request_encoding"}).
+			AddRow("openai", "prov-1", []byte(nil), ""))
 
 	got, err := h.getTrafficEventForPreview(context.Background(), "evt-2")
 	if err != nil {
@@ -418,8 +415,8 @@ func TestCachePreview_Happy_AnthropicEvent(t *testing.T) {
 	// 1. Traffic event row.
 	mock.ExpectQuery(`SELECT COALESCE`).
 		WithArgs("evt-ok").
-		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body"}).
-			AddRow("anthropic", "prov-1", json.RawMessage(`{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`)))
+		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body", "inline_request_encoding"}).
+			AddRow("anthropic", "prov-1", []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`), "text"))
 
 	// 2. AssembleCacheConfigBlob: global + adapters + providers.
 	mock.ExpectQuery(`FROM cache_global_config`).
@@ -466,8 +463,8 @@ func TestCachePreview_Happy_BlobAssembleFailsSilently(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT COALESCE`).
 		WithArgs("evt-ok").
-		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body"}).
-			AddRow("openai", "prov-1", json.RawMessage(`{"model":"gpt-4o","messages":[]}`)))
+		WillReturnRows(pgxmock.NewRows([]string{"adapter_type", "provider_id", "inline_request_body", "inline_request_encoding"}).
+			AddRow("openai", "prov-1", []byte(`{"model":"gpt-4o","messages":[]}`), "text"))
 
 	// Blob assembly error — handler swallows it and uses empty config.
 	mock.ExpectQuery(`FROM cache_global_config`).WillReturnError(errors.New("db down"))

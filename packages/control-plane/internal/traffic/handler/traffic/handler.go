@@ -22,6 +22,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
 	metricspkg "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/spillstore"
+	sharednormalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // ProxyConfig is the BFF proxy snapshot the proxy/* admin routes use.
@@ -52,6 +54,12 @@ type Handler struct {
 	spillStore spillstore.SpillStore
 	proxy      ProxyConfig
 	httpClient *http.Client
+
+	// normalize recomputes the canonical NormalizedPayload from a captured body
+	// at VIEW TIME (so the traffic detail drawer never depends on a stored
+	// traffic_event_normalized sidecar). Built once from the shared Tier 1+2+3
+	// registry; nil only in test handlers that don't exercise the normalized path.
+	normalize normcore.AuditFn
 }
 
 // New constructs a traffic Handler from its narrow Deps.
@@ -62,6 +70,10 @@ func New(d Deps) *Handler {
 		spillStore: d.SpillStore,
 		proxy:      d.Proxy,
 		httpClient: d.HTTPClient,
+		// Same Tier 1+2+3 chain the data plane runs, so a view-time recompute is
+		// byte-identical to what the writer would have stored. No metrics sink —
+		// this is a read path, not the audit hot path.
+		normalize: normcore.BuildAuditFn(sharednormalize.BuildRegistry(), nil),
 	}
 	if d.Pool != nil {
 		ms := metricsstore.New(d.Pool)

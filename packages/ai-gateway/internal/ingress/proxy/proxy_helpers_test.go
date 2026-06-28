@@ -10,8 +10,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -373,7 +373,7 @@ func (f *fakeLimiter) Allow(_ string, _ int, _ int64) (bool, int) {
 }
 
 // keyCapturingLimiter records the bucket key it is called with and lets the
-// test mark specific keys as already-exhausted. Used to prove F-0045: the
+// test mark specific keys as already-exhausted. Used to prove the
 // rate-limit bucket must be keyed on the unique VirtualKey id, not the
 // non-unique display name.
 type keyCapturingLimiter struct {
@@ -398,7 +398,7 @@ func (k *keyCapturingLimiter) sawKey(want string) bool {
 	return false
 }
 
-// F-0045: two VKs that share a display Name but differ by ID must get
+// two VKs that share a display Name but differ by ID must get
 // SEPARATE rate-limit buckets — keyed on the unique ID, never the Name.
 func TestCheckRateLimit_KeyedOnVKID_NotName(t *testing.T) {
 	rpm := 100
@@ -423,7 +423,7 @@ func TestCheckRateLimit_KeyedOnVKID_NotName(t *testing.T) {
 	}
 }
 
-// F-0045: the /v1/estimate compare bucket must also key on the unique ID.
+// the /v1/estimate compare bucket must also key on the unique ID.
 func TestCheckCompareRateLimit_KeyedOnVKID(t *testing.T) {
 	lim := &keyCapturingLimiter{}
 	h := &Handler{deps: &Deps{RateLimiter: lim}}
@@ -533,9 +533,29 @@ func TestProxy_ReadBody_Oversize(t *testing.T) {
 	// 10 MiB. Construct a 11 MiB body.
 	body := bytes.Repeat([]byte("x"), 11*1024*1024)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	_, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatOpenAI})
+	_, _, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatOpenAI})
 	if !errors.Is(err, errRequestTooLarge) {
 		t.Errorf("err=%v want errRequestTooLarge", err)
+	}
+}
+
+func TestProxy_ReadBody_InflatedContentLengthGuard(t *testing.T) {
+	// A client that lies with a gigantic Content-Length must NOT cause a large
+	// preallocation (OOM primitive). The small actual body must still read back
+	// intact, and the read is bounded by the LimitReader, not the header.
+	h := &Handler{deps: &Deps{}}
+	body := []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req.ContentLength = 2 << 30 // claim 2 GiB; only ~67 bytes actually present
+	got, _, model, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatOpenAI})
+	if err != nil {
+		t.Fatalf("inflated Content-Length must still read the small body cleanly: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("body mismatch under inflated Content-Length: got %q", got)
+	}
+	if model != "gpt-4o-mini" {
+		t.Errorf("model=%q want gpt-4o-mini", model)
 	}
 }
 
@@ -543,7 +563,7 @@ func TestProxy_ReadBody_ModelRequired(t *testing.T) {
 	h := &Handler{deps: &Deps{}}
 	body := []byte(`{}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	_, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatOpenAI})
+	_, _, _, _, err := h.readBody(req, Ingress{BodyFormat: provcore.FormatOpenAI})
 	if err == nil || !strings.Contains(err.Error(), "model is required") {
 		t.Errorf("err=%v", err)
 	}
@@ -553,7 +573,7 @@ func TestProxy_ReadBody_AutoEmbeddingsRejected(t *testing.T) {
 	h := &Handler{deps: &Deps{}}
 	body := []byte(`{"model":"auto"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", bytes.NewReader(body))
-	_, _, _, err := h.readBody(req, Ingress{WireShape: typology.WireShapeOpenAIEmbeddings, BodyFormat: provcore.FormatOpenAI})
+	_, _, _, _, err := h.readBody(req, Ingress{WireShape: typology.WireShapeOpenAIEmbeddings, BodyFormat: provcore.FormatOpenAI})
 	if err == nil || !strings.Contains(err.Error(), "auto") {
 		t.Errorf("err=%v want auto-rejection", err)
 	}
@@ -1066,7 +1086,7 @@ func (f *fakeVKLookup) GetVirtualKeyByHash(_ context.Context, keyHash string) (*
 }
 
 func hmacHashVK(raw, secret string) string {
-	// SEC-W2-01: VKs are hashed under the HKDF-derived VK-domain sub-key, not the
+	// VKs are hashed under the HKDF-derived VK-domain sub-key, not the
 	// raw master — mirror the authenticator so seeded lookup hashes match.
 	sub := keyderive.DeriveSubkey([]byte(secret), keyderive.ClassAPIKeyVirtualKey)
 	mac := hmac.New(sha256.New, sub[:])

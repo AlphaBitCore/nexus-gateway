@@ -56,6 +56,10 @@ type Policy struct {
 	KillSwitch  bool
 	BypassPIDs  []uint32
 	BypassCIDRs []netip.Prefix
+	// QUICFallbackImages is the macOS-parity force-QUIC-TCP-fallback
+	// allowlist: process image basenames (e.g. "chrome.exe") whose UDP/443
+	// the driver blocks so they fall back to interceptable TCP/443.
+	QUICFallbackImages []string
 }
 
 var (

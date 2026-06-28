@@ -81,7 +81,7 @@ type HubDeps struct {
 // wires the static_info push.  The caller must call ThingClient.Close when
 // shutting down.
 //
-// Note: InitHub mutates the global slog default to layer the diag sink on top
+// InitHub mutates the global slog default to layer the diag sink on top
 // of the base logger.  The returned logger (via slog.Default()) should be used
 // by all downstream subsystems.
 func InitHub(d HubDeps) (HubResult, error) {

@@ -1,8 +1,8 @@
 // Unit tests for the ingress/proxy audit-finding fixes: the embeddings
-// metadata helpers (F-0218 base64 dimension, F-0219 token-id batch sizing),
-// the quota downgrade-budget + cost-limit helpers (F-0152/F-0154), the
-// unpriced-cost metadata stamp (F-0059), and the SSE reader terminal-error
-// classification (F-0058). Each test asserts the named failure mode, not
+// metadata helpers (base64 dimension, token-id batch sizing),
+// the quota downgrade-budget + cost-limit helpers, the
+// unpriced-cost metadata stamp, and the SSE reader terminal-error
+// classification. Each test asserts the named failure mode, not
 // just line execution.
 package proxy
 
@@ -19,7 +19,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// --- F-0219: embeddingBatchSize ---
+// --- embeddingBatchSize ---
 
 func TestEmbeddingBatchSize(t *testing.T) {
 	cases := []struct {
@@ -45,7 +45,7 @@ func TestEmbeddingBatchSize(t *testing.T) {
 	}
 }
 
-// --- F-0218: embeddingResponseDimension (incl. base64 string vectors) ---
+// --- embeddingResponseDimension (incl. base64 string vectors) ---
 
 func TestEmbeddingResponseDimension(t *testing.T) {
 	// 3-element float32 vector packed as base64 → 12 bytes → /4 = 3.
@@ -78,7 +78,7 @@ func TestEmbeddingResponseDimension(t *testing.T) {
 	}
 }
 
-// TestUpdateEmbeddingDimension_Base64NoFalseWarning is the F-0218 named
+// TestUpdateEmbeddingDimension_Base64NoFalseWarning is the named
 // failure mode: a valid base64 embedding response must NOT be stamped with
 // warning="empty_data_array", and must carry the decoded dimension.
 func TestUpdateEmbeddingDimension_Base64NoFalseWarning(t *testing.T) {
@@ -110,7 +110,7 @@ func TestUpdateEmbeddingDimension_GenuinelyEmptyWarns(t *testing.T) {
 	}
 }
 
-// --- F-0152 / F-0154: quota helpers ---
+// --- quota helpers ---
 
 func TestQuotaHasCostLimit(t *testing.T) {
 	if quotaHasCostLimit(nil) {
@@ -155,7 +155,7 @@ func TestQuotaDowngradeBudget(t *testing.T) {
 	}
 }
 
-// --- F-0059: stampUnpricedCost ---
+// --- stampUnpricedCost ---
 
 func TestStampUnpricedCost(t *testing.T) {
 	md := stampUnpricedCost(nil)
@@ -174,7 +174,7 @@ func TestStampUnpricedCost(t *testing.T) {
 	}
 }
 
-// --- F-0058: chunkSSEReader terminal-error classification ---
+// --- chunkSSEReader terminal-error classification ---
 
 func TestChunkSSEReader_TerminalError_UpstreamError(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{{err: errors.New("boom")}}}

@@ -23,6 +23,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/profiling"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/runtimemem"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
@@ -46,6 +48,7 @@ func composeManagementBaseURL(advertiseHost, bindAddr string) string {
 
 func run() int {
 	_, _ = bootenv.LoadFromRepoRoot(slog.Default())
+	runtimemem.AutoSetMemoryLimit(slog.Default())
 
 	configPath := flag.String("config", "compliance-proxy.config.yaml", "path to configuration file")
 	flag.Parse()
@@ -66,6 +69,8 @@ func run() int {
 		return 1
 	}
 	slog.SetDefault(logger)
+	// Opt-in profiler: SIGUSR1 dumps to NEXUS_PPROF_DIR / HTTP on NEXUS_PPROF_ADDR. No-op unless set.
+	profiling.Start("nexus-compliance-proxy")
 	slog.Info("nexus compliance-proxy starting", "config", *configPath,
 		"listenAddr", cfg.Listener.Address, "metricsAddr", cfg.Metrics.Address)
 

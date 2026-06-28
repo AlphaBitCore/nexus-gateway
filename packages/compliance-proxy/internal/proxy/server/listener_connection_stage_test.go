@@ -220,8 +220,8 @@ func TestServeHTTP_ConnectionStage_NoConnectionHooks_PassThrough(t *testing.T) {
 	}
 }
 
-// TestServeHTTP_ConnectionStage_StrictFailClosed_UnbuildableRefuses is the
-// F-0371 consumer regression for the CONNECT site. The ProxyServer passes
+// TestServeHTTP_ConnectionStage_StrictFailClosed_UnbuildableRefuses covers the
+// CONNECT site. The ProxyServer passes
 // strictFailClosed=true into BuildPipeline; a mandatory (fail-closed)
 // connection-stage hook whose implementationId is unregistered makes
 // BuildPipeline ERROR. The handler MUST refuse the CONNECT with 403 rather than

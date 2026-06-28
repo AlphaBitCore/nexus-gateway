@@ -2,8 +2,8 @@ package codecs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
@@ -51,7 +51,7 @@ func (n *VoyageEmbeddingsNormalizer) Normalize(_ context.Context, raw []byte, me
 	// SSE / chunked-text bytes arriving here are guaranteed misrouted —
 	// returning ErrUnsupported lets the Registry walk fall through to
 	// Tier 2 PatternNormalizer / Tier 3 GenericHTTP instead of dying on
-	// a JSON unmarshal hard-error. #98 cross-service consistency:
+	// a JSON unmarshal hard-error. Cross-service consistency:
 	// every Tier 1 codec must soft-error on wrong wire shape.
 	if meta.Stream {
 		return zeroEmbeddingPayload("voyage-embeddings", meta), fmt.Errorf("voyage-embeddings: streaming not supported: %w", core.ErrUnsupported)
@@ -139,7 +139,7 @@ func (n *VoyageEmbeddingsNormalizer) normalizeRequest(raw []byte, meta core.Meta
 
 // voyageEmbeddingsResponse mirrors the Voyage AI /v1/embeddings response.
 // Embedding vectors are intentionally ignored per SDD §T2.3.
-// Note: Voyage AI only reports total_tokens; there is no prompt/completion split.
+// Voyage AI only reports total_tokens; there is no prompt/completion split.
 type voyageEmbeddingsResponse struct {
 	Object string            `json:"object"`
 	Model  string            `json:"model"`

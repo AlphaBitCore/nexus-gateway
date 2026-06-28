@@ -52,10 +52,10 @@ func TestCovers_SuperAdminCoversAnything(t *testing.T) {
 	}
 }
 
-// TestCovers_ScopedCallerBlockedFromEscalation is the core SEC-M6-02/03 guard: a
+// TestCovers_ScopedCallerBlockedFromEscalation is the core grant-ceiling guard: a
 // delegated IAM operator holding only iam-policy.* / iam-group.* must NOT be able
 // to author/attach a policy granting admin:* — the escalation-to-super-admin
-// payload from the finding.
+// payload.
 func TestCovers_ScopedCallerBlockedFromEscalation(t *testing.T) {
 	operator := engineFor(doc(allow(
 		[]string{"admin:iam-policy.*", "admin:iam-group.*"},
@@ -165,7 +165,7 @@ func TestCovers_LoaderErrorFailsClosed(t *testing.T) {
 
 // byPrincipalLoader returns a distinct policy set per (type,id), so a single
 // engine can model both a caller and a separate owner principal. Used by the
-// PrincipalCoversPrincipal tests (F-0365).
+// PrincipalCoversPrincipal tests.
 type byPrincipalLoader struct {
 	byID map[string][]LoadedPolicy
 	err  error

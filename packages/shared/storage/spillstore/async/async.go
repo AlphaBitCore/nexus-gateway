@@ -5,7 +5,7 @@
 // Why: inspect-path goroutines call spillstore.EmitBody → store.Put per
 // audited request. The S3 PutObject inside Put can run 50-500 ms in
 // production; per-request blocking adds up and shows as user-visible
-// page slow-down. The audit-side write was made async in #78 (the
+// page slow-down. The audit-side write was made async (the
 // agent's SQLite write queue); this completes the picture by also
 // taking the body upload off the hot path.
 //

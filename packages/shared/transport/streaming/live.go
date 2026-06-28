@@ -2,9 +2,9 @@ package streaming
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -169,7 +169,7 @@ func (l *LivePipeline) Process(
 		client = io.MultiWriter(client, l.captureBuf)
 	}
 
-	// #90 — when a PreHook callback is installed, tee the upstream reader
+	// When a PreHook callback is installed, tee the upstream reader
 	// into a thread-safe accumulator so the compliance goroutine can read
 	// a cumulative raw-bytes snapshot at every checkpoint and feed it to
 	// the Registry. Without this, checkpoint hooks only see the flat-text
@@ -246,7 +246,6 @@ func (l *LivePipeline) Process(
 			pendingLen     int
 			totalBytes     int
 			allResults     []core.HookResult
-			hasSoftReject  bool // tracks whether any checkpoint returned BlockSoft
 		)
 
 		flushCheckpoint := func() core.Decision {
@@ -256,7 +255,7 @@ func (l *LivePipeline) Process(
 
 			checkpointInput := buildCheckpointInput(baseInput, accumulatedAll.String())
 
-			// #90 — let caller swap in a Registry-normalized payload so
+			// Let caller swap in a Registry-normalized payload so
 			// hooks see structured chat content (model name, tool_calls,
 			// reasoning segments, etc.) instead of the flat-text fallback.
 			// Receives the cumulative raw SSE wire bytes seen so far so
@@ -294,18 +293,6 @@ func (l *LivePipeline) Process(
 				// as the writer-error and overflow branches).
 				CloseUpstreamOnExit(upstream)
 				return core.RejectHard
-
-			case core.BlockSoft:
-				// Soft reject: still send events but flag the result.
-				select {
-				case approvedChan <- approvedChunk{events: pendingEvents}:
-				case <-ctx.Done():
-					return core.BlockSoft
-				}
-				pendingEvents = nil
-				pendingText.Reset()
-				pendingLen = 0
-				return core.BlockSoft
 
 			default:
 				// Approve or Abstain — flush pending events.
@@ -355,23 +342,16 @@ func (l *LivePipeline) Process(
 				if decision == core.RejectHard {
 					return
 				}
-				if decision == core.BlockSoft {
-					hasSoftReject = true
-				}
 			}
 		}
 
 		// Final checkpoint: flush remaining accumulated text.
-		decision := flushCheckpoint()
+		flushCheckpoint()
 
 		// Build final aggregate result if not already set by a rejection.
 		if finalResult == nil {
-			finalDecision := core.Approve
-			if decision == core.BlockSoft || hasSoftReject {
-				finalDecision = core.BlockSoft
-			}
 			finalResult = &core.CompliancePipelineResult{
-				Decision:    finalDecision,
+				Decision:    core.Approve,
 				HookResults: allResults,
 			}
 		}

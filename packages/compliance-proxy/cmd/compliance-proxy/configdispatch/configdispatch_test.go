@@ -23,8 +23,8 @@ import (
 //
 // The canonical list comes from the pre-refactor switch statement (11
 // cases plus the default catch-all); the default is preserved by the
-// main.go wrapper, not by the loader. PR-6 added `streaming_compliance`
-// to fix the missing-receiver gap for streaming_compliance.
+// main.go wrapper, not by the loader. `streaming_compliance` was added
+// to close the missing-receiver gap for streaming_compliance.
 func TestBuildConfigLoader_AllKeysRegistered(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	tracker := thingclient.NewOutcomeTracker()

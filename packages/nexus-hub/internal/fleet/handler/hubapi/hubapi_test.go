@@ -12,7 +12,7 @@ package hubapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -73,7 +73,7 @@ func decodeResp(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 }
 
 // errCode extracts the machine-readable code from the canonical nested error
-// envelope {error:{message,type,code}} (F-0319).
+// envelope {error:{message,type,code}}.
 func errCode(m map[string]any) any {
 	if inner, ok := m["error"].(map[string]any); ok {
 		return inner["code"]
@@ -82,7 +82,7 @@ func errCode(m map[string]any) any {
 }
 
 // errMsg extracts the human-readable message from the canonical nested error
-// envelope (F-0319).
+// envelope.
 func errMsg(m map[string]any) string {
 	if inner, ok := m["error"].(map[string]any); ok {
 		s, _ := inner["message"].(string)
@@ -894,7 +894,7 @@ func TestInternalThingsAPI_ShadowReport_ValidationBranches(t *testing.T) {
 // TestInternalThingsAPI_BreakGlassReport_ValidationBranches exercises the named
 // 400 gates on the dedicated break-glass route. Each case is rejected before
 // the (nil) Manager is touched: id/reported/reportedVer shape, missing
-// actorTokenId, the F-0139 allowlist (non-writable key), and the F-0139 schema
+// actorTokenId, the allowlist (non-writable key), and the schema
 // gate (malformed state for a writable key).
 func TestInternalThingsAPI_BreakGlassReport_ValidationBranches(t *testing.T) {
 	e := newTestEcho()
@@ -1219,7 +1219,7 @@ func buildScheduler(jobs []testJob) *scheduler.Scheduler {
 	return s
 }
 
-// --- F-0060: cross-Thing identity binding on the internal Things API ---
+// --- cross-Thing identity binding on the internal Things API ---
 
 // TestRequireThingMatch unit-tests the shared authorization predicate: a
 // service-token caller (no context Thing) is always allowed; a device-token
@@ -1256,7 +1256,7 @@ func TestRequireThingMatch(t *testing.T) {
 }
 
 // TestInternalThingsAPI_CrossThingBinding_DeviceMismatch_Returns403 is the
-// F-0060 regression guard: every handler that operates on a body/query thing id
+// regression guard: every handler that operates on a body/query thing id
 // rejects a device token whose authenticated id differs from the operated id. A
 // bare handler suffices — the guard short-circuits before any manager use.
 func TestInternalThingsAPI_CrossThingBinding_DeviceMismatch_Returns403(t *testing.T) {
@@ -1292,7 +1292,7 @@ func TestInternalThingsAPI_CrossThingBinding_DeviceMismatch_Returns403(t *testin
 		{
 			name: "BreakGlassReport",
 			ctx: func() (echo.Context, *httptest.ResponseRecorder) {
-				// Valid break-glass body (killswitch + keyVersions) so the F-0139
+				// Valid break-glass body (killswitch + keyVersions) so the
 				// validation passes and the request reaches the object-authority
 				// gate, which then blocks the cross-Thing access.
 				return echoCtxJSON(e, http.MethodPost, map[string]any{"id": victim, "reported": map[string]any{"killswitch": map[string]any{"engaged": true}}, "reportedVer": 4, "keyVersions": map[string]any{"killswitch": 4}, "actorTokenId": "a1b2c3d4"}, nil)

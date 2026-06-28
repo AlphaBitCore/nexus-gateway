@@ -23,7 +23,6 @@
 package cursor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -36,14 +35,6 @@ import (
 )
 
 const adapterID = "cursor"
-
-// requestKnownKeys lists JSON top-level fields the adapter recognises;
-// anything else lands in Extra.
-var requestKnownKeys = []string{
-	"messages", "prompt", "query", "text", "input", "model",
-	"stream", "session_id", "conversation_id", "request_id",
-	"workspace_root_path", "context", "model_details",
-}
 
 // Adapter implements cursor extraction.
 type Adapter struct{}
@@ -71,9 +62,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, path string) (t
 		if isChatPath(path) {
 			return extractGetChatRequest(body)
 		}
-		return traffic.NormalizedContent{
-			Extra: map[string]string{"binary_preview": preview(body)},
-		}, traffic.ErrUnknownSchema
+		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
@@ -119,9 +108,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, path string) (t
 	if len(segments) == 0 && len(toolCalls) == 0 {
 		// JSON without recognisable AI content fields — surface as
 		// unknown so the policy can branch on it.
-		return traffic.NormalizedContent{
-			Extra: traffic.CollectExtra(body, requestKnownKeys),
-		}, traffic.ErrUnknownSchema
+		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 
 	meta := map[string]string{}
@@ -136,7 +123,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, path string) (t
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -308,24 +294,6 @@ func looksLikeJSON(b []byte) bool {
 	return false
 }
 
-// preview returns a truncated, ASCII-safe rendering of the body for
-// the Extra["binary_preview"] safety net.
-func preview(body []byte) string {
-	if len(body) > 256 {
-		body = body[:256]
-	}
-	clean := bytes.Map(func(r rune) rune {
-		if r < 0x20 && r != '\n' && r != '\t' {
-			return '.'
-		}
-		if r > 0x7e {
-			return '.'
-		}
-		return r
-	}, body)
-	return string(clean)
-}
-
 // isChatPath returns true for Connect-RPC paths that carry GetChatRequest bodies.
 func isChatPath(path string) bool {
 	return strings.HasPrefix(path, "/aiserver.v1.AiService/Stream") ||
@@ -406,9 +374,7 @@ func extractGetChatRequest(body []byte) (traffic.NormalizedContent, error) {
 	}
 
 	if len(segments) == 0 {
-		return traffic.NormalizedContent{
-			Extra: map[string]string{"binary_preview": preview(body)},
-		}, traffic.ErrUnknownSchema
+		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 	return traffic.NormalizedContent{
 		Segments: segments,

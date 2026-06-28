@@ -23,7 +23,7 @@ type WireShape string
 // labels, MQ wire formats, and downstream analytics SQL.
 //
 // The enumeration covers every provider adapter under
-// packages/ai-gateway/internal/providers/specs/ as of E87-S1, plus the
+// packages/ai-gateway/internal/providers/specs/, plus the
 // CP/Agent classifier rules registered in defaults.go.
 const (
 	// OpenAI family.

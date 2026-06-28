@@ -1,6 +1,6 @@
 package providers
 
-// F-0099 regression: security-sensitive credential/provider/model writes must
+// Security-sensitive credential/provider/model writes must
 // fail loud (HTTP 502) when the Category B invalidation push to Hub fails, so
 // the data plane does not keep serving a stale (e.g. just-deleted) credential.
 // Each test asserts the CP DB write committed (truth preserved), the response
@@ -8,8 +8,8 @@ package providers
 // enqueued.
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"

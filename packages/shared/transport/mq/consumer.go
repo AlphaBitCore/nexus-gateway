@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,37 @@ import (
 // threshold STRICTLY BELOW this cap with a compile-time assertion instead of a
 // second, drift-prone magic literal.
 const MaxDeliver = 5
+
+// fetchMaxBytes bounds a single JetStream pull by BYTES rather than message
+// count. The Hub shares one NATS connection across all event consumers, and the
+// server drops a connection as a Slow Consumer once its outbound buffer exceeds
+// ~64 MiB. Audit frames vary hugely in size — a 1M-context request/response can
+// be multi-MB and large single records ship as their own message — so a
+// count-based Fetch(N) of large frames could queue far more than 64 MiB on the
+// shared connection and wedge the drain (observed: repeated "Slow Consumer
+// Detected" + consumer-disconnect EOF loops with rows landing far behind the
+// publish rate). A byte bound keeps each pull's in-flight bytes predictable
+// regardless of message size; 16 MiB leaves ample headroom under 64 MiB even with
+// the db-writer + alerting ai-traffic consumers both pulling at once.
+const fetchMaxBytes = 16 << 20 // 16 MiB
+
+// defaultMaxAckPending is the delivered-but-unacked window for the pull consumers.
+// Far above JetStream's 1000 default so a high-throughput audit drain is not
+// stalled waiting for acks while disk and CPU sit idle. The unacked messages live
+// in the stream (memory by default), so the bound is RAM, not disk.
+const defaultMaxAckPending = 20000
+
+// maxAckPending returns the configured in-flight window (NEXUS_MQ_MAX_ACK_PENDING),
+// defaulting to defaultMaxAckPending. A non-positive / unparseable value keeps the
+// default.
+func maxAckPending() int {
+	if v := strings.TrimSpace(os.Getenv("NEXUS_MQ_MAX_ACK_PENDING")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxAckPending
+}
 
 // NATSConsumer implements Consumer using Core NATS (topics) and JetStream (queues).
 type NATSConsumer struct {
@@ -117,26 +150,45 @@ func (c *NATSConsumer) Consume(ctx context.Context, queue, group string, handler
 		// path still has delivery budget left to retry on.
 		MaxDeliver: MaxDeliver,
 		AckWait:    30 * time.Second,
+		// MaxAckPending bounds how many messages may be delivered-but-unacked at
+		// once. The JetStream default is 1000, which throttles a high-throughput
+		// drain: with ~14 KB audit frames that is only ~14 MiB in flight, so the
+		// pull workers stall waiting for acks long before the disk or CPU is busy
+		// (observed: hub at ~55% CPU and disk at ~25% while the stream still backed
+		// up and overflowed to drop). A large window lets the byte-bounded fetch
+		// (fetchMaxBytes) and the parallel drain workers keep PostgreSQL fed; the
+		// in-flight messages live in the (memory) stream, so size it against RAM via
+		// NEXUS_MQ_MAX_ACK_PENDING.
+		MaxAckPending: maxAckPending(),
 	})
 	if err != nil {
 		return fmt.Errorf("natsmq: create consumer %s/%s: %w", queue, group, err)
 	}
 
+	emptyStreak := 0
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		batch, err := cons.Fetch(10, jetstream.FetchMaxWait(5*time.Second))
+		batch, err := cons.FetchBytes(fetchMaxBytes, jetstream.FetchMaxWait(5*time.Second))
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			c.logger.Warn("natsmq: fetch error", "queue", queue, "error", err)
+			// Treat a fetch error like an empty round so a broker hiccup backs off
+			// instead of hot-looping.
+			emptyStreak++
+			if !sleepCtx(ctx, idleBackoff(emptyStreak)) {
+				return ctx.Err()
+			}
 			continue
 		}
 
+		got := 0
 		for nmsg := range batch.Messages() {
+			got++
 			var ts time.Time
 			var numDelivered uint64
 			if meta, err := nmsg.Metadata(); err == nil {
@@ -182,6 +234,22 @@ func (c *NATSConsumer) Consume(ctx context.Context, queue, group string, handler
 		if err := batch.Error(); err != nil && ctx.Err() == nil {
 			c.logger.Warn("natsmq: batch error", "queue", queue, "error", err)
 		}
+
+		// Adaptive idle backoff: a consumer whose subject is quiet (e.g. the
+		// low-frequency JWT-revocation topic) otherwise hot-polls a 16 MiB pull
+		// every fetch window, churning allocations into a multi-core GC storm on an
+		// otherwise idle process. Backing off when a round returns nothing drops an
+		// idle consumer to ~zero CPU, while a busy subject (the audit drain — always
+		// has data) keeps emptyStreak at 0 and never sleeps, so throughput is
+		// unchanged. Revocation tolerates the added seconds of delivery latency.
+		if got == 0 {
+			emptyStreak++
+			if !sleepCtx(ctx, idleBackoff(emptyStreak)) {
+				return ctx.Err()
+			}
+		} else {
+			emptyStreak = 0
+		}
 	}
 }
 
@@ -207,6 +275,28 @@ func (c *NATSConsumer) resolveStream(ctx context.Context, queue string) (jetstre
 		return nil, fmt.Errorf("stream %q not found (run EnsureStreams at Hub startup): %w", name, err)
 	}
 	return s, nil
+}
+
+// StreamFillFraction reports the named stream's used bytes as a fraction of its
+// MaxBytes cap (0..1), with ok=false on any query error or when the stream is
+// uncapped (MaxBytes <= 0, no meaningful fraction). The audit drain uses it to
+// override its CPU-yield throttle to full-speed as the backlog approaches the cap,
+// turning the sustained-saturation wedge into bounded catch-up. Cheap enough to
+// call on a low-frequency timer; callers should not call it per message.
+func (c *NATSConsumer) StreamFillFraction(ctx context.Context, stream string) (float64, bool) {
+	s, err := c.js.Stream(ctx, stream)
+	if err != nil {
+		return 0, false
+	}
+	info, err := s.Info(ctx)
+	if err != nil {
+		return 0, false
+	}
+	maxBytes := info.Config.MaxBytes
+	if maxBytes <= 0 {
+		return 0, false // uncapped stream → no fill fraction
+	}
+	return float64(info.State.Bytes) / float64(maxBytes), true
 }
 
 // jetstreamDurableName builds a unique JetStream durable consumer name for

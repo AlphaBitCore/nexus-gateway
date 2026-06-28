@@ -1,11 +1,12 @@
 // stage_hooks.go — the request-hooks stage of the proxy stage chain:
-// the request-stage compliance pipeline (reject / soft-block / modify /
+// the request-stage compliance pipeline (block / redact / modify /
 // storage policy) and its emergency-passthrough bypass. Owns
 // proxyState.reqHookResult and may replace proxyState.body with the
 // hook-rewritten bytes.
 package proxy
 
 import (
+	"bytes"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -16,7 +17,7 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -45,6 +46,10 @@ func (st requestHooksStage) run() bool {
 	// further branching.
 	if pt := s.resolvedReq.Passthrough(); pt.AnyBypassActive() && pt.BypassHooks {
 		s.rec.HookDecision = "BYPASSED"
+		// No hook evaluated this request, so there is no redaction demand:
+		// the captured body is persisted as-is (approve). Without this the
+		// zero-value action would drop the raw body in StorageRawBody.
+		s.rec.RequestAction = hookcore.ActionApprove
 	} else {
 		rewrittenBody, reqHookResult, rejected := h.runRequestHooks(s.r, s.w, s.rec, s.requestID, s.body, requestHookTarget, s.resolved, s.phaseTimer, s.logger)
 		if rejected {
@@ -80,16 +85,76 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	// format so content extraction + rewrite run through the right
 	// schema parser. For OpenAI-compat ingress this is the classic
 	// `openai-compat`; for Anthropic ingress it is `anthropic`; etc.
-	// Per SDD E28-s5 §4: hook rewrite runs on the ingress-format
-	// bytes, so the adapter here MUST match the ingress format, not
-	// the upstream provider format.
+	// Hook rewrite runs on the ingress-format bytes, so the adapter
+	// here MUST match the ingress format, not the upstream provider
+	// format.
 	trafficAdapter := h.trafficAdapterFor(in.BodyFormat)
 	ingressFormat := string(in.BodyFormat)
 
-	extractStart := time.Now()
-	normalized := h.extractRequestContentForHooks(r.Context(), trafficAdapter, ingressFormat, body, r.URL.Path, logger)
+	// [perf A6] Build the pipeline FIRST. Its gating inputs (endpoint kind +
+	// modality) come from the Ingress descriptor, NOT the request body, so we can
+	// decide whether any hook will run before doing the expensive (gjson)
+	// traffic-adapter content extraction. When no hooks are configured
+	// (pipeline == nil) we return early and skip extraction entirely — the
+	// extracted content only ever feeds pipeline.Execute and is never persisted,
+	// so skipping it on the hooks-OFF path is behaviour-preserving.
+	endpointType := typology.KindFromWireShape(in.WireShape)
+	inputModality := []hookcore.Modality{hookcore.ModalityText}
+
+	resolver := h.deps.HookConfigCache.Resolver(r.Context())
+	buildStart := time.Now()
+	pipeline, err := resolver.BuildPipeline(
+		"request", "AI_GATEWAY",
+		endpointType,
+		inputModality,
+		5*time.Second, 15*time.Second, perfParallelHooks(), true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
+	)
 	if pt != nil {
-		pt.MarkBetween(traffic.PhaseHookExtract, time.Since(extractStart))
+		pt.MarkBetween(traffic.PhaseHookBuild, time.Since(buildStart))
+	}
+	if err != nil {
+		logger.Error("failed to build request hook pipeline", "error", err)
+		h.writeError(w, rec, http.StatusInternalServerError, "hook pipeline error")
+		return nil, nil, true
+	}
+	if pipeline == nil {
+		// No hooks → extraction skipped. Still emit the traffic-extract counter
+		// (it previously fired here as a side effect of always extracting) so the
+		// exported series keeps moving on the hooks-OFF path; outcome "skipped"
+		// records that no extraction ran.
+		if h.deps.Metrics != nil {
+			h.deps.Metrics.RecordTrafficExtract(ingressFormat, "request", "skipped")
+		}
+		// No hook ran → no redaction demand → persist the captured body as-is.
+		rec.RequestAction = hookcore.ActionApprove
+		return nil, nil, false
+	}
+
+	// [perf] Raw-body prefilter — skip the ~21%-CPU gjson extraction on benign
+	// traffic. When the body carries no JSON backslash escape (so each extracted
+	// content segment is a verbatim, contiguous substring of the raw bytes) AND
+	// an anchor-stripped SUPERSET scan of every content hook's rules finds
+	// nothing in the raw body, no rule can match the extracted content — so the
+	// extraction (whose only consumer is this hook input) is skipped and the
+	// pipeline runs with a nil Normalized payload. Content hooks then abstain
+	// naturally; metadata hooks (size/ip/rate) are unaffected; the forwarded
+	// body and the downstream cross-format translation path are untouched
+	// (extraction here never fed them). Any backslash, or any hook that cannot
+	// prefilter, falls through to full extraction — soundness over coverage.
+	var normalized *normcore.NormalizedPayload
+	prefiltered := perfHookPrefilter() &&
+		bytes.IndexByte(body, '\\') < 0 &&
+		!pipeline.MayMatchRawContent(body)
+	if prefiltered {
+		if h.deps.Metrics != nil {
+			h.deps.Metrics.RecordTrafficExtract(ingressFormat, "request", "prefiltered")
+		}
+	} else {
+		extractStart := time.Now()
+		normalized = h.extractRequestContentForHooks(r.Context(), trafficAdapter, ingressFormat, body, r.URL.Path, logger)
+		if pt != nil {
+			pt.MarkBetween(traffic.PhaseHookExtract, time.Since(extractStart))
+		}
 	}
 
 	input := &hookcore.HookInput{
@@ -106,33 +171,11 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		// Hook configs (`targetModels: [...]`) are authored by admins
 		// using customer-facing codes ("gpt-4o"), not internal UUIDs.
 		Model: target.ModelCode,
-	}
-
-	// Populate endpoint/modality context on the hook input so BuildPipeline
-	// can gate Class-A text hooks out of non-text endpoints. At request
-	// stage the endpoint type is known from the Ingress descriptor; default
-	// to text modality (all current AI-gateway traffic is text-in).
-	input.EndpointType = typology.KindFromWireShape(in.WireShape)
-	input.InputModality = []hookcore.Modality{hookcore.ModalityText}
-
-	resolver := h.deps.HookConfigCache.Resolver(r.Context())
-	buildStart := time.Now()
-	pipeline, err := resolver.BuildPipeline(
-		"request", "AI_GATEWAY",
-		input.EndpointType,
-		input.InputModality,
-		5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
-	)
-	if pt != nil {
-		pt.MarkBetween(traffic.PhaseHookBuild, time.Since(buildStart))
-	}
-	if err != nil {
-		logger.Error("failed to build request hook pipeline", "error", err)
-		h.writeError(w, rec, http.StatusInternalServerError, "hook pipeline error")
-		return nil, nil, true
-	}
-	if pipeline == nil {
-		return nil, nil, false
+		// Endpoint/modality context lets BuildPipeline gate Class-A text hooks
+		// out of non-text endpoints; text modality (all current AI-gateway
+		// traffic is text-in). Mirror the values passed to BuildPipeline above.
+		EndpointType:  endpointType,
+		InputModality: inputModality,
 	}
 	pipeline.SetAllowModify(true)
 	pipeline.SetClearSoftOnApprove(true)
@@ -149,27 +192,13 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, hookResult.Tags)
 	rec.BlockingRule = mapBlockingRule(hookResult.BlockingRule)
 	rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "request", hookResult.HookResults)
-	// Propagate TransformSpans + storage policy from the pipeline result
-	// onto the audit Record. The audit writer applies storage policy to
-	// the persisted NormalizedPayload at recordToMessage.
-	rec.RequestTransformSpans = hookResult.TransformSpans
-	rec.RequestStorageAction = string(hookResult.StorageAction)
-	rec.RequestRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
-	rec.RequestRedetect = hookResult.Redetect
-	// Stamp the storage-policy ReasonCode when the operator chose
-	// "audit-only redact" or "drop content" — i.e. the storage path
-	// diverged from the inflight path. Pure inflight-rewrite or pure
-	// reject paths leave the hook's own reason code in place.
-	if rec.HookReasonCode == "" {
-		switch hookResult.StorageAction {
-		case hookcore.StorageDropContent:
-			rec.HookReasonCode = hookcore.ReasonStorageDroppedByPolicy
-		case hookcore.StorageRedact:
-			if hookResult.Decision == hookcore.Approve && len(hookResult.TransformSpans) > 0 {
-				rec.HookReasonCode = hookcore.ReasonRedactStorageOnlyByPolicy
-			}
-		}
-	}
+	// Carry the single hook action onto the audit Record. The writer keys
+	// the persisted raw body off it: approve = captured bytes, redact/block
+	// = the redacted wire copy (RequestBodyRedacted) only. Derive from the
+	// pipeline Decision so a no-match approve (Action left empty by the
+	// pipeline) still stamps ActionApprove and persists the captured bytes
+	// rather than dropping them.
+	rec.RequestAction = hookcore.ActionFromDecision(hookResult.Decision)
 
 	if h.deps.Metrics != nil {
 		h.deps.Metrics.RecordHookRequest(ingressFormat, "request", string(hookResult.Decision))
@@ -186,19 +215,6 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		w.Header().Set("X-Nexus-Mode", "")
 		traffic.SetExposeHeaders(w.Header())
 		h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
-		return nil, hookResult, true
-	}
-	// HTTP 246 is a Nexus-specific status code for "soft reject" — the request
-	// was flagged by compliance hooks but not hard-blocked. The response body
-	// contains the hook's reason. Clients should treat 246 as a 200-class
-	// success with a compliance warning. This convention is shared across
-	// ai-gateway and compliance-proxy.
-	if hookResult.Decision == hookcore.BlockSoft {
-		traffic.PrependVia(w.Header(), "ai-gateway")
-		w.Header().Set("X-Nexus-Hook", traffic.FormatHookOutcome(aigwHookOutcomeFromResult(hookResult)))
-		w.Header().Set("X-Nexus-Mode", "")
-		traffic.SetExposeHeaders(w.Header())
-		h.writeError(w, rec, 246, hookResult.Reason)
 		return nil, hookResult, true
 	}
 
@@ -235,7 +251,7 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 			rec.HookRewriteCount = n
 			rec.HookRewritten = true
 			// The redacted wire copy is what the raw storage policy
-			// persists under storageAction=redact (rec.RequestBody holds
+			// persists under action=redact (rec.RequestBody holds
 			// the pre-hook bytes for normalization and must never reach
 			// raw storage when redaction is demanded — without this stamp
 			// the writer fail-safes the raw copy to NULL).

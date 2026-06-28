@@ -4,6 +4,7 @@ package wiring
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -38,6 +39,18 @@ func InitQuota(ctx context.Context, db *store.DB, rdb redis.UniversalClient, log
 	// restart.
 	if err := usageCache.Backfill(ctx, db.Pool, policyCache.ActivePeriodTypes(), logger); err != nil {
 		logger.Error("usage cache backfill failed", "error", err)
+	}
+	// Quota write-behind: accumulate cost increments in-process and flush to Redis
+	// on an interval, keeping the per-request hot path Redis-free. Soft quota with
+	// bounded overshoot (≤ one flush interval). ON by default — the per-request
+	// Redis round-trip is the dominant quota cost; the flusher does a final drain on
+	// ctx cancel so graceful shutdown loses nothing. NEXUS_QUOTA_WRITE_BEHIND=0 opts
+	// back out (strict per-request quota, no overshoot window).
+	if os.Getenv("NEXUS_QUOTA_WRITE_BEHIND") != "0" {
+		usageCache.EnableReadCache(time.Second)
+		usageCache.EnableWriteBehind()
+		go usageCache.RunFlusher(ctx, 250*time.Millisecond)
+		logger.Info("quota usage in-process cache enabled", "read_ttl", "1s", "flush_interval", "250ms")
 	}
 	quotaEngine := quota.NewEngine(policyCache, usageCache, logger, metrics)
 	return quotaEngine, policyCache

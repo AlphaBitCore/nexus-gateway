@@ -16,9 +16,9 @@ package enrollment_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -498,15 +498,12 @@ func TestRun_SSOEnroll_MalformedJSON_Propagated(t *testing.T) {
 	}
 }
 
-// (TestRun_SSOEnroll_RequestBuildError_OnBadCpURL was REMOVED — it
-// surfaced a real production bug in flow.go:240
-// `u, _ := url.Parse(f.cpURL + "/oauth/authorize")` discards the error
-// and then `u.Query()` nil-derefs when cpURL contains a control char.
-// Per the task's "real bug → STOP" rule, fixing it is out of scope here;
-// the bug is reported in the final summary so the next session can
-// triage. Without a prod-code fix, http.NewRequestWithContext's error
-// arm in ssoEnroll is unreachable end-to-end since the panic happens
-// earlier in buildAuthorizeURL.)
+// There is no test for ssoEnroll's http.NewRequestWithContext error
+// arm on a bad cpURL: buildAuthorizeURL does
+// `u, _ := url.Parse(f.cpURL + "/oauth/authorize")` which discards the
+// error, and `u.Query()` then nil-derefs when cpURL contains a control
+// char — so the panic happens earlier and that error arm is
+// unreachable end-to-end.
 
 // TestRun_SSOEnroll_TransportError_OnClosedServer covers flow.go:283 —
 // when the CP TCP socket refuses (CP down mid-flow), client.Do returns

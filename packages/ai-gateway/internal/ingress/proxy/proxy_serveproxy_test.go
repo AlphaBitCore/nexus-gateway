@@ -8,7 +8,7 @@
 //     downgrade / notify branches without standing up Redis + Postgres +
 //     the real engine wiring.
 //   - handleNonStream / handleNonStreamHit / handleNonStreamWithSubscription
-//     response-stage hook branches (RejectHard / BlockSoft / Modify):
+//     response-stage hook branches (RejectHard / non-blocking / Modify):
 //     response-stage hook configs registered in a per-test hook registry
 //     fire across cache-MISS, cache-HIT, and broker-leader paths.
 //   - bypassResponseHooks: a per-request ResolvedRequest with
@@ -18,8 +18,8 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"math"
 	"net/http"
@@ -107,7 +107,9 @@ func (responseRejectHook) Execute(_ context.Context, _ *goHooks.HookInput) (*goH
 	}, nil
 }
 
-// responseBlockSoftHook always returns BlockSoft (HTTP 246 path).
+// responseBlockSoftHook returns a non-blocking BlockSoft decision. Hooks no
+// longer drive a soft-reject HTTP path, so the proxy treats this as
+// non-blocking: the upstream response is forwarded unchanged with HTTP 200.
 type responseBlockSoftHook struct {
 	goHooks.AnyEndpointAnyModality
 }
@@ -512,7 +514,7 @@ func TestServeProxy_CheckQuota_PolicyReject(t *testing.T) {
 	}
 }
 
-// TestServeProxy_CheckQuota_UnpricedModelHardFail is the F-0154 named
+// TestServeProxy_CheckQuota_UnpricedModelHardFail is the named
 // failure mode: a routed model with NO price row (nil InputPricePM/
 // OutputPricePM) under an active cost cap would estimate $0 and bypass quota
 // entirely. The handler must instead fail closed with QUOTA_MODEL_UNPRICED
@@ -558,7 +560,7 @@ func TestServeProxy_CheckQuota_UnpricedModelHardFail(t *testing.T) {
 	}
 }
 
-// TestServeProxy_CheckQuota_FreeModelAllowed is the F-0154 counter-case: a
+// TestServeProxy_CheckQuota_FreeModelAllowed is the counter-case: a
 // model priced explicitly at 0 (genuinely free) must NOT be hard-failed,
 // even under an active cost cap.
 func TestServeProxy_CheckQuota_FreeModelAllowed(t *testing.T) {
@@ -751,9 +753,9 @@ func TestServeProxy_NonStream_ResponseHook_RejectHard(t *testing.T) {
 	}
 }
 
-// TestServeProxy_NonStream_ResponseHook_BlockSoft drives the
-// BlockSoft branch (HTTP 246).
-func TestServeProxy_NonStream_ResponseHook_BlockSoft(t *testing.T) {
+// TestServeProxy_NonStream_ResponseHook_NonBlocking pins that a non-blocking
+// response-hook decision forwards the upstream body unchanged with HTTP 200.
+func TestServeProxy_NonStream_ResponseHook_NonBlocking(t *testing.T) {
 	upstream := openAIChatUpstream(t, `{
 		"id":"x","object":"chat.completion","model":"gpt-4o",
 		"choices":[{"index":0,"message":{"role":"assistant","content":"upstream"},"finish_reason":"stop"}],
@@ -774,8 +776,11 @@ func TestServeProxy_NonStream_ResponseHook_BlockSoft(t *testing.T) {
 	w := httptest.NewRecorder()
 	h(w, req)
 
-	if w.Code != 246 {
-		t.Fatalf("status=%d want 246 (BlockSoft); body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 (non-blocking response hook forwards body); body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "upstream") {
+		t.Errorf("body=%s want upstream content forwarded", w.Body.String())
 	}
 }
 
@@ -910,9 +915,10 @@ func TestServeProxy_CacheHIT_NonStream_ResponseHook_RejectHard(t *testing.T) {
 	}
 }
 
-// TestServeProxy_CacheHIT_NonStream_ResponseHook_BlockSoft drives the
-// BlockSoft branch (HTTP 246) inside handleNonStreamHit.
-func TestServeProxy_CacheHIT_NonStream_ResponseHook_BlockSoft(t *testing.T) {
+// TestServeProxy_CacheHIT_NonStream_ResponseHook_NonBlocking pins that a
+// non-blocking response-hook decision forwards the cached body with HTTP 200
+// inside handleNonStreamHit.
+func TestServeProxy_CacheHIT_NonStream_ResponseHook_NonBlocking(t *testing.T) {
 	cacheOpt, cleanup := withCache(t)
 	defer cleanup()
 
@@ -939,8 +945,11 @@ func TestServeProxy_CacheHIT_NonStream_ResponseHook_BlockSoft(t *testing.T) {
 	w := httptest.NewRecorder()
 	h(w, req)
 
-	if w.Code != 246 {
-		t.Fatalf("status=%d want 246; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 (non-blocking response hook forwards body); body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "cached body") {
+		t.Errorf("body=%s want cached content forwarded", w.Body.String())
 	}
 }
 
@@ -1013,9 +1022,9 @@ func TestServeProxy_NonStream_BrokerMISS_ResponseHook_RejectHard(t *testing.T) {
 	}
 }
 
-// TestServeProxy_NonStream_BrokerMISS_ResponseHook_BlockSoft — broker
-// MISS path with BlockSoft.
-func TestServeProxy_NonStream_BrokerMISS_ResponseHook_BlockSoft(t *testing.T) {
+// TestServeProxy_NonStream_BrokerMISS_ResponseHook_NonBlocking — broker MISS
+// path: a non-blocking response-hook decision forwards the body with HTTP 200.
+func TestServeProxy_NonStream_BrokerMISS_ResponseHook_NonBlocking(t *testing.T) {
 	upstream := openAIChatUpstream(t, `{
 		"id":"x","object":"chat.completion","model":"gpt-4o",
 		"choices":[{"index":0,"message":{"role":"assistant","content":"upstream"},"finish_reason":"stop"}],
@@ -1040,8 +1049,8 @@ func TestServeProxy_NonStream_BrokerMISS_ResponseHook_BlockSoft(t *testing.T) {
 	w := httptest.NewRecorder()
 	h(w, req)
 
-	if w.Code != 246 {
-		t.Fatalf("status=%d want 246; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 (non-blocking response hook forwards body); body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -1313,7 +1322,7 @@ func TestServeProxy_CacheHIT_NonStream_WithQuotaEngine_StoreResponseBody(t *test
 }
 
 // TestServeProxy_CacheHIT_NonStream_DoesNotReconcileQuota is the
-// regression guard for the prod incident where VK 803836bf's weekly
+// regression guard for the case where a VK's weekly
 // quota counter hit $500 while the dashboard's billed cost summed to
 // ~$10: handleNonStreamHit was reconciling tokens × per-token-price into
 // the Redis counter on every L1 cache HIT, even though the user pays
@@ -1913,8 +1922,8 @@ func TestServeProxy_CheckQuota_DowngradeSuccess(t *testing.T) {
 	defer upstream.Close()
 
 	// Downgrade policy with usage BELOW the cap but real remaining
-	// headroom: limit $5 (500c), used $1 (100c) → $4 budget. F-0152: the
-	// downgrade budget is now (LimitCents-CurrentCents)/100 = $4, NOT a
+	// headroom: limit $5 (500c), used $1 (100c) → $4 budget. The
+	// downgrade budget is (LimitCents-CurrentCents)/100 = $4, NOT a
 	// fraction of the estimate. The expensive original model's estimate
 	// blows the cap (triggering downgrade); the cheap target fits the $4
 	// remaining budget so the downgrade succeeds.
@@ -1922,7 +1931,7 @@ func TestServeProxy_CheckQuota_DowngradeSuccess(t *testing.T) {
 
 	// pricing (drives the downgrade SelectCheapestIndex): cheap enough to
 	// fit the $4 remaining-headroom budget. Priced=true marks it as having a
-	// real price row — the F-0348 precondition for being a valid downgrade
+	// real price row — the precondition for being a valid downgrade
 	// target (an unpriced candidate is skipped; see
 	// TestServeProxy_CheckQuota_DowngradeToUnpricedRejected).
 	pricing := []store.ModelPricing{{ModelID: "gpt-4o", InputPricePM: 0.01, OutputPricePM: 0.01, Priced: true}}
@@ -1963,8 +1972,8 @@ func TestServeProxy_CheckQuota_DowngradeSuccess(t *testing.T) {
 	}
 }
 
-// TestServeProxy_CheckQuota_DowngradeToUnpricedRejected is the F-0348
-// regression: the primary model is priced (so it passes the F-0154 guard) and
+// TestServeProxy_CheckQuota_DowngradeToUnpricedRejected is the
+// regression: the primary model is priced (so it passes the unpriced-model guard) and
 // the quota engine returns "downgrade", but the only downgrade candidate has NO
 // price row (Priced=false). Such a candidate prices to $0 and would otherwise
 // win the cheapest-fits selection, then re-price to 0 and slip past the very
@@ -1986,7 +1995,7 @@ func TestServeProxy_CheckQuota_DowngradeToUnpricedRejected(t *testing.T) {
 	pricing := []store.ModelPricing{{ModelID: "gpt-4o", InputPricePM: 0, OutputPricePM: 0, Priced: false}}
 	deps := makeOpenAIDeps(t, upstream.URL, emptyHookCache(t), func(d *Deps) {
 		d.QuotaEngine = engine
-		// Primary model IS priced (passes the F-0154 guard) but expensive
+		// Primary model IS priced (passes the unpriced-model guard) but expensive
 		// enough to blow the cap → downgrade action.
 		m := &store.Model{ID: "gpt-4o", InputPricePM: fPtr(1_000_000.0), OutputPricePM: fPtr(1_000_000.0)}
 		d.Models = &stubModelsWithPricing{
@@ -2025,7 +2034,7 @@ type cachePricingStub struct{ row *store.CachePricing }
 
 func (s cachePricingStub) LookupCachePricing(_ string) *store.CachePricing { return s.row }
 
-// TestServeProxy_Reconcile_ChargesCanonicalEstimatedCost_F0163 pins the F-0163
+// TestServeProxy_Reconcile_ChargesCanonicalEstimatedCost_F0163 pins the
 // unification: the live quota counter is incremented by the SAME single
 // canonical cost the cost pipeline stamps onto traffic_event.estimated_cost_usd
 // — the value the Hub rollup sums into billed_cost_usd and the boot Backfill

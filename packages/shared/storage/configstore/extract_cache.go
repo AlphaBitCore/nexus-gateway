@@ -81,9 +81,9 @@ func NewExtractCacheStoreWithPgxPool(pool PgxPool) *ExtractCacheStore {
 func defaultExtractCacheRow() *ExtractCacheConfigRow {
 	return &ExtractCacheConfigRow{
 		ID:                  "singleton",
-		Enabled:             true,
+		Enabled:             false,
 		TTLSeconds:          extractCacheDefaultTTLSeconds,
-		ApplyFreshnessRules: true,
+		ApplyFreshnessRules: false,
 		UpdatedAt:           time.Time{},
 		UpdatedBy:           nil,
 	}

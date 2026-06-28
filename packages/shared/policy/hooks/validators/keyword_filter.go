@@ -3,29 +3,28 @@ package validators
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"io"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 )
 
-// keywordPattern is a single compiled pattern with its metadata.
-type keywordPattern struct {
-	re       *regexp.Regexp
-	category string
-}
-
 // KeywordFilter scans normalised content against a set of regex patterns.
-// All matches drive the same onMatch.inflightAction; per-pattern severity
-// granularity requires rule packs instead.
+// All matches drive the same onMatch.action; per-pattern severity
+// granularity requires rule packs instead. Matching is executed through the
+// Matcher seam (Vectorscan under -tags vectorscan), with the per-pattern
+// category metadata retained for the match reason.
 // Applies to all text-carrying endpoints, text modality only, via
 // the embedded TextOnlyContentScanning helper.
 type KeywordFilter struct {
 	core.TextOnlyContentScanning
-	cfg           *core.HookConfig
-	patterns      []keywordPattern
-	caseSensitive bool
-	onMatch       core.OnMatchConfig
+	contentPrescan // raw-body prefilter (core.RawContentPrescanner)
+	cfg            *core.HookConfig
+	categories     []string // indexed by pattern ID
+	matcher        matcher.Matcher
+	caseSensitive  bool
+	onMatch        core.OnMatchConfig
 }
 
 // NewKeywordFilter constructs a KeywordFilter from declarative config.
@@ -35,7 +34,7 @@ type KeywordFilter struct {
 //	{
 //	  "patterns": [{"pattern": "regex", "category": "string"}],
 //	  "caseSensitive": false,
-//	  "onMatch": {"inflightAction":"block-hard", "storageAction":"redact"}
+//	  "onMatch": {"action":"block"}
 //	}
 //
 // When `_rulePackInstalls` is attached to the config, the factory
@@ -60,7 +59,9 @@ func NewKeywordFilter(cfg *core.HookConfig) (core.Hook, error) {
 		return nil, fmt.Errorf("keyword-filter: %w", err)
 	}
 
-	compiled := make([]keywordPattern, 0, len(patternList))
+	flags := flagsForCaseSensitive(caseSensitive)
+	categories := make([]string, 0, len(patternList))
+	pats := make([]matcher.Pattern, 0, len(patternList))
 	for i, raw := range patternList {
 		m, ok := raw.(map[string]any)
 		if !ok {
@@ -71,22 +72,25 @@ func NewKeywordFilter(cfg *core.HookConfig) (core.Hook, error) {
 			return nil, fmt.Errorf("keyword-filter: pattern[%d] has empty pattern string", i)
 		}
 		category, _ := m["category"].(string)
+		pats = append(pats, matcher.Pattern{ID: len(categories), Expr: pat, Flags: flags})
+		categories = append(categories, category)
+	}
 
-		re, err := core.CompilePattern(pat, flagsForCaseSensitive(caseSensitive))
-		if err != nil {
-			return nil, fmt.Errorf("keyword-filter: pattern[%d] invalid regex %q: %w", i, pat, err)
-		}
-		compiled = append(compiled, keywordPattern{
-			re:       re,
-			category: category,
-		})
+	// Reject at construction if any pattern cannot compile (keyword-filter's
+	// historical strict posture — unlike rulepack-engine which skips). bad holds
+	// only RE2-uncompilable patterns regardless of the active engine.
+	mtch, bad := buildMatcher(pats)
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("keyword-filter: pattern[%d] invalid regex: %w", bad[0].ID, bad[0].Err)
 	}
 
 	return &KeywordFilter{
-		cfg:           cfg,
-		patterns:      compiled,
-		caseSensitive: caseSensitive,
-		onMatch:       onMatch,
+		contentPrescan: newContentPrescan(pats),
+		cfg:            cfg,
+		categories:     categories,
+		matcher:        mtch,
+		caseSensitive:  caseSensitive,
+		onMatch:        onMatch,
 	}, nil
 }
 
@@ -102,28 +106,42 @@ func (kf *KeywordFilter) Execute(_ context.Context, input *core.HookInput) (*cor
 		Decision:         core.Approve,
 	}
 
-	for _, text := range input.TextSegmentsWith(kf.cfg.ProjectionOptions()) {
-		for idx := range kf.patterns {
-			p := &kf.patterns[idx]
-			if p.re.MatchString(text) {
-				result.Decision = core.DecisionForInflight(kf.onMatch.InflightAction)
-				result.Reason = fmt.Sprintf("keyword matched: %s", p.category)
-				result.ReasonCode = "KEYWORD_BLOCKED"
-				// Self-stamp the storage policy: the pipeline stamps it only
-				// for non-Approve decisions, so an "approve inflight,
-				// redact/drop storage" match would otherwise persist the
-				// matched content. Keyword matches carry no spans, so a
-				// redact storage policy degrades to drop-content at the
-				// audit writer (fail-safe: never store what we cannot redact).
-				result.StorageAction = kf.onMatch.StorageAction
-				result.LatencyMs = int(time.Since(start).Milliseconds())
-				return result, nil
+	segments := input.TextSegmentsWith(kf.cfg.ProjectionOptions())
+	matched := matchedSet(kf.matcher, segments)
+	core.ObserveContentScan(kf.cfg.ImplementationID, len(matched))
+
+	// Segment-major, pattern-minor first-match-wins (preserved verbatim): the
+	// matched-set lookup replaces the per-pattern MatchString call, so the engine
+	// is swappable without changing which (segment,pattern) wins.
+	for si := range segments {
+		for pi := range kf.categories {
+			if _, ok := matched[[2]int{pi, si}]; !ok {
+				continue
 			}
+			result.Decision = core.DecisionForAction(kf.onMatch.Action)
+			result.Reason = fmt.Sprintf("keyword matched: %s", kf.categories[pi])
+			result.ReasonCode = "KEYWORD_BLOCKED"
+			// Keyword matches carry no spans, so a redact/block action has
+			// nothing to mask: the audit writer degrades to the drop
+			// placeholder (fail-safe: never store what we cannot redact).
+			result.Action = kf.onMatch.Action
+			result.LatencyMs = int(time.Since(start).Milliseconds())
+			return result, nil
 		}
 	}
 
 	result.LatencyMs = int(time.Since(start).Milliseconds())
 	return result, nil
+}
+
+// Close releases the matcher's resources (the Vectorscan database, if any) when
+// a config swap evicts this hook. No-op for the RE2 matcher.
+func (kf *KeywordFilter) Close() error {
+	_ = kf.closePrescan()
+	if c, ok := kf.matcher.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 // flagsForCaseSensitive maps the keyword-filter caseSensitive config bool

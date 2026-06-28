@@ -69,7 +69,7 @@ type WriteResult struct {
 // The write is best-effort: a failure logs at WARN, increments a metric, and
 // returns Skipped=true — it must never fail the L1 write or the response
 // delivery. Callers are encouraged to run Write in a goroutine bounded by a
-// separate context (see S4 wiring note in doc.go).
+// separate context (see wiring note in doc.go).
 type Writer struct {
 	cache         *ConfigCache
 	client        *Client

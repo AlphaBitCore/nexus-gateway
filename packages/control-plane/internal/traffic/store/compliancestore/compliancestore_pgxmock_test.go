@@ -2,8 +2,8 @@ package compliancestore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -128,15 +128,19 @@ func TestListMatrixAuditEvents(t *testing.T) {
 func TestGetMatrixAuditEvent(t *testing.T) {
 	m := newMock(t)
 	s := New(m, nil)
-	cols := make([]string, 22)
+	cols := make([]string, 24)
 	rmReq := json.RawMessage(`{"req":1}`)
 	rmResp := json.RawMessage(`{"resp":1}`)
 	mk := func(body bool) []any {
-		v := make([]any, 22)
+		v := make([]any, 24)
 		for i := range v {
 			v[i] = nil
 		}
 		v[0] = "e1" // eid (string); complianceTags (idx 16) left nil
+		// inline_request_encoding / inline_response_encoding (idx 22/23) are
+		// scanned into plain string via COALESCE(...,''); empty = "text".
+		v[22] = ""
+		v[23] = ""
 		if body {
 			// request/response body are *json.RawMessage scanned via & → feed *json.RawMessage.
 			v[20] = &rmReq

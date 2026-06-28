@@ -2,8 +2,8 @@ package wiring
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/jackc/pgx/v5"

@@ -6,24 +6,21 @@ import (
 
 // Canonical bundled rule IDs.
 const (
-	RuleAnthropicCchStrip         = "claude-code-cch-strip"
-	RuleBedrockCchStrip           = "bedrock-claude-cch-strip"
-	RuleOpenAIFieldOrderNormalize = "openai-field-order-normalize"
-	RuleAzureOpenAIFieldOrder     = "azure-openai-field-order-normalize"
-	RuleDeepSeekFieldOrder        = "deepseek-field-order-normalize"
-	RuleGLMFieldOrder             = "glm-field-order-normalize"
-	RuleMoonshotFieldOrder        = "moonshot-field-order-normalize"
-	RuleMistralFieldOrder         = "mistral-field-order-normalize"
-	RuleXaiFieldOrder             = "xai-field-order-normalize"
-	RuleGroqFieldOrder            = "groq-field-order-normalize"
-	RulePerplexityFieldOrder      = "perplexity-field-order-normalize"
-	RuleTogetherFieldOrder        = "together-field-order-normalize"
-	RuleFireworksFieldOrder       = "fireworks-field-order-normalize"
-	RuleMiniMaxFieldOrder         = "minimax-field-order-normalize"
+	RuleAnthropicCchStrip = "claude-code-cch-strip"
+	RuleBedrockCchStrip   = "bedrock-claude-cch-strip"
 )
 
 // bundledRules returns the factory-default rule definitions. These are
 // cloned and merged with operator config overrides on every Engine reload.
+//
+// Only surgical, opt-in strip rules ship here: each removes a single known
+// volatile token (a billing nonce) from a precise body path via regex, so the
+// forwarded request stays byte-identical to the client's intent apart from that
+// one token. Whole-body re-serialisation (e.g. JSON field-order canonicalisation)
+// is intentionally NOT offered: re-encoding the client's body to stabilise a
+// cache key rewrites bytes the client chose (number formatting, escaping, key
+// order) and changes what is sent upstream — an unacceptable risk for a
+// passthrough gateway, and the dominant per-request allocation when enabled.
 func bundledRules() []Rule {
 	cchRe := regexp.MustCompile(`cch=[0-9a-f]+;?\s*`)
 	return []Rule{
@@ -52,106 +49,6 @@ func bundledRules() []Rule {
 			KeyNormalizeSafe: true,
 			BodyPath:         "system.#.text",
 			Regex:            cchRe,
-		},
-		{
-			// Canonicalise top-level JSON field order for OpenAI-wire bodies.
-			// Go's encoding/json sorts map keys alphabetically; applying this
-			// to PrepareBody output neutralises SDK-specific field orderings
-			// (Python vs Go vs TS SDKs) before hashing.
-			ID:               RuleOpenAIFieldOrderNormalize,
-			AdapterType:      AdapterOpenAI,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// Azure OpenAI uses identical wire format to OpenAI — same field
-			// order normalisation guarantees stable cache keys across SDK versions.
-			ID:               RuleAzureOpenAIFieldOrder,
-			AdapterType:      AdapterAzureOpenAI,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// DeepSeek OpenAI-compat wire — canonicalise field order.
-			ID:               RuleDeepSeekFieldOrder,
-			AdapterType:      AdapterDeepSeek,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// GLM OpenAI-compat wire — canonicalise field order.
-			ID:               RuleGLMFieldOrder,
-			AdapterType:      AdapterGLM,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// Moonshot OpenAI-compat wire — canonicalise field order.
-			ID:               RuleMoonshotFieldOrder,
-			AdapterType:      AdapterMoonshot,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// Mistral OpenAI-compat wire — canonicalise field order.
-			ID:               RuleMistralFieldOrder,
-			AdapterType:      AdapterMistral,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// xAI (Grok) OpenAI-compat wire — canonicalise field order.
-			ID:               RuleXaiFieldOrder,
-			AdapterType:      AdapterXai,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// Groq OpenAI-compat wire — canonicalise field order.
-			ID:               RuleGroqFieldOrder,
-			AdapterType:      AdapterGroq,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// Perplexity OpenAI-compat wire — canonicalise field order.
-			ID:               RulePerplexityFieldOrder,
-			AdapterType:      AdapterPerplexity,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// Together AI OpenAI-compat wire — canonicalise field order.
-			ID:               RuleTogetherFieldOrder,
-			AdapterType:      AdapterTogether,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// Fireworks AI OpenAI-compat wire — canonicalise field order.
-			ID:               RuleFireworksFieldOrder,
-			AdapterType:      AdapterFireworks,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
-		},
-		{
-			// MiniMax OpenAI-compat wire — canonicalise field order.
-			ID:               RuleMiniMaxFieldOrder,
-			AdapterType:      AdapterMiniMax,
-			Type:             RuleTypeFieldOrder,
-			EnabledByDefault: true,
-			KeyNormalizeSafe: true,
 		},
 	}
 }

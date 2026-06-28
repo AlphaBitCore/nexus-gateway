@@ -57,6 +57,9 @@ const (
 // InterceptionModeReporter is the optional interface for surfacing the active mode.
 type InterceptionModeReporter = api.InterceptionModeReporter
 
+// ForceQUICFallbackController is the optional interface for forcing QUIC apps onto TCP.
+type ForceQUICFallbackController = api.ForceQUICFallbackController
+
 // InterceptionHealth captures whether the OS-level capture layer is attached.
 type InterceptionHealth = api.InterceptionHealth
 

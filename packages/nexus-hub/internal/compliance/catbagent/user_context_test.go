@@ -2,8 +2,8 @@ package catbagent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -185,7 +185,7 @@ func TestUserContext_Load_NoUserUsesDefaultOrg(t *testing.T) {
 }
 
 // TestUserContext_Load_ZeroTimestampsReturnsZeroVersion is the
-// F-0118 regression guard: when both assignment queries miss and the
+// regression guard: when both assignment queries miss and the
 // resolved org rows carry zero-valued updatedAt timestamps, updatedAt
 // stays time.Time{}. The loader MUST report version 0 (via
 // timestampVersion's zero-guard), never the large NEGATIVE epoch-

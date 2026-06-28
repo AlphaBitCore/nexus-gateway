@@ -43,7 +43,7 @@ func okJSON() func(context.Context, *http.Request) (*http.Response, error) {
 	}
 }
 
-// TestExecute_EmbeddingsModelBackfill_StampsRequestedModel covers F-0217:
+// TestExecute_EmbeddingsModelBackfill_StampsRequestedModel covers the case:
 // an embeddings decoder that leaves "model" empty (Gemini/Vertex wire has no
 // model field) must have it back-filled with the resolved ProviderModelID so
 // OpenAI SDK callers see the model they asked for.
@@ -64,7 +64,7 @@ func TestExecute_EmbeddingsModelBackfill_StampsRequestedModel(t *testing.T) {
 }
 
 // TestExecute_EmbeddingsModelBackfill_PreservesDecoderModel ensures the
-// back-fill never overwrites a model the decoder already stamped (F-0217).
+// back-fill never overwrites a model the decoder already stamped.
 func TestExecute_EmbeddingsModelBackfill_PreservesDecoderModel(t *testing.T) {
 	adapter := decodeAdapter([]byte(`{"object":"list","data":[],"model":"voyage-3"}`), okJSON())
 	resp, err := adapter.Execute(context.Background(), Request{
@@ -83,7 +83,7 @@ func TestExecute_EmbeddingsModelBackfill_PreservesDecoderModel(t *testing.T) {
 
 // TestExecute_ChatResponse_NoEmbeddingsModelBackfill ensures the back-fill is
 // scoped to embeddings — a chat response with an empty model is left untouched
-// (F-0217: the rule keys on EndpointKindEmbeddings, not all responses).
+// (the rule keys on EndpointKindEmbeddings, not all responses).
 func TestExecute_ChatResponse_NoEmbeddingsModelBackfill(t *testing.T) {
 	adapter := decodeAdapter([]byte(`{"object":"chat.completion","model":""}`), okJSON())
 	resp, err := adapter.Execute(context.Background(), Request{
@@ -109,7 +109,7 @@ func withTimeoutBudget(t *testing.T, budget time.Duration) {
 	t.Cleanup(func() { specutil.Configure(prev) })
 }
 
-// TestExecute_NonStream_AppliesContextDeadline covers F-0054: a non-streaming
+// TestExecute_NonStream_AppliesContextDeadline covers the contract: a non-streaming
 // upstream call must carry the configured per-request deadline so a connected
 // upstream cannot run unbounded.
 func TestExecute_NonStream_AppliesContextDeadline(t *testing.T) {
@@ -136,7 +136,7 @@ func TestExecute_NonStream_AppliesContextDeadline(t *testing.T) {
 	}
 }
 
-// TestExecute_Stream_NoBudgetDeadline covers F-0054: a streaming upstream call
+// TestExecute_Stream_NoBudgetDeadline covers the contract: a streaming upstream call
 // must NOT inherit the per-frame budget deadline — the body is read lazily
 // after Execute returns, so a deadline here would abort a healthy stream.
 func TestExecute_Stream_NoBudgetDeadline(t *testing.T) {
@@ -171,7 +171,7 @@ func TestExecute_Stream_NoBudgetDeadline(t *testing.T) {
 	}
 }
 
-// TestExecute_NonStream_DeadlineExceeded_MapsToTimeout covers F-0054: when the
+// TestExecute_NonStream_DeadlineExceeded_MapsToTimeout covers the contract: when the
 // configured budget elapses on a non-stream call, the gateway returns a typed
 // CodeTimeout / 504 instead of a generic upstream error.
 func TestExecute_NonStream_DeadlineExceeded_MapsToTimeout(t *testing.T) {

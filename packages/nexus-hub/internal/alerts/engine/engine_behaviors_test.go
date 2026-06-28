@@ -12,9 +12,9 @@ package alerting
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1804,7 +1804,8 @@ func (f *adminFakeStore) ListChannels(ctx context.Context) ([]Channel, error) {
 }
 func (f *adminFakeStore) CountChannels(ctx context.Context) (int, error) {
 	// Default to "channels exist" so update-rule tests that don't care about
-	// the F-0354 warning path never nil-panic and never see a spurious warning.
+	// the no-delivery-channels warning path never nil-panic and never see a
+	// spurious warning.
 	if f.countChannelsFn == nil {
 		return 1, nil
 	}
@@ -2449,7 +2450,7 @@ func TestAdminUpdateRule(t *testing.T) {
 		}
 	})
 
-	// F-0354: enabling a rule with no delivery channels surfaces a warning.
+	// Enabling a rule with no delivery channels surfaces a warning.
 	// The refreshed rule (second getRule call) carries the resulting Enabled
 	// state, so we return an enabled rule on refresh and vary CountChannels.
 	enabledRefresh := func() func(context.Context, string) (*AlertRule, error) {

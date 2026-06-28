@@ -2,7 +2,7 @@ package tlsbump
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
@@ -22,7 +22,7 @@ import (
 //	    normalized_response column lands populated even on the
 //	    streaming path
 //
-// #93 — implementation delegates to shared
+// The implementation delegates to shared
 // transport/normalize/responseprehook.Build so all three ingress
 // services (agent / compliance-proxy / ai-gateway) wire the same
 // PreHookCallback shape. The audit-row stamp (#2) is service-specific

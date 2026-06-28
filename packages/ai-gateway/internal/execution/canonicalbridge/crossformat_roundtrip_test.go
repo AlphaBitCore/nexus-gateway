@@ -130,7 +130,7 @@ func TestCrossFormatEmbeddingsRoundTrip(t *testing.T) {
 }
 
 // TestIngressEmbeddingsToWire_GeminiEndpointSelection is the unit-level guard
-// for Bug F-0053: the Gemini embeddings codec selects between the single
+// for the Gemini embeddings codec selecting between the single
 // (:embedContent) and batch (:batchEmbedContents) upstream endpoints purely via
 // EncodeResult.URLOverride. IngressEmbeddingsToWire MUST surface that override
 // (it was previously discarded, so a batch body — {"requests":[…]} — was POSTed

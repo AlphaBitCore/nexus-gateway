@@ -7,8 +7,8 @@ package queue
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 	"testing"

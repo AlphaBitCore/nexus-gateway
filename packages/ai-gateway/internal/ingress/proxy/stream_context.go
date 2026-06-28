@@ -51,6 +51,14 @@ type streamState struct {
 	hookRunner func(ctx context.Context, input *hookcore.HookInput) *hookcore.CompliancePipelineResult
 	holdBack   bool
 
+	// responseHooksActive is false only when the stream-entry probe proved
+	// there are NO response-stage rules wired. The live pipeline uses it to
+	// skip installing the per-checkpoint Registry-normalize PreHook (and the
+	// raw-accumulating TeeReader it requires): with no response hook to consume
+	// the normalized payload, that work is pure waste. Same probe + same
+	// staleness window as the holdBack decision.
+	responseHooksActive bool
+
 	// Wire-shape outputs (stream_shape.go): the `[DONE]` sentinel
 	// decision, the admin streaming mode + buffer cap, and the
 	// cross-format / cross-ingress transcoder selection.

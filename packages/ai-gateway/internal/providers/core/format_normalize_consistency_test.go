@@ -9,12 +9,12 @@ import (
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// TestEveryAllFormatsHasTier1Normalizer (#98 binding) is the
+// TestEveryAllFormatsHasTier1Normalizer is the
 // cross-service compliance assertion that guarantees ai-gateway's
 // chat-routing matrix and shared/transport/normalize/codecs stay in
 // lockstep.
 //
-// The PreHookCallback path (#93 responseprehook.Build) feeds the
+// The PreHookCallback path (responseprehook.Build) feeds the
 // Registry with Meta.AdapterType = strings.ToLower(target.AdapterType)
 // where target.AdapterType is exactly a provcore.Format string. If a
 // new Format lands in core/types.go AllFormats() without a

@@ -13,7 +13,7 @@ package enroll
 //   - register_thing_error         → 500 INTERNAL_ERROR
 //   - store_device_token_error     → 500 INTERNAL_ERROR
 //   - happy_token_enrollment       → 200 with certPem, deviceToken, id, trustLevel
-//   - client_supplied_thingid      → ignored; server mints its own id (F-0200)
+//   - client_supplied_thingid      → ignored; server mints its own id
 //   - happy_jwt_enrollment         → 200 with trustLevel via SSO path
 //   - jwt_replayed                 → 401 JWT_REPLAYED
 //   - jwt_wrong_purpose            → 401 JWT_INVALID
@@ -21,9 +21,9 @@ package enroll
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -190,7 +190,7 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 }
 
 // ErrorResponse is a test-only helper for asserting the canonical nested error
-// envelope {error:{message,type,code}} (F-0319). It unmarshals the inner object.
+// envelope {error:{message,type,code}}. It unmarshals the inner object.
 type ErrorResponse struct {
 	Code    string `json:"-"`
 	Message string `json:"-"`
@@ -276,7 +276,7 @@ func TestEnroll_TokenInvalid(t *testing.T) {
 	}
 }
 
-// F-0204: a request that LOSES the consume race (ConsumeToken →
+// A request that LOSES the consume race (ConsumeToken →
 // ErrAlreadyUsed) must be rejected with 401 BEFORE any enrollment side effect.
 // We wire a fleet manager whose store has ZERO mock expectations: if the
 // handler reached doEnroll (signed the CSR, registered the thing, stored the
@@ -306,7 +306,7 @@ func TestEnroll_TokenConsumeLostRace_NoEnrollmentSideEffect(t *testing.T) {
 	}
 }
 
-// F-0204: under N concurrent enrollments with the SAME token, exactly one wins.
+// Under N concurrent enrollments with the SAME token, exactly one wins.
 // The stub's consumeOnce models the DB's atomic UPDATE...WHERE pending RETURNING
 // (the real arbiter, verified at the store layer); here we assert the handler
 // honours it — one consume win, the rest ErrAlreadyUsed → 401 — with no data
@@ -473,7 +473,7 @@ func TestEnroll_HappyTokenEnrollment(t *testing.T) {
 	decodeBody(t, rec, &body)
 
 	// Verify response shape: required fields present. Enrollment returns the
-	// device token + thing id (no mTLS cert fields — F-0203 removed that surface).
+	// device token + thing id (no mTLS cert fields — that surface is gone).
 	for _, field := range []string{"id", "deviceToken", "deviceTokenExpiresAt", "trustLevel"} {
 		if _, ok := body[field]; !ok {
 			t.Errorf("response missing field %q", field)
@@ -486,7 +486,7 @@ func TestEnroll_HappyTokenEnrollment(t *testing.T) {
 		}
 	}
 
-	// The device token must carry a parseable, future expiry (F-0202): a token
+	// The device token must carry a parseable, future expiry: a token
 	// is no longer issued without a bounded lifetime.
 	expStr, _ := body["deviceTokenExpiresAt"].(string)
 	exp, perr := time.Parse(time.RFC3339, expStr)
@@ -523,7 +523,7 @@ func TestEnroll_HappyTokenEnrollment(t *testing.T) {
 }
 
 func TestEnroll_ClientSuppliedThingID_IsIgnored(t *testing.T) {
-	// F-0200 regression: a client that puts a thingId in the body (attempting to
+	// Regression: a client that puts a thingId in the body (attempting to
 	// name/overwrite an existing Thing or a service identity) must NOT get that
 	// id — the Hub always mints a fresh server-assigned id.
 	tok := &enrollment.Token{
@@ -568,7 +568,7 @@ func TestEnroll_ClientSuppliedThingID_IsIgnored(t *testing.T) {
 }
 
 func TestEnroll_TokenThingTypeIsAuthoritative(t *testing.T) {
-	// F-0200 regression (type half): a token issued for `agent` must enroll as
+	// Regression (type half): a token issued for `agent` must enroll as
 	// `agent` even if the request body claims `ai-gateway` — the caller cannot
 	// upgrade the type to a service identity.
 	tok := &enrollment.Token{
@@ -755,7 +755,7 @@ func TestResolveThingID_Generated(t *testing.T) {
 		t.Errorf("generated id must start with 'agent-', got %q", id)
 	}
 	// Uniqueness: two calls must produce different IDs — the server mints a
-	// fresh, unguessable ID every time; the caller can never pin one (F-0200).
+	// fresh, unguessable ID every time; the caller can never pin one.
 	id2, err := api.resolveThingID("agent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

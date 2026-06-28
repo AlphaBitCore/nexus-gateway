@@ -2,8 +2,8 @@ package opsmetrics
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"sync/atomic"

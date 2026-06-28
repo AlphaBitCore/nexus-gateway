@@ -13,7 +13,7 @@ import (
 	sharedstreaming "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
 )
 
-// TestLivePipeline_WithPreHook_FiresWithCumulativeBytes verifies #91 —
+// TestLivePipeline_WithPreHook_FiresWithCumulativeBytes verifies that
 // the installed PreHook callback fires at every checkpoint with the
 // cumulative raw SSE wire bytes seen so far, and can mutate the
 // HookInput's Normalized field before the hookRun executes.
@@ -77,8 +77,8 @@ func TestLivePipeline_WithPreHook_FiresWithCumulativeBytes(t *testing.T) {
 	}
 }
 
-// TestLivePipeline_NoPreHook_StillWorks verifies the existing
-// (pre-#91) flat-text behaviour stays the default when caller doesn't
+// TestLivePipeline_NoPreHook_StillWorks verifies the
+// flat-text behaviour stays the default when caller doesn't
 // wire WithPreHook.
 func TestLivePipeline_NoPreHook_StillWorks(t *testing.T) {
 	body := strings.NewReader(`event: content_block_delta

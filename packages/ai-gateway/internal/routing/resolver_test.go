@@ -2,8 +2,8 @@ package routing
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"math"
@@ -356,7 +356,7 @@ func TestResolver_InlineFallbackChain_PopulatesRecovery(t *testing.T) {
 	}
 }
 
-// TestResolver_InlineFallbackChain_RespectsVKAllowedModels is the SEC-C1-01
+// TestResolver_InlineFallbackChain_RespectsVKAllowedModels is the
 // regression: an inline FallbackChain entry pointing at a (provider, model)
 // OUTSIDE the VK's allowedModels must be filtered out of RecoveryTargets — the
 // same allowlist gate the primary path enforces — so a primary failure cannot
@@ -404,7 +404,7 @@ func TestResolver_InlineFallbackChain_RespectsVKAllowedModels(t *testing.T) {
 }
 
 // TestResolver_InlineFallbackChain_KeepsAllowlistedEntry is the positive control
-// for SEC-C1-01: a FallbackChain entry that IS within the VK allowlist must still
+// for the inline-fallback-chain allowlist case: a FallbackChain entry that IS within the VK allowlist must still
 // survive the new filter (no over-blocking).
 func TestResolver_InlineFallbackChain_KeepsAllowlistedEntry(t *testing.T) {
 	f := newResolverFixture()

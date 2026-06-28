@@ -9,7 +9,7 @@ import (
 
 func TestQualityChecker_Factory_OnMatchValidationPropagates(t *testing.T) {
 	_, err := NewQualityChecker(&HookConfig{Config: map[string]any{
-		"onMatch": map[string]any{"inflightAction": "purge-the-cache"},
+		"onMatch": map[string]any{"action": "purge-the-cache"},
 	}})
 	if err == nil {
 		t.Fatal("bad onMatch should be rejected")
@@ -26,7 +26,7 @@ func TestQualityChecker_Factory_ConfigOverridesAccepted(t *testing.T) {
 		"expectedFinishReasons": []any{"length", "stop"},
 		"detectRefusals":        false,
 		"refusalPatterns":       []any{"i refuse"},
-		"onMatch":               map[string]any{"inflightAction": "block-soft"},
+		"onMatch":               map[string]any{"action": "block"},
 	}}
 	h, err := NewQualityChecker(cfg)
 	if err != nil {
@@ -45,21 +45,21 @@ func TestQualityChecker_Factory_ConfigOverridesAccepted(t *testing.T) {
 	if len(qc.refusalPatterns) != 1 || qc.refusalPatterns[0] != "i refuse" {
 		t.Errorf("refusalPatterns: %v", qc.refusalPatterns)
 	}
-	if qc.onMatch.InflightAction != InflightBlockSoft {
-		t.Errorf("onMatch.InflightAction: %q want block-soft", qc.onMatch.InflightAction)
+	if qc.onMatch.Action != ActionBlock {
+		t.Errorf("onMatch.Action: %q want block", qc.onMatch.Action)
 	}
 }
 
 func TestQualityChecker_Factory_AbsentOnMatchDefaultsToApprove(t *testing.T) {
 	// Quality is log-only by tradition: when operator did not write onMatch
-	// the inflightAction should be Approve, NOT block-hard.
+	// the action should be approve, NOT block.
 	h, err := NewQualityChecker(&HookConfig{Config: map[string]any{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	qc := h.(*QualityChecker)
-	if qc.onMatch.InflightAction != InflightApprove {
-		t.Errorf("absent onMatch: got %q want approve (log-only)", qc.onMatch.InflightAction)
+	if qc.onMatch.Action != ActionApprove {
+		t.Errorf("absent onMatch: got %q want approve (log-only)", qc.onMatch.Action)
 	}
 }
 
@@ -84,10 +84,10 @@ func TestQualityChecker_Execute_ShortResponseLogOnly(t *testing.T) {
 }
 
 func TestQualityChecker_Execute_QualityAnomalyReasonCodeWhenBlocking(t *testing.T) {
-	// When operator promotes to block-soft, the ReasonCode flips from
+	// When operator promotes to action=block, the ReasonCode flips from
 	// QUALITY_SIGNAL to QUALITY_ANOMALY.
 	h, _ := NewQualityChecker(&HookConfig{Config: map[string]any{
-		"onMatch": map[string]any{"inflightAction": "block-soft"},
+		"onMatch": map[string]any{"action": "block"},
 	}})
 	res, _ := h.Execute(t.Context(), &HookInput{
 		Stage:        "response",
@@ -101,7 +101,7 @@ func TestQualityChecker_Execute_QualityAnomalyReasonCodeWhenBlocking(t *testing.
 
 func TestQualityChecker_Execute_NoSignalsApproves(t *testing.T) {
 	h, _ := NewQualityChecker(&HookConfig{Config: map[string]any{
-		"onMatch": map[string]any{"inflightAction": "block-soft"},
+		"onMatch": map[string]any{"action": "block"},
 	}})
 	res, _ := h.Execute(t.Context(), &HookInput{
 		Stage:        "response",
@@ -143,13 +143,13 @@ func TestQualityChecker_Execute_AbsorbsFinishReasonFromNormalized(t *testing.T) 
 		}},
 	}
 	h, _ := NewQualityChecker(&HookConfig{Config: map[string]any{
-		"onMatch": map[string]any{"inflightAction": "block-soft"},
+		"onMatch": map[string]any{"action": "block"},
 	}})
 	res, err := h.Execute(t.Context(), &HookInput{Stage: "response", Normalized: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Decision != BlockSoft {
+	if res.Decision != RejectHard {
 		t.Errorf("absorbed finishReason should trigger signal; got %s", res.Decision)
 	}
 	if !strings.Contains(res.Reason, "content_filter") {
@@ -171,7 +171,7 @@ func TestQualityChecker_Execute_AbsorbsFinishReasonFromPayloadTopLevel(t *testin
 		}},
 	}
 	h, _ := NewQualityChecker(&HookConfig{Config: map[string]any{
-		"onMatch": map[string]any{"inflightAction": "block-soft"},
+		"onMatch": map[string]any{"action": "block"},
 	}})
 	res, _ := h.Execute(t.Context(), &HookInput{Stage: "response", Normalized: payload})
 	if !strings.Contains(res.Reason, "length") {
@@ -184,7 +184,7 @@ func TestQualityChecker_Execute_FallsBackToTextProjectionWhenNoAssistantText(t *
 	// user-role text.
 	payload := PayloadFromTextSegments([]string{"only user-role text but long enough to pass minimum"})
 	h, _ := NewQualityChecker(&HookConfig{Config: map[string]any{
-		"onMatch": map[string]any{"inflightAction": "block-soft"},
+		"onMatch": map[string]any{"action": "block"},
 	}})
 	res, _ := h.Execute(t.Context(), &HookInput{
 		Stage:        "response",
@@ -200,7 +200,7 @@ func TestQualityChecker_Execute_RefusalDetectionDisabled(t *testing.T) {
 	// detectRefusals=false → refusal text should NOT trigger signal.
 	h, _ := NewQualityChecker(&HookConfig{Config: map[string]any{
 		"detectRefusals": false,
-		"onMatch":        map[string]any{"inflightAction": "block-soft"},
+		"onMatch":        map[string]any{"action": "block"},
 	}})
 	res, _ := h.Execute(t.Context(), &HookInput{
 		Stage:        "response",
@@ -218,7 +218,7 @@ func TestQualityChecker_Execute_CustomRefusalPatterns(t *testing.T) {
 	// Operator can replace default refusal phrases.
 	h, _ := NewQualityChecker(&HookConfig{Config: map[string]any{
 		"refusalPatterns": []any{"sorry dave"},
-		"onMatch":         map[string]any{"inflightAction": "block-soft"},
+		"onMatch":         map[string]any{"action": "block"},
 	}})
 	// Built-in "as an ai" should NOT match anymore (overridden).
 	res, _ := h.Execute(t.Context(), &HookInput{
@@ -238,7 +238,7 @@ func TestQualityChecker_Execute_CustomRefusalPatterns(t *testing.T) {
 		FinishReason: "stop",
 		Normalized:   PayloadFromTextSegments([]string{"Sorry Dave, I can't do that this time today."}),
 	})
-	if res.Decision != BlockSoft {
-		t.Errorf("custom refusal pattern: got %s want BlockSoft", res.Decision)
+	if res.Decision != RejectHard {
+		t.Errorf("custom refusal pattern: got %s want RejectHard", res.Decision)
 	}
 }

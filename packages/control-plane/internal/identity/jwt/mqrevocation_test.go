@@ -2,8 +2,8 @@ package jwtverifier_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"

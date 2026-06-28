@@ -3,9 +3,9 @@ package enrollment
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net"
 	"net/http"

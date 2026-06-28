@@ -13,7 +13,7 @@
 // to a full purge when the slice is empty.
 package wiring
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 type invalidatePayload struct {
 	Op  string   `json:"op"`

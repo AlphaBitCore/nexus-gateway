@@ -1,125 +1,127 @@
 package audit
 
 import (
-	"encoding/json"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/goccy/go-json"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 )
 
-// recordToMessage storage governance: the per-stage Redetect closure
-// stamped on the Record must reach redact.ApplyStorageAction so a span
-// whose hook-time address does not resolve on the storage-time payload
-// is re-located instead of degrading the row to the drop placeholder.
+// T5 regression: recordToMessage MUST NOT persist a normalized projection.
+// Under the single-action contract the control plane recomputes the
+// normalized view at read time from the (already action-governed) raw body,
+// so the wire envelope's RequestNormalized / ResponseNormalized and their
+// redaction-span columns always stay nil — even when a redact/block action
+// fired and a normalizer is wired on the Writer.
 
-const redetectEmail = "alice.demo@contoso.com"
+const t5Secret = "alice.demo@contoso.com"
 
-// redetectNormalizer fakes the shared/normalize closure: it emits a
-// single-message chat payload containing the email, regardless of the
-// raw bytes — the storage-time projection that disagrees with the
-// hook-time span addresses.
-func redetectNormalizer(t *testing.T) NormalizeFn {
+// t5LeakyNormalizer returns a closure that, if ever invoked, would emit a
+// payload containing the secret. recordToMessage no longer calls it; the
+// test fails loudly if a future change re-introduces write-time normalize.
+func t5LeakyNormalizer(t *testing.T) NormalizeFn {
 	t.Helper()
-	p := normcore.NormalizedPayload{
-		Kind:             normcore.KindAIChat,
-		NormalizeVersion: normcore.SchemaVersion,
-		Messages: []normcore.Message{
-			{Role: normcore.RoleUser, Content: []normcore.ContentBlock{{Type: normcore.ContentText, Text: "mail " + redetectEmail + " now"}}},
-		},
-	}
-	b, err := json.Marshal(p)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	return func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (json.RawMessage, string, string) {
-		return b, "ok", ""
+	return func(direction, contentType, adapterType, model, path string, stream bool, body []byte) (raw json.RawMessage, status, errReason string) {
+		t.Fatalf("recordToMessage must never invoke the normalizer (direction=%s); normalized is recomputed at view time", direction)
+		return nil, "", ""
 	}
 }
 
-// crossFormatRecord builds a Record whose request span addresses a
-// message index that exists only on the hook-time projection.
-func crossFormatRecord() *Record {
-	return &Record{
-		RequestID:            "req-redetect",
-		Timestamp:            time.Now(),
-		RequestBody:          []byte(`{"messages":[{"content":"mail ` + redetectEmail + ` now"}]}`),
-		RequestStorageAction: "redact",
-		RequestTransformSpans: []normcore.TransformSpan{
-			{Source: normcore.SourceHook, SourceID: "email", Action: normcore.ActionRedact, ContentAddress: "messages.2.content.0", Start: 5, End: 5 + len(redetectEmail), Replacement: "[EMAIL-REDACTED]"},
-		},
-		RequestRedactRuleIDs: []string{"email"},
+func TestRecordToMessage_NeverPersistsNormalizedProjection(t *testing.T) {
+	captured := []byte(`{"messages":[{"content":"mail ` + t5Secret + ` now"}]}`)
+	redacted := []byte(`{"messages":[{"content":"mail [EMAIL-REDACTED] now"}]}`)
+
+	cases := []struct {
+		name        string
+		reqAction   decision.Action
+		respAction  decision.Action
+		wantReqBody []byte // expected raw bytes persisted (nil = absent)
+	}{
+		{"approve persists captured", decision.ActionApprove, decision.ActionApprove, captured},
+		{"redact persists redacted copy only", decision.ActionRedact, decision.ActionRedact, redacted},
+		{"block persists redacted copy only", decision.ActionBlock, decision.ActionBlock, redacted},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default()).WithNormalizer(t5LeakyNormalizer(t))
+			rec := &Record{
+				RequestID:            "req-t5",
+				Timestamp:            time.Now(),
+				RequestBody:          captured,
+				RequestBodyRedacted:  redacted,
+				RequestAction:        tc.reqAction,
+				RequestContentType:   "application/json",
+				ResponseBody:         captured,
+				ResponseBodyRedacted: redacted,
+				ResponseAction:       tc.respAction,
+				ResponseContentType:  "application/json",
+			}
+
+			msg := w.recordToMessage(rec)
+
+			// The normalized projection is never persisted on either direction.
+			if msg.RequestNormalized != nil {
+				t.Errorf("RequestNormalized must be nil (view-time recompute), got %q", msg.RequestNormalized)
+			}
+			if msg.ResponseNormalized != nil {
+				t.Errorf("ResponseNormalized must be nil (view-time recompute), got %q", msg.ResponseNormalized)
+			}
+			if msg.RequestRedactionSpans != nil {
+				t.Errorf("RequestRedactionSpans must be nil, got %q", msg.RequestRedactionSpans)
+			}
+			if msg.ResponseRedactionSpans != nil {
+				t.Errorf("ResponseRedactionSpans must be nil, got %q", msg.ResponseRedactionSpans)
+			}
+
+			// The RAW body persisted obeys the action: approve = captured,
+			// redact/block = the redacted copy. The secret must never leak
+			// under a redact/block action.
+			if got := msg.RequestBody.InlineBytes; string(got) != string(tc.wantReqBody) {
+				t.Errorf("RequestBody = %q, want %q", got, tc.wantReqBody)
+			}
+			if tc.reqAction != decision.ActionApprove {
+				if got := string(msg.RequestBody.InlineBytes); contains(got, t5Secret) {
+					t.Errorf("redact/block raw request body leaked the secret: %q", got)
+				}
+			}
+		})
 	}
 }
 
-func TestRecordToMessage_RequestRedetectRecoversUnresolvedSpans(t *testing.T) {
-	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default()).WithNormalizer(redetectNormalizer(t))
-	rec := crossFormatRecord()
-	rec.RequestRedetect = func(text string, ruleIDs []string) []redact.Match {
-		for _, id := range ruleIDs {
-			if id != "email" {
-				continue
-			}
-			if i := strings.Index(text, redetectEmail); i >= 0 {
-				return []redact.Match{{RuleID: id, Start: i, End: i + len(redetectEmail), Replacement: "[EMAIL-REDACTED]"}}
-			}
+// TestStorageRawBody_NoRedactedCopyDropsContent locks the fail-safe: when a
+// redact/block action fires but the producer supplied no redacted copy (e.g.
+// reverse-encode unsupported), the writer persists nothing rather than the
+// unredacted captured bytes.
+func TestRecordToMessage_RedactWithoutRedactedCopyDropsRawBody(t *testing.T) {
+	captured := []byte(`{"messages":[{"content":"mail ` + t5Secret + ` now"}]}`)
+	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default())
+	rec := &Record{
+		RequestID:          "req-t5-drop",
+		Timestamp:          time.Now(),
+		RequestBody:        captured,
+		RequestAction:      decision.ActionRedact, // no RequestBodyRedacted set
+		RequestContentType: "application/json",
+	}
+
+	msg := w.recordToMessage(rec)
+
+	if got := msg.RequestBody.InlineBytes; len(got) != 0 {
+		t.Errorf("redact without a redacted copy must drop the raw body, got %q", got)
+	}
+	if msg.RequestNormalized != nil {
+		t.Errorf("RequestNormalized must stay nil, got %q", msg.RequestNormalized)
+	}
+}
+
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
 		}
-		return nil
 	}
-
-	msg := w.recordToMessage(rec)
-
-	if strings.Contains(string(msg.RequestNormalized), redetectEmail) {
-		t.Fatalf("stored normalized copy must not leak the email, got %q", msg.RequestNormalized)
-	}
-	var p normcore.NormalizedPayload
-	if err := json.Unmarshal(msg.RequestNormalized, &p); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if p.Redacted {
-		t.Fatalf("re-detection succeeded — want the redacted conversation, not a placeholder: %q", msg.RequestNormalized)
-	}
-	if len(p.Messages) != 1 || !strings.Contains(p.Messages[0].Content[0].Text, "[EMAIL-REDACTED]") {
-		t.Errorf("stored conversation must carry the marker, got %q", msg.RequestNormalized)
-	}
-	if msg.RequestRedactionSpans == nil {
-		t.Error("relocated spans must be stamped for the UI badges")
-	}
-}
-
-func TestRecordToMessage_DegradedRowKeepsSpansAndDiagnosis(t *testing.T) {
-	// No Redetect on the record (e.g. spans from a remote AI guard): the
-	// row degrades but stays diagnosable — reason + cause + addresses on
-	// the placeholder, original spans preserved on the spans column.
-	w := NewWriter(nil, "nexus.event.ai-traffic", nil, slog.Default()).WithNormalizer(redetectNormalizer(t))
-	rec := crossFormatRecord()
-
-	msg := w.recordToMessage(rec)
-
-	if strings.Contains(string(msg.RequestNormalized), redetectEmail) {
-		t.Fatalf("degraded row must not leak the email, got %q", msg.RequestNormalized)
-	}
-	var p normcore.NormalizedPayload
-	if err := json.Unmarshal(msg.RequestNormalized, &p); err != nil {
-		t.Fatalf("placeholder unmarshal: %v", err)
-	}
-	if !p.Redacted || p.RedactedReason != normcore.RedactedReasonDegraded {
-		t.Errorf("redactedReason = %q, want %q", p.RedactedReason, normcore.RedactedReasonDegraded)
-	}
-	if p.RedactedDetail == nil || p.RedactedDetail.Cause != normcore.DegradeCauseSpansUnresolved {
-		t.Fatalf("redactedDetail = %+v, want cause %q", p.RedactedDetail, normcore.DegradeCauseSpansUnresolved)
-	}
-	if len(p.RedactedDetail.FailedAddresses) != 1 || p.RedactedDetail.FailedAddresses[0] != "messages.2.content.0" {
-		t.Errorf("failedAddresses = %v, want [messages.2.content.0]", p.RedactedDetail.FailedAddresses)
-	}
-	var spans []normcore.TransformSpan
-	if err := json.Unmarshal(msg.RequestRedactionSpans, &spans); err != nil || len(spans) != 1 {
-		t.Fatalf("degraded row must preserve diagnostic spans, got %q (err %v)", msg.RequestRedactionSpans, err)
-	}
-	if strings.Contains(string(msg.RequestRedactionSpans), redetectEmail) {
-		t.Fatalf("spans must never carry matched content, got %q", msg.RequestRedactionSpans)
-	}
+	return false
 }

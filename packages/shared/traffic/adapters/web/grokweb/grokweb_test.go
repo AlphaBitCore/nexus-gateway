@@ -79,24 +79,9 @@ func TestExtractRequest_ToolCalls(t *testing.T) {
 func TestExtractRequest_BinaryBody(t *testing.T) {
 	body := []byte{0x00, 0x42, 0x00}
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
+	_, err := a.ExtractRequest(context.Background(), body, "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("Extra missing binary_preview")
-	}
-}
-
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{"prompt":"hi","x_grok_field":{"sensitive":"data"}}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/chat")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if x, ok := nc.Extra["x_grok_field"]; !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_grok_field", nc.Extra)
 	}
 }
 
@@ -442,36 +427,4 @@ func TestLooksLikeJSON(t *testing.T) {
 			t.Errorf("%s: looksLikeJSON(%q)=%v want %v", c.name, c.in, got, c.want)
 		}
 	}
-}
-
-func TestPreview(t *testing.T) {
-	t.Run("short-printable-passthrough", func(t *testing.T) {
-		if got := preview([]byte("hello world")); got != "hello world" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("preserves-newline-and-tab", func(t *testing.T) {
-		if got := preview([]byte("a\nb\tc")); got != "a\nb\tc" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("scrubs-control-bytes", func(t *testing.T) {
-		if got := preview([]byte{'a', 0x07, 'b', 0x0d, 'c', 0x1b, 'd'}); got != "a.b.c.d" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("scrubs-high-bytes", func(t *testing.T) {
-		if got := preview([]byte{'a', 0x7f, 'b', 0x80, 'c', 0xff, 'd'}); got != "a.b.c.d" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("truncates-over-256-bytes", func(t *testing.T) {
-		body := make([]byte, 300)
-		for i := range body {
-			body[i] = 'A'
-		}
-		if got := preview(body); len(got) != 256 {
-			t.Errorf("len=%d want 256", len(got))
-		}
-	})
 }

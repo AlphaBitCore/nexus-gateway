@@ -18,7 +18,7 @@ import (
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -346,9 +346,9 @@ func newAgentRig(t *testing.T, ctx context.Context, hub *mockHub, thingID string
 	// OnConfigChanged echoes desired back as reported. The mock Hub's
 	// "connected" envelope carries a single non-empty desired key with
 	// version 1 so this callback fires once on the initial connect; this
-	// keeps the test path realistic but is no longer needed to unblock
-	// OnReconnect (the runLoop fires it on every connect since the
-	// reportedVer > 0 gate was removed).
+	// keeps the test path realistic but is not needed to unblock
+	// OnReconnect (the runLoop fires it on every connect; there is no
+	// reportedVer > 0 gate).
 	client.OnConfigChanged(func(desired map[string]thingclient.ConfigState) (map[string]thingclient.ConfigState, error) {
 		out := make(map[string]thingclient.ConfigState, len(desired))
 		for k, v := range desired {

@@ -2,7 +2,7 @@ package exemption
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 )
@@ -329,7 +329,7 @@ func TestPendingAutoExemptions_ReturnsOnlyAutoSource(t *testing.T) {
 	}
 }
 
-// F-0303: wildcard denylist matching.
+// Wildcard denylist matching.
 
 // TestDenylistWildcard_BlocksIsExempt verifies that a wildcard denylist entry
 // "*.openai.com" denies an exact subdomain "api.openai.com" even though no

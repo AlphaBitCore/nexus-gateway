@@ -34,7 +34,7 @@ func TestRender_DefaultTemplate_ContainsSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	// `modified_content` was removed in favour of structured `redactions`.
+	// The default prompt uses structured `redactions`, not a `modified_content` field.
 	for _, needle := range []string{"decision", "confidence", "reason", "labels", "redactions", "start", "end", "replacement"} {
 		if !strings.Contains(out, needle) {
 			t.Errorf("default prompt missing %q instruction", needle)

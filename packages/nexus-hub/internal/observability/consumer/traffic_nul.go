@@ -1,8 +1,8 @@
 package consumer
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"

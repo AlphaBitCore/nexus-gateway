@@ -4,15 +4,18 @@ package dsarstore
 
 import (
 	"context"
-	"encoding/json"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/usercascade"
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 )
 
 // PgxPool is the minimum pgx pool surface dsarstore methods need.
@@ -388,7 +391,8 @@ func (store *Store) fillAccessIAMGroups(ctx context.Context, subjectID string, r
 // both traffic legs (same scoping predicate as erasure), capped at limit.
 func (store *Store) fillAccessPayloads(ctx context.Context, subjectID string, limit int, result *DSARAccessExport) error {
 	rows, err := store.pool.Query(ctx, `
-		SELECT t.id, t.source, p.inline_request_body, p.inline_response_body
+		SELECT t.id, t.source, p.inline_request_body, p.inline_response_body,
+			COALESCE(p.inline_request_encoding, ''), COALESCE(p.inline_response_encoding, '')
 		FROM traffic_event_payload p
 		JOIN traffic_event t ON t.id = p.traffic_event_id
 		WHERE (
@@ -408,15 +412,40 @@ func (store *Store) fillAccessPayloads(ctx context.Context, subjectID string, li
 	defer rows.Close()
 	for rows.Next() {
 		var id, source string
-		var reqBody, respBody json.RawMessage
-		if err := rows.Scan(&id, &source, &reqBody, &respBody); err == nil {
+		var reqBody, respBody []byte
+		var reqEncoding, respEncoding string
+		if err := rows.Scan(&id, &source, &reqBody, &respBody, &reqEncoding, &respEncoding); err == nil {
+			// The inline body columns hold the raw captured body (TEXT) or its
+			// base64; decode per the sibling encoding column so the data
+			// subject receives their actual request/response body bytes, not
+			// the stored column form.
 			result.Payloads = append(result.Payloads, map[string]any{
 				"trafficEventId": id, "source": source,
-				"requestBody": reqBody, "responseBody": respBody,
+				"requestBody":  decodeAccessBody(reqBody, reqEncoding),
+				"responseBody": decodeAccessBody(respBody, respEncoding),
 			})
 		}
 	}
 	return rows.Err()
+}
+
+// decodeAccessBody decodes a stored inline body column into the original
+// captured body bytes for a data-subject access export. A body that is valid
+// JSON is returned as json.RawMessage (so the export preserves structure);
+// anything else (SSE text, decoded binary) is returned as a string. Returns
+// nil for an absent/empty body.
+func decodeAccessBody(col []byte, encoding string) any {
+	if len(col) == 0 {
+		return nil
+	}
+	raw := sharedaudit.DecodeBodyForColumn(col, encoding)
+	if len(raw) == 0 {
+		return nil
+	}
+	if stdjson.Valid(raw) {
+		return json.RawMessage(raw)
+	}
+	return string(raw)
 }
 
 // fillAccessAssistant loads the subject's assistant sessions, memory, and files.

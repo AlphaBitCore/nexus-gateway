@@ -3,7 +3,7 @@ package aigwsim
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -192,8 +192,8 @@ func TestValidateForwardRequest(t *testing.T) {
 	}
 }
 
-// TestAIGatewaySimulatorForward_IgnoresCallerSuppliedHost is the F-0269
-// regression: a caller that smuggles a targetUrl into the JSON body must NOT be
+// TestAIGatewaySimulatorForward_IgnoresCallerSuppliedHost verifies that a
+// caller that smuggles a targetUrl into the JSON body must NOT be
 // able to redirect the proxy — the request always goes to the configured
 // gateway. We stand up two servers; only the configured one must be hit.
 func TestAIGatewaySimulatorForward_IgnoresCallerSuppliedHost(t *testing.T) {

@@ -70,7 +70,7 @@ func mountAssistantWithIAM(engine *iam.Engine) *echo.Echo {
 	return e
 }
 
-// TestAssistantRoutes_IAMDenyReturns403 is the F-0081 regression: every
+// TestAssistantRoutes_IAMDenyReturns403 is the regression guard: every
 // assistant endpoint must carry an IAM gate, so an authenticated session user
 // with NO assistant grant is denied (403) — never reaching the handler. Without
 // the gate, login alone would let any user open the assistant and burn

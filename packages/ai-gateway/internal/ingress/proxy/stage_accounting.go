@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
@@ -16,6 +17,8 @@ import (
 // stage's exit path.
 func (s *proxyState) finalizeAudit() {
 	deferStart := time.Now()
+	s.stampNormalizeGate()
+	s.stampRequestNormalizedReuse()
 	s.rec.UpstreamTtfbMs = s.phaseSink.TtfbMs()
 	s.rec.UpstreamTotalMs = s.phaseSink.TotalMs()
 	// Latency detail toggle: yaml-only operator flag. When true
@@ -83,4 +86,84 @@ func (s *proxyState) finalizeAudit() {
 	}
 	s.rec.LatencyBreakdown = snap
 	s.h.deps.AuditWriter.Enqueue(s.rec)
+}
+
+// stampNormalizeGate decides, per direction, whether the async audit writer must
+// produce the normalized projection at write-time, and stamps the deferral onto
+// the Record (lazy-audit-normalize). A direction is deferred only when the
+// NEXUS_LAZY_AUDIT_NORMALIZE flag is on AND no write-time consumer needs the
+// normalized text for that direction:
+//
+//   - request_normalized deferred ⟺ the request canonical was NOT materialized
+//     (no smart-rule match and cache off) AND no stage-request hook is active.
+//     When the canonical WAS materialized (smart routing / cache pulled it) the
+//     audit reuses it for free; when a request hook is active the writer must
+//     normalize fresh because redaction spans reference the projection.
+//   - response_normalized deferred ⟺ no stage-response hook is active AND cache
+//     is off (the cache response pipeline / L2 path needs the projection).
+//
+// Hooks force write-time normalize per direction because redaction spans are
+// direction-scoped and cannot be faithfully recomputed on view (the hook
+// decision may be non-deterministic). When the flag is OFF this is a no-op and
+// both directions normalize as before (byte-identical legacy path). The
+// canonical-computed signal is read WITHOUT triggering the lazy compute, so the
+// gate never forces the work it exists to skip.
+func (s *proxyState) stampNormalizeGate() {
+	if s.h == nil || !s.h.lazyAuditNormalize {
+		return
+	}
+	// The normalized projection is NEVER persisted for audit: the control plane
+	// recomputes it at view time from the stored raw body. Redaction applies to
+	// the payload (the raw body is masked in storage), so the view-time recompute
+	// reads already-redacted bytes and is PII-safe without a stored projection —
+	// shipping request_normalized / response_normalized on every audit message is
+	// pure publish-frame + storage + CPU waste. Write-time normalize is forced
+	// only for a genuine write-time consumer of the projection itself:
+	//   - request: a smart-routing/cache canonical was already materialized, so
+	//     the audit reuses it for free (stampRequestNormalizedReuse) — no extra
+	//     compute.
+	//   - response: the cache pipeline needs the projection at write time.
+	// Compliance hooks do NOT force it: a hook inspects content via its own
+	// lightweight extraction and records its decision/spans on the row, and the
+	// projection it would have persisted is identical to the view-time recompute.
+	cacheEnabled := s.h.deps != nil && s.h.deps.Cache != nil && s.h.deps.Cache.IsEnabled()
+	_, canonicalComputed := s.rctxFull.NormalizedIfComputed()
+	if !canonicalComputed {
+		s.rec.SkipRequestNormalize = true
+	}
+	if !cacheEnabled {
+		s.rec.SkipResponseNormalize = true
+	}
+}
+
+// stampRequestNormalizedReuse stamps the already-materialized request canonical
+// onto the Record so the async writer reuses it as request_normalized instead of
+// re-Normalizing the raw body. The Meta was aligned at compute time, so these
+// bytes are byte-identical to a fresh re-Normalize.
+//
+// It reads NormalizedIfComputed — it never TRIGGERS the lazy compute. The
+// canonical is reused only when a request-time consumer (smart routing / cache)
+// already produced it; otherwise the request direction either re-normalizes in
+// the writer (hooks/legacy) or is deferred (lazy-audit-normalize), both handled
+// downstream. Marshaling synchronously here (the live payload is not retained
+// past this point) avoids aliasing races with the async writer. A marshal error
+// leaves the reuse fields zero, so recordToMessage falls back to re-Normalize.
+func (s *proxyState) stampRequestNormalizedReuse() {
+	if !s.h.lazyCanonical || s.rctxFull == nil || len(s.rec.RequestBody) == 0 {
+		return
+	}
+	if s.rec.SkipRequestNormalize {
+		return
+	}
+	np, ok := s.rctxFull.NormalizedIfComputed()
+	if !ok {
+		return
+	}
+	b, err := json.Marshal(np)
+	if err != nil {
+		return
+	}
+	s.rec.RequestNormalizedReuse = b
+	s.rec.RequestNormalizedProtocol = np.Protocol
+	s.rec.RequestNormalizedKind = string(np.Kind)
 }

@@ -2,7 +2,7 @@ package geminicache
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"

@@ -30,12 +30,12 @@ type QualityChecker struct {
 //	  "expectedFinishReasons": ["stop","end_turn"],
 //	  "detectRefusals":        true,
 //	  "refusalPatterns":       ["i can't help with", ...],
-//	  "onMatch": {"inflightAction":"approve|block-soft", "storageAction":"keep"}
+//	  "onMatch": {"action":"approve|block"}
 //	}
 //
-// onMatch.inflightAction = "approve" → log-only (anomaly tagged, request
-// flows through). "block-soft" → reject with HTTP 246. Other inflight values
-// (block-hard, redact) are valid but uncommon; they are honored when set.
+// onMatch.action = "approve" → log-only (anomaly tagged, request
+// flows through). "block" → reject. The "redact" action is valid
+// but uncommon for a quality check; it is honored when set.
 func NewQualityChecker(cfg *core.HookConfig) (core.Hook, error) {
 	qc := &QualityChecker{
 		minResponseLength:     10,
@@ -81,7 +81,7 @@ func NewQualityChecker(cfg *core.HookConfig) (core.Hook, error) {
 		return nil, fmt.Errorf("quality-checker: %w", err)
 	}
 	if _, explicit := cfg.Config["onMatch"]; !explicit {
-		onMatch.InflightAction = core.InflightApprove
+		onMatch.Action = core.ActionApprove
 	}
 	qc.onMatch = onMatch
 
@@ -155,15 +155,18 @@ func (qc *QualityChecker) Execute(_ context.Context, input *core.HookInput) (*co
 	}
 
 	reason := "quality signals: " + strings.Join(signals, ", ")
-	decision := core.DecisionForInflight(qc.onMatch.InflightAction)
+	dec := core.DecisionForAction(qc.onMatch.Action)
 	reasonCode := "QUALITY_ANOMALY"
-	if decision == core.Approve {
+	action := qc.onMatch.Action
+	if dec == core.Approve {
 		reasonCode = "QUALITY_SIGNAL"
+		action = ""
 	}
 	return &core.HookResult{
-		Decision:   decision,
+		Decision:   dec,
 		Reason:     reason,
 		ReasonCode: reasonCode,
+		Action:     action,
 	}, nil
 }
 

@@ -5,9 +5,9 @@ package agentstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -44,7 +44,7 @@ type ThingNode struct {
 	Tags []string `json:"tags,omitempty"`
 }
 
-// Note: the Go struct field is `Metadata` (json:"metadata") and we read
+// The Go struct field is `Metadata` (json:"metadata") and we read
 // it from the `thing.metadata` JSONB column — this is where the Hub
 // writes `staticInfo` (sysinfo: hostname, OS, CPU, memory, NICs, …) via
 // `UpdateStaticInfo` (see nexus-hub/internal/opsmetrics/static_info_writer.go).

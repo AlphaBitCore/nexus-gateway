@@ -27,17 +27,6 @@ import (
 
 const adapterID = "cohere"
 
-var requestKnownKeys = []string{
-	"model", "messages", "stream", "tools", "tool_choice",
-	"temperature", "max_tokens", "p", "k", "seed", "stop_sequences",
-	"frequency_penalty", "presence_penalty", "response_format",
-	"safety_mode", "documents", "citation_options",
-}
-
-var responseKnownKeys = []string{
-	"id", "message", "finish_reason", "usage", "logprobs",
-}
-
 type Adapter struct{}
 
 func (a *Adapter) ID() string                       { return adapterID }
@@ -105,7 +94,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -152,7 +140,6 @@ func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (tra
 		ReasoningSegments: reasoning,
 		ToolCallSegments:  toolCalls,
 		Metadata:          meta,
-		Extra:             traffic.CollectExtra(body, responseKnownKeys),
 	}, nil
 }
 

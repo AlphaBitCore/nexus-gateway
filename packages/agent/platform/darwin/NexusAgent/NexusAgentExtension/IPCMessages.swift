@@ -46,7 +46,7 @@ struct NEFlowNewMessage: Encodable {
 
 /// Message sent from the NE when a flow closes.
 ///
-/// E50 latency phase fields (`upstreamTtfbMs`, `upstreamTotalMs`,
+/// Latency phase fields (`upstreamTtfbMs`, `upstreamTotalMs`,
 /// `interceptMs`) are optional; the Swift NE proxy populates them when
 /// the upstream call surfaces `URLSessionTaskMetrics` data (most flows
 /// do — Apple's NEAppProxyTCPFlow + URLSession path emits the metric
@@ -61,7 +61,7 @@ struct NEFlowClosedMessage: Encodable {
     let durationMs: Int
     let bumpStatus: String
 
-    // E50 phase fields — nil means "not measured this flow". URLSession
+    // Phase fields — nil means "not measured this flow". URLSession
     // metrics are best-effort: passthrough flows that go directly via
     // raw TCP relay (no URLSessionTask wrapping) report nil for all 3.
     let upstreamTtfbMs: Int?

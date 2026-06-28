@@ -2,8 +2,8 @@ package wiring
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -332,7 +332,7 @@ func TestLiveClassifier_Classify_withConfiguredProviderBackend(t *testing.T) {
 }
 
 // buildBackend — external_url builds an ExternalBackend that carries NO
-// provider credential (SEC-M2-01). The external judge is the operator's own
+// provider credential. The external judge is the operator's own
 // service and authenticates only through CustomHeaders; buildBackend resolves
 // no stored Credential on this path, so a provider key can never be forwarded
 // to an operator-chosen URL.

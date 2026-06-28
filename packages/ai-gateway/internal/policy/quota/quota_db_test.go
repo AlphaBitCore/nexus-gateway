@@ -147,7 +147,7 @@ func TestPolicyCache_Load_HappyPath(t *testing.T) {
 	}
 }
 
-// TestPolicyCache_LoadedFlag locks SEC-C6-01: the cache reports Loaded()==false
+// TestPolicyCache_LoadedFlag locks: the cache reports Loaded()==false
 // until the FIRST successful Load (so the engine can distinguish a boot-time
 // load failure → silent fail-open from a legitimately empty policy set), and a
 // failing Load does NOT flip it to loaded.
@@ -183,7 +183,7 @@ func TestPolicyCache_LoadedFlag(t *testing.T) {
 	}
 }
 
-// TestPolicyCache_Load_NormalizesVKScope locks SEC-C6-02: a VK-scoped policy /
+// TestPolicyCache_Load_NormalizesVKScope locks: a VK-scoped policy /
 // override persisted by the CP UI as scope/targetType "vk" must be enforced
 // under the engine's canonical "virtual_key" lookup. Before the fix these rows
 // were keyed as "vk" and the engine's "virtual_key" queries never found them, so
@@ -221,7 +221,7 @@ func TestPolicyCache_Load_NormalizesVKScope(t *testing.T) {
 
 // TestPolicyCache_Load_OverrideQueryFiltersExpired asserts the override load
 // query carries the expiry predicate so expired overrides (a past "expiresAt")
-// are never pulled into the enforcement cache — the F-0161 fix. The strict
+// are never pulled into the enforcement cache. The strict
 // ExpectQuery regex fails if the WHERE clause is dropped, guarding the
 // regression where a "temporary" exception permanently raised a limit.
 func TestPolicyCache_Load_OverrideQueryFiltersExpired(t *testing.T) {
@@ -259,7 +259,7 @@ func TestPolicyCache_Load_OverrideQueryFiltersExpired(t *testing.T) {
 // returns nil for an override whose ExpiresAt is in the past, even if it was
 // loaded into the cache (i.e., the DB filter ran before it expired). This
 // closes the enforcement gap where a cached override would outlive its expiry
-// until the next Load() trigger (F-0161).
+// until the next Load() trigger.
 func TestPolicyCache_GetOverride_ReadPathExpiryCheck(t *testing.T) {
 	c := NewPolicyCacheWithPgxPool(nil, testLogger())
 	past := time.Now().Add(-1 * time.Second)
@@ -459,7 +459,7 @@ func TestUsageCache_Backfill_HappyPath_SeedsAllDimensions(t *testing.T) {
 	mock := newMockPool(t)
 
 	// Backfill iterates 4 dimensions in order: user, virtual_key, project,
-	// organization (F-0151 — project must be seeded so a Redis cold-start
+	// organization (project must be seeded so a Redis cold-start
 	// does not zero the project counter and grant a full extra budget).
 	now := time.Now().UTC()
 	periodKey := now.Format("2006-01")
@@ -505,7 +505,7 @@ func TestUsageCache_Backfill_HappyPath_SeedsAllDimensions(t *testing.T) {
 	if got != "200" {
 		t.Errorf("vk usage: %q want 200", got)
 	}
-	// F-0151: project counter seeded from the rollup.
+	// project counter seeded from the rollup.
 	got, _ = rdb.Get(context.Background(), usageKey("project", "proj-1", periodKey)).Result()
 	if got != "300" {
 		t.Errorf("project usage: %q want 300 (F-0151 — project dimension must be backfilled)", got)

@@ -156,13 +156,13 @@ func TestRunPassthroughStream_CtxCancel_NoErrorLog(t *testing.T) {
 	}
 }
 
-// TestRunPassthroughStream_NetErrClosed_Silenced pins the PR #24
-// follow-up R-6 fix: when CloseUpstreamOnExit fires in a sibling
+// TestRunPassthroughStream_NetErrClosed_Silenced pins the behavior:
+// when CloseUpstreamOnExit fires in a sibling
 // pipeline (or the caller's outer defer Close races this relay),
-// io.Copy returns net.ErrClosed. The 2nd-round architect review
-// flagged that this sentinel wasn't in the silence list, so every
-// such teardown produced a "passthrough stream copy error" warning.
-// With the fix, net.ErrClosed silences the same way ctx.Canceled
+// io.Copy returns net.ErrClosed. This sentinel must be in the silence
+// list, otherwise every such teardown produces a "passthrough stream
+// copy error" warning.
+// net.ErrClosed silences the same way ctx.Canceled
 // does. Without it, the assert-empty-log check fails.
 func TestRunPassthroughStream_NetErrClosed_Silenced(t *testing.T) {
 	tee := &testWriter{Buffer: &bytes.Buffer{}, header: http.Header{}}
@@ -197,5 +197,4 @@ func (f *flushTracker) Header() http.Header { return f.header }
 func (f *flushTracker) WriteHeader(_ int)   {}
 func (f *flushTracker) Flush()              { f.flushCount.Add(1) }
 
-// yieldThenErrReader lives in test_helpers_test.go (PR #24 / O7
-// dedup).
+// yieldThenErrReader lives in test_helpers_test.go.

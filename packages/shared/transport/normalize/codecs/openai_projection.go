@@ -37,9 +37,9 @@ package codecs
 
 import (
 	"crypto/sha1"
-	"encoding/json"
 	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/goccy/go-json"
 	"time"
 )
 

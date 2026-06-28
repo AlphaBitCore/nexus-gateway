@@ -1,12 +1,12 @@
-// reasoning_cost_test.go — F-0056: reasoning_cost_usd must be stamped
+// reasoning_cost_test.go — reasoning_cost_usd must be stamped
 // consistently with reasoning_tokens on EVERY cost-stamp path (direct
 // non-stream, broker non-stream, streaming, and cache HIT), not only the
 // direct non-stream path. Each path funnels through stampReasoningCost.
 package proxy
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"math"
 	"net/http"
@@ -210,7 +210,7 @@ func TestHandleStreamWithSubscription_Live_StampsReasoningCost(t *testing.T) {
 	}
 }
 
-// F-0058: a stream that faults mid-flight (headers already flushed with
+// a stream that faults mid-flight (headers already flushed with
 // HTTP 200) must record a queryable usage_extraction_status="streaming_error"
 // + ErrorCode, distinguishing it from a clean no-usage stream.
 func TestHandleStreamWithSubscription_UpstreamError_StampsStreamingError(t *testing.T) {

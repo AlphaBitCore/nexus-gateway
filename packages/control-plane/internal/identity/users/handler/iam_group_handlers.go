@@ -13,11 +13,12 @@ import (
 )
 
 func (h *Handler) ListIAMGroups(c echo.Context) error {
-	groups, err := h.iam.ListIamGroups(c.Request().Context())
+	pg := parsePagination(c)
+	groups, total, err := h.iam.ListIamGroupsPage(c.Request().Context(), c.QueryParam("q"), pg.Limit, pg.Offset)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to list groups", "server_error", ""))
 	}
-	return c.JSON(http.StatusOK, map[string]any{"data": groups, "total": len(groups)})
+	return c.JSON(http.StatusOK, map[string]any{"data": groups, "total": total})
 }
 
 func (h *Handler) GetIAMGroup(c echo.Context) error {

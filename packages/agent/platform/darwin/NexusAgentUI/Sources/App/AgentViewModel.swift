@@ -3,11 +3,11 @@ import Combine
 import UserNotifications
 import os
 
-/// Minimal menu-bar view model (E40 Phase 1 + review fix-ups).
+/// Minimal menu-bar view model.
 ///
 /// Owns only the state the seven-item NSMenu actually reads. Every
 /// detail view that used to live inside a 320×520 popover moves to
-/// the Wails Dashboard in Phase 2. This file is deliberately small.
+/// the Wails Dashboard. This file is deliberately small.
 ///
 /// Polling is a constant 2 s. The menu itself is built lazily via
 /// NSMenuDelegate.menuNeedsUpdate (see AppDelegate), so a poll that
@@ -47,7 +47,7 @@ class AgentViewModel: ObservableObject {
     /// Back-compat for older daemons that don't emit the field is the
     /// `?? true` at the poll site, not this initial value.
     @Published var quitAllowed: Bool = false
-    /// Live-traffic indicator (#69). True when the daemon has reported
+    /// Live-traffic indicator. True when the daemon has reported
     /// a provider-tagged audit event within the last 3 seconds, i.e.
     /// the user just made an LLM call. The tray-icon view subscribes
     /// to this to render a brief highlight overlay so the user gets
@@ -198,10 +198,10 @@ class AgentViewModel: ObservableObject {
 
     // ─── Actions wired to NSMenu items ───────────────────────────────
 
-    /// Launches the Dashboard window (Phase 2's Wails app). Falls back
+    /// Launches the Dashboard window (the Wails app). Falls back
     /// to a "not installed" alert if the bundled .app isn't on disk
-    /// — covers users still on a Phase-1-era installation while the
-    /// Phase-2 .pkg rolls out.
+    /// — covers users still on a menu-bar-only installation while the
+    /// Dashboard .pkg rolls out.
     func openDashboard() {
         if launchDashboardApp() { return }
         showComingSoonAlert(
@@ -464,7 +464,7 @@ class AgentViewModel: ObservableObject {
         // 3 s ceiling: removeFromPreferences round-trips to NEAgent
         // and typically completes in 100-300 ms; cap higher than that
         // so a slow NEAgent still completes within the Quit budget.
-        // User binding (#83): "Quit means the network goes back to
+        // User binding: "Quit means the network goes back to
         // native routing fully and immediately." This is what gives
         // the user a true "get me back to normal" button.
         let removeSemaphore = DispatchSemaphore(value: 0)

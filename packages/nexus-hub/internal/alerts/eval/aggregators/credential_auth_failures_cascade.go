@@ -42,11 +42,11 @@ func (a *CredentialAuthFailuresCascade) MinWarmupSec(params map[string]any) int 
 // grouped every event under empty string and was effectively dead for
 // however long it's been deployed. Two fixes here:
 //  1. Read from the dedicated top-level credential_id column (carried
-//     on TrafficEventMessage as CredentialID) — cheaper than decoding
-//     the identity JSONB and can be indexed if hot.
+//     on AlertView as CredentialID) — cheaper than decoding the identity
+//     JSONB and can be indexed if hot.
 //  2. Keep the function name + alert name "Credential…" since they
 //     semantically refer to the upstream apiCredential, not the VK.
-func extractCredentialID(t *consumer.TrafficEventMessage) string {
+func extractCredentialID(t *consumer.AlertView) string {
 	if t == nil || t.CredentialID == nil {
 		return ""
 	}

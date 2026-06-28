@@ -1,6 +1,6 @@
 package codecs
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 // spliceDeltasIntoTerminal appends the accumulated output_text deltas to the
 // terminal response object as an assistant message, but ONLY when the terminal

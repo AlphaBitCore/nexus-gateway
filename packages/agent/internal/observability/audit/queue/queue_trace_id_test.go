@@ -1,17 +1,17 @@
 package queue
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"testing"
 	"time"
 )
 
-// #70 — trace_id column round-trip: Record → DrainBatch + QueryEvents
-// both must read the value back exactly as written. Pre-#70 the column
-// did not exist in the schema; Row.TraceID was scanned but the INSERT
-// never carried it, so every audit row uploaded to Hub with traceId=""
-// and cp-ui Detail showed an empty cross-service correlation id.
+// trace_id column round-trip: Record → DrainBatch + QueryEvents
+// both must read the value back exactly as written. If the INSERT
+// fails to carry it while Row.TraceID is scanned, every audit row
+// uploads to Hub with traceId="" and cp-ui Detail shows an empty
+// cross-service correlation id.
 
 func TestRecord_RoundtripTraceID_NonEmpty(t *testing.T) {
 	q := newTestQueue(t)
@@ -46,8 +46,7 @@ func TestRecord_RoundtripTraceID_NonEmpty(t *testing.T) {
 func TestRecord_RoundtripAdditionalFields(t *testing.T) {
 	// Covers the if-Valid populate branches in DrainBatch + QueryEvents
 	// for NormalizedRequest / NormalizedResponse / StatusCode that ship
-	// alongside trace_id in #69/#70. Pre-test these branches existed
-	// but had no coverage hit; failing to read them back here would
+	// alongside trace_id. Failing to read them back here would
 	// surface as silent NULL on agent UI immediately.
 	q := newTestQueue(t)
 	e := makeEvent("rt3")

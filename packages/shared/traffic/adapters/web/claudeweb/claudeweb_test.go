@@ -122,25 +122,6 @@ func TestExtractRequest_FutureMessagesShape(t *testing.T) {
 	}
 }
 
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{
-		"prompt": "hi",
-		"x_future_field": {"sensitive": "data"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/.../completion")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	x, ok := nc.Extra["x_future_field"]
-	if !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_future_field", nc.Extra)
-	}
-	if _, ok := nc.Extra["prompt"]; ok {
-		t.Errorf("prompt must not leak into Extra")
-	}
-}
-
 func TestExtractRequest_MissingPromptAndMessages(t *testing.T) {
 	a := &Adapter{}
 	_, err := a.ExtractRequest(context.Background(), []byte(`{"timezone":"UTC"}`), "/api/.../completion")

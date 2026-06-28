@@ -7,8 +7,8 @@ package iam
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -75,6 +75,7 @@ type iamIAMStore interface {
 	ListDirectPolicyAttachments(ctx context.Context, policyID string) ([]iamstore.DirectPolicyAttachmentRow, error)
 	ListPolicyAttachedUserIDs(ctx context.Context, policyID string) ([]string, error)
 	ListIamGroups(ctx context.Context) ([]iamstore.GroupRow, error)
+	ListIamGroupsPage(ctx context.Context, q string, limit, offset int) ([]iamstore.GroupRow, int, error)
 	GetIamGroup(ctx context.Context, id string) (*iamstore.GroupRow, error)
 	CreateIamGroup(ctx context.Context, name string, description *string, createdBy string) (*iamstore.GroupRow, error)
 	UpdateIamGroup(ctx context.Context, id string, p iamstore.UpdateIamGroupParams) (*iamstore.GroupRow, error)
@@ -189,7 +190,7 @@ type Handler struct {
 	vk         iamVKStore
 	fed        iamFedStore
 	governance iamGovernanceStore
-	// oauth backs the OAuth client admin endpoints (issue #40). Distinct
+	// oauth backs the OAuth client admin endpoints. Distinct
 	// from the OAuth runtime store wired into authserver/oauth: the admin
 	// surface here CRUD's the OAuthClient row, the runtime surface there
 	// reads it during /token verification.

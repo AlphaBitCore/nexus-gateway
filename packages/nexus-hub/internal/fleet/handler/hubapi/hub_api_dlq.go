@@ -2,9 +2,9 @@ package hubapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strconv"
 	"time"

@@ -106,3 +106,44 @@ func TestPendingAuthzStore_SetIdPID_ExpiredSweeps(t *testing.T) {
 		t.Fatal("expired entry must be evicted after SetIdPID returns false")
 	}
 }
+
+func TestPendingAuthzStore_SetOIDCRedirectURI_Live(t *testing.T) {
+	s := store.NewPendingAuthzStore()
+	defer s.Close()
+
+	s.Put("ctx", store.PendingAuthzEntry{
+		RedirectURI: "http://127.0.0.1:3001/authserver/idp/old/callback",
+		ExpiresAt:   time.Now().Add(time.Minute),
+	})
+	if ok := s.SetOIDCRedirectURI("ctx", "https://cp.example.com/authserver/idp/new/callback"); !ok {
+		t.Fatal("SetOIDCRedirectURI should report true for a live entry")
+	}
+	e, ok := s.Take("ctx")
+	if !ok || e.OIDCRedirectURI != "https://cp.example.com/authserver/idp/new/callback" {
+		t.Fatalf("Take after SetOIDCRedirectURI: ok=%v OIDCRedirectURI=%q", ok, e.OIDCRedirectURI)
+	}
+}
+
+func TestPendingAuthzStore_SetOIDCRedirectURI_Missing(t *testing.T) {
+	s := store.NewPendingAuthzStore()
+	defer s.Close()
+
+	if s.SetOIDCRedirectURI("unknown", "https://cp.example.com/callback") {
+		t.Fatal("SetOIDCRedirectURI on unknown authctx must report false")
+	}
+}
+
+func TestPendingAuthzStore_SetOIDCRedirectURI_ExpiredSweeps(t *testing.T) {
+	s := store.NewPendingAuthzStore()
+	defer s.Close()
+
+	s.Put("stale", store.PendingAuthzEntry{
+		ExpiresAt: time.Now().Add(-time.Second),
+	})
+	if s.SetOIDCRedirectURI("stale", "https://cp.example.com/callback") {
+		t.Fatal("SetOIDCRedirectURI on expired entry must report false")
+	}
+	if _, ok := s.Take("stale"); ok {
+		t.Fatal("expired entry must be evicted after SetOIDCRedirectURI returns false")
+	}
+}

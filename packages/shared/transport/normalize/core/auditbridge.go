@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -97,6 +97,30 @@ func BuildAuditFn(reg *Registry, metrics *Metrics) AuditFn {
 			}
 		}
 		return raw, status, errReason
+	}
+}
+
+// BuildReuseMetricFn returns a closure that records the normalize metrics for a
+// direction whose payload was produced on the request goroutine and reused
+// verbatim, so the normalize_total / payload_bytes series keep moving
+// on the reuse path that bypasses BuildAuditFn. The emission mirrors
+// BuildAuditFn's status-"ok" branch exactly (same adapter/kind fallback, same
+// series). Returns a no-op when metrics is nil.
+func BuildReuseMetricFn(metrics *Metrics) func(protocol, kind, direction string, payloadLen int) {
+	return func(protocol, kind, direction string, payloadLen int) {
+		if metrics == nil {
+			return
+		}
+		if protocol == "" {
+			protocol = "unsupported"
+		}
+		if kind == "" {
+			kind = string(KindUnsupported)
+		}
+		metrics.Total.WithLabelValues(protocol, kind, direction, "ok").Inc()
+		if payloadLen > 0 {
+			metrics.PayloadBytes.WithLabelValues(protocol, direction).Observe(float64(payloadLen))
+		}
 	}
 }
 

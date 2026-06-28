@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+// TestParser_PooledBufferReuse_NoStaleBytes runs a long stream to completion,
+// Releases its buffer, then parses a short distinct stream that reuses the
+// recycled buffer — which must yield only its OWN bytes, never a residue of the
+// longer first stream. Cross-stream-leak guard for the per-stream buffer pool.
+func TestParser_PooledBufferReuse_NoStaleBytes(t *testing.T) {
+	long := strings.Repeat("Z", 4096)
+	p1 := NewParser(strings.NewReader("data: " + long + "\n\ndata: [DONE]\n\n"))
+	ev, err := p1.Next()
+	if err != nil || ev.Data != long {
+		t.Fatalf("first stream: data corrupted (err=%v)", err)
+	}
+	if ev2, _ := p1.Next(); !ev2.Done {
+		t.Fatalf("first stream: expected DONE")
+	}
+	p1.Release() // returns the dirtied buffer to the pool
+
+	p2 := NewParser(strings.NewReader("data: short\n\n"))
+	defer p2.Release()
+	ev, err = p2.Next()
+	if err != nil {
+		t.Fatalf("second stream: %v", err)
+	}
+	if ev.Data != "short" {
+		t.Fatalf("second stream Data=%q, want %q (stale bytes leaked from pool)", ev.Data, "short")
+	}
+}
+
 func TestParser_BasicEvents(t *testing.T) {
 	input := "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\ndata: [DONE]\n\n"
 	p := NewParser(strings.NewReader(input))

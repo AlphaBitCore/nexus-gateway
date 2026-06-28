@@ -14,8 +14,8 @@ package trayipc
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net"
 	"runtime"
 	"strings"

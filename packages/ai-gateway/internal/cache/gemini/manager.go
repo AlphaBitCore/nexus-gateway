@@ -2,9 +2,9 @@ package geminicache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync/atomic"
 	"time"

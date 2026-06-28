@@ -2,7 +2,7 @@ package thingclient
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// #66 — UploadAgentAudit POSTs a raw JSON array to
+// UploadAgentAudit POSTs a raw JSON array to
 // /api/internal/things/agent-audit (distinct from /things/audit which
 // expects a cp envelope shape). Pre-fix agent was sending to the cp
 // endpoint and Hub silently dropped PayloadRequest / PayloadResponse,

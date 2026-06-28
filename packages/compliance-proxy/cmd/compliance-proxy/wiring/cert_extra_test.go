@@ -44,7 +44,7 @@ func TestInitCertIssuer_RemoteSigningMode_BadCACertPath(t *testing.T) {
 // TestInitCertIssuer_RemoteSigningMode_HappyPath drives the full self-
 // bootstrapping envelope: valid cert + Redis + KMS commands → the DEK is
 // generated, wrapped, and SETNX-persisted, and a working Issuer is returned.
-// Encrypt uses `cat` (reads plaintext from stdin; no {file}, F-0299).
+// Encrypt uses `cat` (reads plaintext from stdin; no {file}).
 // Decrypt uses `cat {file}` (reads ciphertext from temp file, identity passthrough).
 // Observable evidence: the wrapped-DEK key now exists in Redis.
 func TestInitCertIssuer_RemoteSigningMode_HappyPath(t *testing.T) {
@@ -59,7 +59,7 @@ func TestInitCertIssuer_RemoteSigningMode_HappyPath(t *testing.T) {
 	cfg.CA.CertPath = certPath
 	cfg.CA.KMS.SigningMode = "remote"
 	cfg.CA.KMS.SignCommand = []string{"cat"}
-	cfg.CA.KMS.EncryptCommand = []string{"cat"} // reads plaintext from stdin; no {file} on encrypt path (F-0299)
+	cfg.CA.KMS.EncryptCommand = []string{"cat"} // reads plaintext from stdin; no {file} on encrypt path
 	cfg.CA.KMS.Command = []string{"cat", "{file}"}
 	cfg.CA.KMS.TimeoutSec = 5
 
@@ -87,7 +87,7 @@ func TestInitCertIssuer_RemoteSigningMode_NoRedis_FailClosed(t *testing.T) {
 	cfg.CA.CertPath = certPath
 	cfg.CA.KMS.SigningMode = "remote"
 	cfg.CA.KMS.SignCommand = []string{"cat"}
-	cfg.CA.KMS.EncryptCommand = []string{"cat"} // reads plaintext from stdin; no {file} on encrypt path (F-0299)
+	cfg.CA.KMS.EncryptCommand = []string{"cat"} // reads plaintext from stdin; no {file} on encrypt path
 	cfg.CA.KMS.Command = []string{"cat", "{file}"}
 
 	_, err := InitCertIssuer(cfg, nil, testLogger())
@@ -126,7 +126,7 @@ func TestInitCertIssuer_RemoteSigningMode_NoDecryptCommand_FailClosed(t *testing
 	cfg.CA.CertPath = certPath
 	cfg.CA.KMS.SigningMode = "remote"
 	cfg.CA.KMS.SignCommand = []string{"cat"}
-	cfg.CA.KMS.EncryptCommand = []string{"cat"} // reads plaintext from stdin; no {file} on encrypt path (F-0299)
+	cfg.CA.KMS.EncryptCommand = []string{"cat"} // reads plaintext from stdin; no {file} on encrypt path
 
 	_, err := InitCertIssuer(cfg, rdb, testLogger())
 	if err == nil {

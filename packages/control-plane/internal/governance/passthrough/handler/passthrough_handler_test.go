@@ -2,8 +2,8 @@ package passthrough
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -115,7 +115,7 @@ func expectEmptyAssembleBlob(mock pgxmock.PgxPoolIface) {
 		WillReturnRows(pgxmock.NewRows([]string{"provider_id", "enabled", "config", "expires_at", "enabled_by", "reason"}))
 }
 
-// F-0131: SourceState is the config-drift reconciler's SourceLoader. It must
+// SourceState is the config-drift reconciler's SourceLoader. It must
 // assemble the gateway_passthrough source-of-truth blob from the three
 // gateway_passthrough_config_* tables — identical to what propagateConfig
 // pushes — so the drift diff compares CP tables against thing.desired, not a
@@ -170,7 +170,7 @@ func TestSourceState_AssemblesBlobFromConfigTables(t *testing.T) {
 	}
 }
 
-// F-0131: SourceState on an unseeded fleet marshals to the zero blob with
+// SourceState on an unseeded fleet marshals to the zero blob with
 // initialized (non-nil) maps, matching what an ai-gateway with no passthrough
 // config carries in thing.desired — so the content diff does not thrash.
 func TestSourceState_EmptyFleetZeroBlob(t *testing.T) {

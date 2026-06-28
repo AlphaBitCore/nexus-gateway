@@ -2,9 +2,9 @@ package ws
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -394,7 +394,7 @@ func TestHandleMessage_ShadowReport_ManagerError(t *testing.T) {
 // "shadow_report_break_glass") through the WS dispatcher and asserts it reaches
 // HandleShadowReport with the break_glass reconciliation sentinel stamped and
 // the audit context (KeyVersions / ActorTokenID / SourceIP) carried. This is
-// the regression guard for F-0143 — before the fix this frame fell to the
+// the regression guard for the break-glass frame — before the fix it fell to the
 // dispatcher's default case and was silently dropped, so the emergency override
 // never reached Hub adoption.
 func TestHandleMessage_BreakGlass_ReachesHandler(t *testing.T) {
@@ -625,7 +625,7 @@ func newStubConn(id, typ string) *Conn {
 // stubConnWithFullBuffer returns a Conn whose outCh is at capacity so Write
 // drops with an error (used to assert Broadcast and Send failure branches). It
 // is backed by a real (discard) websocket because the buffer-full drop path now
-// closes the connection (F-0251), which dereferences c.ws.
+// closes the connection, which dereferences c.ws.
 func stubConnWithFullBuffer(t *testing.T, id, typ string) *Conn {
 	t.Helper()
 	c := &Conn{
@@ -1085,7 +1085,7 @@ func TestHandleUpgrade_AcceptFailsOnDisallowedOrigin(t *testing.T) {
 	}
 }
 
-// TestHandleUpgrade_ProdRejectsLocalhostOrigin covers F-0256: with devMode
+// TestHandleUpgrade_ProdRejectsLocalhostOrigin covers the case where, with devMode
 // false (production), a localhost Origin must NOT be auto-allowed — the upgrade
 // must fail the origin check (coder/websocket returns 403, not 101). This is
 // the regression that would otherwise let a page served from the operator's own
@@ -1371,7 +1371,7 @@ func TestConn_WritePump_CtxDoneReturns(t *testing.T) {
 var _ = atomic.LoadInt64
 
 // TestPool_Remove_IdentityGuard_StaleConnDoesNotEvictLive is the pool-level
-// F-0199 regression. After a reconnect race installs a new connection for a
+// reconnect-race regression. After a reconnect race installs a new connection for a
 // Thing ID, the stale old connection's late Remove must be a no-op: it must NOT
 // evict the live new connection, must report it did not remove (false), and
 // pool.Send must still reach the live conn. A genuine Remove of the current
@@ -1431,7 +1431,7 @@ func TestPool_Remove_NeverAddedReportsFalse(t *testing.T) {
 }
 
 // TestHandleUpgrade_ReconnectRace_StaleDisconnectDoesNotMarkOffline is the
-// server-level F-0199 regression. Two WebSocket connections arrive for the same
+// server-level reconnect-race regression. Two WebSocket connections arrive for the same
 // Thing ID; the second replaces the first in the pool. When the stale first
 // connection's read loop unblocks and runs its disconnect cleanup, pool.Remove
 // returns false (the new conn is current) so MarkOffline MUST be suppressed —
@@ -1515,7 +1515,7 @@ func TestHandleUpgrade_ReconnectRace_StaleDisconnectDoesNotMarkOffline(t *testin
 // TestAuthenticate_ServiceToken_RevokedThingIsRejected verifies that a
 // service-token WS upgrade for a Thing whose status is "revoked" is rejected
 // with 401, preventing a revoked service Thing from re-promoting itself to
-// online (F-0201).
+// online.
 func TestAuthenticate_ServiceToken_RevokedThingIsRejected(t *testing.T) {
 	pool := NewPool(nil, nullLogger())
 	fv := &fakeValidator{

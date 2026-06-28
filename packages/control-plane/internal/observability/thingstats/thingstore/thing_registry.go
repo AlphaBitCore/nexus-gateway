@@ -2,8 +2,8 @@ package thingstore
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 )
 

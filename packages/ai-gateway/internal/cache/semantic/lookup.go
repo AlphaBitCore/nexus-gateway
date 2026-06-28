@@ -2,8 +2,8 @@ package semantic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 

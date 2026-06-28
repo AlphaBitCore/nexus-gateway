@@ -110,11 +110,11 @@ func TestEngineEvaluate(t *testing.T) {
 	}
 }
 
-// TestEngineEvaluate_BackfillsCurrentTime locks SEC-M7-01: a Deny guarded by a
-// Date condition on nexus:CurrentTime fires even when the caller passes nil/empty
-// condCtx, because Evaluate backfills the real wall clock centrally. Before the
-// fix the empty CurrentTime made time.Parse fail → the Date condition was false →
-// the Deny never matched → the broad Allow fail-opened.
+// TestEngineEvaluate_BackfillsCurrentTime locks the time backfill: a Deny guarded
+// by a Date condition on nexus:CurrentTime fires even when the caller passes
+// nil/empty condCtx, because Evaluate backfills the real wall clock centrally.
+// Without it the empty CurrentTime makes time.Parse fail → the Date condition is
+// false → the Deny never matches → the broad Allow fail-opens.
 func TestEngineEvaluate_BackfillsCurrentTime(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	policies := []LoadedPolicy{

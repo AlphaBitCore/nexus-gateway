@@ -1,7 +1,7 @@
 package rules_test
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine/rules"

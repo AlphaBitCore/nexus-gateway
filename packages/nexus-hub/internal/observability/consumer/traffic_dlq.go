@@ -101,7 +101,7 @@ func (w *TrafficEventWriter) deadLetter(ctx context.Context, pm pendingTrafficMe
 		rec := diskDLQRecord{
 			MsgID:         pm.event.ID,
 			Subject:       pm.msg.Subject,
-			Payload:       pm.msg.Data,
+			Payload:       pm.payloadBytes(),
 			DeliveryCount: int(pm.msg.NumDelivered),
 			LastError:     errString(lastErr),
 			WrittenAt:     time.Now().UTC(),
@@ -127,20 +127,30 @@ func (w *TrafficEventWriter) deadLetter(ctx context.Context, pm pendingTrafficMe
 	w.nakWithBackoff(pm)
 }
 
-// ackDeadLettered Acks a message that has been durably captured in a DLQ sink.
+// ackDeadLettered resolves a record that has been durably captured in a DLQ sink
+// — it counts as a successful (ack-side) resolution of its frame slot; the
+// underlying NATS message acks once all the frame's records are resolved.
 func (w *TrafficEventWriter) ackDeadLettered(pm pendingTrafficMessage) {
+	if pm.frame != nil {
+		pm.frame.resolve(false, 0)
+		return
+	}
 	if err := pm.msg.Ack(); err != nil {
 		w.logger.Warn("dlq ack failed", "error", err)
 	}
 }
 
-// nakWithBackoff rejects a message for delayed redelivery, preferring
-// NakWithDelay so the broker honours the backoff. Falls back to a bare Nak on
-// transports that do not expose a per-message delay.
+// nakWithBackoff rejects a record for delayed redelivery. The frame is settled as
+// a nak (with the broker honouring the backoff) once the frame resolves; a single
+// record asking to retry redelivers the whole frame, and dedup by request id makes
+// the already-committed siblings idempotent.
 func (w *TrafficEventWriter) nakWithBackoff(pm pendingTrafficMessage) {
+	if pm.frame != nil {
+		pm.frame.resolve(true, redeliveryDelay(pm.msg.NumDelivered))
+		return
+	}
 	if pm.msg.NakWithDelay != nil {
-		delay := redeliveryDelay(pm.msg.NumDelivered)
-		if err := pm.msg.NakWithDelay(delay); err != nil {
+		if err := pm.msg.NakWithDelay(redeliveryDelay(pm.msg.NumDelivered)); err != nil {
 			w.logger.Warn("nak-with-delay failed", "error", err)
 		}
 		return
@@ -187,7 +197,7 @@ VALUES ($1, $2, $3, $4, $5)
 		_, err := w.pool.Exec(ctx, sqlNoTS,
 			pm.event.ID,
 			pm.msg.Subject,
-			pm.msg.Data,
+			pm.payloadBytes(),
 			int(pm.msg.NumDelivered),
 			errPtr,
 		)
@@ -196,7 +206,7 @@ VALUES ($1, $2, $3, $4, $5)
 	_, err := w.pool.Exec(ctx, sql,
 		pm.event.ID,
 		pm.msg.Subject,
-		pm.msg.Data,
+		pm.payloadBytes(),
 		int(pm.msg.NumDelivered),
 		errPtr,
 		firstSeen,

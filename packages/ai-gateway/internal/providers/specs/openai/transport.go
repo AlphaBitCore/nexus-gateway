@@ -2,7 +2,9 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -106,4 +108,48 @@ func (t *Transport) Probe(ctx context.Context, target provcore.CallTarget) (*pro
 		return &provcore.ProbeResult{OK: true, LatencyMs: latency, Detail: "ok"}, nil
 	}
 	return &provcore.ProbeResult{OK: false, LatencyMs: latency, Detail: fmt.Sprintf("HTTP %d", resp.StatusCode)}, nil
+}
+
+// ListModels issues GET {BaseURL}/v1/models and returns the upstream model
+// ids from the standard OpenAI list envelope. Used by the provider-discover
+// admin path to pre-fill the create-provider wizard; only OpenAI-shaped
+// upstreams expose this, so this method lives on the OpenAI transport (shared
+// by all OpenAI-compatible specs) and not on the generic Transport interface.
+func (t *Transport) ListModels(ctx context.Context, target provcore.CallTarget) ([]string, error) {
+	base := strings.TrimRight(target.BaseURL, "/")
+	if base == "" {
+		return nil, fmt.Errorf("openai: BaseURL is empty")
+	}
+	ctx, cancel := context.WithTimeout(ctx, specutil.ProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	if target.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+target.APIKey)
+	}
+	resp, err := t.probe.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("openai: /v1/models returned HTTP %d", resp.StatusCode)
+	}
+	var parsed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("openai: decode /v1/models: %w", err)
+	}
+	ids := make([]string, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
 }

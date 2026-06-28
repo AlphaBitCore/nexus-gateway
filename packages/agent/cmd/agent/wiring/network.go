@@ -9,6 +9,7 @@ import (
 	auditqueue "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/observability/audit/queue"
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/platform"
 	policy "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/policy/core"
+	config "github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/schema"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 )
 
@@ -77,6 +78,37 @@ func LogPlatformStartup(plat platform.Platform, logger *slog.Logger) {
 	if r, ok := plat.(platform.InterceptionModeReporter); ok {
 		logger.Info("platform interception mode", "mode", string(r.InterceptionMode()))
 	}
+}
+
+// WireQUICFallback pushes the Hub-configured force-QUIC-TCP-fallback image
+// allowlist (config key forceQUICFallbackBundles) into the platform and keeps
+// it in sync on every config change. No-op for platforms that don't implement
+// ForceQUICFallbackController: macOS drives the same Hub key through its NE
+// file-based path, and Linux has no QUIC handling, so only Windows reacts.
+func WireQUICFallback(ctx context.Context, plat platform.Platform, cfgMgr *config.Manager, logger *slog.Logger) {
+	ctrl, ok := plat.(platform.ForceQUICFallbackController)
+	if !ok {
+		return
+	}
+	// Initial push from current config; the platform stores it and re-pushes
+	// once the kernel driver is up if it isn't already.
+	ctrl.SetForceQUICFallbackImages(cfgMgr.Get().ForceQUICFallbackBundles)
+
+	ch := cfgMgr.Subscribe()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+				ctrl.SetForceQUICFallbackImages(cfgMgr.Get().ForceQUICFallbackBundles)
+			}
+		}
+	}()
+	logger.Info("QUIC-fallback controller wired (Windows NexusWFP UDP/443 block)")
 }
 
 // StartPlatformInterception launches the platform interception accept loop

@@ -21,7 +21,7 @@ func newTestMetrics(t *testing.T) *Metrics {
 	return NewMetrics("nexustest", prometheus.NewRegistry())
 }
 
-// TestEngine_Reconcile_IncrMultiFailure_EmitsCounter verifies F-0155/F-0176:
+// TestEngine_Reconcile_IncrMultiFailure_EmitsCounter verifies:
 // when the post-success Reconcile cannot persist the increment (Redis down),
 // the reconcile-failed counter is emitted so the otherwise-silent counter drift
 // is alertable.
@@ -78,7 +78,7 @@ func TestEngine_Reconcile_Success_NoFailureCounter(t *testing.T) {
 	}
 }
 
-// TestEngine_Check_GetUsageError_EmitsFailOpenCounter verifies F-0156/F-0176:
+// TestEngine_Check_GetUsageError_EmitsFailOpenCounter verifies:
 // when the usage-cache read fails, Check fails open (allows) AND emits
 // quota_check_failopen_total{reason="redis_error"} so the unmetered window is
 // alertable instead of silent.
@@ -108,7 +108,7 @@ func TestEngine_Check_GetUsageError_EmitsFailOpenCounter(t *testing.T) {
 	}
 }
 
-// TestEngine_Check_NilVKMeta_AllowsWithoutPanic verifies F-0171: Check with a
+// TestEngine_Check_NilVKMeta_AllowsWithoutPanic verifies: Check with a
 // nil vkMeta must not panic (it dereferences vkMeta.OrganizationID downstream)
 // and returns Allow, mirroring VKLimit's nil guard. Also asserts the decision
 // counter records the allow.
@@ -127,7 +127,7 @@ func TestEngine_Check_NilVKMeta_AllowsWithoutPanic(t *testing.T) {
 	}
 }
 
-// TestEngine_Check_DecisionCounter_RecordsReject verifies F-0176: a reject
+// TestEngine_Check_DecisionCounter_RecordsReject verifies: a reject
 // decision increments quota_decision_total{action="reject"}.
 func TestEngine_Check_DecisionCounter_RecordsReject(t *testing.T) {
 	mr, err := miniredis.Run()
@@ -180,7 +180,7 @@ func TestEngine_NilMetrics_NoPanic(t *testing.T) {
 	}, ActualUsage{CostUSD: 0.05})
 }
 
-// TestPolicyCache_CostLimitRounds verifies F-0167: $0.29 must convert to 29
+// TestPolicyCache_CostLimitRounds verifies: $0.29 must convert to 29
 // cents, not 28 — math.Round, not truncation. Exercises both the policy and the
 // override conversion sites.
 func TestPolicyCache_CostLimitRounds(t *testing.T) {
@@ -214,7 +214,7 @@ func TestPolicyCache_CostLimitRounds(t *testing.T) {
 }
 
 // TestPolicyCache_ActivePeriodTypes verifies the distinct period-type
-// enumeration used to drive multi-period Backfill (F-0158), including the
+// enumeration used to drive multi-period Backfill, including the
 // empty/unknown -> monthly normalization.
 func TestPolicyCache_ActivePeriodTypes(t *testing.T) {
 	c := NewPolicyCache(nil, testLogger())
@@ -238,7 +238,7 @@ func TestPolicyCache_ActivePeriodTypes(t *testing.T) {
 	}
 }
 
-// TestUsageCache_Backfill_SeedsDailyAndWeekly verifies F-0158: Backfill seeds
+// TestUsageCache_Backfill_SeedsDailyAndWeekly verifies: Backfill seeds
 // the CURRENT daily and weekly period keys, not just the monthly one — so a
 // restart re-hydrates non-monthly counters instead of resetting them to 0.
 func TestUsageCache_Backfill_SeedsDailyAndWeekly(t *testing.T) {
@@ -292,7 +292,7 @@ func TestUsageCache_Backfill_SeedsDailyAndWeekly(t *testing.T) {
 }
 
 // TestUsageCache_Backfill_EmptyPeriodTypes_DefaultsMonthly verifies the
-// fallback: no period types supplied seeds monthly (preserves pre-F-0158
+// fallback: no period types supplied seeds monthly (preserves the prior
 // behaviour for a quota-less deployment).
 func TestUsageCache_Backfill_EmptyPeriodTypes_DefaultsMonthly(t *testing.T) {
 	mr, _ := miniredis.Run()

@@ -10,8 +10,8 @@ import (
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 )
 
-// TestLivePipeline_HoldBackFalse_StillRunsHooksAndPreHook (#102
-// binding) pins the contract that the LivePipeline default behaviour
+// TestLivePipeline_HoldBackFalse_StillRunsHooksAndPreHook
+// pins the contract that the LivePipeline default behaviour
 // when HoldBack=false is NOT equivalent to passthrough.
 //
 // passthrough = wire bytes copied through, NO compliance pipeline,

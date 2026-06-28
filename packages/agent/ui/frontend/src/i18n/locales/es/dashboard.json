@@ -475,7 +475,7 @@
     "certPath": "Archivo de certificado",
     "interceptionMode": {
       "label": "Modo de interceptación",
-      "fallbackWarning": "El controlador del kernel WinDivert no se cargó; usando el modo de respaldo de proxy del sistema. Algunas aplicaciones que ignoran el proxy del sistema pueden eludir el filtrado. Contacte con soporte."
+      "fallbackWarning": "El controlador del kernel NexusWFP no se cargó; usando el modo de respaldo de proxy del sistema. Algunas aplicaciones que ignoran el proxy del sistema pueden eludir el filtrado. Contacte con soporte."
     },
     "actions": {
       "title": "Acciones de recuperación",

@@ -2,7 +2,7 @@ package tlsbump
 
 import "testing"
 
-// TestWithStrictFailClosed_OptionPlumbing is the SEC-W3-01 plumbing regression:
+// TestWithStrictFailClosed_OptionPlumbing is the plumbing regression:
 // the compliance-proxy opts into strict fail-closed; the agent NE path (no
 // option) defaults to fail-open. The flag is threaded to BuildPipeline as
 // bo.strictFailClosed at the four tlsbump build sites; the build-time gate

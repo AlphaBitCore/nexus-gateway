@@ -16,8 +16,8 @@ package debug
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"

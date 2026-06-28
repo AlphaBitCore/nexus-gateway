@@ -225,8 +225,11 @@ const (
 )
 
 // parseFlowAuditEntries unpacks NexusFlowAuditEntry records (Common.h
-// in the driver). 64-byte densely-packed structs.
-const flowAuditEntrySize = 64
+// in the driver): 60-byte #pragma pack(1) structs. Field offsets below
+// MUST match Common.h exactly — timestampUs@0, processId@8, parentPid@12,
+// family@16, protocol@17, decision@18, reserved@19, srcAddr@20, srcPort@36,
+// droppedSinceLast@38, origDstAddr@40, origDstPort@56, reserved3@58 (total 60).
+const flowAuditEntrySize = 60
 
 func parseFlowAuditEntries(buf []byte) []FlowAuditEvent {
 	count := len(buf) / flowAuditEntrySize

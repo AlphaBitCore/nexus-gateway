@@ -83,8 +83,8 @@ func TestFilterResponseHeaders_NilAllowlistFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// TestForwardHeaders_DropsAuthorizationFromClient confirms FR-FH7 +
-// FR-FH4: even when something tries to put authorization on the
+// TestForwardHeaders_DropsAuthorizationFromClient confirms that
+// even when something tries to put authorization on the
 // request side (which the YAML validator rejects, but a hostile
 // client may still send), forwardHeaders drops it before
 // Transport.ApplyAuth re-applies the upstream credential.

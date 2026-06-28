@@ -145,7 +145,7 @@ func TestSelect_StickyKeyVariesAcrossKeys(t *testing.T) {
 func TestSelect_StickyExcludesOpenEntry(t *testing.T) {
 	// A sticky key that hashed to the OPEN entry pre-filter MUST be routed
 	// to a different eligible entry — never returned an OPEN one. This is
-	// the structural guard for the v1 incident "VK pinned to dead cred".
+	// the structural guard against a VK being pinned to a dead cred.
 	pool := []Entry{
 		{ID: "open-1", Weight: 5, Circuit: credstate.CircuitOpen},
 		{ID: "closed-1", Weight: 5, Circuit: ""},

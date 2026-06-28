@@ -318,11 +318,11 @@ func TestMapLevel_AllBranches(t *testing.T) {
 	}
 }
 
-// TestSlogSink_WithAttrsClonesAndCarriesAttrs asserts the post-PR-G
+// TestSlogSink_WithAttrsClonesAndCarriesAttrs asserts the
 // contract: WithAttrs with a non-empty list returns a CLONE that prepends
-// the attrs onto every record at Handle time. The previous "no-op"
-// behaviour silently dropped attrs added via slog.Logger.With(...), which
-// is exactly what producers need to stamp trace_id once at request entry.
+// the attrs onto every record at Handle time, so attrs added via
+// slog.Logger.With(...) are carried — exactly what producers need to stamp
+// trace_id once at request entry.
 // An empty-attrs call still returns the same handler (cheap fast-path).
 // WithGroup remains a no-op because DiagEvent.Attrs is a flat map.
 func TestSlogSink_WithAttrsClonesAndCarriesAttrs(t *testing.T) {

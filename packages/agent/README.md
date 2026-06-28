@@ -2,7 +2,7 @@
 
 Cross-platform desktop agent. Intercepts local network traffic at the
 host level (macOS Network Extension, Linux nftables/iptables redirect,
-Windows WinDivert), runs the same compliance hook pipeline as the
+Windows NexusWFP signed WFP callout driver), runs the same compliance hook pipeline as the
 Compliance Proxy on the device itself, forwards approved traffic
 directly to the provider's origin, and uploads `audit_event` rows to
 Nexus Hub. The agent is a *peer* of the AI Gateway and the Compliance
@@ -16,7 +16,7 @@ Three pillars under `packages/agent/`:
 |--------|------|----------|
 | Core (cross-platform Go) | `internal/` | Hook engine, audit pipeline, config sync, enrollment, killswitch, relay, intercept dispatcher — the pure-Go business logic. |
 | UI (desktop dashboard) | `ui/` | Wails app — React frontend (`ui/frontend/`) + Go bindings. The user-visible status / policy / events panel that lives in the dock or system tray. |
-| Platform native | `platform/{darwin,windows,linux}/` | Per-OS native code: macOS Network Extension (Swift), Windows WinDivert glue, Linux netfilter. Only built when targeting that OS. |
+| Platform native | `platform/{darwin,windows,linux}/` | Per-OS native code: macOS Network Extension (Swift), Windows NexusWFP signed WFP callout driver, Linux netfilter. Only built when targeting that OS. |
 
 The CLI binary entry points live at the package root (`cmd/agent/`,
 `cmd/agent-tray/`) per Go convention.
@@ -59,7 +59,7 @@ make agent-test               # go test -race -count=1 ./...
   service overview, process lifecycle, and the subsystem index into the
   per-concern agent docs.
 - `docs/developers/architecture/services/agent/agent-macos-platform-architecture.md` — Swift NE + tray.
-- `docs/developers/architecture/services/agent/agent-windows-platform-architecture.md` — WinDivert glue.
+- `docs/developers/architecture/agent-windows-wfp-driver.md` — NexusWFP signed WFP callout driver.
 - `docs/developers/architecture/services/agent/agent-linux-platform-architecture.md` — netfilter.
 - `docs/developers/architecture/services/agent/agent-ne-fail-open-architecture.md` — the safety-critical
   fail-open binding rules for the macOS NE.

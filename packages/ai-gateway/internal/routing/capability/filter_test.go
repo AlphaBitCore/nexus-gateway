@@ -178,7 +178,7 @@ func TestCompatible_EncodingFormatMismatch(t *testing.T) {
 	}
 }
 
-// TestCompatible_EncodingFormatDefaultIsFloatOnly (F-0215) — a model that omits
+// TestCompatible_EncodingFormatDefaultIsFloatOnly — a model that omits
 // SupportedEncodingFormats defaults to ["float"] only. base64 must be explicitly
 // opted-in because only some provider codecs honor it, so a base64 request
 // against a descriptor-omitting model is rejected here rather than silently
@@ -206,7 +206,7 @@ func TestCompatible_EncodingFormatDefaultIsFloatOnly(t *testing.T) {
 	}
 }
 
-// TestEffectiveEncodingFormats_Default (F-0215) — direct assertion that the
+// TestEffectiveEncodingFormats_Default — direct assertion that the
 // default produced when the descriptor omits the field is exactly ["float"].
 func TestEffectiveEncodingFormats_Default(t *testing.T) {
 	got := effectiveEncodingFormats(&EmbeddingsCapability{})
@@ -215,7 +215,7 @@ func TestEffectiveEncodingFormats_Default(t *testing.T) {
 	}
 }
 
-// TestEffectiveEncodingFormats_ExplicitOptIn (F-0215) — an explicit
+// TestEffectiveEncodingFormats_ExplicitOptIn — an explicit
 // ["float","base64"] descriptor is honored verbatim (OpenAI-style opt-in).
 func TestEffectiveEncodingFormats_ExplicitOptIn(t *testing.T) {
 	emb := &EmbeddingsCapability{SupportedEncodingFormats: []string{"float", "base64"}}

@@ -34,7 +34,7 @@ func TestNewPIIRedactor(t *testing.T) {
 	}
 }
 
-// TestRedactToolOutput_ScrubsBodyPII is the AC-2 assertion: a traffic body
+// TestRedactToolOutput_ScrubsBodyPII asserts a traffic body
 // carrying PII (email/SSN) must arrive redacted in the tool result before it
 // enters the prompt, and the pii_to_prompt_total counter must move.
 func TestRedactToolOutput_ScrubsBodyPII(t *testing.T) {
@@ -113,7 +113,7 @@ func TestRedactToolOutput_PassthroughWhenClean(t *testing.T) {
 	}
 }
 
-// TestRedactToolOutput_ScrubsMintedSecrets is the F-0290 assertion: a mint /
+// TestRedactToolOutput_ScrubsMintedSecrets is the assertion: a mint /
 // rotate / regenerate response body that echoes a freshly-minted credential in
 // plaintext must arrive with the secret replaced by [redacted-secret] before it
 // enters the prompt — the PiiDetector does not know these formats, so this is the

@@ -1,4 +1,4 @@
-// Service-level tests for the atomic single-use consume flow (F-0204).
+// Service-level tests for the atomic single-use consume flow.
 package enrollment
 
 import (

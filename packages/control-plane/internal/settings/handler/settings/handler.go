@@ -7,8 +7,8 @@ package settings
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 
@@ -125,7 +125,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group, iamMW func(action string) echo.M
 	g.GET("/settings/streaming-compliance", h.GetStreamingComplianceConfig, iamMW(iam.ResourceSettings.Action(iam.VerbRead)))
 	g.PUT("/settings/streaming-compliance", h.UpdateStreamingComplianceConfig, iamMW(iam.ResourceSettings.Action(iam.VerbUpdate)))
 
-	// Note: /instances and ReadinessCheck are registered in
+	// /instances and ReadinessCheck are registered in
 	// infrastructure/infra/readiness.go via infraHandler.RegisterReadinessRoutes.
 	// The public /ready endpoint is registered in cmd/control-plane/main.go.
 }

@@ -255,7 +255,7 @@ func TestDecodeResponse_embeddings_singleEmbedContent(t *testing.T) {
 }
 
 func TestDecodeResponse_embeddings_modelNotHardcodedEmpty(t *testing.T) {
-	// F-0217: the decoder must NOT stamp an empty model string. The Gemini
+	// The decoder must NOT stamp an empty model string. The Gemini
 	// embed wire response carries no model and the stateless decode interface
 	// has no CallTarget, so model is left absent here and back-filled with the
 	// requested ProviderModelID by the dispatcher (spec_adapter.go).
@@ -352,7 +352,7 @@ func TestDecodeResponse_embeddings_noUsageMetadata_zeroUsage(t *testing.T) {
 	}
 }
 
-// TestDecodeResponse_embeddings_countMismatch_rejected pins F-0220: a
+// TestDecodeResponse_embeddings_countMismatch_rejected pins the guard: a
 // batch response with fewer vectors than the request `requests[]` must fail
 // the decode (→ 502) instead of returning misaligned vectors.
 func TestDecodeResponse_embeddings_countMismatch_rejected(t *testing.T) {
@@ -370,7 +370,7 @@ func TestDecodeResponse_embeddings_countMismatch_rejected(t *testing.T) {
 	}
 }
 
-// TestDecodeResponse_embeddings_countMatch_passes is the F-0220 positive
+// TestDecodeResponse_embeddings_countMatch_passes is the positive
 // arm: matching batch counts decode cleanly.
 func TestDecodeResponse_embeddings_countMatch_passes(t *testing.T) {
 	var c gemcodec.Codec
@@ -390,7 +390,7 @@ func TestDecodeResponse_embeddings_countMatch_passes(t *testing.T) {
 }
 
 // TestDecodeResponse_embeddings_estimatesPromptTokensFromRequest pins
-// F-0053: the Gemini embedding wire returns no usage, so the codec
+// the contract: the Gemini embedding wire returns no usage, so the codec
 // estimates prompt tokens (chars/4) from the request text in the
 // DecodeContext. This is the former Gemini-format branch that lived in the
 // generic dispatcher, now owned by the codec that holds the request.
@@ -413,7 +413,7 @@ func TestDecodeResponse_embeddings_estimatesPromptTokensFromRequest(t *testing.T
 }
 
 // TestDecodeResponse_embeddings_estimatesFromBatchRequest covers the batch
-// (`requests[]`) text-sum branch of the F-0053 estimate.
+// (`requests[]`) text-sum branch of the estimate.
 func TestDecodeResponse_embeddings_estimatesFromBatchRequest(t *testing.T) {
 	var c gemcodec.Codec
 	reqBody := []byte(`{"requests":[
@@ -432,7 +432,7 @@ func TestDecodeResponse_embeddings_estimatesFromBatchRequest(t *testing.T) {
 }
 
 // TestDecodeResponse_embeddings_gemini001_singleEmbed_promptTokensPopulated is
-// the Bug-F-0053 traffic_event guard for gemini-embedding-001 specifically.
+// the traffic_event guard for gemini-embedding-001 specifically.
 // Ground truth (verified against live prod + Google's API behaviour + litellm
 // #24339): the gemini-embedding-001 :embedContent response carries ONLY the
 // vector — no usageMetadata / token count. The decoder must therefore recover a

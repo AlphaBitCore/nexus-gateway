@@ -266,7 +266,7 @@ func TestSingleflight_DifferentInputsDontCoalesce(t *testing.T) {
 	}
 }
 
-// TestSingleflight_JoinersDoNotTouchBreaker is the F-0231(d) regression guard.
+// TestSingleflight_JoinersDoNotTouchBreaker is the regression guard.
 // A failing leader with N identical-input joiners must leave the breaker with
 // exactly ONE recorded failure: the leader's. The prior bug had each joiner
 // call RecordSuccess() before the leader resolved, which reset failureCount to

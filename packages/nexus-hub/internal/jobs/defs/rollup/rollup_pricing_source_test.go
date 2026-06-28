@@ -1,5 +1,5 @@
 // rollup_pricing_source_test.go pins the rollup side of the single-canonical-
-// price-source invariant (audit F-0163).
+// price-source invariant.
 //
 // The AI Gateway computes a request's cost exactly once, from the Model table,
 // cache-aware, and stamps it onto traffic_event.estimated_cost_usd. The rollup

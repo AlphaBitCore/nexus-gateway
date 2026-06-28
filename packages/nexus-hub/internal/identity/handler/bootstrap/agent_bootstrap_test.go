@@ -1,8 +1,8 @@
 package bootstrap
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -175,7 +175,7 @@ func TestAgentBootstrapHandler_DBError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d; want 500 on DB error", rec.Code)
 	}
-	// F-0319/F-0320: canonical {error:{message,type,code}} nested envelope.
+	// Canonical {error:{message,type,code}} nested envelope.
 	var resp map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("error body not JSON: %s", rec.Body.String())

@@ -3,7 +3,7 @@ package runtimeintrospect
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strings"

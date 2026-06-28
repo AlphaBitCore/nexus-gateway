@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/redis/go-redis/v9"

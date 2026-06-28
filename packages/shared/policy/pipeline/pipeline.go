@@ -9,19 +9,9 @@ import (
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
-
-// textRedetector is the optional hook capability behind the storage-time
-// redaction retry. A hook that produces byte-addressed redact spans from
-// compiled patterns (pii-detector) implements it so the pipeline can
-// export pattern re-scanning to the audit writers without exposing the
-// patterns themselves. Hooks whose spans come from elsewhere (remote AI
-// guard suggestions) cannot re-detect and simply do not implement it.
-type textRedetector interface {
-	RedetectText(text string, ruleIDs []string) []redact.Match
-}
 
 // applyModifiedContentToNormalized walks the first text fragments of the
 // payload and replaces them with the hook-produced modified text, in order.
@@ -90,6 +80,12 @@ type Pipeline struct {
 	allowModify        bool // when true, MODIFY decisions pass through (for ai-gateway)
 	clearSoftOnApprove bool // when true, APPROVE clears pending BLOCK_SOFT (for ai-gateway)
 	logger             *slog.Logger
+
+	// unionPrescan, when non-nil, is a single matcher folding every content
+	// hook's anchor-stripped prefilter (built+cached per resolved hook set by the
+	// PolicyResolver). MayMatchRawContent scans it ONCE instead of looping one
+	// cgo scan per hook. nil => use the per-hook loop. See unionprescan.go.
+	unionPrescan matcher.Matcher
 }
 
 // SetAllowModify enables MODIFY decision passthrough (for ai-gateway).
@@ -128,6 +124,48 @@ func NewPipeline(hooks []boundHook, perHookTimeout, totalTimeout time.Duration, 
 	}
 }
 
+// MayMatchRawContent reports whether any content-scanning hook in this pipeline
+// could match the raw request body — a cheap prefilter the caller uses to decide
+// whether the expensive structured extraction can be skipped.
+//
+// It returns false ONLY when every hook is accounted for AND none can match:
+//   - a hook implementing core.RawContentPrescanner with ScansContent()==true
+//     contributes its MayMatchRaw(body) verdict (an anchor-stripped superset
+//     scan over the raw bytes — see the interface's soundness contract);
+//   - a content-independent hook (ScansContent()==false: rate limit, IP, size)
+//     never forces extraction;
+//   - ANY hook that does not implement the interface forces true, because the
+//     caller cannot prove that hook would find nothing without extracting.
+//
+// A false result is only safe to act on for bodies with no JSON backslash
+// escape (so the extracted content appears verbatim in the raw bytes); enforcing
+// that precondition is the caller's responsibility.
+func (p *Pipeline) MayMatchRawContent(body []byte) bool {
+	// Fast path: one shared scan over the folded prefilter. The union is attached
+	// ONLY when it provably represents every hook this loop would consult — every
+	// hook is a RawContentPrescanner (no unaccounted hook forcing true) and every
+	// content-scanning hook contributed its anchor-stripped patterns
+	// (buildUnionPrescan returns ok=false otherwise). So union-no-match is
+	// equivalent to the loop finding no match: same skip-extraction decision, one
+	// cgo scan instead of one per hook.
+	if p.unionPrescan != nil {
+		if len(body) == 0 {
+			return false
+		}
+		return len(p.unionPrescan.Scan([]string{bytesView(body)}, true)) > 0
+	}
+	for i := range p.hooks {
+		pre, ok := p.hooks[i].hook.(core.RawContentPrescanner)
+		if !ok {
+			return true
+		}
+		if pre.ScansContent() && pre.MayMatchRaw(body) {
+			return true
+		}
+	}
+	return false
+}
+
 // Execute runs all hooks and returns the aggregated result. If parallel=true,
 // hooks run concurrently; otherwise they run sequentially with short-circuit
 // on REJECT_HARD.
@@ -148,39 +186,8 @@ func (p *Pipeline) Execute(ctx context.Context, input *core.HookInput) *core.Com
 	}
 
 	merged := p.mergeResults(results)
-	// Export the executed hooks' pattern re-scanning capability alongside
-	// the spans: the audit writers run at a point where the hook instances
-	// (and their compiled patterns) are out of reach, and storage-time
-	// redaction needs them when a span's hook-time address does not
-	// resolve on the storage-time payload.
-	if len(merged.TransformSpans) > 0 {
-		merged.Redetect = p.redetector()
-	}
 	PipelineDecisionTotal.WithLabelValues(string(merged.Decision)).Inc()
 	return merged
-}
-
-// redetector fans RedetectText out across every bound hook that supports
-// it and concatenates the matches. Returns nil when no bound hook can
-// re-detect — the audit writer then degrades unresolved spans to the
-// diagnosed drop placeholder.
-func (p *Pipeline) redetector() redact.Redetector {
-	var capable []textRedetector
-	for i := range p.hooks {
-		if r, ok := p.hooks[i].hook.(textRedetector); ok {
-			capable = append(capable, r)
-		}
-	}
-	if len(capable) == 0 {
-		return nil
-	}
-	return func(text string, ruleIDs []string) []redact.Match {
-		var out []redact.Match
-		for _, r := range capable {
-			out = append(out, r.RedetectText(text, ruleIDs)...)
-		}
-		return out
-	}
 }
 
 // executeParallel runs all hooks concurrently and collects results.
@@ -412,15 +419,13 @@ func (p *Pipeline) executeOneHook(ctx context.Context, bh *boundHook, input *cor
 	// MODIFY passes through unconditionally. The downstream caller applies
 	// TransformSpans via TrafficAdapter.RewriteRequestBody; protocols that
 	// cannot reverse-encode return ErrRewriteUnsupported, which the caller
-	// maps to storage-only redact with ReasonRedactInflightUnsupported.
+	// maps to redacted-storage with ReasonRedactInflightUnsupported.
 
-	// Stamp the hook's onMatch.storageAction onto the result when the
-	// hook matched (non-Approve decision). The audit writer aggregates
-	// the strictest across HookResults to drive storage policy.
-	if result.Decision != core.Approve && result.StorageAction == "" {
-		if onMatch, err := core.ParseOnMatch(bh.config.Config); err == nil {
-			result.StorageAction = onMatch.StorageAction
-		}
+	// Stamp the hook's action from its decision when the hook matched but did
+	// not set one explicitly (rulepack/webhook set it; the simple detectors
+	// rely on this fallback). The pipeline aggregates the strictest action.
+	if result.Decision != core.Approve && result.Action == "" {
+		result.Action = core.ActionFromDecision(result.Decision)
 	}
 
 	HookDecisionTotal.WithLabelValues(hookName, string(result.Decision)).Inc()
@@ -480,7 +485,6 @@ func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipel
 	var modifyReason, modifyReasonCode string
 	var lastModifiedContent []core.ContentBlock
 	var allSpans []normalize.TransformSpan
-	var storage core.StorageAction
 
 	for i := range results {
 		r := &results[i]
@@ -491,10 +495,6 @@ func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipel
 		if len(r.TransformSpans) > 0 {
 			allSpans = append(allSpans, r.TransformSpans...)
 		}
-		// Aggregate strictest storage policy across hooks that matched.
-		if r.StorageAction != "" {
-			storage = core.StrictestStorageAction(storage, r.StorageAction)
-		}
 
 		switch r.Decision {
 		case core.RejectHard:
@@ -503,7 +503,7 @@ func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipel
 			pr.ReasonCode = r.ReasonCode
 			pr.BlockingRule = r.BlockingRule
 			pr.TransformSpans = allSpans
-			pr.StorageAction = storage
+			pr.Action = core.ActionFromDecision(core.RejectHard)
 			return pr
 		case core.BlockSoft:
 			hasSoftReject = true
@@ -535,7 +535,6 @@ func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipel
 	}
 
 	pr.TransformSpans = allSpans
-	pr.StorageAction = storage
 
 	if hasSoftReject {
 		pr.Decision = core.BlockSoft
@@ -556,5 +555,6 @@ func (p *Pipeline) mergeResults(results []core.HookResult) *core.CompliancePipel
 		}
 		pr.ModifiedContent = lastModifiedContent
 	}
+	pr.Action = core.ActionFromDecision(pr.Decision)
 	return pr
 }

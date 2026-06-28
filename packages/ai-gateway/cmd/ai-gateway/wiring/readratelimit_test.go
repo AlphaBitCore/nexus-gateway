@@ -39,7 +39,7 @@ func okNext(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("served"))
 }
 
-// F-0047: a VK over its RPM cap gets 429 and never reaches the inner handler.
+// A VK over its RPM cap gets 429 and never reaches the inner handler.
 func TestVKReadRateLimit_Throttles(t *testing.T) {
 	auth := &fakeReadAuth{meta: &vkauth.VKMeta{ID: "vk-1", RateLimitRpm: intPtr(60)}}
 	lim := &fakeReadLimiter{allow: false, retryAfter: 7}
@@ -66,7 +66,7 @@ func TestVKReadRateLimit_Throttles(t *testing.T) {
 	}
 }
 
-// F-0047: a VK under its cap passes through and the inner handler runs.
+// A VK under its cap passes through and the inner handler runs.
 func TestVKReadRateLimit_AllowsUnderCap(t *testing.T) {
 	auth := &fakeReadAuth{meta: &vkauth.VKMeta{ID: "vk-2", RateLimitRpm: intPtr(100)}}
 	lim := &fakeReadLimiter{allow: true}

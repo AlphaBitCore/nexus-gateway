@@ -55,7 +55,9 @@ log:
   # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
   # boot default only. logging.SetLevel mutates the slog.LevelVar live on
   # shadow push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
-  level: "debug"
+  # warn by default: debug is high-volume and grows the log file fast. Raise to
+  # debug per session (or via the Hub log_level shadow) when actively debugging.
+  level: "warn"
   format: "text"
   file: "logs/control-plane.log"
   stackOnError: true

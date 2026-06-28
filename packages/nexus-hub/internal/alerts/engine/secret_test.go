@@ -119,7 +119,7 @@ func TestNewChannelSecretCipher_BadKeyLength(t *testing.T) {
 	}
 }
 
-// TestChannelSecretCipherFromKey pins the SEC-W2-03 Layer C contract: the cipher
+// TestChannelSecretCipherFromKey pins the custody Layer C contract: the cipher
 // is built from the custody-RESOLVED plaintext the caller passes (not os.Getenv
 // at point-of-use), so under provider "command" Hub keys the alert cipher with
 // the unwrapped key — never the wrapped blob, which would fail the 64-hex check.
@@ -141,16 +141,15 @@ func TestChannelSecretCipherFromKey(t *testing.T) {
 		}
 	})
 	t.Run("valid key constructs cipher", func(t *testing.T) {
-		// Non-degenerate 32-byte key (SEC-M2-02: ChannelSecretCipherFromKey now
-		// rejects all-zero / single-repeat / low-distinct keys).
+		// Non-degenerate 32-byte key: ChannelSecretCipherFromKey rejects
+		// all-zero / single-repeat / low-distinct keys.
 		c, err := ChannelSecretCipherFromKey("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
 		if err != nil || c == nil {
 			t.Fatalf("want cipher; got (%v,%v)", c, err)
 		}
 	})
 	t.Run("weak key rejected", func(t *testing.T) {
-		// SEC-M2-02 regression: an all-same-byte key (valid hex, right length)
-		// must fail closed.
+		// An all-same-byte key (valid hex, right length) must fail closed.
 		if _, err := ChannelSecretCipherFromKey(strings.Repeat("ab", 32)); err == nil {
 			t.Fatal("expected weak-key rejection for an all-0xab master key")
 		}
@@ -191,8 +190,8 @@ func TestEncryptDecryptConfig_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestEncryptConfig_WebhookURLSealed verifies F-0247: a Slack incoming-webhook
-// URL (secret token in the path) is encrypted at rest and restored on decrypt.
+// TestEncryptConfig_WebhookURLSealed verifies a Slack incoming-webhook URL
+// (secret token in the path) is encrypted at rest and restored on decrypt.
 func TestEncryptConfig_WebhookURLSealed(t *testing.T) {
 	c := newTestCipher(t)
 	const url = "https://hooks.slack.com/services/T000/B000/Xsecret123"

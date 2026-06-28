@@ -3,8 +3,8 @@ package shadow
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 )
 

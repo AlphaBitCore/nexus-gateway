@@ -1,11 +1,13 @@
 package alerteval
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +27,11 @@ const (
 	// to MQ under. Independent from hub-db-writer (TrafficEventWriter,
 	// AdminAuditWriter); fan-out is the MQ driver's job.
 	ConsumerGroup = "hub-alerting"
+
+	// decodeFailLogEvery throttles the per-record decode-failure WARN: one line
+	// per this many drops. At full traffic an un-throttled log floods the disk
+	// the audit drain writes to.
+	decodeFailLogEvery = 1000
 )
 
 // trafficSubjects maps EventSource → MQ subject string.
@@ -86,7 +93,19 @@ type Engine struct {
 	aggregators map[string]Aggregator
 	runtimes    map[string]*Runtime
 
+	// dispatchTable is an immutable, source-masked snapshot of (aggregator,
+	// runtime) pairs rebuilt under mu whenever Register mutates the maps. The
+	// per-event hot path (dispatchEvent) loads it lock-free — no per-event slice
+	// snapshot, no Sources() slice, no runtimes map lookup. Aggregators are
+	// registered before Start and immutable thereafter, so this is set-once in
+	// practice; the atomic keeps it race-free regardless.
+	dispatchTable atomic.Pointer[[]dispatchEntry]
+
 	mqStarted bool
+
+	// decodeFails counts records that failed to decode; the log for them is
+	// throttled to decodeFailLogEvery (see warnDecodeFail).
+	decodeFails atomic.Uint64
 }
 
 // NewEngine constructs an Engine. Aggregators are added via Register before
@@ -136,6 +155,7 @@ func (e *Engine) Register(agg Aggregator) {
 	defer e.mu.Unlock()
 	e.aggregators[agg.RuleID()] = agg
 	e.runtimes[agg.RuleID()] = NewRuntime(agg.RuleID(), e.cfg.StartTime)
+	e.rebuildDispatchLocked()
 }
 
 // scheduler.Job implementation — see packages/nexus-hub/internal/jobs/scheduler/scheduler.go
@@ -250,34 +270,27 @@ func (e *Engine) runConsumeLoop(subject string) {
 	}
 }
 
-// handleMQMessage processes one MQ event. Returning nil signals the
-// shared/mq consumer to ack the message; returning ErrDeferAck would
-// hand ack ownership back to us. Pre-fix the handler called
-// `defer msg.Ack()` which double-acked every message — the natsmq
-// consumer still autoacks on nil, then JetStream rejected our second
-// ack with "nats: message was already acknowledged" and that warning
-// flooded the Hub log under load. Now we simply return nil and let
-// the consumer ack once.
-func (e *Engine) handleMQMessage(subject string, msg *mq.Message) error {
-	source, ok := subjectToSource(subject)
-	if !ok {
+// splitFrameLines splits an NDJSON frame into its record lines, skipping empty
+// segments (trailing delimiter, blank lines). A single-record message (no
+// interior newline) yields exactly one line, so old per-record producers and
+// new batched producers both flow through the same path. Records are compact
+// single-line JSON (interior newlines escaped inside JSON strings), so a raw
+// 0x0A only appears as a frame delimiter. Mirrors the db-writer's splitFrame
+// in internal/observability/consumer so alerting and persistence agree on frame
+// boundaries.
+func splitFrameLines(data []byte) [][]byte {
+	if len(data) == 0 {
 		return nil
 	}
-
-	evt, err := decodeEvent(source, msg.Data)
-	if err != nil {
-		e.logger.Warn("decode failed; dropping message", "subject", subject, "error", err)
-		return nil
-	}
-
-	for _, agg := range e.snapshotAggregators() {
-		if !aggMatchesSource(agg, source) {
+	parts := bytes.Split(data, []byte{'\n'})
+	out := parts[:0]
+	for _, p := range parts {
+		if len(bytes.TrimSpace(p)) == 0 {
 			continue
 		}
-		rt := e.runtimes[agg.RuleID()]
-		agg.OnEvent(rt, evt)
+		out = append(out, p)
 	}
-	return nil
+	return out
 }
 
 func (e *Engine) handleDecision(ctx context.Context, rule alerting.AlertRule, rt *Runtime, d Decision, now time.Time) {
@@ -372,7 +385,7 @@ func decodeEvent(source EventSource, data []byte) (*Event, error) {
 		}
 		return &Event{Kind: EventAudit, Source: source, Timestamp: msg.Timestamp, Audit: &msg}, nil
 	}
-	var msg consumer.TrafficEventMessage
+	var msg consumer.AlertView
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return nil, err
 	}

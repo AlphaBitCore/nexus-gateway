@@ -1,9 +1,21 @@
 package estimator
 
 import (
+	"bytes"
+
 	"github.com/tidwall/gjson"
 
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+)
+
+// reasoningMarker / thinkingMarker are the substrings every reasoning-intent key
+// shares: the OpenAI keys carry "reasoning" (reasoning_effort / reasoning.effort)
+// and the Anthropic + Gemini keys carry "thinking" (thinking.budget_tokens /
+// thinking_config.thinking_budget). A body containing NEITHER cannot carry any
+// reasoning signal, so the parse below is skipped — see ReadReasoningSignal.
+var (
+	reasoningMarker = []byte("reasoning")
+	thinkingMarker  = []byte("thinking")
 )
 
 // ReasoningSignal is the normalized reasoning-effort signal extracted
@@ -24,6 +36,16 @@ type ReasoningSignal struct {
 // medium/high). When a numeric budget is given (Anthropic /
 // Gemini), it's bucketed: <2000=low, 2000-7999=medium, ≥8000=high.
 func ReadReasoningSignal(rawBody []byte, ingressFormat provcore.Format) ReasoningSignal {
+	// Fast prefilter: every reasoning-intent key carries "reasoning" or "thinking"
+	// as a substring (see the marker vars). A body with neither cannot carry a
+	// signal, so skip the gjson parse entirely — gjson.ParseBytes copies the whole
+	// ~50 KB body to a string (the dominant per-request parse cost), and the common
+	// chat request has no reasoning intent, so this avoids that copy on the hot path.
+	// A false positive (the word appears in user content) merely falls through to the
+	// authoritative key lookups below, which return empty when the keys are absent.
+	if !bytes.Contains(rawBody, reasoningMarker) && !bytes.Contains(rawBody, thinkingMarker) {
+		return ReasoningSignal{}
+	}
 	root := gjson.ParseBytes(rawBody)
 
 	// 1. OpenAI canonical reasoning_effort string.

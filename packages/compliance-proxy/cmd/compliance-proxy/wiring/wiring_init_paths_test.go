@@ -242,7 +242,7 @@ func TestPushStartupDiagEventSync_WithStartedClient(t *testing.T) {
 // TestPushStartupDiagEventSync_WithNilClientWouldPanic verifies the nil guard
 // in PushStartupDiagEvent is the only protection — pushStartupDiagEventSync
 // itself does NOT guard against nil; the guard lives in the exported function.
-// We just exercise the sync path with the shared non-nil client.
+// Exercise the sync path with the shared non-nil client.
 func TestPushStartupDiagEventSync_CompletesWithoutError(t *testing.T) {
 	// Use a very short timeout context so the push times out fast.
 	done := make(chan struct{})
@@ -517,7 +517,7 @@ func TestInitRuntimeAPIServer_HealthRunClosure_RedisAvailable(t *testing.T) {
 
 // TestInitRuntimeAPIServer_HealthRunEndpoint_InvokesHealthRunClosure exercises
 // the Health.Run closure by hitting /runtime/health with a valid bearer token.
-// /runtime/health is auth-gated (F-0070/F-0142: fail-closed); the test sets
+// /runtime/health is auth-gated (fail-closed); the test sets
 // APIToken so the middleware passes the request through to the handler.
 func TestInitRuntimeAPIServer_HealthRunEndpoint_InvokesHealthRunClosure(t *testing.T) {
 	s, err := miniredis.Run()

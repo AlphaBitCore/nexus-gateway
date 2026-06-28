@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -500,6 +500,12 @@ func cmdRun(args []string) int {
 		AttestationSigner:    attestationSigner,
 		UpstreamProxy:        cfg.UpstreamProxy,
 	})
+
+	// Keep the platform's QUIC-force-TCP-fallback allowlist in sync with the
+	// Hub-pushed forceQUICFallbackBundles config (Windows NexusWFP only; no-op
+	// elsewhere). Wired before Start so the initial list is stored before the
+	// driver comes up.
+	wiring.WireQUICFallback(ctx, plat, cfgMgr, logger)
 
 	wiring.StartPlatformInterception(ctx, plat, connHandler, recoveryCfg)
 	defer plat.Stop() //nolint:errcheck
@@ -1075,11 +1081,11 @@ func buildDrainUpload(
 				if err != nil {
 					return fmt.Errorf("marshal audit events: %w", err)
 				}
-				// 2026-05-24: switched from UploadAuditWithRetry (POSTs to
-				// /things/audit, cp-shape envelope, silently drops agent
-				// PayloadRequest/Response fields → 100% body NULL in DB)
-				// to UploadAgentAuditWithRetry (POSTs raw array to
-				// /things/agent-audit handler that knows AgentAuditEvent).
+				// UploadAgentAuditWithRetry POSTs the raw array to the
+				// /things/agent-audit handler that knows AgentAuditEvent.
+				// The cp-shape /things/audit envelope silently drops agent
+				// PayloadRequest/Response fields (body lands NULL in DB),
+				// so it must not be used for agent audit uploads.
 				if _, err = tc.UploadAgentAuditWithRetry(batchCtx, data, 3); err != nil {
 					return err
 				}

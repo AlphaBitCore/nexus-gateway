@@ -3,8 +3,8 @@ package assistant
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"strings"
 	"testing"

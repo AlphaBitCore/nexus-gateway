@@ -148,21 +148,6 @@ func TestExtractRequest_LegacySydneyShape_PreviousMessages(t *testing.T) {
 
 // Defensive paths
 
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{
-		"messages":[{"author":"user","text":"hi","contentType":"Text"}],
-		"x_future_field":{"sensitive":"data"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/c/api/chat")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if x, ok := nc.Extra["x_future_field"]; !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_future_field", nc.Extra)
-	}
-}
-
 func TestExtractRequest_UnknownShape(t *testing.T) {
 	body := []byte(`{"foo":"bar"}`)
 	a := &Adapter{}

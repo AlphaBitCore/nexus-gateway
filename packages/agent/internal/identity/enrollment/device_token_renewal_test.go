@@ -1,7 +1,7 @@
 package enrollment
 
 // device_token_renewal_test.go covers the agent-side device-token rotation
-// lifecycle (F-0202): the renewal-window check, the expiry read, and the
+// lifecycle: the renewal-window check, the expiry read, and the
 // rotate-and-persist path that invalidates the prior token.
 
 import (

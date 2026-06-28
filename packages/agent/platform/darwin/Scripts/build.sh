@@ -64,24 +64,60 @@ cd "$REPO_ROOT/packages/agent"
 
 HOST_ARCH="$(uname -m)"  # arm64 or x86_64
 
+# --- Optional: Vectorscan rule-pack engine (cgo, statically linked) ----------
+# Off by default — the agent ships the pure-Go RE2 engine until the save-time
+# rule linter (task #12) gates semantically divergent user rules. Enable with
+# NEXUS_AGENT_VECTORSCAN=1, which requires LIBHS_DIR to contain:
+#     $LIBHS_DIR/include/hs/hs.h
+#     $LIBHS_DIR/lib/<goarch>/libhs.a   (goarch ∈ {arm64, amd64} for universal)
+# The archive is linked statically (Vectorscan is C++, hence -lc++), so the
+# resulting universal Mach-O carries no libhs.dylib runtime dependency and stays
+# notarizable — the same model the agent already uses for go-sqlcipher.
+AGENT_GO_TAGS=""
+if [ "${NEXUS_AGENT_VECTORSCAN:-}" = "1" ]; then
+    : "${LIBHS_DIR:?NEXUS_AGENT_VECTORSCAN=1 requires LIBHS_DIR (include/hs + lib/<arch>/libhs.a)}"
+    AGENT_GO_TAGS="vectorscan vsstatic"
+    echo "==> Vectorscan rule-pack engine ENABLED (static link from $LIBHS_DIR)"
+fi
+
+# go_build_agent <goarch> <output> — one go build, applying the Vectorscan tag
+# and per-arch static-link flags when enabled.
+go_build_agent() {
+    local goarch="$1" out="$2" cflags="" ldflags_cgo=""
+    if [ -n "$AGENT_GO_TAGS" ]; then
+        local archive="$LIBHS_DIR/lib/$goarch/libhs.a"
+        [ -f "$archive" ] || { echo "ERROR: $archive not found for GOARCH=$goarch (NEXUS_AGENT_VECTORSCAN=1)" >&2; exit 1; }
+        cflags="-I$LIBHS_DIR/include/hs"
+        ldflags_cgo="$archive -lc++"
+    fi
+    CGO_ENABLED=1 GOOS=darwin GOARCH="$goarch" \
+        CGO_CFLAGS="$cflags" CGO_LDFLAGS="$ldflags_cgo" \
+        go build ${AGENT_GO_TAGS:+-tags "$AGENT_GO_TAGS"} \
+        -trimpath \
+        -ldflags="-s -w $LDFLAGS_VERSION $LDFLAGS_EXTRA" \
+        -o "$out" \
+        ./cmd/agent
+}
+
 can_cross_cgo() {
-    # Probe amd64 cross-compile; suppress output; treat any error as no-CGO-cross.
+    # Probe amd64 cross-compile (with the Vectorscan tag+lib when enabled);
+    # suppress output; treat any error as no-CGO-cross.
+    local cflags="" ldflags_cgo=""
+    if [ -n "$AGENT_GO_TAGS" ]; then
+        local archive="$LIBHS_DIR/lib/amd64/libhs.a"
+        [ -f "$archive" ] || return 1
+        cflags="-I$LIBHS_DIR/include/hs"
+        ldflags_cgo="$archive -lc++"
+    fi
     CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 \
-        go build -o /dev/null ./cmd/agent >/dev/null 2>&1
+        CGO_CFLAGS="$cflags" CGO_LDFLAGS="$ldflags_cgo" \
+        go build ${AGENT_GO_TAGS:+-tags "$AGENT_GO_TAGS"} -o /dev/null ./cmd/agent >/dev/null 2>&1
 }
 
 if [ "$HOST_ARCH" = "arm64" ] && can_cross_cgo; then
     echo "==> Cross-compiling universal binary (arm64 + amd64)"
-    CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build \
-        -trimpath \
-        -ldflags="-s -w $LDFLAGS_VERSION $LDFLAGS_EXTRA" \
-        -o "$BUILD_DIR/nexus-agent-arm64" \
-        ./cmd/agent
-    CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build \
-        -trimpath \
-        -ldflags="-s -w $LDFLAGS_VERSION $LDFLAGS_EXTRA" \
-        -o "$BUILD_DIR/nexus-agent-amd64" \
-        ./cmd/agent
+    go_build_agent arm64 "$BUILD_DIR/nexus-agent-arm64"
+    go_build_agent amd64 "$BUILD_DIR/nexus-agent-amd64"
     lipo -create -output "$BUILD_DIR/nexus-agent" \
         "$BUILD_DIR/nexus-agent-arm64" \
         "$BUILD_DIR/nexus-agent-amd64"
@@ -91,11 +127,7 @@ else
     # build a native binary for the current host architecture.
     if [ "$HOST_ARCH" = "arm64" ]; then GOARCH=arm64; else GOARCH=amd64; fi
     echo "==> Building native binary (GOARCH=$GOARCH)"
-    CGO_ENABLED=1 GOOS=darwin GOARCH="$GOARCH" go build \
-        -trimpath \
-        -ldflags="-s -w $LDFLAGS_VERSION $LDFLAGS_EXTRA" \
-        -o "$BUILD_DIR/nexus-agent" \
-        ./cmd/agent
+    go_build_agent "$GOARCH" "$BUILD_DIR/nexus-agent"
 fi
 
 # 4. Build Swift targets: NexusAgentUI (menu bar app) + NexusAgentExtension (NE extension).

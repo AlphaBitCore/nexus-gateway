@@ -2,8 +2,8 @@ package analytics
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"sort"
 	"time"

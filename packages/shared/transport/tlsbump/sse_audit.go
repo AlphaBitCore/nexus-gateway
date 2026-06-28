@@ -2,7 +2,7 @@ package tlsbump
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
 
@@ -16,7 +16,7 @@ import (
 // Registry's Tier 1+2+3 normalize chain (same path the non-SSE response
 // at forward_handler.go:692 uses) and stamps the result onto
 // info.ResponseNormalized so the audit_event.normalized_response column
-// lands populated. Pre-#89 this never happened for SSE — the bytes
+// lands populated. Previously this never happened for SSE — the bytes
 // were captured, written to client, captured to body buffer for inline
 // audit, but no Normalize call ran at end-of-stream. Result: every
 // SSE audit row at agent + cp + ai-gateway shipped normalized_response

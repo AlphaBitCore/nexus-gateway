@@ -4,8 +4,8 @@ package configdispatch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync/atomic"
 	"time"

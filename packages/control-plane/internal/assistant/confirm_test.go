@@ -2,7 +2,7 @@ package assistant
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +28,7 @@ func (fakeConfirmTool) Run(context.Context, json.RawMessage) (agent.Result, erro
 }
 
 // fakeImpactTool is a confirm-tier tool that also implements agent.ImpactDetailer,
-// so makeConfirm's FR-22 preview path can be exercised. impact/err are the canned
+// so makeConfirm's preview path can be exercised. impact/err are the canned
 // ImpactDetail return.
 type fakeImpactTool struct {
 	impact any
@@ -90,7 +90,7 @@ func captureConfirmEvent(t *testing.T, h *Handler, tool agent.Tool) map[string]a
 	return got
 }
 
-// TestMakeConfirm_AttachesImpactPreview covers FR-22/AC-6: a high-blast-radius tool
+// TestMakeConfirm_AttachesImpactPreview covers the impact-preview attach path: a high-blast-radius tool
 // (ImpactDetailer) surfaces its structured preview in the confirm event so the card
 // can show it before Allow.
 func TestMakeConfirm_AttachesImpactPreview(t *testing.T) {
@@ -388,7 +388,7 @@ func postConfirm(t *testing.T, h *Handler, userID, sessionID, callID string, dec
 	return rec.Code, out
 }
 
-// TestConfirm_ProdSecondConfirmRequired is the FR-9 happy path: on a prod instance a
+// TestConfirm_ProdSecondConfirmRequired is the happy path: on a prod instance a
 // single Allow does NOT execute — it mints a one-time challenge token and keeps the
 // write parked; a second Allow echoing that token executes it.
 func TestConfirm_ProdSecondConfirmRequired(t *testing.T) {

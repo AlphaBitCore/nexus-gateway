@@ -1,7 +1,7 @@
 package instruments
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"sort"
 	"time"
 )

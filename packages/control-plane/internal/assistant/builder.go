@@ -1,7 +1,7 @@
 package assistant
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/initiator"

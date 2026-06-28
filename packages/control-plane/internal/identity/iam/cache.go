@@ -2,7 +2,7 @@ package iam
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"sync"
 	"time"
 
@@ -25,7 +25,7 @@ type l1Entry struct {
 // L1: in-process map with short TTL (10s default).
 // L2: Redis with longer TTL (60s default). Optional — degrades to L1-only.
 //
-// Note: time-bounded policy attachments (`IamPolicyAttachment.expires_at`)
+// Time-bounded policy attachments (`IamPolicyAttachment.expires_at`)
 // are filtered at SQL load time, but the cache may serve a stale entry for up
 // to L2 TTL (60s) after a grant expires. For break-glass / incident-response
 // use cases this is acceptable — a minute of overhang at the deadline is within

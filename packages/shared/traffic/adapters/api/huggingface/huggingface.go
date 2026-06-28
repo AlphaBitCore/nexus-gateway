@@ -27,10 +27,6 @@ import (
 
 const adapterID = "huggingface"
 
-var legacyKnownKeys = []string{
-	"inputs", "parameters", "options", "stream", "model",
-}
-
 // Adapter dispatches between the OpenAI-compat path (TGI endpoints)
 // and the legacy serverless path based on body shape.
 type Adapter struct {
@@ -80,7 +76,6 @@ func (a *Adapter) ExtractRequest(ctx context.Context, body []byte, path string) 
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, legacyKnownKeys),
 	}, nil
 }
 

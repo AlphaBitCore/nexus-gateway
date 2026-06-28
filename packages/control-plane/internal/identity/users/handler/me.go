@@ -16,7 +16,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
-// Note: the "authn" import path has package name "auth" — all uses below
+// The "authn" import path has package name "auth" — all uses below
 // reference functions as auth.Xxx (the compiled package name).
 
 // RegisterMeRoutes registers /me, /me/permissions, PATCH /me, and

@@ -1,4 +1,4 @@
-// Tests for the atomic single-use enrollment-token consume path (F-0204).
+// Tests for the atomic single-use enrollment-token consume path.
 package enrollstore
 
 import (
@@ -31,7 +31,7 @@ func TestConsumeEnrollmentToken_Success(t *testing.T) {
 
 	exp := time.Now().Add(time.Hour)
 	// The single statement must be an UPDATE...RETURNING that filters on
-	// pending + unexpired — that is the atomicity guarantee F-0204 relies on.
+	// pending + unexpired — that is the atomicity guarantee this path relies on.
 	mock.ExpectQuery(`UPDATE enrollment_token`).
 		WithArgs(hashTokenSHA256("enroll-raw")).
 		WillReturnRows(enrollmentTokenRow("tok-1", "used", exp))

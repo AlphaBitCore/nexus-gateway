@@ -2,8 +2,8 @@ package login_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -305,7 +305,7 @@ func TestPasswordHandler_Mock_UserMissingMapsToInvalidCreds(t *testing.T) {
 }
 
 // TestPasswordHandler_Mock_DisabledAccountReturnsGenericError asserts the
-// F-0078 anti-enumeration fix at the HTTP layer: a disabled local account that
+// anti-enumeration behavior at the HTTP layer: a disabled local account that
 // presents the correct password returns 401 with the generic
 // invalid_credentials code (NOT a distinct user_disabled), so an anonymous
 // caller cannot enumerate disabled accounts.

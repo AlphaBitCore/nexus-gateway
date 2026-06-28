@@ -199,13 +199,13 @@ func TestOpenAIResponses_Registration(t *testing.T) {
 
 // derefIntPtr already defined in anthropic_messages.go; reuse that.
 
-// TestOpenAIResponses_StreamSSE_FoldsToFinalResponse is the regression for the
-// egress-shape Epic finding: a streamed /v1/responses row is captured as the
-// raw Responses-API SSE event stream the client received. Before the fold, the
-// normalizer json-unmarshalled the raw `event: …` bytes and failed with
-// "invalid character 'e'", leaving traffic_event_normalized empty (no content,
-// no usage). The fold must collapse the stream to the terminal response object
-// so text + usage normalize identically to a non-streamed row.
+// TestOpenAIResponses_StreamSSE_FoldsToFinalResponse covers the case where a
+// streamed /v1/responses row is captured as the raw Responses-API SSE event
+// stream the client received. Without folding, the normalizer would
+// json-unmarshal the raw `event: …` bytes and fail with "invalid character
+// 'e'", leaving traffic_event_normalized empty (no content, no usage). The fold
+// must collapse the stream to the terminal response object so text + usage
+// normalize identically to a non-streamed row.
 func TestOpenAIResponses_StreamSSE_FoldsToFinalResponse(t *testing.T) {
 	sse := "event: response.created\n" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\",\"output\":[]}}\n\n" +

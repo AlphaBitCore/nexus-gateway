@@ -2,7 +2,7 @@ package senders_test
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +76,7 @@ func TestPagerDutySender_Non2xxIsError(t *testing.T) {
 		t.Fatal("expected error for 402")
 	}
 	// PagerDuty shares the postJSON path, which collapses every non-2xx to the
-	// generic delivery error with status 0 (F-0370). The collapse is harmless
+	// generic delivery error with status 0. The collapse is harmless
 	// here (PagerDuty's URL is fixed, not admin-supplied) and keeps one
 	// chokepoint for all webhook-style senders.
 	if sc != 0 {

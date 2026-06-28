@@ -2,7 +2,7 @@ package shadow
 
 import (
 	"database/sql"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"path/filepath"
 	"testing"
 

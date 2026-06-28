@@ -96,6 +96,15 @@ type ConsumerConfig struct {
 	Enabled       bool          `yaml:"enabled"`
 	BatchSize     int           `yaml:"batchSize"`
 	FlushInterval time.Duration `yaml:"flushInterval"`
+
+	// TrafficDrainDutyCycle bounds the fraction of wall-clock the traffic-event
+	// drain may spend working, yielding the rest so a co-located AI-gateway's
+	// core request path wins the box's CPU / memory-bandwidth / Postgres. 0 or
+	// >= 1 = full-speed drain (the right default for a Hub on its own box). The
+	// NATS file store absorbs the backlog while the drain idles; audit is
+	// delay-tolerant, no-loss is preserved by NATS retention. yaml
+	// trafficDrainDutyCycle / env NEXUS_HUB_AUDIT_DRAIN_DUTY_CYCLE (env wins).
+	TrafficDrainDutyCycle float64 `yaml:"trafficDrainDutyCycle"`
 }
 
 // SchedulerConfig controls whether this Hub instance runs scheduled jobs.
@@ -407,9 +416,21 @@ func defaults() *HubConfig {
 			NATS:   NATSConfig{URL: "nats://localhost:4222"},
 		},
 		Consumers: ConsumerConfig{
-			Enabled:       true,
-			BatchSize:     100,
+			Enabled: true,
+			// 2000-row drain batch: the audit insert is dominated by commit
+			// fsyncs, so a larger batch amortizes them sharply and pairs with the
+			// COPY fast path (the data write is unchanged). Override via
+			// NEXUS_HUB_CONSUMER_BATCH_SIZE; on very small instances a smaller
+			// batch trades throughput for a lower per-flush memory ceiling.
+			BatchSize:     2000,
 			FlushInterval: 5 * time.Second,
+			// Default the audit drain to a fixed 0.3 duty cycle: on the single-box
+			// deployment the AI-gateway and Hub share the machine, and a fixed
+			// throttle reliably yields the box's memory bandwidth / loopback /
+			// Postgres back to the gateway's core path (the CPU-pressure probe at
+			// duty 0 cannot see memory-bandwidth contention on a core-rich box).
+			// Set 0 for the adaptive probe, or >= 1 to disable on a dedicated Hub box.
+			TrafficDrainDutyCycle: 0.3,
 		},
 		Scheduler: SchedulerConfig{
 			Enabled:                  true,
@@ -491,6 +512,16 @@ func applyEnvOverrides(cfg *HubConfig) {
 	}
 	if v := os.Getenv("NEXUS_HUB_SCHEDULER_ENABLED"); v != "" {
 		cfg.Scheduler.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	// Traffic-drain PG insert batch size. Larger batches amortize the per-commit
+	// WAL fsync over more rows — the audit drain's disk-IO cost under load is
+	// dominated by commit fsyncs, so a bigger batch cuts fsync/s sharply (the data
+	// write is unchanged). Tunable redeploy-free on the perf rig.
+	if v := os.Getenv("NEXUS_HUB_CONSUMER_BATCH_SIZE"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			cfg.Consumers.BatchSize = n
+		}
 	}
 	if v := os.Getenv("INTERNAL_SERVICE_TOKEN"); v != "" {
 		cfg.Auth.InternalServiceToken = v

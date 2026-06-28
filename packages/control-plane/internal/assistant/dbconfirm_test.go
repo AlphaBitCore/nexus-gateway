@@ -2,7 +2,7 @@ package assistant
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,7 +112,7 @@ func confirmReq(userID, sessionID, callID string) (*httptest.ResponseRecorder, e
 	return rec, c
 }
 
-// TestConfirm_RestartReissueVsExpired is the NFR-10 user-facing payoff: an in-memory
+// TestConfirm_RestartReissueVsExpired is the user-facing payoff: an in-memory
 // miss (no parked channel) with a still-fresh durable orphan → restart_reissue; with no
 // row → plain expired. Distinguishing the two is the whole point of persisting.
 func TestConfirm_RestartReissueVsExpired(t *testing.T) {

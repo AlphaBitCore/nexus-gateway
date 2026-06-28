@@ -60,6 +60,11 @@ func processInfoUncached(pid int) (api.ProcessMeta, error) {
 	}
 	defer windows.CloseHandle(h)
 
+	// Parent PID off the same handle (no system-wide process snapshot).
+	// Resolved here (not in the kernel driver) so the kernel
+	// NexusFlowAuditEntry.parentPid field can stay reserved.
+	meta.ParentPID = queryParentPID(h)
+
 	// Executable path via QueryFullProcessImageNameW
 	meta.Path = queryProcessImageName(h)
 	if meta.Path != "" {
@@ -97,6 +102,20 @@ func queryProcessImageName(h windows.Handle) string {
 		return ""
 	}
 	return windows.UTF16ToString(buf[:size])
+}
+
+// queryParentPID returns the parent process ID for the process referenced by
+// h via NtQueryInformationProcess(ProcessBasicInformation) — a single query
+// against the open handle, not a system-wide process-table walk. Returns 0 if
+// it cannot be resolved.
+func queryParentPID(h windows.Handle) int {
+	var pbi windows.PROCESS_BASIC_INFORMATION
+	var retLen uint32
+	if err := windows.NtQueryInformationProcess(h, windows.ProcessBasicInformation,
+		unsafe.Pointer(&pbi), uint32(unsafe.Sizeof(pbi)), &retLen); err != nil {
+		return 0
+	}
+	return int(pbi.InheritedFromUniqueProcessId)
 }
 
 // findOwnerPID looks up the PID owning a local TCP endpoint via

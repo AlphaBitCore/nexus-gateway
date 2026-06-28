@@ -2,8 +2,8 @@ package credstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -156,7 +156,7 @@ func TestGetCredentialEncrypted(t *testing.T) {
 func TestCreateCredential_Defaults(t *testing.T) {
 	s, m := newMock(t)
 	// keyID empty → "v1"; weight 0 → 100. The first arg is the app-side id —
-	// the store generates it when CreateCredentialParams.ID is empty (SEC-C1-02),
+	// the store generates it when CreateCredentialParams.ID is empty,
 	// so AnyArg; the rest are asserted by value.
 	m.ExpectQuery(`INSERT INTO "Credential"`).
 		WithArgs(pgxmock.AnyArg(), "cred", "p1", "ek", "iv", "tag", "v1", true, "none", (*time.Time)(nil), 100).

@@ -2,8 +2,8 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -108,7 +108,7 @@ func TestLedger_ListPendingReturnsLaggingKeys(t *testing.T) {
 	}
 }
 
-// F-0345: a successful Category-B push records intent then stamps the ack, so
+// A successful Category-B push records intent then stamps the ack, so
 // the key is not left pending.
 func TestInvalidateConfigE_ledgerSuccessRecordsAck(t *testing.T) {
 	var hits int32
@@ -141,7 +141,7 @@ func TestInvalidateConfigE_ledgerSuccessRecordsAck(t *testing.T) {
 	}
 }
 
-// F-0345 + F-0099: when the push fails the intent is recorded but the ack is NOT
+// When the push fails the intent is recorded but the ack is NOT
 // stamped (no ExpectExec), so the key stays pending for the reconcile arm — and
 // the error surfaces (handler returns 502).
 func TestInvalidateConfigE_ledgerFailureLeavesPending(t *testing.T) {
@@ -173,7 +173,7 @@ func TestInvalidateConfigE_ledgerFailureLeavesPending(t *testing.T) {
 	}
 }
 
-// F-0345: the reconcile arm re-pushes a pending key and stamps the ack on
+// The reconcile arm re-pushes a pending key and stamps the ack on
 // success.
 func TestReconcilePending_repushesPendingKey(t *testing.T) {
 	var hits int32
@@ -211,7 +211,7 @@ func TestReconcilePending_repushesPendingKey(t *testing.T) {
 	}
 }
 
-// F-0345: an up-to-date fleet (no pending keys) triggers no re-push.
+// An up-to-date fleet (no pending keys) triggers no re-push.
 func TestReconcilePending_noPendingNoPush(t *testing.T) {
 	var hits int32
 	ts := pushServer(t, http.StatusOK, &hits)

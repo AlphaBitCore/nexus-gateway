@@ -3,8 +3,8 @@ package webhook
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"
@@ -95,7 +95,7 @@ func NewWebhookForwardWithClient(cfg *core.HookConfig, client *http.Client) (cor
 			Timeout:        timeout,
 			Caller:         "webhook-hook",
 			PropagateReqID: true,
-			// F-0370: the endpoint is an admin-configured URL the compliance
+			// The endpoint is an admin-configured URL the compliance
 			// pipeline POSTs captured traffic to — external by nature and an
 			// SSRF primitive. Block every non-public address at dial time
 			// (loopback / RFC-1918 / link-local / metadata); the guard runs on
@@ -121,19 +121,13 @@ func NewWebhookForwardWithClient(cfg *core.HookConfig, client *http.Client) (cor
 	// webhook-forward is uniquely advisory: unlike pii-detector /
 	// keyword-filter / content-safety (where "match → block by default" is
 	// the right security default), the webhook's reply IS the decision.
-	// If the admin did not configure an explicit `inflightAction` value,
-	// treat the ceiling as `approve` so the webhook's suggestion flows
-	// through without being silently clobbered to RejectHard by
-	// ParseOnMatch's block-hard default. Admins who want
+	// If the admin did not configure an explicit `action`, treat the ceiling
+	// as `approve` so the webhook's suggestion flows through without being
+	// silently clobbered to block by ParseOnMatch's default. Admins who want
 	// webhook-bounded-by-ceiling behavior must opt in via an explicit
-	// `onMatch.inflightAction`.
-	//
-	// The gate checks the inner `inflightAction` key (not the outer
-	// `onMatch` block) so a partial config like `onMatch: {storageAction:
-	// "redact"}` — which leaves `InflightAction` defaulted — still gets
-	// the webhook-forward approve-ceiling override.
-	if !hasInflightActionConfigured(cfg.Config) {
-		onMatch.InflightAction = core.InflightApprove
+	// `onMatch.action`.
+	if !hasActionConfigured(cfg.Config) {
+		onMatch.Action = core.ActionApprove
 	}
 
 	return &WebhookForward{
@@ -214,11 +208,10 @@ func (w *WebhookForward) Execute(ctx context.Context, input *core.HookInput) (*c
 
 	suggested := core.Approve
 	switch strings.ToLower(strings.TrimSpace(result.Decision)) {
-	case "reject", "reject_hard":
+	case "reject", "reject_hard", "block", "block_soft":
+		// block_soft is accepted for back-compat; it maps to a block.
 		suggested = core.RejectHard
-	case "block_soft":
-		suggested = core.BlockSoft
-	case "modify":
+	case "modify", "redact":
 		suggested = core.Modify
 	case "abstain":
 		suggested = core.Abstain
@@ -241,20 +234,17 @@ func (w *WebhookForward) Execute(ctx context.Context, input *core.HookInput) (*c
 	reason := result.Reason
 	reasonCode := result.ReasonCode
 	if suggested != core.Abstain {
-		policyCeiling := core.DecisionForInflight(w.onMatch.InflightAction)
+		policyCeiling := core.DecisionForAction(w.onMatch.Action)
 		reconciled = core.StrictestDecision(suggested, policyCeiling)
 		if reconciled != suggested {
 			reasonCode = core.ReasonAIGuardSuggestedVsPolicy
-			// Both sides render in the admin-configured InflightAction
-			// vocabulary (block-hard / block-soft / redact / approve) so
-			// the audit row + UI chip read in the same language the
-			// operator wrote in the hook config, instead of mixing the
-			// internal Decision enum (`reject_hard`) with the YAML
-			// inflightAction strings (`block-hard`).
+			// Both sides render in the admin-configured action vocabulary
+			// (approve / redact / block) so the audit row + UI chip read in
+			// the same language the operator wrote in the hook config.
 			reason = fmt.Sprintf(
 				"webhook suggested %s; policy ceiling: %s",
-				core.LabelForDecision(suggested),
-				string(w.onMatch.InflightAction),
+				core.ActionFromDecision(suggested),
+				string(w.onMatch.Action),
 			)
 		}
 	}
@@ -266,16 +256,16 @@ func (w *WebhookForward) Execute(ctx context.Context, input *core.HookInput) (*c
 		Reason:         reason,
 		ReasonCode:     reasonCode,
 		TransformSpans: spans,
+		Action:         core.ActionFromDecision(reconciled),
 	}, nil
 }
 
-// hasInflightActionConfigured inspects the raw hook config to determine
-// whether the admin supplied an explicit `onMatch.inflightAction` value.
-// Returns true only when both the `onMatch` block exists and the
-// `inflightAction` key inside it carries a non-empty string. A bare
-// `onMatch: {storageAction: ...}` block is treated as "no inflight
-// configured" so webhook-forward's approve-ceiling override still fires.
-func hasInflightActionConfigured(cfg map[string]any) bool {
+// hasActionConfigured inspects the raw hook config to determine whether the
+// admin supplied an explicit action choice. Returns true when the `onMatch`
+// block exists and carries a non-empty `action` (or, during the deprecation
+// window, the legacy `inflightAction`). A bare `onMatch: {}` is treated as
+// "no action configured" so webhook-forward's approve-ceiling override fires.
+func hasActionConfigured(cfg map[string]any) bool {
 	raw, ok := cfg["onMatch"]
 	if !ok || raw == nil {
 		return false
@@ -284,8 +274,13 @@ func hasInflightActionConfigured(cfg map[string]any) bool {
 	if !ok {
 		return false
 	}
-	v, ok := m["inflightAction"].(string)
-	return ok && v != ""
+	if v, ok := m["action"].(string); ok && v != "" {
+		return true
+	}
+	if v, ok := m["inflightAction"].(string); ok && v != "" {
+		return true
+	}
+	return false
 }
 
 // webhookRedactionWire is the on-wire shape of an AI-Guard / generic

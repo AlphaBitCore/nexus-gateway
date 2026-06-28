@@ -2,8 +2,8 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +16,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
 )
 
-// version_lock_test.go covers the F-0109 fix: the per-type advisory lock that
+// version_lock_test.go covers the per-type advisory lock that
 // UpdateConfig / SetOverride / ClearOverride take as the FIRST statement of
 // their transaction so concurrent same-type desired_ver allocations cannot
 // collide.
@@ -143,7 +143,7 @@ func TestManager_UpdateConfig_AdvisoryLockOrderedFirst(t *testing.T) {
 	mock.ExpectQuery(`WITH next AS`).
 		WithArgs("agent", "hooks", pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "desired_ver"}).AddRow("t-1", int64(6)))
-	// F-0110: agent type emits no pg_notify in UpdateDesiredForType. Dropping
+	// agent type emits no pg_notify in UpdateDesiredForType. Dropping
 	// the stale ExpectExec(pg_notify) keeps ExpectationsWereMet strict — if the
 	// gate regressed and a notify fired, the unmatched Exec would fail here.
 	mock.ExpectExec(`INSERT INTO config_change_event`).
@@ -167,7 +167,7 @@ func TestManager_UpdateConfig_AdvisoryLockOrderedFirst(t *testing.T) {
 }
 
 // TestManager_UpdateConfig_DistinctVersionsUnderConcurrency is the faithful
-// F-0109 regression test. It fires two concurrent UpdateConfig calls for the
+// regression test for the advisory lock. It fires two concurrent UpdateConfig calls for the
 // SAME Thing type but DIFFERENT keys against a live Postgres and asserts:
 //
 //   - the two calls receive DISTINCT, consecutive versions (6 and 7), never a

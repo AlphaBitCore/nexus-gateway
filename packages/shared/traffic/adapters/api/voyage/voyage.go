@@ -24,14 +24,6 @@ import (
 
 const adapterID = "voyage"
 
-var requestKnownKeys = []string{
-	"model", "input", "input_type", "truncation", "output_dimension", "output_dtype",
-}
-
-var responseKnownKeys = []string{
-	"object", "data", "model", "usage",
-}
-
 // Adapter implements [traffic.Adapter] for Voyage AI's /v1/embeddings surface.
 type Adapter struct{}
 
@@ -77,7 +69,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -101,7 +92,6 @@ func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (tra
 
 	return traffic.NormalizedContent{
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, responseKnownKeys),
 	}, nil
 }
 

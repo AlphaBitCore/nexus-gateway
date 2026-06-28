@@ -195,7 +195,7 @@ func TestClient_EntryKey_Format(t *testing.T) {
 	}
 }
 
-// TestClient_EntryKey_FoldsScopeModelKind verifies F-0050: the same embedding
+// TestClient_EntryKey_FoldsScopeModelKind verifies that the same embedding
 // text written under different vk_scope, model, or response_kind yields
 // DISTINCT keys, so the entries occupy separate HASH keys and cannot evict
 // each other via HSET overwrite. The bug folded only the embedding text into

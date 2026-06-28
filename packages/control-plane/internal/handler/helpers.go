@@ -2,8 +2,8 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -15,6 +15,7 @@ import (
 	cachehandler "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/cache/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/aiguard/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/exemptions/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/patternperf"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/rulepacks/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
@@ -154,6 +155,11 @@ type AdminHandler struct {
 	// RulePacks owns /api/admin/rule-packs/* and related install routes.
 	// Nil when the DB-backed rulepack store is unavailable.
 	RulePacks *rulepacks.Handler
+
+	// PatternPerf owns POST /api/admin/rule-packs/pattern-perf-test — the
+	// authoring-time Vectorscan perf test, proxied to the AI Gateway. Nil when
+	// no AI-Gateway URL is configured.
+	PatternPerf *patternperf.Handler
 
 	// Redis is an optional Redis client used to read circuit breaker state and
 	// perform circuit resets for credential pool management. Nil when Redis is

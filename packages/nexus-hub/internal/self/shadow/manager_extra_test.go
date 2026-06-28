@@ -2,8 +2,8 @@ package selfshadow
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"math"
 	"sync"
 	"sync/atomic"

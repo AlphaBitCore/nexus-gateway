@@ -3,9 +3,9 @@ package chain
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"os"
 	"sync"
 	"testing"
@@ -540,7 +540,7 @@ func scanCanonicalKeys(t *testing.T, cb []byte) []string {
 	return keys
 }
 
-// TestCanonicalize_ViaTamperEvidentAndHumanUnchanged is the E90 I5 load-bearing
+// TestCanonicalize_ViaTamperEvidentAndHumanUnchanged is the load-bearing
 // guard. It pins two properties of folding `via` into the canonical hash payload:
 //
 //  1. Tamper-evidence: a row written with via="assistant" produces DIFFERENT

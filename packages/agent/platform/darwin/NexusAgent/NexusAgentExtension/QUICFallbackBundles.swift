@@ -39,7 +39,7 @@ final class QUICFallbackBundles {
     /// allowlist. Empty bundleId (unsigned binaries) always returns false.
     /// Triggers a lazy refresh when the cache is older than refreshInterval.
     ///
-    /// #74: matches by exact bundleId OR helper/child prefix
+    /// Matches by exact bundleId OR helper/child prefix
     /// ("<parent>.<anything>") because the bundleId macOS reports for
     /// outbound UDP is the EXECUTING process bundle, which for Chromium
     /// browsers is `com.google.Chrome.helper` (and `.helper.GPU`,

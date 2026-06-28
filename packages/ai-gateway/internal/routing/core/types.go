@@ -6,7 +6,7 @@ package core
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -100,9 +100,8 @@ type RoutingContext struct {
 	// EndpointKindEmbeddings, EndpointKindModels, …). Empty when the request
 	// path could not be classified (treated as "unknown" by the resolver —
 	// no capability filtering, no kind-specific routing).
-	// E87-S3a-2 (2026-05-25): retyped from legacy audit-string to
-	// typology.EndpointKind. Construction sites must call
-	// typology.KindFromPathSegment(<legacy>) at boundary.
+	// Construction sites must convert any path-segment string via
+	// typology.KindFromPathSegment(<segment>) at the boundary.
 	EndpointType typology.EndpointKind
 	VirtualKey   *VKContext
 	Headers      SafeHeaders

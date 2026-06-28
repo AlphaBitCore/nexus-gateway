@@ -63,7 +63,7 @@ func InitHealthHandler(d HealthDeps) (*http.ServeMux, *runtimeintrospect.Registr
 	pipeline.RegisterDefaultMetrics("nexus")
 	mux := health.NewHandler(d.Readiness, shadowProbe, prometheus.DefaultRegisterer)
 
-	// --- Runtime introspection (e31-s7) ---
+	// --- Runtime introspection ---
 	introspectReg := runtimeintrospect.New("compliance-proxy", d.ProxyID, d.BuildVersion)
 	introspectReg.Register(runtimeintrospect.SourceFunc{
 		SourceName: "config.killswitch",
@@ -96,7 +96,7 @@ func InitHealthHandler(d HealthDeps) (*http.ServeMux, *runtimeintrospect.Registr
 			}, nil
 		},
 	})
-	// e31-s13: full InterceptionDomain + InterceptionPath snapshot.
+	// Full InterceptionDomain + InterceptionPath snapshot.
 	introspectReg.Register(runtimeintrospect.SourceFunc{
 		SourceName: "cache.interception_domains_full",
 		Fn: func(_ context.Context) (any, error) {

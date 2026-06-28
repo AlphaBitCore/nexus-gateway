@@ -88,29 +88,23 @@ func TestExtractRequest_BinaryProtobuf_ChatPath_HappyPath(t *testing.T) {
 
 func TestExtractRequest_BinaryProtobuf_ChatPath_NoMessages(t *testing.T) {
 	// protobuf-shape body but with no conversation field — adapter must
-	// fall through to ErrUnknownSchema and stamp binary_preview.
+	// fall through to ErrUnknownSchema.
 	body := buildGetChatRequestRaw(nil, "conv-only", true)
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/aiserver.v1.AiService/StreamChat")
+	_, err := a.ExtractRequest(context.Background(), body, "/aiserver.v1.AiService/StreamChat")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Fatalf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("missing binary_preview")
 	}
 }
 
 func TestExtractRequest_BinaryProtobuf_NonChatPath(t *testing.T) {
 	// Non-JSON body on a non-chat path: adapter returns ErrUnknownSchema
-	// + binary_preview without trying to parse as GetChatRequest.
+	// without trying to parse as GetChatRequest.
 	body := []byte{0xde, 0xad, 0xbe, 0xef}
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/random-binary")
+	_, err := a.ExtractRequest(context.Background(), body, "/api/random-binary")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Fatalf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("missing binary_preview")
 	}
 }
 
@@ -211,14 +205,11 @@ func TestExtractRequest_ConversationMessage_GarbageTag(t *testing.T) {
 	// ConsumeTag n<0 immediately. text stays empty → outer skips append.
 	body := buildGetChatRequestRaw([][]byte{{0xff}}, "conv-only", false)
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/aiserver.v1.AiService/StreamChat")
+	_, err := a.ExtractRequest(context.Background(), body, "/aiserver.v1.AiService/StreamChat")
 	// Garbage inner + no good messages → no segments, but conversation_id
 	// is set → still ErrUnknownSchema because we gate on segments.
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Fatalf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("missing binary_preview")
 	}
 }
 
@@ -484,24 +475,5 @@ func TestDetectRequestMeta_StreamComposerPath(t *testing.T) {
 	meta := a.DetectRequestMeta(r, []byte{0xff}) // not JSON → no body model
 	if meta.Model != "cursor-composer" {
 		t.Errorf("Model=%q want cursor-composer", meta.Model)
-	}
-}
-
-// preview — high-byte branch.
-
-func TestPreview_StripsHighBytes(t *testing.T) {
-	// Non-ASCII bytes (>0x7e) must be replaced with '.'.
-	body := []byte{'a', 0xff, 'b', 0x80, 'c'}
-	p := preview(body)
-	if p != "a.b.c" {
-		t.Errorf("preview=%q want a.b.c", p)
-	}
-}
-
-func TestPreview_PreservesTabsAndNewlines(t *testing.T) {
-	body := []byte{'a', '\t', 'b', '\n', 'c'}
-	p := preview(body)
-	if p != "a\tb\nc" {
-		t.Errorf("preview=%q want a\\tb\\nc", p)
 	}
 }

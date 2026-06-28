@@ -3,8 +3,8 @@ package routing
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"os"

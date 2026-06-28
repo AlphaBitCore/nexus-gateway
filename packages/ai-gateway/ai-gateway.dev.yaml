@@ -19,6 +19,14 @@ server:
   # and non-streaming extends it to upstream.timeoutSec. This value only binds
   # responses that never hit the proxy override path.
   writeTimeout: "360s"
+  # Pre-grow size (KiB) of the pooled request-body read scratch, so a typical
+  # body reads with no bytes.Buffer doubling+re-copy. 64 (default) suits a
+  # mixed/small-prompt fleet; raise to ~128 when requests routinely carry
+  # ~128K-token contexts. Fixed size — independent of the client Content-Length
+  # (the read is bounded by the maxBytes limit, never by a caller value), so a
+  # hostile Content-Length cannot drive a large up-front allocation. 0 → 64.
+  # Env: AI_GATEWAY_REQUEST_READ_BUF_KB.
+  requestReadBufKb: 64
 
 database:
   url: "postgresql://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
@@ -68,7 +76,10 @@ log:
   # Shadow-overridable via Hub admin UI (config_key: log_level); YAML is the
   # boot default only. Edits in the UI propagate live via thingclient.OnConfigChanged
   # → logging.SetLevel (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1.
-  level: "debug"
+  # warn by default: debug logs every upstream request/response body (spec_adapter
+  # debugBody), which floods the log file and steals hot-path CPU under load. Raise
+  # to debug per session (or via the Hub log_level shadow) when actively debugging.
+  level: "warn"
   format: "text"
   # Relative to cwd (packages/ai-gateway when using VS Code launch).
   file: "logs/ai-gateway.log"
@@ -194,7 +205,8 @@ httpClients:
 # MaxAttemptsPerTarget is clamped to [1,5] at load.
 routing:
   defaultRetryPolicy:
-    maxAttemptsPerTarget: 1
+    # 2 = one same-target retry on a transient fault before L3 failover.
+    maxAttemptsPerTarget: 2
     retryOn: ["network", "timeout", "429", "5xx"]
     backoffInitial: 250ms
     backoffMax: 5s
@@ -212,6 +224,41 @@ spill:
     perObjectCap: 268435456      # 256 MiB
     totalSizeCap: 5368709120     # 5 GiB
     retentionDays: 7
+
+audit:
+  # Durable NDJSON fallback for whole audit records when the in-heap buffer
+  # overflows (never a silent drop; a sweeper re-ingests once the pipeline
+  # recovers). Empty spoolDir → overflow becomes a loud, counted drop.
+  spoolDir: /tmp/nexus-audit-spool
+  spoolMaxFileMb: 64
+  spoolMaxTotalMb: 512
+  # In-heap audit record-buffer cap (overflow → spoolDir). Each queued record
+  # pins its pooled ~50 KB request/response body until marshaled, so this bound
+  # is the primary control over the audit side-path's gw heap: 10000 (default)
+  # holds the body pool near ~1 GB under a slow-publish burst, vs ~5 GB at the
+  # former hard-coded 50000, at the same measured spill rate and ~70% lower GC
+  # pause. Raise on a memory-rich box for extra absorption headroom; lower on a
+  # constrained one. 0 → 10000. Env: AI_GATEWAY_AUDIT_MAX_QUEUED_RECORDS.
+  maxQueuedRecords: 10000
+  # Overflow policy. Durable audit is a product promise + compliance requirement,
+  # so the default "block" is NO-LOSS back-pressure: when the buffer fills, the
+  # gateway slows the request path until the audit pipeline drains (NATS disk is
+  # the burst buffer) — never dropping a record. Lossy opt-out for non-compliance
+  # callers: "spill" (async durable NDJSON spill off the request path; bounded drop
+  # only if the spill is also saturated) or "drop" (counted bounded drop, max
+  # throughput). Empty/unknown → "block". Env: AI_GATEWAY_AUDIT_LOSS_MODE.
+  lossMode: block
+  # End-to-end zstd compression of large captured bodies: producer compresses off
+  # the request path, body rides the NATS wire compressed, the Hub persists the
+  # compressed bytes verbatim (no decompress on ingest), and only the CP view
+  # layer decompresses. Direct lever on publish throughput (the pipeline is
+  # disk-I/O-bound at the broker). Default true. Env: AI_GATEWAY_AUDIT_COMPRESS.
+  compress: true
+  # Smallest body worth compressing; 0 → 1024. Env: AI_GATEWAY_AUDIT_COMPRESS_MIN_BYTES.
+  compressMinBytes: 1024
+  # zstd level (1=fastest, 3=default, higher=better/slower); 0 → library default.
+  # Env: AI_GATEWAY_AUDIT_COMPRESS_LEVEL.
+  compressLevel: 3
 
 # E36 — Forward-header allowlist. Both directions (request → upstream
 # and upstream → client) are governed here. Omitting this whole block

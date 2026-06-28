@@ -35,8 +35,10 @@ func RequestID(next http.Handler) http.Handler {
 }
 
 // Logger logs each request with method, path, status, and duration.
-// Health/metrics probes are logged at Debug level to reduce noise.
-// 4xx responses are logged at Warn, 5xx at Error.
+// Successful (2xx/3xx) requests and health/metrics probes log at Debug — the
+// per-request data is already captured in the traffic_event audit row and the
+// Prometheus request/latency series, so an Info access line per request is
+// redundant hot-path I/O. 4xx responses log at Warn, 5xx at Error.
 func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +61,16 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 				return
 			}
 
-			level := slog.LevelInfo
+			// Successful (2xx/3xx) requests log at Debug, not Info: on the proxy
+			// hot path this access line writes per request (to stdout AND the log
+			// file via the MultiWriter) and fully duplicates data already recorded
+			// elsewhere — every request becomes a traffic_event audit row
+			// (method/path/status/latency) and the Prometheus request/latency
+			// series. At load the synchronous per-request file write was a
+			// measurable hot-path cost (~2.8% CPU) for a triply-redundant line.
+			// 4xx/5xx still surface at Warn/Error so failures stay visible at the
+			// default Info level without the audit/metrics round-trip.
+			level := slog.LevelDebug
 			if sw.status >= 500 {
 				level = slog.LevelError
 			} else if sw.status >= 400 {

@@ -23,8 +23,8 @@ func TestInitVKAuth_nonEmptySecret(t *testing.T) {
 	}
 }
 
-// TestInitVKAuth_KeyMap verifies the versioned-keyring path (SEC-W2-01 Layer A):
-// an ADMIN_KEY_HMAC_KEY_MAP value builds a multi-version keyring and returns a
+// TestInitVKAuth_KeyMap verifies the versioned-keyring path: an
+// ADMIN_KEY_HMAC_KEY_MAP value builds a multi-version keyring and returns a
 // non-nil Authenticator.
 func TestInitVKAuth_KeyMap(t *testing.T) {
 	cfg := &config.Config{Auth: config.AuthConfig{HMACKeyMap: "v1:old,*v2:current"}}

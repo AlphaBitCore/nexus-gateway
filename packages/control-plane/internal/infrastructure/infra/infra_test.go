@@ -15,8 +15,8 @@ package infra
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1540,7 +1540,7 @@ func TestSetupClient_DefaultAndOverride(t *testing.T) {
 
 // Helper: the signature returns (url string, handled bool) where handled=true
 // means resolveManagementURL already wrote the error response and the caller
-// must return without proceeding (F-0104). Tests check rec.Code + handled +
+// must return without proceeding. Tests check rec.Code + handled +
 // the empty url on the unhappy paths.
 func TestResolveManagementURL_NotFound(t *testing.T) {
 	hub := &fakeHub{serviceMetaErr: errors.New("not found")}
@@ -1842,7 +1842,7 @@ func TestSetupPatchOnboarding_BindError(t *testing.T) {
 
 func TestSetupPatchOnboarding_HubError(t *testing.T) {
 	// serviceMeta must resolve so we reach the config push; the notify error
-	// then surfaces as 502 (F-0104 added the up-front thing existence check).
+	// then surfaces as 502 (the up-front thing existence check).
 	fh := &fakeHub{
 		serviceMeta: &hub.ThingServiceMeta{ThingID: "t1", ManagementURL: "http://proxy"},
 		notifyErr:   errors.New("boom"),

@@ -2,7 +2,7 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"
@@ -24,10 +24,10 @@ import (
 // applies AND semantics. This mirrors `/credentials/:id/probe` so a read-only
 // provider viewer cannot trigger a credential decrypt with only provider:read.
 //
-// F-0369: `/providers/test-connection` probes a caller-supplied, not-yet-saved
-// base URL. Pre-fix it was gated on provider:read and reflected the upstream
-// status + raw transport error back to the caller — a blind-SSRF / internal-
-// endpoint fingerprinting oracle available to a read-only viewer. It is now gated
+// `/providers/test-connection` probes a caller-supplied, not-yet-saved
+// base URL and reflects the upstream status + raw transport error back to the
+// caller. Gating it on provider:read would make it a blind-SSRF / internal-
+// endpoint fingerprinting oracle available to a read-only viewer, so it is gated
 // on the provider-config-write tier (provider:create), so only a caller who can
 // already configure a provider (and thus set the base URL anyway) can run the
 // probe. This closes the oracle while preserving the full error detail for

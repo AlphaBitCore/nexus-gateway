@@ -3,11 +3,12 @@ package validators
 import (
 	"context"
 	"fmt"
+	"io"
 	"regexp"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
@@ -20,16 +21,25 @@ type piiPattern struct {
 }
 
 // PiiDetector scans content for personally identifiable information and
-// either short-circuits the pipeline with REJECT_* or replaces matches
-// in-place. The pipeline decision is derived from onMatch.inflightAction.
+// dispatches on onMatch.action: approve detects for tagging only, redact
+// rewrites matches in-place, block rejects (and still masks the stored copy).
 // Applies to all text-carrying endpoints (chat, embeddings, stt,
 // image_generation, tts, video_generation), text modality only, via the
 // embedded TextOnlyContentScanning helper.
 type PiiDetector struct {
 	core.TextOnlyContentScanning
-	cfg      *core.HookConfig
-	patterns []piiPattern
-	onMatch  core.OnMatchConfig
+	contentPrescan // raw-body prefilter (core.RawContentPrescanner)
+	cfg            *core.HookConfig
+	patterns       []piiPattern
+	// matcher runs the detection pass (Vectorscan under -tags vectorscan): one
+	// scan over all patterns gates whether any pattern fired at all. On benign
+	// traffic (the common case) it short-circuits to Approve with zero RE2 work.
+	// The per-pattern RE2 in `patterns` is still used for precise redaction
+	// offsets + Luhn validation on the matched subset — Vectorscan reports no
+	// sub-match spans, and Luhn needs the matched text (locked hybrid: Vectorscan
+	// detects, RE2 extracts).
+	matcher matcher.Matcher
+	onMatch core.OnMatchConfig
 }
 
 // NewPiiDetector constructs a PiiDetector from declarative config.
@@ -41,14 +51,13 @@ type PiiDetector struct {
 //	    {"id":"email","regex":"\\b[...]\\b","flags":"i","luhn":false}
 //	  ],
 //	  "onMatch": {
-//	    "inflightAction": "block-hard"|"block-soft"|"redact"|"approve",
-//	    "storageAction":  "redact"|"keep"|"drop-content",
-//	    "replacement":    "[REDACTED_<RULE_ID>]"
+//	    "action":      "approve"|"redact"|"block",
+//	    "replacement": "[REDACTED_<RULE_ID>]"
 //	  }
 //	}
 //
 // Per-pattern `replacement` overrides onMatch.Replacement for that pattern's
-// hits in redact mode. inflightAction defaults to block-hard.
+// hits in redact/block mode. action defaults to block.
 //
 // When `_rulePackInstalls` is attached the factory delegates to
 // NewRulePackEngine.
@@ -71,6 +80,7 @@ func NewPiiDetector(cfg *core.HookConfig) (core.Hook, error) {
 	}
 
 	patterns := make([]piiPattern, 0, len(patternList))
+	pats := make([]matcher.Pattern, 0, len(patternList))
 	for i, raw := range patternList {
 		m, ok := raw.(map[string]any)
 		if !ok {
@@ -112,13 +122,30 @@ func NewPiiDetector(cfg *core.HookConfig) (core.Hook, error) {
 			luhn:        luhn,
 			replacement: replacement,
 		})
+		pats = append(pats, matcher.Pattern{ID: len(pats), Expr: regexSrc, Flags: cacheFlags})
 	}
 
+	// The detection matcher mirrors the per-pattern RE2 set; since every pattern
+	// already RE2-compiled above, no pattern is bad here.
+	mtch, _ := buildMatcher(pats)
+
 	return &PiiDetector{
-		cfg:      cfg,
-		patterns: patterns,
-		onMatch:  onMatch,
+		contentPrescan: newContentPrescan(pats),
+		cfg:            cfg,
+		patterns:       patterns,
+		matcher:        mtch,
+		onMatch:        onMatch,
 	}, nil
+}
+
+// Close releases the detection matcher's resources (the Vectorscan database, if
+// any) when a config swap evicts this hook. No-op for the RE2 matcher.
+func (pd *PiiDetector) Close() error {
+	_ = pd.closePrescan()
+	if c, ok := pd.matcher.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 // translatePiiFlagsForCache converts pii-detector's JS-style flag string into
@@ -148,7 +175,13 @@ func translatePiiFlagsForCache(flags string) (string, error) {
 	return string(out), nil
 }
 
-// Execute scans content blocks for PII matches.
+// Execute scans content blocks for PII matches and dispatches on the hook's
+// single onMatch.action:
+//   - redact: rewrite the payload (Modify) and emit the spans that mask the
+//     forwarded / returned / stored copies.
+//   - block:  reject (RejectHard) and emit the spans that mask the stored
+//     redacted copy (the request itself is rejected, never forwarded).
+//   - approve: detect for tagging only — forward and store as-is.
 func (pd *PiiDetector) Execute(_ context.Context, input *core.HookInput) (*core.HookResult, error) {
 	start := time.Now()
 
@@ -159,69 +192,75 @@ func (pd *PiiDetector) Execute(_ context.Context, input *core.HookInput) (*core.
 		Decision:         core.Approve,
 	}
 
-	if pd.onMatch.InflightAction == core.InflightRedact {
-		return pd.executeRedact(input, result, start)
-	}
-	return pd.executeScan(input, result, start)
-}
-
-// executeScan implements the non-rewriting inflight paths (approve /
-// block-hard / block-soft). The inflight body is never modified, but a match
-// still stamps the hook's own storageAction onto the result — the pipeline
-// only stamps it for non-Approve decisions, so without the self-stamp an
-// "approve inflight, redact/drop storage" policy would silently persist the
-// matched content. When storageAction is redact the scan additionally
-// collects the full TransformSpan set (the same collector the inflight
-// redact path uses): the storage rewrite is span-driven, and with no spans
-// it would have nothing to apply.
-func (pd *PiiDetector) executeScan(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
-	if pd.onMatch.StorageAction == core.StorageRedact {
-		_, spans := pd.collectRedactions(input)
-		if len(spans) > 0 {
-			result.Decision = core.DecisionForInflight(pd.onMatch.InflightAction)
-			result.Reason = fmt.Sprintf("PII detected: %s", spans[0].SourceID)
-			result.ReasonCode = "PII_DETECTED"
-			result.Tags = core.AppendTag(result.Tags, "compliance:pii")
-			result.Tags = core.AppendTag(result.Tags, "severity:confidential")
-			result.TransformSpans = spans
-			result.StorageAction = pd.onMatch.StorageAction
-		}
+	// Detection gate (Vectorscan under -tags vectorscan): one scan over all
+	// patterns. If nothing fired, no PII is present — return Approve without any
+	// RE2 work (the benign hot path). Only when a pattern fires do we run the
+	// per-pattern RE2 below for precise offsets + Luhn validation. A pattern that
+	// fires here but fails Luhn still resolves to Approve via the action paths,
+	// so the gate never over-reports.
+	gateMatched := matchedSet(pd.matcher, input.TextSegmentsWith(pd.cfg.ProjectionOptions()))
+	core.ObserveContentScan(pd.cfg.ImplementationID, len(gateMatched))
+	if len(gateMatched) == 0 {
 		result.LatencyMs = int(time.Since(start).Milliseconds())
 		return result, nil
 	}
 
-	// keep / drop-content storage needs no spans — short-circuit on first match.
+	switch pd.onMatch.Action {
+	case core.ActionRedact:
+		return pd.executeRedact(input, result, start)
+	case core.ActionApprove:
+		return pd.executeApprove(input, result, start)
+	default: // ActionBlock
+		return pd.executeBlock(input, result, start)
+	}
+}
+
+// executeApprove detects PII for tagging only and leaves the payload
+// untouched (Approve forwards and stores as-is). Short-circuits on the first
+// match; no spans are collected.
+func (pd *PiiDetector) executeApprove(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
 	for _, text := range input.TextSegmentsWith(pd.cfg.ProjectionOptions()) {
 		for idx := range pd.patterns {
 			p := &pd.patterns[idx]
-			matches := p.re.FindAllString(text, -1)
-			for _, match := range matches {
+			for _, match := range p.re.FindAllString(text, -1) {
 				if p.luhn && !luhnValid(match) {
 					continue
 				}
-				result.Decision = core.DecisionForInflight(pd.onMatch.InflightAction)
 				result.Reason = fmt.Sprintf("PII detected: %s", p.id)
 				result.ReasonCode = "PII_DETECTED"
 				result.Tags = core.AppendTag(result.Tags, "compliance:pii")
 				result.Tags = core.AppendTag(result.Tags, "severity:confidential")
-				result.StorageAction = pd.onMatch.StorageAction
 				result.LatencyMs = int(time.Since(start).Milliseconds())
 				return result, nil
 			}
 		}
 	}
-
 	result.LatencyMs = int(time.Since(start).Milliseconds())
 	return result, nil
 }
 
-// executeRedact replaces all PII matches across the projection and
-// emits structured TransformSpans alongside the transitional
-// ModifiedContent. Spans precisely address each redacted byte range
-// (Source=hook, SourceID=pattern.id, Action=redact); pipeline storage
-// rewrite and inflight rewrite both consume the spans uniformly.
-// ModifiedContent stays for ai-gateway's existing RewriteRequestBody
-// path until cp/agent fully adopt the span-driven rewrite.
+// executeBlock rejects on a match and collects the TransformSpans that drive
+// the stored-copy redaction (block stores the redacted copy so an auditor can
+// review what tripped without the raw sensitive bytes).
+func (pd *PiiDetector) executeBlock(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
+	_, spans := pd.collectRedactions(input)
+	if len(spans) > 0 {
+		result.Decision = core.RejectHard
+		result.Reason = fmt.Sprintf("PII detected: %s", spans[0].SourceID)
+		result.ReasonCode = "PII_DETECTED"
+		result.Tags = core.AppendTag(result.Tags, "compliance:pii")
+		result.Tags = core.AppendTag(result.Tags, "severity:confidential")
+		result.TransformSpans = spans
+		result.Action = core.ActionBlock
+	}
+	result.LatencyMs = int(time.Since(start).Milliseconds())
+	return result, nil
+}
+
+// executeRedact replaces all PII matches across the projection and emits
+// structured TransformSpans alongside the transitional ModifiedContent. Spans
+// precisely address each redacted byte range (Source=hook, SourceID=pattern.id,
+// Action=redact); the same masked body is forwarded, returned, and stored.
 func (pd *PiiDetector) executeRedact(input *core.HookInput, result *core.HookResult, start time.Time) (*core.HookResult, error) {
 	modified, spans := pd.collectRedactions(input)
 
@@ -233,43 +272,11 @@ func (pd *PiiDetector) executeRedact(input *core.HookInput, result *core.HookRes
 		result.Tags = core.AppendTag(result.Tags, "severity:confidential")
 		result.ModifiedContent = modified
 		result.TransformSpans = spans
+		result.Action = core.ActionRedact
 	}
 
 	result.LatencyMs = int(time.Since(start).Milliseconds())
 	return result, nil
-}
-
-// RedetectText re-locates this detector's matches within one text block of
-// a storage-bound payload, restricted to the requested rule IDs. It backs
-// the storage-time redaction retry: hook-time span addresses can fail to
-// resolve on the storage-time normalized payload (cross-format requests
-// project the same content at different addresses), and the audit writer
-// has no access to the compiled patterns — the pipeline exports them
-// through this method as a redact.Redetector closure on its result.
-// Matches carry offsets, rule attribution, and the replacement marker
-// only — never the matched content.
-func (pd *PiiDetector) RedetectText(text string, ruleIDs []string) []redact.Match {
-	if text == "" || len(ruleIDs) == 0 {
-		return nil
-	}
-	want := make(map[string]struct{}, len(ruleIDs))
-	for _, id := range ruleIDs {
-		want[id] = struct{}{}
-	}
-	var out []redact.Match
-	for i := range pd.patterns {
-		p := &pd.patterns[i]
-		if _, ok := want[p.id]; !ok {
-			continue
-		}
-		for _, loc := range p.re.FindAllStringIndex(text, -1) {
-			if p.luhn && !luhnValid(text[loc[0]:loc[1]]) {
-				continue
-			}
-			out = append(out, redact.Match{RuleID: p.id, Start: loc[0], End: loc[1], Replacement: p.replacement})
-		}
-	}
-	return out
 }
 
 // addressedSegment pairs a projection text segment with its span content
@@ -391,33 +398,4 @@ func (pd *PiiDetector) collectRedactions(input *core.HookInput) ([]core.ContentB
 		return nil, nil
 	}
 	return modified, spans
-}
-
-// luhnValid checks a numeric string (ignoring spaces and hyphens) with the Luhn algorithm.
-func luhnValid(s string) bool {
-	// Pre-allocate for typical card number length (16 digits + separators).
-	digits := make([]int, 0, 20)
-	for _, ch := range s {
-		if ch >= '0' && ch <= '9' {
-			digits = append(digits, int(ch-'0'))
-		}
-	}
-	if len(digits) == 0 {
-		return false
-	}
-
-	sum := 0
-	alt := false
-	for i := len(digits) - 1; i >= 0; i-- {
-		d := digits[i]
-		if alt {
-			d *= 2
-			if d > 9 {
-				d -= 9
-			}
-		}
-		sum += d
-		alt = !alt
-	}
-	return sum%10 == 0
 }

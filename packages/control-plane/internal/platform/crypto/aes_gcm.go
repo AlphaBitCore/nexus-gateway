@@ -240,11 +240,11 @@ func NewMultiVault(keyMap string, logger *slog.Logger) (*MultiVault, error) {
 	// Delegate the "[*]id:hexkey" wire parse + current-key selection (the
 	// "*"-strip, single-"*", dup-id, empty-map, last-wins-fallback rules) to the
 	// shared leaf keymap.Parse. The credential vault's value rule — exactly 64
-	// hex chars, valid hex, not a degenerate/known-weak master (SEC-M2-02) — is
+	// hex chars, valid hex, not a degenerate/known-weak master — is
 	// supplied as the validator so a malformed key reports the same per-id error
 	// at parse time. The same leaf parses CREDENTIAL_KEY_MAP on the AI Gateway
 	// open side (creddecrypt.NewMultiDecryptor), so both stamp/strip the id
-	// identically — the [MUST MATCH] contract (F-0390).
+	// identically — the [MUST MATCH] contract.
 	entries, current, _, currentExplicit, err := keymap.Parse(keyMap, func(_, hexKey string) error {
 		if len(hexKey) != 64 {
 			return fmt.Errorf("must be 64 hex chars")

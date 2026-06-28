@@ -21,7 +21,7 @@ func TestPreStampEmbeddingRequestMeta_StampsEstimatedPromptTokens(t *testing.T) 
 // on the non-stream embeddings upstream paths (live + broker-subscription):
 // when the upstream reported no token usage (e.g. Gemini embedContent) the
 // request-side estimate is substituted; otherwise the real count is preserved.
-// Embeddings are never served from the response cache (F-0222), so there is no
+// Embeddings are never served from the response cache, so there is no
 // cache-HIT fallback path for this endpoint.
 func TestEmbeddingTokenFallback(t *testing.T) {
 	meta := preStampEmbeddingRequestMeta(nil, []byte(`{"model":"m","input":"some words here to count"}`), false)

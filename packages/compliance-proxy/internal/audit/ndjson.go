@@ -1,8 +1,8 @@
 package audit
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
 

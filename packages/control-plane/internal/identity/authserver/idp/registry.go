@@ -22,7 +22,7 @@ var ErrInvalidCredentials = errors.New("idp: invalid credentials")
 
 // AuthResult is the normalized authentication outcome produced by every IdP
 // adapter. Fields are the minimum the downstream authorization-code + token
-// flow needs to build an ID token (Task 1.11); additional claims are
+// flow needs to build an ID token; additional claims are
 // resolved at token-issuance time from IamPolicy.
 type AuthResult struct {
 	UserID string   // NexusUser.id

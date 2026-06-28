@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -386,7 +386,7 @@ func TestAdminAuth_APIKey_HappyPath_AsAPIKey(t *testing.T) {
 	}
 }
 
-// TestAdminAuth_APIKey_LazyRehashOnOldVersion is the SEC-W2-01 Layer A core
+// TestAdminAuth_APIKey_LazyRehashOnOldVersion is the keyring-versioning core
 // regression: a key whose stored hash was sealed under an OLDER keyring version
 // still admits (try-all-versions, current-first) AND is lazy-migrated to the
 // current version (UpdateKeyHashAndVersion called with the current-version hash).

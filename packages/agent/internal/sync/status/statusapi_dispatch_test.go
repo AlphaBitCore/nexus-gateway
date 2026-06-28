@@ -2,8 +2,8 @@ package status
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net"
 	"os"
 	"path/filepath"
@@ -383,7 +383,7 @@ func TestDispatch_Authenticate_Error(t *testing.T) {
 }
 
 func TestDispatch_Authenticate_ConfirmationRequired_DoesNotForceSuccess(t *testing.T) {
-	// FR-29: when the daemon asks for confirmation we must leave
+	// When the daemon asks for confirmation we must leave
 	// success absent so the GUI can render the prompt rather than
 	// claiming enrollment already happened.
 	s := newBareServer(t)
@@ -987,7 +987,7 @@ func TestQueryEvents_HandlerError(t *testing.T) {
 // handleConn: socket-level lifecycle
 
 func TestHandleConn_MultipleCommandsPerConnection(t *testing.T) {
-	socketPath := shortSocketPath(t, "m")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newTestCollector(), nil, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer srv.Stop()
@@ -1004,7 +1004,7 @@ func TestHandleConn_MultipleCommandsPerConnection(t *testing.T) {
 }
 
 func TestHandleConn_BlankLinesSkipped(t *testing.T) {
-	socketPath := shortSocketPath(t, "b")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newTestCollector(), nil, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer srv.Stop()
@@ -1039,17 +1039,17 @@ func TestHandleConn_ReadDeadlineExpires(t *testing.T) {
 	// shortening via a direct dispatch test, and just confirm here
 	// that the server cleanly handles an immediate client EOF (Scanner.Scan
 	// returns false → handler exits without leaking goroutines).
-	socketPath := shortSocketPath(t, "e")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newTestCollector(), nil, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer srv.Stop()
 
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := dialEndpoint(socketPath)
 	if err != nil {
 		// Retry briefly while the listener is coming up.
 		for i := 0; i < 20 && err != nil; i++ {
 			time.Sleep(10 * time.Millisecond)
-			conn, err = net.Dial("unix", socketPath)
+			conn, err = dialEndpoint(socketPath)
 		}
 		if err != nil {
 			t.Fatalf("dial: %v", err)
@@ -1099,7 +1099,7 @@ func TestServer_Start_ListenError(t *testing.T) {
 // at exactly the right moment, so we lower the cap by replacing the
 // semaphore directly via a tiny helper that exposes the field.
 func TestServer_ConcurrencyCap(t *testing.T) {
-	socketPath := shortSocketPath(t, "c")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newTestCollector(), nil, nil, nil, nil, nil, nil)
 	// Replace the semaphore to a cap of 1 BEFORE Start.
 	srv.sem = make(chan struct{}, 1)
@@ -1140,7 +1140,7 @@ func TestServer_ConcurrencyCap(t *testing.T) {
 	// Second connection: dial, the server's accept loop should see the
 	// cap and immediately close us. Reading should hit io.EOF very
 	// quickly (well under 2s).
-	second, err := net.Dial("unix", socketPath)
+	second, err := dialEndpoint(socketPath)
 	if err != nil {
 		t.Fatalf("second dial failed: %v", err)
 	}
@@ -1166,7 +1166,7 @@ func TestServer_ConcurrencyCap(t *testing.T) {
 // TestServer_BlockedClientDoesNotLeakOtherCommands exercises the
 // goroutine fan-out: many concurrent connections all get served.
 func TestServer_ConcurrentClients(t *testing.T) {
-	socketPath := shortSocketPath(t, "f")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newTestCollector(), nil, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer srv.Stop()

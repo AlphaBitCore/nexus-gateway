@@ -3,8 +3,8 @@ package alerting_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -130,7 +130,7 @@ func TestHandleRaise_UnknownRule(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	// Verify JSON error body has nested {error:{message,...}} shape (F-0319).
+	// Verify JSON error body has nested {error:{message,...}} shape.
 	var resp map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	inner, _ := resp["error"].(map[string]any)
@@ -235,9 +235,8 @@ func TestHandleResolve_ServiceCallerAllowed(t *testing.T) {
 	}
 }
 
-// TestHubHTTPErr_CanonicalShape verifies F-0319/F-0320: the raw net/http error
-// path emits the nested {error:{message,type,code}} envelope matching the Echo
-// handlers.
+// TestHubHTTPErr_CanonicalShape verifies the raw net/http error path emits the
+// nested {error:{message,type,code}} envelope matching the Echo handlers.
 func TestHubHTTPErr_CanonicalShape(t *testing.T) {
 	h := alerting.HandleRaise(&mockRaiser{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/raise", bytes.NewReader([]byte("not json")))

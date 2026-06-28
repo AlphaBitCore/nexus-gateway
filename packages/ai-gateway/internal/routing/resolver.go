@@ -3,8 +3,8 @@ package routing
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"hash/fnv"
 	"log/slog"
 	"sync"
@@ -50,6 +50,12 @@ type Resolver struct {
 	// re-unmarshals every rule's conditions. Self-invalidating: a changed rule
 	// has new bytes → a new key. Lock-free; see parseMatchConditions.
 	condCache sync.Map // map[uint64]*condCacheEntry
+	// contentCache memoizes, per rule Config (StrategyNode tree), whether the
+	// tree contains a content-reading strategy (e.g. smart). RequestNeedsCanonical
+	// runs per request to drive the lazy-canonical lazy-canonical gate; without this it
+	// would re-unmarshal every rule's Config each request. Self-invalidating like
+	// condCache (changed Config -> new bytes -> new key). Lock-free.
+	contentCache sync.Map // map[uint64]*contentCacheEntry
 }
 
 // condCacheEntry is a parsed-conditions cache value. raw is retained so a hash

@@ -9,8 +9,8 @@
 package hub
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // nodeFieldMap covers one-to-one key renames for a single Thing row. Metadata

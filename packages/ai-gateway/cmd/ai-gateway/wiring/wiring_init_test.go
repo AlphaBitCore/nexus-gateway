@@ -747,7 +747,7 @@ func TestMountAIGuardRoutes_complianceWebhookRegistered(t *testing.T) {
 	}
 	MountAIGuardRoutes(mux, cfg, nil, adapterReg, nil, nil, nil, configCache, discardLogger())
 
-	// F-0044: the compliance-webhook reaches a billable judge-model call, so it MUST
+	// The compliance-webhook reaches a billable judge-model call, so it MUST
 	// be token-gated exactly like /v1/ai-guard/classify — never mounted unauthenticated.
 	// Without the X-RS-Token header it must reject with 401 (and never reach the handler).
 	reqNoToken := httptest.NewRequest(http.MethodPost, "/v1/ai-guard/compliance-webhook", nil)
@@ -1409,7 +1409,7 @@ func testEncryptForCred(t *testing.T, keyHex, plaintext string, aad []byte) (ct,
 	if err != nil {
 		t.Fatalf("hex decode key: %v", err)
 	}
-	// SEC-W2-03/C1-02: mirror the production seal — HKDF the provider-credential
+	// Mirror the production seal — HKDF the provider-credential
 	// sub-key and bind the row-identity aad, so the Decryptor can open it.
 	sub, err := keyderive.DeriveKey32(master, keyderive.ClassProviderCredential)
 	if err != nil {

@@ -151,9 +151,9 @@ func TestNoRawAdminActionStringsInHandlerLiterals(t *testing.T) {
 // TestNoFreeFormAuditAssignments fails on any direct ae.Action / ae.EntityType
 // assignment in handler code. The only allowed construction
 // path for an audit Entry that carries (Action, EntityType) is
-// audit.EntryFor(c, resource, verb). Free-form assignment historically
-// produced the virtualKey/virtual_key + camelCase/snake_case drift this
-// epic is fixing.
+// audit.EntryFor(c, resource, verb). Free-form assignment can produce
+// virtualKey/virtual_key + camelCase/snake_case drift, which this guard
+// prevents.
 //
 // The test scans for `<varname>.Action\s*=\s*"` and same for EntityType.
 // `varname` is constrained to {ae, rae, e} to avoid false positives on
@@ -253,7 +253,7 @@ func TestAllAdminActionStringsAreCanonical(t *testing.T) {
 // `admin:...` strings and asserts every one matches the canonical
 // regex. Production-equivalent of test #3 for the seed surface; would
 // have failed on the pre-migration seed.ts block 13 with its 10+ phantom
-// action references that block 13's deletion (P3) removed.
+// action references that block 13's deletion removed.
 //
 // Implementation: regex-scan the seed.ts source file rather than parse
 // TypeScript. The seed file uses single-line quoted literals

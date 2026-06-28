@@ -615,10 +615,10 @@ func TestEnrollmentAPI_LoggerFallback(t *testing.T) {
 	}
 }
 
-// Tests: verifyEnrollmentJWT — jtiSeen nil branch FAILS CLOSED (F-0259)
+// Tests: verifyEnrollmentJWT — jtiSeen nil branch FAILS CLOSED
 
 func TestVerifyEnrollmentJWT_JTISeenNil_FailsClosed(t *testing.T) {
-	// F-0259: when jtiSeen is nil (Init() never ran — a wiring bug),
+	// When jtiSeen is nil (Init() never ran — a wiring bug),
 	// verifyEnrollmentJWT MUST reject rather than proceed without replay
 	// protection. The previous behaviour logged an error and accepted the
 	// JWT (fail-open), silently disabling the replay guard. We now require a
@@ -1046,7 +1046,7 @@ func TestEnroll_JWT_WithFingerprint_ReuseExistingThingID(t *testing.T) {
 		WithArgs("fp-abc123").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(existingThingID))
 
-	// F-0329 ownership check: the existing device is owned by the SAME SSO user
+	// Ownership check: the existing device is owned by the SAME SSO user
 	// (subject "user-fp"), so reuse is allowed.
 	mock.ExpectQuery(`FROM "DeviceAssignment"`).
 		WithArgs(existingThingID).
@@ -1103,7 +1103,7 @@ func TestEnroll_JWT_WithFingerprint_ReuseExistingThingID(t *testing.T) {
 }
 
 func TestEnroll_JWT_WithFingerprint_DifferentOwner_Refused(t *testing.T) {
-	// F-0329: DeviceFingerprint is an attacker-controllable request field. When
+	// DeviceFingerprint is an attacker-controllable request field. When
 	// it matches a device already owned by a DIFFERENT SSO user, enrollment must
 	// be REFUSED (409) — not silently rebound to the new user (device takeover).
 	key := newRSAKey(t)
@@ -1158,7 +1158,7 @@ func TestEnroll_JWT_WithFingerprint_DifferentOwner_Refused(t *testing.T) {
 }
 
 func TestEnroll_JWT_WithFingerprint_OwnershipReadError_FailsClosed(t *testing.T) {
-	// F-0329 fail-closed: if the ownership check itself errors, enrollment must
+	// Fail-closed: if the ownership check itself errors, enrollment must
 	// be refused (500) and NOT fall through to reusing/rebinding the device.
 	key := newRSAKey(t)
 	st, mock := newPgxmockStore(t)
@@ -1198,7 +1198,7 @@ func TestEnroll_JWT_WithFingerprint_OwnershipReadError_FailsClosed(t *testing.T)
 }
 
 func TestEnroll_JWT_WithFingerprint_Unowned_MintsNewThingID(t *testing.T) {
-	// SEC-C2-01: a fingerprint match with NO active assignment (e.g. a
+	// A fingerprint match with NO active assignment (e.g. a
 	// token-enrolled / trust-level-1 device) must NOT be claimed by the
 	// fingerprint alone — a world-readable DeviceFingerprint is an identifier,
 	// not an authenticator. The handler mints a NEW thing_id instead of reusing

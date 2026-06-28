@@ -24,9 +24,9 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -824,7 +824,7 @@ func TestServeProxy_Fake_ResponsesCrossFormat_Canonicalizes(t *testing.T) {
 
 // TestServeProxy_Fake_ResponsesGuard_Rejects drives the
 // validateResponsesIngressForCrossFormat success path. The request body
-// carries previous_response_id, which (per F-7) cannot be honoured on a
+// carries previous_response_id, which cannot be honoured on a
 // cross-format target, so the gateway must respond with a Responses-shape
 // 400 envelope BEFORE the request hits hooks / quota / executor.
 func TestServeProxy_Fake_ResponsesGuard_Rejects(t *testing.T) {
@@ -1442,7 +1442,7 @@ func TestServeProxy_Fake_RequestHookPipelineError(t *testing.T) {
 	}
 }
 
-// Broker non-stream MISS — response-hook RejectHard / BlockSoft / Modify
+// Broker non-stream MISS — response-hook RejectHard / non-blocking / Modify
 
 // fakeBrokerSuccessResult is the common executor result used by the
 // broker tests below: a successful OpenAI chat.completion non-stream
@@ -1492,9 +1492,11 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookRejects(t *testing.T) {
 	}
 }
 
-// TestServeProxy_Fake_BrokerLeader_NonStream_RespHookBlockSoft drives
-// the BlockSoft arm (HTTP 246) in handleNonStreamWithSubscription.
-func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookBlockSoft(t *testing.T) {
+// TestServeProxy_Fake_BrokerLeader_NonStream_RespHookNonBlocking pins that
+// a non-blocking response-hook decision (one that is neither RejectHard nor
+// Modify) forwards the upstream body unchanged with HTTP 200 in
+// handleNonStreamWithSubscription.
+func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookNonBlocking(t *testing.T) {
 	fexec := &fakeExecutor{Result: fakeBrokerSuccessResult()}
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
@@ -1512,11 +1514,8 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookBlockSoft(t *testing.T) 
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, body))
 
-	if w.Code != 246 {
-		t.Fatalf("status=%d want 246; body=%s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "softblock from response hook") {
-		t.Errorf("body=%s want BlockSoft reason", w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 (non-blocking response hook forwards body); body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -1548,7 +1547,7 @@ func TestServeProxy_Fake_BrokerLeader_NonStream_RespHookModify(t *testing.T) {
 	}
 }
 
-// handleNonStream — response hook RejectHard / BlockSoft / Modify
+// handleNonStream — response hook RejectHard / non-blocking / Modify
 // (direct path, no cache, no broker — covers the 2249-2302 arms)
 
 // TestServeProxy_Fake_Direct_NonStream_RespHookRejects exercises the
@@ -1573,7 +1572,7 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookRejects(t *testing.T) {
 	}
 }
 
-func TestServeProxy_Fake_Direct_NonStream_RespHookBlockSoft(t *testing.T) {
+func TestServeProxy_Fake_Direct_NonStream_RespHookNonBlocking(t *testing.T) {
 	fexec := &fakeExecutor{Result: fakeBrokerSuccessResult()}
 	fbridge := &fakeBridge{}
 	deps := makeFakeDeps(t, fexec, fbridge)
@@ -1587,8 +1586,8 @@ func TestServeProxy_Fake_Direct_NonStream_RespHookBlockSoft(t *testing.T) {
 	w := httptest.NewRecorder()
 	h(w, freshChatRequest(t, body))
 
-	if w.Code != 246 {
-		t.Fatalf("status=%d want 246; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 (non-blocking response hook forwards body); body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -2220,7 +2219,7 @@ func TestServeProxy_Fake_Embeddings_CrossFormat_Gemini(t *testing.T) {
 	}
 }
 
-// TestServeProxy_Fake_Embeddings_NeverServedFromCache is the F-0222 regression
+// TestServeProxy_Fake_Embeddings_NeverServedFromCache is the regression
 // guard: the response cache is endpoint-scoped, so an embeddings request must
 // NEVER be served from a seeded cache entry — even when the cache is enabled
 // and a matching entry exists. The pre-lookup classifier short-circuits the

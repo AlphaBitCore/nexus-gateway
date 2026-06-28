@@ -6,8 +6,8 @@ package routing
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"testing"
@@ -267,7 +267,7 @@ func TestCapabilityPreFilter_AllRejected(t *testing.T) {
 	}
 }
 
-// TestCapabilityPreFilter_RecoveryTargetsAlsoFiltered (F-0233) — the capability
+// TestCapabilityPreFilter_RecoveryTargetsAlsoFiltered — the capability
 // pre-filter must run on plan.RecoveryTargets (fallback-rule recovery), not only
 // plan.Targets. ResolveTargets flattens primary + recovery into allTargets and
 // gates the rich-400 on the combined count; a recovery target that bypassed the
@@ -344,7 +344,7 @@ func TestCapabilityPreFilter_RecoveryTargetsAlsoFiltered(t *testing.T) {
 	}
 }
 
-// TestCapabilityPreFilter_AllPrimaryAndRecoveryRejected (F-0233) — when EVERY
+// TestCapabilityPreFilter_AllPrimaryAndRecoveryRejected — when EVERY
 // primary AND EVERY recovery target fails the capability filter, the combined
 // allTargets is empty and ResolveTargets returns the rich-400
 // (*core.NoCompatibleProviderError). Before the fix, a surviving-but-unchecked

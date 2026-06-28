@@ -31,9 +31,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"sort"
 
 	"github.com/jackc/pgx/v5"

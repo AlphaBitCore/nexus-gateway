@@ -25,16 +25,6 @@ import (
 
 const adapterID = "replicate"
 
-var requestKnownKeys = []string{
-	"version", "input", "model", "stream", "webhook", "webhook_events_filter",
-}
-
-var responseKnownKeys = []string{
-	"id", "version", "input", "output", "status", "logs",
-	"created_at", "started_at", "completed_at", "error",
-	"urls", "data_removed", "metrics",
-}
-
 type Adapter struct{}
 
 func (a *Adapter) ID() string                       { return adapterID }
@@ -82,7 +72,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -127,7 +116,6 @@ func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (tra
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, responseKnownKeys),
 	}, nil
 }
 

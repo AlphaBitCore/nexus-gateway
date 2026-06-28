@@ -2,8 +2,8 @@ package siem
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -681,7 +681,7 @@ func TestQueryAdminEvents_PopulatesFields(t *testing.T) {
 		t.Errorf("beforeState should be parsed and present")
 	}
 	// Row 1 — via="assistant" must be exported so the SIEM can distinguish the
-	// AI-initiated write from a human one (E90 I5 — the whole point of the column).
+	// AI-initiated write from a human one — the whole point of the column.
 	if events[0]["via"] != "assistant" {
 		t.Errorf("row 1 via = %v, want 'assistant'", events[0]["via"])
 	}
@@ -1233,7 +1233,7 @@ func allowLoopbackSink(t *testing.T) {
 	t.Cleanup(func() { httpSinkDialControl = prev })
 }
 
-// TestHTTPSink_RejectsPrivateURL is the SEC-M6-01 egress regression: with the
+// TestHTTPSink_RejectsPrivateURL is the egress regression test: with the
 // production guard in force (no allowLoopbackSink), a sink whose URL resolves to
 // a loopback / private address must fail to deliver — the dial is refused before
 // any byte of the audit stream leaves the Hub. Without the guard this 127.0.0.1
@@ -1385,7 +1385,7 @@ func (failFormatter) FormatBatch(_ []Event) ([]byte, error) { return nil, errors
 // Formatter — close the remaining cefSeverity / syslogSeverity gaps
 
 // TestCEFSeverity_FromTaxonomy drives cefSeverity on the CANONICAL eventTypes
-// the classifier actually emits (F-0191). The old table keyed on invented
+// the classifier actually emits. The old table keyed on invented
 // prefixes ("iam.", "config.", "proxy.") the classifier never produces, so
 // every privilege/kill-switch/node mutation fell through to the lowest default
 // severity. These cases pin the taxonomy-derived mapping — and specifically

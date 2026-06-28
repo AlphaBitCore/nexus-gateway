@@ -336,7 +336,7 @@ func TestAnalyticsCacheROI_DirectAdapterScanError(t *testing.T) {
 	assertStatus(t, rec, http.StatusOK)
 }
 
-// TestAnalyticsCacheROI_TotalsAreFleetWideMultiProvider is the F-0196 intent
+// TestAnalyticsCacheROI_TotalsAreFleetWideMultiProvider is the intent
 // assertion: the top-level totals are a single FLEET-WIDE combined figure (one
 // summed row, no provider dimension) while the byAdapter breakdown carries the
 // per-provider split. A multi-provider tenant (OpenAI + Gemini) therefore sees
@@ -406,7 +406,7 @@ func TestAnalyticsCacheROI_TotalsAreFleetWideMultiProvider(t *testing.T) {
 }
 
 // TestAnalyticsCacheROI_DirectFallback_NullProviderReconciliation is the
-// F-0196 regression test: when traffic_event rows have NULL provider_id
+// Regression test: when traffic_event rows have NULL provider_id
 // (compliance-proxy / agent / errored-before-routing traffic), the LEFT JOIN
 // must route them to the "unknown" bucket instead of dropping them.
 // Invariant: Σ(byAdapter cost) == fleet-wide totalEstimatedCostUsd.

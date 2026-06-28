@@ -1,7 +1,7 @@
 package shadow
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 // InterceptionDomainDTO is the wire format for interception domains from the

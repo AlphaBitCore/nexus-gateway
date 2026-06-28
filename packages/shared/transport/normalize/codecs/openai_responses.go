@@ -40,9 +40,9 @@ package codecs
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/goccy/go-json"
 	"strings"
 )
 

@@ -3,8 +3,8 @@ package dispatch
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,12 +19,6 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
-
-// debugBodyLimit caps how many bytes of the raw upstream body are captured
-// and logged when slog DEBUG is enabled. Large enough to show a full SSE
-// event from Gemini Flash (typically < 2 KiB) but small enough to avoid
-// flooding the log with embedding / image responses.
-const debugBodyLimit = 8192
 
 // NewSpecAdapter wraps an [AdapterSpec] as an [Adapter]. Panics on a
 // structurally invalid spec — a programming error caught at startup by
@@ -65,32 +59,6 @@ func (a *specAdapter) Format() Format { return a.spec.Format }
 
 func (a *specAdapter) SupportsShape(shape typology.WireShape) bool {
 	return a.spec.SupportsShape(shape)
-}
-
-// effectiveAllowlist returns the adapter's wired allowlist, or the
-// package-level embedded default when a caller (typically a test) did
-// not wire one. The returned pointer is process-stable; callers must
-// not mutate it.
-//
-// Accept-Encoding is permanently excluded from the request-side
-// allowlist. Forwarding it to the upstream disables Go
-// net/http.Transport's transparent gzip auto-decompression, which
-// caused a real Anthropic streaming SSE production incident — see
-// https://pkg.go.dev/net/http#Transport. The hard denylist enforced
-// at config load (forwardheader.Resolve) makes it impossible for an
-// operator's YAML to re-add `accept-encoding`.
-func (a *specAdapter) effectiveAllowlist() *forwardheader.Resolved {
-	// Live atomic snapshot wins; the forwardHeaders allowlist is
-	// resolved once from yaml at boot and never rewritten thereafter.
-	// The construction-time pointer is retained only as a fallback for
-	// tests that haven't seeded forwardheader.SetActive.
-	if live := forwardheader.Active(); live != nil {
-		return live
-	}
-	if a.allowlist != nil {
-		return a.allowlist
-	}
-	return forwardheader.Default()
 }
 
 func (a *specAdapter) Execute(ctx context.Context, req Request) (*Response, error) {
@@ -233,7 +201,7 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 		// rather than the runtime cap so a misconfigured zero cap can
 		// never starve the error message we surface to the caller.
 		raw, _ := LimitedReadAll(httpResp.Body)
-		// #77 — decompress non-gzip Content-Encoding (br / zstd / deflate)
+		// Decompress non-gzip Content-Encoding (br / zstd / deflate)
 		// that Go's transport leaves untouched, so the ErrorNormalizer's
 		// JSON probe sees plain text. gzip is auto-decompressed by Go
 		// (Accept-Encoding stripped → transport adds its own) and the
@@ -305,7 +273,7 @@ func (a *specAdapter) executeWithBodyAndURL(ctx context.Context, req Request, bo
 			slog.String("format", string(a.spec.Format)),
 		)
 	}
-	// #77 — decompress non-gzip Content-Encoding (br / zstd / deflate)
+	// Decompress non-gzip Content-Encoding (br / zstd / deflate)
 	// upstream before SchemaCodec sees the bytes. A custom provider URL
 	// fronted by Cloudflare / Akamai can legitimately respond in br even
 	// when the gateway negotiated gzip; without this DecodeResponse
@@ -385,6 +353,28 @@ func (a *specAdapter) Probe(ctx context.Context, target CallTarget) (*ProbeResul
 	return a.spec.Transport.Probe(ctx, target)
 }
 
+// transportModelLister is a capability interface optionally implemented by
+// OpenAI-compatible transports. Only transports that expose a /v1/models
+// list endpoint implement this; non-OpenAI transports do not, which is the
+// correct signal that model discovery is unsupported for that adapter.
+type transportModelLister interface {
+	ListModels(ctx context.Context, target CallTarget) ([]string, error)
+}
+
+// ListModels delegates to the underlying transport when it implements the
+// optional [transportModelLister] capability (OpenAI and OpenAI-compatible
+// transports), and returns (nil, false) otherwise. The handler uses the
+// boolean to distinguish "discovery supported" from "adapter does not support
+// discovery" without branching on format names.
+func (a *specAdapter) ListModels(ctx context.Context, target CallTarget) ([]string, bool, error) {
+	lister, ok := a.spec.Transport.(transportModelLister)
+	if !ok {
+		return nil, false, nil
+	}
+	ids, err := lister.ListModels(ctx, target)
+	return ids, true, err
+}
+
 // PrepareBody picks between passthrough and SchemaCodec.EncodeRequest.
 // Returns the wire body, the list of in-place rewrites applied (empty when
 // none), and any encoding error. Rewrites are only possible on the
@@ -414,7 +404,7 @@ func (a *specAdapter) prepareBodyFull(req Request) (body []byte, rewrites []stri
 	// codec EncodeRequest on those adapters is an identity pass that would
 	// leave the original model ID in the body.
 	if req.BodyFormat == a.spec.Format || (req.BodyFormat.IsOpenAIFamily() && a.spec.Format.IsOpenAIFamily()) {
-		b, rw, e := rewritePassthroughModel(req, a.spec.PassthroughRewrite)
+		b, rw, e := rewritePassthroughModel(req, a.spec.PassthroughRewrite, a.spec.PassthroughRewriteApplies)
 		return b, rw, "", e
 	}
 	// Canonical OpenAI input needs codec translation. Codecs may apply
@@ -450,9 +440,9 @@ func applyURLOverride(baseURL, override string) string {
 	return override
 }
 
-func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any, string) []string) ([]byte, []string, error) {
+func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any, string) []string, rewriteApplies func(string) bool) ([]byte, []string, error) {
 	// Strip the gateway-internal `nexus` namespace from the body before
-	// any further work (PR #9). The passthrough path forwards req.Body
+	// any further work The passthrough path forwards req.Body
 	// to upstream verbatim (modulo model rewrite), and the cross-format
 	// codec path rebuilds the body from canonical fields — only this
 	// passthrough is at risk of leaking gateway extensions to upstream.
@@ -479,6 +469,80 @@ func rewritePassthroughModel(req Request, passthroughRewrite func(map[string]any
 	}
 	if len(body) == 0 {
 		return body, nil, nil
+	}
+	// Fast path: the map[string]any unmarshal+marshal below is a full round-trip
+	// of the (often large) body whose ONLY purpose, in the common case, is to set
+	// the top-level `model`. That round-trip is needed only when a per-adapter
+	// rewrite or the streaming-usage option must mutate the parsed map — i.e.
+	// WireShapeOpenAIChat with a non-nil passthroughRewrite or a streaming
+	// request. Otherwise a surgical sjson edit of just `model` avoids decoding the
+	// whole body (the dominant per-request allocation on the hot path).
+	//
+	// Guard: more than one `"model"` occurrence may be a duplicate top-level key.
+	// sjson edits the FIRST occurrence; JSON parsers and the cache-key
+	// canonicaliser take last-wins — so fall back to the map path (last-wins) for
+	// correctness on that pathological shape. The prepared body's byte layout is
+	// not persisted (traffic_event stores the original client body) and the cache
+	// key re-canonicalises, so sjson's layout difference vs the map path is safe.
+	// The map round-trip is needed only when something must mutate the parsed
+	// body: a streaming-usage option, or a per-adapter rewrite that ACTUALLY
+	// applies to this model. PassthroughRewriteApplies answers the latter without
+	// decoding — so a non-reasoning model on an adapter whose only rewrite is the
+	// reasoning-quirk strip takes the surgical sjson path instead of the
+	// (dominant) full decode+marshal. Nil probe ⇒ assume it may apply (keep the
+	// map path), preserving prior behavior.
+	rewriteMayApply := passthroughRewrite != nil &&
+		(rewriteApplies == nil || rewriteApplies(req.Target.ProviderModelID))
+	needsMap := req.WireShape == typology.WireShapeOpenAIChat &&
+		(req.Stream || rewriteMayApply)
+	// Passthrough does at most ONE thing to the body: set the top-level `model`.
+	// We deliberately do NOT pre-validate the whole body with json.Valid first.
+	// A malformed client body is the client's problem — sjson forwards it (or
+	// errors) and the upstream returns the error; an enterprise caller does not
+	// submit garbage JSON, and even under attack an upstream 400 is harmless to
+	// the gateway. The full-body gjson.ValidBytes scan it replaced was the single
+	// largest CPU cost on the passthrough hot path (~46% of this function) for a
+	// validation the upstream already performs. The dup-key guard stays: sjson
+	// edits the FIRST `"model"`, but JSON parsers take last-wins, so a body with
+	// two top-level model keys must fall to the map path or the routing rewrite
+	// would silently target the wrong model — a correctness bug, not a client
+	// error.
+	if !needsMap && bytes.Count(body, []byte(`"model"`)) <= 1 {
+		// Skip the rewrite entirely when the body already carries the provider's
+		// model id (the common case where the client requests the upstream model
+		// name directly, e.g. no alias). sjson.SetBytes would otherwise rebuild
+		// the whole ~50 KB body to write an identical value — a pure-waste
+		// allocation on the hot path. GetBytes stops at the top-level model field,
+		// so this no-op check does not scan the whole body.
+		if gjson.GetBytes(body, "model").String() == req.Target.ProviderModelID {
+			return body, nil, nil
+		}
+		out, err := sjson.SetBytes(body, "model", req.Target.ProviderModelID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return out, nil, nil
+	}
+	// Streaming all-skip: a conformant streaming body — provider model already
+	// set, stream:true, and stream_options.include_usage already present — needs
+	// NO rewrite. Return it untouched (zero allocation) instead of paying the
+	// map round-trip below just to re-emit byte-identical content. This is the
+	// common shape when the client sends the upstream model name and already
+	// requests usage (the OpenAI-stream SDK default). gjson scans + json.Valid
+	// are alloc-free; malformed bodies are NOT skipped — they fall to the map
+	// path's json.Unmarshal which preserves the 400 contract. A benchmark
+	// confirmed map[string]any is the lowest-alloc round-trip when a rewrite IS
+	// needed (it beats sjson and map[string]json.RawMessage), so the map path is
+	// kept for that case — only the no-op case is short-circuited here.
+	if req.Stream && req.WireShape == typology.WireShapeOpenAIChat && !rewriteMayApply {
+		// No pre-validation (see the non-stream fast path above): a malformed body
+		// is the client's problem. One parse for all three fields (GetManyBytes).
+		// If all three already conform, forward verbatim; otherwise fall to the map
+		// path, which both applies the usage option and rejects malformed bodies.
+		r := gjson.GetManyBytes(body, "model", "stream", "stream_options.include_usage")
+		if r[0].String() == req.Target.ProviderModelID && r[1].Exists() && r[2].Exists() {
+			return body, nil, nil
+		}
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -532,7 +596,6 @@ func applyStreamUsageOption(payload map[string]any) {
 	}
 }
 
-// forwardHeaders copies allowlisted client headers from src onto the
 // stripNexusNamespace drops the top-level `nexus` key from a JSON body
 // using sjson's in-place delete. The `nexus` namespace is gateway-internal
 // (canonicalext: ext.<provider>.<key>, ...) and must not reach any
@@ -551,157 +614,4 @@ func stripNexusNamespace(body []byte) []byte {
 		return body
 	}
 	return out
-}
-
-// outbound dst request. Anything not on the resolved request-side
-// allowlist is dropped and counted against
-// nexus_forward_header_dropped_total.
-//
-// The allowlist is precomputed per Format at config load
-// (forwardheader.Resolve), so no per-request map allocation happens here.
-func (a *specAdapter) forwardHeaders(dst *http.Request, src http.Header) {
-	if len(src) == 0 {
-		return
-	}
-	allowed := a.effectiveAllowlist().Request(string(a.spec.Format))
-	adapterLabel := string(a.spec.Format)
-	for k, vs := range src {
-		lk := canonicalLower(k)
-		if _, ok := allowed[lk]; !ok {
-			emitForwardHeaderDrop("request", adapterLabel, forwardheader.BucketDroppedHeader(lk))
-			continue
-		}
-		for _, v := range vs {
-			dst.Header.Add(k, v)
-		}
-	}
-}
-
-// FilterResponseHeaders is a free function (not a method on Adapter)
-// that returns a new http.Header containing only the upstream
-// response headers permitted by the resolved response allowlist for
-// the supplied Format. Per-request headers (e.g. x-request-id,
-// rate-limit headers) are dropped on cache HIT — replaying a stale
-// per-request value is worse than not surfacing it, since clients
-// would correlate to a request that never happened.
-//
-// allowlist may be nil; callers get the embedded defaults via
-// [forwardheader.Default]. format selects the per-adapter-type
-// extension; passing an unknown Format returns just the base set.
-//
-// Headers not on either Static or PerRequest are dropped silently
-// and counted against
-// nexus_forward_header_dropped_total{direction="response"}.
-//
-// Kept as a free function so the handler does not need to type-assert
-// on Adapter or pull the method through the interface (which would
-// force every test mock of Adapter to grow it).
-func FilterResponseHeaders(allowlist *forwardheader.Resolved, format Format, src http.Header, isCacheHit bool) http.Header {
-	out := make(http.Header)
-	if len(src) == 0 {
-		return out
-	}
-	if allowlist == nil {
-		allowlist = forwardheader.Default()
-	}
-	set := allowlist.Response(string(format))
-	adapterLabel := string(format)
-	for k, vs := range src {
-		lk := canonicalLower(k)
-		if _, ok := set.Static[lk]; ok {
-			for _, v := range vs {
-				out.Add(k, v)
-			}
-			continue
-		}
-		if _, ok := set.PerRequest[lk]; ok {
-			if isCacheHit {
-				// Strip on cache hit; replaying a stale per-request value
-				// (request id, ratelimit-remaining, processing-ms) lies to
-				// the client.
-				continue
-			}
-			for _, v := range vs {
-				out.Add(k, v)
-			}
-			continue
-		}
-		emitForwardHeaderDrop("response", adapterLabel, forwardheader.BucketDroppedHeader(lk))
-	}
-	return out
-}
-
-// debugBody wraps an io.ReadCloser to log every Read call at DEBUG level.
-// The first debugBodyLimit bytes read are accumulated and emitted as a
-// single "upstream stream body" record on Close, giving a clear snapshot
-// of what the provider actually sent over the wire. Used only when slog
-// DEBUG is enabled; never in production (gated by Enabled check).
-type debugBody struct {
-	inner  io.ReadCloser
-	log    *slog.Logger
-	ctx    context.Context //nolint:containedctx
-	format string
-	buf    bytes.Buffer
-	capped bool
-}
-
-func newDebugBody(rc io.ReadCloser, log *slog.Logger, ctx context.Context, format string) *debugBody {
-	return &debugBody{inner: rc, log: log, ctx: ctx, format: format}
-}
-
-func (d *debugBody) Read(p []byte) (int, error) {
-	n, err := d.inner.Read(p)
-	if n > 0 && !d.capped {
-		remaining := debugBodyLimit - d.buf.Len()
-		if remaining > 0 {
-			take := n
-			if take > remaining {
-				take = remaining
-				d.capped = true
-			}
-			d.buf.Write(p[:take])
-		}
-	}
-	return n, err
-}
-
-func (d *debugBody) Close() error {
-	if d.buf.Len() > 0 || d.capped {
-		suffix := ""
-		if d.capped {
-			suffix = " (truncated)"
-		}
-		d.log.LogAttrs(d.ctx, slog.LevelDebug, "upstream stream body",
-			slog.String("format", d.format),
-			slog.Int("bytes_captured", d.buf.Len()),
-			slog.Bool("capped", d.capped),
-			slog.String("body", d.buf.String()+suffix),
-		)
-	} else {
-		d.log.LogAttrs(d.ctx, slog.LevelDebug, "upstream stream body",
-			slog.String("format", d.format),
-			slog.Int("bytes_captured", 0),
-			slog.String("body", "(empty — no bytes read from stream body)"),
-		)
-	}
-	return d.inner.Close()
-}
-
-// canonicalLower returns the lower-cased canonical form of an HTTP
-// header name. Reserved as a single chokepoint so future name
-// normalization (e.g. tightening for non-ASCII inputs) lands here.
-func canonicalLower(name string) string {
-	// http.CanonicalMIMEHeaderKey already canonicalizes ASCII case;
-	// lower-casing it once gives a stable key that matches the
-	// pre-lowered allowlist. textproto would do the same, but the
-	// stdlib already canonicalizes header keys on Header.Get/Set.
-	b := make([]byte, len(name))
-	for i := range len(name) {
-		c := name[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
 }

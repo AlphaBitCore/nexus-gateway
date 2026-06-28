@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -111,7 +111,7 @@ func (d *mockDedup) SetNX(context.Context, string, time.Duration) (bool, error) 
 }
 
 // countingDedup records how many times SetNX was called so tests can assert the
-// dedup slot is acquired ONLY after a durable, verified Put (F-0188).
+// dedup slot is acquired ONLY after a durable, verified Put.
 type countingDedup struct {
 	acquired bool
 	calls    int
@@ -467,7 +467,7 @@ func TestPutBlob_Success(t *testing.T) {
 	}
 }
 
-// TestPutBlob_PutErrorDoesNotBurnDedup verifies F-0188: a failed Put must NOT
+// TestPutBlob_PutErrorDoesNotBurnDedup verifies a failed Put must NOT
 // acquire the one-shot dedup slot, so a legitimate retry of a never-stored body
 // is not permanently rejected with 409.
 func TestPutBlob_PutErrorDoesNotBurnDedup(t *testing.T) {
@@ -490,7 +490,7 @@ func TestPutBlob_PutErrorDoesNotBurnDedup(t *testing.T) {
 	}
 }
 
-// TestPutBlob_SHAMismatchDoesNotBurnDedup verifies F-0188: a sha256 mismatch
+// TestPutBlob_SHAMismatchDoesNotBurnDedup verifies a sha256 mismatch
 // (body corrupted in flight) must NOT acquire the dedup slot, so the agent can
 // retry with the correct body.
 func TestPutBlob_SHAMismatchDoesNotBurnDedup(t *testing.T) {
@@ -567,7 +567,7 @@ func mintAsNode(t *testing.T, h *SpillUploadAPI, nodeID string, r SpillUploadMin
 	return resp
 }
 
-// TestMint_NamespacesKeyByNode is the SEC-M5-01 binding test: the storage key is
+// TestMint_NamespacesKeyByNode is the binding test: the storage key is
 // namespaced by the authenticated node identity, so two different nodes minting
 // for the SAME eventId get DIFFERENT keys and cannot overwrite one another's
 // spill object. The signed token also carries NodeID so the blob handler writes

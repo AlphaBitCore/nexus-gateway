@@ -28,10 +28,13 @@ import (
 // helper only distinguishes "no body field present" (empty string) from
 // "path param missing" (returns an error).
 func ExtractIngressModel(in Ingress, r *http.Request, body []byte) (modelID string, isStream bool, err error) {
-	parsed := gjson.ParseBytes(body)
+	// gjson.GetBytes is zero-copy (operates on body directly via unsafe),
+	// whereas gjson.ParseBytes copies the whole body to a string — a ~50 KB
+	// alloc per request on the hot path. Read the one or two fields we need
+	// with GetBytes instead; the value-level result is identical.
 	isStream = in.StreamFromPath
 	if !in.StreamFromPath && len(body) > 0 {
-		isStream = parsed.Get("stream").Bool()
+		isStream = gjson.GetBytes(body, "stream").Bool()
 	}
 
 	switch in.BodyFormat {
@@ -44,7 +47,7 @@ func ExtractIngressModel(in Ingress, r *http.Request, body []byte) (modelID stri
 		// /v1/responses uses the same top-level `model` field as
 		// chat-completions; extraction is identical. The stream flag
 		// reads from body `stream:true` (not from path).
-		modelID = parsed.Get("model").String()
+		modelID = gjson.GetBytes(body, "model").String()
 	case provcore.FormatGemini:
 		seg := r.PathValue("model")
 		if seg == "" {

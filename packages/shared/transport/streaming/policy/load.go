@@ -3,9 +3,9 @@ package policy
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // SystemMetadataKey is the system_metadata row that stores the global

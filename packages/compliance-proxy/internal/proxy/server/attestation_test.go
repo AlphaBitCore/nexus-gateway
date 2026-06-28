@@ -99,7 +99,7 @@ func TestVerifier_Valid_HappyPath(t *testing.T) {
 	}
 }
 
-// TestVerifier_CertExpired_RejectsOtherwiseValid is the SEC-M4-01 keystone: a
+// TestVerifier_CertExpired_RejectsOtherwiseValid is the keystone: a
 // header that is in-window, correctly signed, and from a known agent must STILL
 // be rejected (outcome=expired → MITM fallback) when the agent's attestation
 // cert NotAfter has passed. Without the fix this returned valid → full

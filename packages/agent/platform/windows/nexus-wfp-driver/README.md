@@ -3,9 +3,18 @@
 In-house Windows Filtering Platform (WFP) callout driver that
 replaces WinDivert as the Nexus Agent's traffic interception layer.
 
-**Status:** Skeleton (E59-S1). Loadable, registers four callouts,
-exposes the IOCTL contract, but does not yet redirect traffic — the
-implementation pass lands after architecture review.
+**Status:** Implemented and working (E59-S1/S2). Loads, registers the
+four callouts (V4/V6 connect-redirect + V4/V6 QUIC-block), exposes the
+IOCTL contract, and transparently redirects outbound **TCP** connections
+to the agent's local proxy (`127.0.0.1:<proxyPort>`); the agent recovers
+the original destination (driver FlowTable / `GET_ORIG_DST`) and
+MITM-inspects the flow, over both IPv4 and IPv6. UDP passes through
+untouched **except** UDP/443 from processes on the admin-pushed
+QUIC-fallback allowlist, which is blocked at `ALE_AUTH_CONNECT` so those
+apps fall back to interceptable TCP/443 (macOS-parity
+QUIC-force-TCP-fallback; protocol v2). Verified end-to-end on Windows 11
+24H2 (client → kernel redirect → agent MITM → real upstream → audit).
+Driver signing for stock (non-test-signed) Windows is E59-S5.
 
 - **Architecture:** [`docs/developers/architecture/agent-windows-wfp-driver.md`](../../../../../docs/developers/architecture/agent-windows-wfp-driver.md)
 - **Epic:** [`docs/developers/specs/e59-windows-wfp-migration.md`](../../../../../docs/developers/specs/e59-windows-wfp-migration.md)
@@ -19,7 +28,7 @@ implementation pass lands after architecture review.
 | `Common.h` | Shared definitions — IOCTL codes, wire structs, GUIDs |
 | `Driver.c` | DriverEntry / EvtDriverUnload / device-object setup |
 | `Callouts.c` | The four classify functions + callout registration |
-| `Filter.c` | FwpmEngine session + sublayer + filters (filter wiring stubbed) |
+| `Filter.c` | FwpmEngine session + sublayer + filters (binds each callout to its layer) |
 | `Ioctl.c` | IOCTL dispatcher (HELLO / SET_PROXY_PORT / PUSH_POLICY / GET_ORIG_DST / AUDIT_PUMP) |
 | `nexus-wfp.inf` | INF manifest, NT$ARCH$ for amd64 + arm64 |
 | `nexus-wfp.vcxproj` / `.sln` | WDK KMDF project, both platforms |
@@ -40,42 +49,51 @@ Prerequisites:
   the VS installer; required because the project sets
   `<SpectreMitigation>Spectre</SpectreMitigation>`).
 
-```cmd
+```powershell
 cd packages\agent\platform\windows\nexus-wfp-driver
-build.bat
+pwsh -NoProfile -File build.ps1              # x64 Release; -Platform both for x64 + ARM64
 ```
 
-Outputs:
+`build.ps1` is the verified path. It auto-selects the newest installed Windows
+SDK that actually has the `km\` kernel headers and pins it via
+`WindowsTargetPlatformVersion` — without that pin msbuild resolves the bundled
+Desktop SDK (no `km\`) and fails with `error C1083: Cannot open include file:
+'ntddk.h'`. It also sets `DriverVer`/`STAMPINF_VERSION` (stampinf errors 87
+otherwise) and skips the `.cat` catalog packaging (`SkipPackageVerification` +
+`EnableInf2cat=false`) — the catalog is release-only (E59-S5) and needs WDK
+tooling (`x86\InfVerif.dll`) absent from a plain WDK install. `build.bat` is the
+older entry point and omits these flags; prefer `build.ps1`.
+
+Outputs (test-signed by the WDK test cert):
 
 ```
 bin\x64\Release\nexus-wfp.sys
 bin\ARM64\Release\nexus-wfp.sys
 ```
 
-Both unsigned. Signing happens in `packages\agent\platform\windows\
-scripts\sign-driver.ps1` (E59-S5).
+Production signing (Microsoft attestation) happens in `packages\agent\platform\
+windows\scripts\sign-driver.ps1` (E59-S5).
 
 ## Loading for development
 
 Production builds need Microsoft Hardware Dev Center attestation
-(E59-S5). For dev iteration:
+(E59-S5). For dev iteration the driver loads inside the crash-safe
+**NexusWFP-Debug** kernel-debug VM (never your workstation — a driver bug
+bugchecks the machine). Full VM provisioning + the dev loop are documented in
+[`docs/developers/workflow/windows-kernel-debug-vm.md`](../../../../../docs/developers/workflow/windows-kernel-debug-vm.md).
 
-```cmd
-REM Enable test-signed loading. Reboot required.
-bcdedit /set testsigning on
-shutdown /r /t 0
+Host-driven and hands-off, from the **elevated Hyper-V host** (`dev-deploy.ps1`):
 
-REM After reboot:
-cd %~dp0
-signtool sign /a /v /fd sha256 /tr http://timestamp.digicert.com bin\x64\Release\nexus-wfp.sys
-pnputil /add-driver nexus-wfp.inf /install
-sc start NexusWFP
-netsh wfp show state > wfp-state.txt
-findstr /i NexusConnectRedirectV4 wfp-state.txt
+```powershell
+pwsh -NoProfile -File dev-deploy.ps1             # build + revert checkpoint + deploy + verify
+pwsh -NoProfile -File dev-deploy.ps1 -SkipBuild  # deploy an already-built .sys
+pwsh -NoProfile -File dev-deploy.ps1 -Stop       # sc stop in the guest
 ```
 
-The last command should print a single match — confirmation that
-the redirect-v4 callout is registered.
+It reverts the `clean-debug-ready` checkpoint, copies the `.sys` into the guest
+over PowerShell Direct, trusts the test cert, `sc start`s the driver under a 45s
+timeout (timeout ⇒ bugcheck → attach `kd`, revert), and asserts the
+`NexusConnectRedirectV4 / V6` callouts registered.
 
 ## Uninstalling for development
 

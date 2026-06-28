@@ -3,7 +3,7 @@ package oauth_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -287,7 +287,7 @@ func TestAuthorize_ValidationErrors(t *testing.T) {
 			wantDescSubs: "code_challenge required",
 		},
 		{
-			// F-0073: PKCE is mandatory for every client — there is no
+			// PKCE is mandatory for every client — there is no
 			// per-client opt-out flag. Omitting code_challenge must 400 for an
 			// ordinary registered public client.
 			name:    "missing_code_challenge_rejected_no_per_client_opt_out",
@@ -444,7 +444,7 @@ func TestAuthorize_AgentDesktop_BindingChallengeMismatch(t *testing.T) {
 	}
 }
 
-// TestAuthorize_AuthctxIsUnguessableCSRFState is the F-0083 regression: the
+// TestAuthorize_AuthctxIsUnguessableCSRFState is the CSRF-state regression: the
 // authctx minted by /oauth/authorize is the value carried back as the OIDC
 // `state` parameter (login/start.go sets state=authctx) and is the CSRF binding
 // the callback enforces via Pending.Take. It must therefore be an unguessable,

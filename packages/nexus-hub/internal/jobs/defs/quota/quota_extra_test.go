@@ -6,8 +6,8 @@ package quota
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -142,7 +142,7 @@ func TestLoadRollupCosts_CacheHit(t *testing.T) {
 // TestLoadRollupCosts_TrailingWindowOnly covers the branch where the whole
 // requested window sits inside the last two hours (start newer than the
 // previous full hour): the 1h base read is skipped and only the 5m tail read
-// fires. The end is set in the future to also exercise the clamp-to-now (F-0164).
+// fires. The end is set in the future to also exercise the clamp-to-now.
 func TestLoadRollupCosts_TrailingWindowOnly(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -208,7 +208,7 @@ func TestLoadRollupCosts_QueryError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 	sentinel := errors.New("rollup query err")
-	// loadRollupCosts now splits into a 1h base read + a 5m tail read (F-0164);
+	// loadRollupCosts now splits into a 1h base read + a 5m tail read;
 	// the base read fires first, so its error short-circuits before the tail.
 	// Times are runtime-derived (base end = prev full hour), so use AnyArg.
 	start := time.Now().UTC().Add(-24 * time.Hour)
@@ -237,7 +237,7 @@ func TestLoadRollupCosts_HappyPath_AggregatesEntityCosts(t *testing.T) {
 		"id", "bucketStart", "metricName", "dimensionKey", "subDimension",
 		"value", "metadata", "updatedAt",
 	}
-	// F-0164: loadRollupCosts reads the stable base from the 1h tier and tops up
+	// loadRollupCosts reads the stable base from the 1h tier and tops up
 	// the trailing window from the 5m tier. The two reads are additive — a
 	// dimension's spend split across base and tail must sum. u1 = 25 (base) +
 	// 25 (tail) = 50; u2 = 10 (base only). The wrong-prefix vk row is skipped.
@@ -292,7 +292,7 @@ func TestRun_WithOverrideCostLimit_RaisesAlert(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id", "scope", "organizationId", "costLimitUsd", "alertThresholds"}))
 
 	// loadRollupCosts → 1h base read (the spend) + 5m tail read (empty) per the
-	// F-0164 two-tier stitch; use AnyArg for time values.
+	// two-tier stitch; use AnyArg for time values.
 	mock.ExpectQuery(`FROM "metric_rollup_`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), "billed_cost_usd", "user=%").
 		WillReturnRows(pgxmock.NewRows([]string{
@@ -372,7 +372,7 @@ func TestRun_WithPolicyCostLimit_RaisesAlert(t *testing.T) {
 	}
 }
 
-// TestRun_ProjectOverride_ReadsProjectDimension is the F-0150 regression
+// TestRun_ProjectOverride_ReadsProjectDimension is the regression
 // guard for Phase A. A project-scoped override must read spend from the
 // `project=<uuid>` rollup dimension. Before the fix, scopeToDimension mapped
 // project→organization, so costs[o.TargetID] looked a project UUID up in the
@@ -437,7 +437,7 @@ func TestRun_ProjectOverride_ReadsProjectDimension(t *testing.T) {
 	}
 }
 
-// TestRun_ProjectPolicy_ComparesProjectSpendToProjectLimit is the F-0150
+// TestRun_ProjectPolicy_ComparesProjectSpendToProjectLimit is the
 // regression guard for Phase B. A project-scoped policy must compare each
 // project's own spend (from the project= dimension) against the project
 // limit, and the resulting alert's targetType must be "project" (via

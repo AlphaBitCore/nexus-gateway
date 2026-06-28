@@ -3,9 +3,9 @@ package store
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,8 +22,8 @@ type UpsertThingAgentParams struct {
 }
 
 // UpdateThingAgent inserts or updates the thing_agent extension row.
-// As of Phase 6 of the thing-identity refactor, hostname/os/os_version
-// live ONLY on thing.* (written by Heartbeat from staticInfo); this
+// Hostname/os/os_version live ONLY on thing.* (written by Heartbeat from
+// staticInfo); this
 // helper only owns the agent-cert columns now. The params struct still
 // carries Hostname/OS/OSVersion for backward-compat with callers, but
 // the helper writes them into thing.* directly so the move is atomic

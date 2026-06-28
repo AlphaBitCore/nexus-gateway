@@ -204,7 +204,7 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 	// System settings + device-auth + device-defaults routes, plus
 	// setup-state, cache mgmt, observability, payload-capture, streaming-compliance —
 	// settings/handler/settings subpackage. Hub is needed for cache flush
-	// and multi-plane shadow invalidation (P8.12 extras migration).
+	// and multi-plane shadow invalidation.
 	settings.New(settings.Deps{
 		Pool:   h.DB.Pool,
 		Meta:   systemmetastore.New(h.DB.Pool),
@@ -251,6 +251,10 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 	if h.RulePacks != nil {
 		h.RulePacks.RegisterRoutes(g, iamMW)
 	}
+	// Authoring-time Vectorscan pattern perf test (proxied to the AI Gateway).
+	if h.PatternPerf != nil {
+		h.PatternPerf.RegisterRoutes(g, iamMW)
+	}
 	// Compliance + agent exemption admin API.
 	// R8-B1 4th sub-cluster — handler/exemption/ subpackage owns the
 	// full exemption surface (compliance grants + request approve/reject
@@ -269,33 +273,36 @@ func (h *AdminHandler) RegisterAdminRoutes(g *echo.Group) {
 	// owned by handler/agent/ (registered above).
 	// Admin API key management
 	iamBundle.RegisterAPIKeyRoutes(g, iamMW)
-	// OAuth client registrations (issue #40) — separate from per-user
+	// OAuth client registrations — separate from per-user
 	// admin API keys above; same audience (IAM admins), distinct lifecycle.
 	iamBundle.RegisterOAuthClientRoutes(g, iamMW)
 	// IAM policies/groups/attachments
 	iamBundle.RegisterIAMRoutes(g, iamMW)
 	// Provider connectivity tests and provider health —
-	// moved to ai/providers/handler per P8.12.
+	// lives in ai/providers/handler.
 	provHandler.RegisterProviderTestRoutes(g, iamMW)
+	// Provider model discovery — fetches upstream /v1/models for a not-yet-saved
+	// custom provider; gated on provider:create (SSRF-vector, mirrors test-connection).
+	provHandler.RegisterProviderDiscoverRoutes(g, iamMW)
 	// Embedding probe route — admin "Test Embedding" on Cache Settings.
 	provHandler.RegisterEmbeddingProbeRoutes(g, iamMW)
 	// Hook extras (implementations registry, execution chain, hook test/dry-run) —
-	// moved to governance/hooks/handler per P8.12.
+	// lives in governance/hooks/handler.
 	hooksHandler.RegisterHookExtrasRoutes(g, iamMW, hooks.ProxyConfig{AIGatewayURL: h.Proxy.AIGatewayURL, AIGatewayInternalToken: h.Proxy.AIGatewayInternalToken})
-	// Fleet analytics — moved to fleet/handler/agent per P8.12.
+	// Fleet analytics — lives in fleet/handler/agent.
 	// (registered above via agentHandler.RegisterRoutes → RegisterFleetAnalyticsRoutes)
 	// /me + /me/permissions + PATCH /me + /iam/action-catalog + /organizations/tree —
-	// moved to identity/users/handler per P8.12.
+	// lives in identity/users/handler.
 	iamBundle.RegisterMeRoutes(g, iamMW)
 	iamBundle.RegisterOrganizationTreeRoute(g, iamMW)
 	// Setup state, cache management, observability, payload capture, streaming compliance —
-	// moved to settings/handler/settings per P8.12 (registered above via settingsHandler.RegisterRoutes).
-	// Readiness + instances — moved to infrastructure/infra per P8.12.
+	// live in settings/handler/settings (registered above via settingsHandler.RegisterRoutes).
+	// Readiness + instances — live in infrastructure/infra.
 	infraHandler.RegisterReadinessRoutes(g, iamMW)
 	// Auth sessions + revocation replay
 	iamBundle.RegisterAuthSessionRoutes(g, iamMW)
-	// Ops metrics endpoints (current / timeseries / fleet) — Phase 6 of the
-	// ops-metrics-and-diag rollout. Reads metric_ops_* tables directly via pgx.
+	// Ops metrics endpoints (current / timeseries / fleet).
+	// Reads metric_ops_* tables directly via pgx.
 	opsmetrics.New(opsmetrics.Deps{Pool: h.DB.InternalPool(), Logger: h.Logger}).RegisterOpsMetricsRoutes(g, iamMW)
 	// Diagnostic events list / groups / crash-cohorts (read-only).
 	// h.RegisterDiagEventsRoutes(g, iamMW) — owned by handler/infra/

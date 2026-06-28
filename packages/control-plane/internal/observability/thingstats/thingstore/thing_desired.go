@@ -2,8 +2,8 @@ package thingstore
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/configreconcile"
 )

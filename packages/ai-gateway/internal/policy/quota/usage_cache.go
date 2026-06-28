@@ -5,15 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
+	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
+
+// perfNoRedis is a THROWAWAY experiment switch (NEXUS_PERF_NO_REDIS=1): it
+// short-circuits the per-request Redis usage read/increment so an A/B run can
+// measure "what if Redis were free" without building the real cache layer.
+// Returning zero usage makes the quota check behave like cold-start (allow).
+// NOT for production — used only to validate that Redis round-trips are the RPS
+// bottleneck before investing in T1b.
+var perfNoRedis = os.Getenv("NEXUS_PERF_NO_REDIS") == "1"
 
 // UsageCache tracks per-period cost usage in Redis (with in-memory fallback).
 type UsageCache struct {
@@ -23,6 +29,16 @@ type UsageCache struct {
 	// In-memory fallback when Redis is unavailable.
 	mu       sync.Mutex
 	memUsage map[string]int64
+
+	// agg is the T1b write-behind accumulator. When non-nil, IncrMulti adds to
+	// it instead of writing Redis on the hot path; a background flusher (or
+	// FlushUsage in tests) drains it to Redis. nil = legacy synchronous path.
+	agg *usageAggregator
+
+	// rc is the T1b short-TTL usage read cache. When non-nil, GetUsageMulti
+	// serves the quota check from the in-process snapshot (+ un-flushed local
+	// delta) instead of a per-request MGET. nil = legacy synchronous read.
+	rc *usageReadCache
 }
 
 const usageCachePrefix = "quota:usage:"
@@ -42,6 +58,45 @@ func NewUsageCache(rdb redis.UniversalClient, logger *slog.Logger) *UsageCache {
 // usageKey returns "quota:usage:{targetType}:{targetID}:{periodKey}".
 func usageKey(targetType, targetID, periodKey string) string {
 	return usageCachePrefix + targetType + ":" + targetID + ":" + periodKey
+}
+
+// EnableWriteBehind installs the T1b write-behind accumulator so IncrMulti
+// defers Redis writes off the request hot path. No-op when Redis is absent
+// (in-memory fallback already does no Redis). Call once at wiring time; a
+// background flusher must then call FlushUsage on an interval, and a final
+// FlushUsage on shutdown to bound loss to one interval.
+func (c *UsageCache) EnableWriteBehind() {
+	if c.rdb == nil {
+		return
+	}
+	c.agg = newUsageAggregator()
+}
+
+// FlushUsage drains the write-behind accumulator to Redis: one IncrBy + Expire
+// per key, identical to the synchronous IncrMulti path, so Redis converges to
+// the same value. Safe to call on an empty accumulator (no-op). Fail-open: a
+// Redis error is returned (the caller logs + retries next tick); the drained
+// deltas are NOT re-queued here — bounded loss on persistent Redis outage is the
+// accepted soft-quota posture (never over-bills; under-bills ≤ outage window).
+func (c *UsageCache) FlushUsage(ctx context.Context) error {
+	if c.agg == nil || c.rdb == nil {
+		return nil
+	}
+	deltas := c.agg.drain()
+	if len(deltas) == 0 {
+		return nil
+	}
+	pipe := c.rdb.Pipeline()
+	for key, d := range deltas {
+		pipe.IncrBy(ctx, key, d.cents)
+		if ttl := periodTTL(d.periodKey); ttl > 0 {
+			pipe.Expire(ctx, key, ttl)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("usage_cache: write-behind flush: %w", err)
+	}
+	return nil
 }
 
 // SetUsageForTest seeds the in-memory usage map with a fixed cost in
@@ -88,6 +143,123 @@ func (c *UsageCache) GetUsage(ctx context.Context, targetType, targetID, periodK
 	return c.memUsage[key], nil
 }
 
+// UsageQuery identifies one (target, period) usage key for a batch read.
+type UsageQuery struct {
+	TargetType string
+	TargetID   string
+	PeriodKey  string
+}
+
+// GetUsageMulti reads the current cost (cents) for each query in a SINGLE Redis
+// MGET instead of one GET per query — the per-level sequential GETs were a
+// per-request latency cost proportional to the quota chain depth. Returns two
+// positionally-aligned slices: usages[i] is the cents for queries[i] (0 when the
+// key is missing, mirroring GetUsage's cold-start behaviour) and errs[i] is
+// non-nil only when that element could not be read/parsed. The error posture is
+// PER LEVEL: a whole-batch transport error sets errs[i] for every i (each caller
+// level then fails open independently), and a single unparseable element sets
+// only its own errs[i] — never failing the other levels. This preserves the
+// fail-open posture of GetUsage exactly.
+func (c *UsageCache) GetUsageMulti(ctx context.Context, queries []UsageQuery) (usages []int64, errs []error) {
+	usages = make([]int64, len(queries))
+	errs = make([]error, len(queries))
+	if len(queries) == 0 {
+		return usages, errs
+	}
+	if perfNoRedis {
+		return usages, errs // experiment: zero usage, no Redis
+	}
+
+	if c.rdb != nil {
+		keys := make([]string, len(queries))
+		for i, q := range queries {
+			keys[i] = usageKey(q.TargetType, q.TargetID, q.PeriodKey)
+		}
+		// T1b read cache: serve fresh entries from the in-process snapshot
+		// (0 Redis on a full hit); MGET only the misses; add this instance's
+		// un-flushed write-behind delta so it never under-counts its own spend.
+		if c.rc != nil {
+			now := time.Now()
+			missIdx := make([]int, 0, len(keys))
+			missKeys := make([]string, 0, len(keys))
+			for i, k := range keys {
+				if v, ok := c.rc.get(k, now); ok {
+					usages[i] = v
+				} else {
+					missIdx = append(missIdx, i)
+					missKeys = append(missKeys, k)
+				}
+			}
+			if len(missKeys) > 0 {
+				vals, err := c.rdb.MGet(ctx, missKeys...).Result()
+				if err != nil {
+					for _, i := range missIdx {
+						errs[i] = fmt.Errorf("usage_cache: MGET: %w", err)
+					}
+				} else {
+					for j, i := range missIdx {
+						var cents int64
+						if j < len(vals) && vals[j] != nil {
+							s, ok := vals[j].(string)
+							if !ok {
+								errs[i] = fmt.Errorf("usage_cache: MGET %s: unexpected type %T", missKeys[j], vals[j])
+								continue
+							}
+							parsed, perr := strconv.ParseInt(s, 10, 64)
+							if perr != nil {
+								errs[i] = fmt.Errorf("usage_cache: parse %s: %w", s, perr)
+								continue
+							}
+							cents = parsed
+						}
+						usages[i] = cents
+						c.rc.set(missKeys[j], cents, now) // cache misses (incl. 0 cold-start) to bound the TTL window
+					}
+				}
+			}
+			if c.agg != nil {
+				for i, k := range keys {
+					usages[i] += c.agg.peek(k)
+				}
+			}
+			return usages, errs
+		}
+		vals, err := c.rdb.MGet(ctx, keys...).Result()
+		if err != nil {
+			// Whole-batch transport error: every level fails open.
+			for i := range errs {
+				errs[i] = fmt.Errorf("usage_cache: MGET: %w", err)
+			}
+			return usages, errs
+		}
+		for i := range queries {
+			if i >= len(vals) || vals[i] == nil {
+				continue // missing key → 0 (cold start)
+			}
+			s, ok := vals[i].(string)
+			if !ok {
+				errs[i] = fmt.Errorf("usage_cache: MGET %s: unexpected type %T", keys[i], vals[i])
+				continue
+			}
+			cents, perr := strconv.ParseInt(s, 10, 64)
+			if perr != nil {
+				errs[i] = fmt.Errorf("usage_cache: parse %s: %w", s, perr)
+				continue
+			}
+			usages[i] = cents
+		}
+		return usages, errs
+	}
+
+	// In-memory fallback.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, q := range queries {
+		usages[i] = c.memUsage[usageKey(q.TargetType, q.TargetID, q.PeriodKey)]
+	}
+	return usages, errs
+}
+
 // UsageLevel identifies a quota enforcement target for batch increment.
 type UsageLevel struct {
 	TargetType string
@@ -97,6 +269,18 @@ type UsageLevel struct {
 // IncrMulti increments usage for multiple levels in one Redis pipeline.
 func (c *UsageCache) IncrMulti(ctx context.Context, levels []UsageLevel, periodKey string, costCents int64) error {
 	if len(levels) == 0 || costCents <= 0 {
+		return nil
+	}
+	if perfNoRedis {
+		return nil // experiment: no Redis increment
+	}
+	if c.agg != nil {
+		// T1b write-behind: accumulate locally, flush asynchronously. Keeps the
+		// per-request hot path Redis-free; Redis converges via FlushUsage's
+		// IncrBy. Bounded overshoot ≤ one flush interval (soft quota).
+		for _, l := range levels {
+			c.agg.add(usageKey(l.TargetType, l.TargetID, periodKey), periodKey, costCents)
+		}
 		return nil
 	}
 
@@ -128,194 +312,4 @@ func (c *UsageCache) IncrMulti(ctx context.Context, levels []UsageLevel, periodK
 	}
 	c.mu.Unlock()
 	return nil
-}
-
-// Backfill seeds Redis usage keys from the metrics rollup tables for the
-// CURRENT period of every period type actually in use. periodTypes is the set
-// returned by PolicyCache.ActivePeriodTypes (e.g. ["daily","monthly"]); a nil
-// or empty slice defaults to monthly only. Uses SETNX to avoid overwriting keys
-// that already have live-accumulated data. Call once at startup.
-//
-// Seeding only the monthly key (the previous behaviour) left daily and weekly
-// counters at 0 on every restart, so a freshly-booted gateway granted a full
-// extra daily/weekly budget until live traffic re-accumulated. Re-seeding each
-// active period closes that gap.
-func (c *UsageCache) Backfill(ctx context.Context, pool *pgxpool.Pool, periodTypes []string, logger *slog.Logger) error {
-	// Typed-nil guard: a nil *pgxpool.Pool stored in the PgxPool interface
-	// would compare != nil at the seam, so unwrap to untyped nil here.
-	if pool == nil {
-		return c.backfillWithPgxPool(ctx, nil, periodTypes, logger)
-	}
-	return c.backfillWithPgxPool(ctx, pool, periodTypes, logger)
-}
-
-// periodWindow returns the period key plus [start, end) window for the current
-// period of the given period type, evaluated at now (UTC). The key matches
-// CurrentPeriodKey so the backfilled key and the live-traffic key collide and
-// SETNX correctly no-ops when live data already exists.
-func periodWindow(periodType string, now time.Time) (periodKey string, start, end time.Time) {
-	switch periodType {
-	case "daily":
-		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-		end = start.AddDate(0, 0, 1)
-		return now.Format("2006-01-02"), start, end
-	case "weekly":
-		// Monday 00:00 UTC of the current ISO week through the next Monday.
-		// Go weekday Sun=0..Sat=6; ISO Mon=1..Sun=7. Offset from Monday:
-		offsetFromMonday := (int(now.Weekday()) + 6) % 7
-		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-		start = dayStart.AddDate(0, 0, -offsetFromMonday)
-		end = start.AddDate(0, 0, 7)
-		y, w := now.ISOWeek()
-		return fmt.Sprintf("%d-W%02d", y, w), start, end
-	default: // monthly
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		end = start.AddDate(0, 1, 0)
-		return now.Format("2006-01"), start, end
-	}
-}
-
-// backfillWithPgxPool is the test-friendly seam — accepts any pgx-compatible
-// pool (real *pgxpool.Pool or pgxmock) so unit tests can exercise the rollup
-// SQL + pipeline path without a live Postgres.
-func (c *UsageCache) backfillWithPgxPool(ctx context.Context, pool PgxPool, periodTypes []string, logger *slog.Logger) error {
-	if c.rdb == nil || pool == nil {
-		return nil
-	}
-
-	// Default to monthly when no policy period types are supplied — preserves
-	// the original behaviour for a quota-less or override-less deployment.
-	if len(periodTypes) == 0 {
-		periodTypes = []string{"monthly"}
-	}
-	// Dedupe so a config with many daily policies issues one daily backfill.
-	seen := make(map[string]struct{}, len(periodTypes))
-	uniqueTypes := make([]string, 0, len(periodTypes))
-	for _, pt := range periodTypes {
-		if _, dup := seen[pt]; dup {
-			continue
-		}
-		seen[pt] = struct{}{}
-		uniqueTypes = append(uniqueTypes, pt)
-	}
-
-	now := time.Now().UTC()
-
-	// All four enforcement-chain dimensions. The enforcement chain adds a
-	// project level (chain.go) and reconcile increments the live project
-	// counter, so the boot seed must cover project too — otherwise a Redis
-	// cold-start resets the project counter to 0 and a full extra budget of
-	// project overspend is allowed until live traffic re-accumulates. The
-	// seed query (dim+"=%") and key derivation (usageKey(dim, ...)) are
-	// dimension-agnostic, so project flows through the same path.
-	dimensions := []string{"user", "virtual_key", "project", "organization"}
-	var totalKeys int
-
-	for _, periodType := range uniqueTypes {
-		periodKey, periodStart, periodEnd := periodWindow(periodType, now)
-
-		for _, dim := range dimensions {
-			rows, err := pool.Query(ctx, `
-				SELECT "dimensionKey", SUM(value) AS total_cost
-				FROM "metric_rollup_1h"
-				WHERE "bucketStart" >= $1 AND "bucketStart" < $2
-				  AND "metricName" = 'billed_cost_usd'
-				  AND "dimensionKey" LIKE $3
-				GROUP BY "dimensionKey"
-			`, periodStart, periodEnd, dim+"=%")
-			// Uses billed_cost_usd (success only, excludes cache hits) rather than
-			// estimated_cost_usd (gross) to avoid cold-start over-counting.
-			if err != nil {
-				logger.Warn("usage backfill: query failed", "dimension", dim, "periodType", periodType, "error", err)
-				continue
-			}
-
-			pipe := c.rdb.Pipeline()
-			count := 0
-
-			for rows.Next() {
-				var dimKey string
-				var costUsd float64
-				if err := rows.Scan(&dimKey, &costUsd); err != nil {
-					continue
-				}
-				// Extract entityID from "dimension=entityID"
-				parts := strings.SplitN(dimKey, "=", 2)
-				if len(parts) != 2 || parts[1] == "" {
-					continue
-				}
-				entityID := parts[1]
-				costCents := int64(math.Round(costUsd * 100))
-				if costCents <= 0 {
-					continue
-				}
-
-				key := usageKey(dim, entityID, periodKey)
-				pipe.SetNX(ctx, key, costCents, periodTTL(periodKey))
-				count++
-			}
-			rows.Close()
-
-			if count > 0 {
-				if _, err := pipe.Exec(ctx); err != nil {
-					logger.Warn("usage backfill: pipeline exec failed", "dimension", dim, "periodType", periodType, "error", err)
-				} else {
-					totalKeys += count
-				}
-			}
-		}
-	}
-
-	if totalKeys > 0 {
-		logger.Info("usage cache backfill completed", "keys", totalKeys, "periodTypes", uniqueTypes)
-	}
-	return nil
-}
-
-// periodTTL returns time until the end of the current period plus a buffer.
-func periodTTL(periodKey string) time.Duration {
-	now := time.Now().UTC()
-
-	// Try daily: "2006-01-02"
-	if t, err := time.Parse("2006-01-02", periodKey); err == nil {
-		end := t.AddDate(0, 0, 1).Add(time.Hour) // next day + 1h buffer
-		if d := end.Sub(now); d > 0 {
-			return d
-		}
-		return 2 * time.Hour // fallback
-	}
-
-	// Try weekly: "2006-W02"
-	if len(periodKey) >= 7 && periodKey[4] == '-' && periodKey[5] == 'W' {
-		var year, week int
-		if _, err := fmt.Sscanf(periodKey, "%d-W%d", &year, &week); err == nil {
-			// Find Monday of the given ISO week. Jan 4 is always in ISO week 1.
-			// Go's time.Weekday has Sun=0..Sat=6; ISO weekday is Mon=1..Sun=7.
-			// Convert: isoDOW = ((Go weekday + 6) % 7) gives Mon=0..Sun=6 offset
-			// from Monday, so subtracting it from Jan 4 lands on the Monday of
-			// week 1. Note: (Go weekday - Monday) is -1 for years where Jan 4
-			// falls on a Sunday and would produce a Monday 7 days too late.
-			jan4 := time.Date(year, 1, 4, 0, 0, 0, 0, time.UTC)
-			mondayOffsetFromJan4 := (int(jan4.Weekday()) + 6) % 7
-			week1Monday := jan4.AddDate(0, 0, -mondayOffsetFromJan4)
-			monday := week1Monday.AddDate(0, 0, (week-1)*7)
-			nextMonday := monday.AddDate(0, 0, 7).Add(time.Hour)
-			if d := nextMonday.Sub(now); d > 0 {
-				return d
-			}
-			return 8 * 24 * time.Hour // fallback
-		}
-	}
-
-	// Try monthly: "2006-01"
-	if t, err := time.Parse("2006-01", periodKey); err == nil {
-		end := t.AddDate(0, 1, 0).Add(time.Hour) // next month + 1h buffer
-		if d := end.Sub(now); d > 0 {
-			return d
-		}
-		return 32 * 24 * time.Hour // fallback
-	}
-
-	// Unknown format — default 32 days.
-	return 32 * 24 * time.Hour
 }

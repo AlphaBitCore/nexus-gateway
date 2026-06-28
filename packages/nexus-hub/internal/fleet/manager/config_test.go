@@ -2,8 +2,8 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"testing"
@@ -42,7 +42,7 @@ func newFanoutTestManager(t *testing.T, ws WSPool, mq *mockMQProducer) (*Manager
 	return m, reg
 }
 
-// TestManager_FanoutMetrics asserts the F-0114 named failure mode: every
+// TestManager_FanoutMetrics asserts the named failure mode: every
 // post-commit fan-out failure (WS broadcast skip / marshal, MQ marshal /
 // publish) increments config_fanout_failed_total{path} instead of returning
 // silently — so a NATS outage stranding peer-Hub Things is observable

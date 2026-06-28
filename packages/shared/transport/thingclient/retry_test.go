@@ -2,8 +2,8 @@ package thingclient
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// ── F-0351: live token via TokenFn ─────────────────────────────────────────
+// ── live token via TokenFn ──────────────────────────────────────────────────
 
 func TestCurrentToken_FallbackAndLive(t *testing.T) {
 	t.Parallel()
@@ -47,8 +47,8 @@ func TestCurrentToken_FallbackAndLive(t *testing.T) {
 }
 
 // TestConnectWS_UsesLiveTokenOnReconnect proves the WS handshake reads the
-// rotated token on the next dial rather than the value captured at Start
-// (F-0351): the Authorization header the Hub sees changes after rotation.
+// rotated token on the next dial rather than the value captured at Start:
+// the Authorization header the Hub sees changes after rotation.
 func TestConnectWS_UsesLiveTokenOnReconnect(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	hub := newHubServer(connectedMsg(1))
@@ -88,7 +88,7 @@ func TestConnectWS_UsesLiveTokenOnReconnect(t *testing.T) {
 }
 
 // TestHTTPFallback_UsesLiveTokenPerRequest proves the HTTP fallback transport
-// reads the live token on every request (F-0351): rotating the token between
+// reads the live token on every request: rotating the token between
 // two heartbeats changes the Authorization header the server observes.
 func TestHTTPFallback_UsesLiveTokenPerRequest(t *testing.T) {
 	var seen []string
@@ -141,7 +141,7 @@ func TestHTTPFallback_UsesLiveTokenPerRequest(t *testing.T) {
 	}
 }
 
-// ── F-0122: per-key delta dispatches only the changed key ───────────────────
+// ── per-key delta dispatches only the changed key ───────────────────────────
 
 // TestConfigChangedDelta_DispatchesOnlyChangedKey proves a per-key
 // config_changed delta re-applies ONLY the changed key — siblings already in
@@ -198,7 +198,7 @@ func TestConfigChangedDelta_DispatchesOnlyChangedKey(t *testing.T) {
 	}
 }
 
-// ── F-0117: bounded proactive retry that clears on success ──────────────────
+// ── bounded proactive retry that clears on success ──────────────────────────
 
 // flakyCallback fails the named key for the first failFor apply attempts, then
 // succeeds. Thread-safe (apply runs on the dispatch goroutine + retry timer).
@@ -425,7 +425,7 @@ func TestDispatch_CleanRoundHeldByPriorFailure(t *testing.T) {
 
 // TestRetryTimer_CancelOnClearAndAlreadyPending exercises the timer lifecycle
 // directly: a second arm while one is pending is a no-op, and clearing the last
-// failure cancels the pending timer (the "cancels on success" half of F-0117).
+// failure cancels the pending timer (the "cancels on success" half).
 // A large backoff guarantees the timer is still pending (not yet fired) when we
 // clear it.
 func TestRetryTimer_CancelOnClearAndAlreadyPending(t *testing.T) {

@@ -74,18 +74,6 @@ func TestExtractRequest_LegacyInputsArray(t *testing.T) {
 	}
 }
 
-func TestExtractRequest_LegacyExtra(t *testing.T) {
-	body := []byte(`{"inputs":"hi","x_future_field":"sensitive"}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/models/foo")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if _, ok := nc.Extra["x_future_field"]; !ok {
-		t.Errorf("Extra=%v missing x_future_field", nc.Extra)
-	}
-}
-
 func TestExtractRequest_NoInputsNoMessages(t *testing.T) {
 	a := &Adapter{}
 	_, err := a.ExtractRequest(context.Background(), []byte(`{"foo":"bar"}`), "/models/x")

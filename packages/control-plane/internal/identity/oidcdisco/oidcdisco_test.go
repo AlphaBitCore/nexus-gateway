@@ -221,7 +221,7 @@ func (errTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, fmt.Errorf("network must not be touched")
 }
 
-// TestIsDisallowedIP_RangeMatrix is the F-0270 unit matrix: every non-public
+// TestIsDisallowedIP_RangeMatrix is the SSRF-guard unit matrix: every non-public
 // range the SSRF guard must block returns true; representative public IPs
 // return false.
 func TestIsDisallowedIP_RangeMatrix(t *testing.T) {
@@ -279,7 +279,7 @@ func TestValidatePublicHost_PublicLiteralAllowed(t *testing.T) {
 	}
 }
 
-// TestValidatePublicHost_DNSFailureNotBlocked proves the F-0270 contract that a
+// TestValidatePublicHost_DNSFailureNotBlocked proves the SSRF-guard contract that a
 // host with zero resolvable addresses is NOT treated as an SSRF block (it returns
 // nil so the caller surfaces the real network error). We use a guaranteed-
 // nonexistent TLD so the lookup fails.
@@ -289,7 +289,7 @@ func TestValidatePublicHost_DNSFailureNotBlocked(t *testing.T) {
 	}
 }
 
-// TestResolve_PrivateIssuerRejected is the end-to-end F-0270 assertion through
+// TestResolve_PrivateIssuerRejected is the end-to-end SSRF-guard assertion through
 // the production NewResolver(): an issuer pointing at a loopback/private address
 // is rejected before any document is fetched (so the error is the SSRF guard's,
 // not a connection-refused).

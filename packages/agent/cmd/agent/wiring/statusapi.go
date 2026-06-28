@@ -110,7 +110,7 @@ func WireSnapshotCacheToCollector(
 	collector.SetSnapshotCacheGetter(cache.Get)
 }
 
-// WireRecentEvents wires the "recent activity" feed (#74) into the
+// WireRecentEvents wires the "recent activity" feed into the
 // status collector so the Overview renders recent traffic events.
 func WireRecentEvents(collector *status.Collector, q *auditqueue.Queue) {
 	collector.SetRecentEventsFn(func(limit int) []status.RecentEvent {

@@ -2,8 +2,8 @@ package compliance
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/sync/shadow"

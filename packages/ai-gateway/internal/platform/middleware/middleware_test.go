@@ -82,7 +82,8 @@ func newCaptureLogger() (*slog.Logger, *bytes.Buffer) {
 }
 
 // TestLogger_LevelRouting_2xx_4xx_5xx asserts the Logger middleware:
-//   - Logs at INFO for 2xx.
+//   - Logs at DEBUG for 2xx (redundant with the traffic_event audit row and the
+//     Prometheus request/latency series; kept off the Info hot path).
 //   - Logs at WARN for 4xx.
 //   - Logs at ERROR for 5xx.
 //   - Logs at DEBUG for /healthz and /metrics regardless of status.
@@ -93,7 +94,7 @@ func TestLogger_LevelRouting_2xx_4xx_5xx(t *testing.T) {
 		status    int
 		wantLevel string
 	}{
-		{"2xx routes to INFO", "/v1/models", http.StatusOK, "INFO"},
+		{"2xx routes to DEBUG", "/v1/models", http.StatusOK, "DEBUG"},
 		{"4xx routes to WARN", "/v1/models", http.StatusBadRequest, "WARN"},
 		{"5xx routes to ERROR", "/v1/models", http.StatusInternalServerError, "ERROR"},
 		{"healthz routes to DEBUG", "/healthz", http.StatusOK, "DEBUG"},

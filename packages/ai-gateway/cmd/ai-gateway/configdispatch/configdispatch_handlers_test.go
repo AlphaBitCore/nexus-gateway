@@ -14,8 +14,8 @@ package configdispatch
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -97,7 +97,7 @@ func miniredisCache(t *testing.T) (*cachecore.Cache, *miniredis.Miniredis) {
 	return c, mini
 }
 
-// F-0126: routing_rules / credentials / providers / models / virtual_keys are
+// routing_rules / credentials / providers / models / virtual_keys are
 // all registered ai-gateway keys backed by structurally-required deps (DB,
 // CacheLayer, CredManager). A nil dep there is a wiring regression, NOT a
 // disabled module — the applier must return an ERROR so the loader records a
@@ -197,7 +197,7 @@ func TestHandler_PayloadCapture_NilDB_NoOp(t *testing.T) {
 	}
 }
 
-// F-0125: ai-gateway intentionally registers NO streaming_compliance applier
+// ai-gateway intentionally registers NO streaming_compliance applier
 // (the key is absent from ValidByThingType["ai-gateway"], so Hub never pushes
 // it). A streaming_compliance shadow tick must therefore be treated as an
 // unknown key and skipped — never applied — so no Store mutation can ride in
@@ -789,7 +789,7 @@ func TestKeys_ReturnsExpectedCount(t *testing.T) {
 		ObservabilityState: &obs,
 	})
 	keys := l.Keys()
-	const want = 19 // registered keys total (F-0125 removed the dead streaming_compliance applier)
+	const want = 19 // registered keys total (no streaming_compliance applier)
 	if len(keys) != want {
 		t.Fatalf("Keys(): got %d keys, want %d: %v", len(keys), want, keys)
 	}
@@ -878,7 +878,7 @@ func TestHandler_Credentials_WithCacheLayer_ReloadsCredentials(t *testing.T) {
 	mock, layer := newMockLayer(t)
 	expectCredentialReload(mock)
 	d.CacheLayer = layer
-	d.CredManager = &fakeCredInvalidator{} // required dep (F-0126)
+	d.CredManager = &fakeCredInvalidator{} // required dep
 	if err := applyKey(t, d, "credentials", []byte(`{}`)); err != nil {
 		t.Fatalf("credentials with non-nil CacheLayer: unexpected error: %v", err)
 	}
@@ -891,7 +891,7 @@ func TestHandler_Credentials_CacheLayerReloadError_Propagates(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery(`FROM "Credential"`).WillReturnError(fmt.Errorf("db error"))
 	d.CacheLayer = layer
-	d.CredManager = &fakeCredInvalidator{} // required dep (F-0126)
+	d.CredManager = &fakeCredInvalidator{} // required dep
 	if err := applyKey(t, d, "credentials", []byte(`{}`)); err == nil {
 		t.Fatal("credentials: expected error when CacheLayer.ReloadCredentials fails")
 	}
@@ -1065,10 +1065,10 @@ func TestHandler_CredentialReliability_WithReliabilityAndDB_CallsReload(t *testi
 	}
 }
 
-// credentials — F-0097 granular vs full invalidation (non-nil CredManager branch)
+// credentials — granular vs full invalidation (non-nil CredManager branch)
 
 // fakeCredInvalidator records which credential cache ops the credentials
-// applier performed so the F-0097 granular-vs-full decision is observable.
+// applier performed so the granular-vs-full decision is observable.
 type fakeCredInvalidator struct {
 	invalidated []string
 	cleared     int
@@ -1077,7 +1077,7 @@ type fakeCredInvalidator struct {
 func (f *fakeCredInvalidator) Invalidate(id string) { f.invalidated = append(f.invalidated, id) }
 func (f *fakeCredInvalidator) ClearCache()          { f.cleared++ }
 
-// F-0097: a targeted invalidate-by-id payload must evict ONLY the named
+// A targeted invalidate-by-id payload must evict ONLY the named
 // credentials (per-id Invalidate), never a full ClearCache storm.
 func TestHandler_Credentials_TargetedIDs_CallsInvalidatePerID(t *testing.T) {
 	fake := &fakeCredInvalidator{}
@@ -1098,7 +1098,7 @@ func TestHandler_Credentials_TargetedIDs_CallsInvalidatePerID(t *testing.T) {
 	}
 }
 
-// F-0097: a non-targeted payload (full reload signal) falls back to ClearCache.
+// A non-targeted payload (full reload signal) falls back to ClearCache.
 func TestHandler_Credentials_NoIDs_FallsBackToClearCache(t *testing.T) {
 	fake := &fakeCredInvalidator{}
 	d := newTestDeps(t)

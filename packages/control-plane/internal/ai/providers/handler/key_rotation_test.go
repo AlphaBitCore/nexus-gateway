@@ -6,8 +6,8 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -252,7 +252,7 @@ func TestRotateCredentialsWorker_DecryptEncryptUpdateAllPaths(t *testing.T) {
 	// encrypts with the current key (v2), so we drive v1 directly via a
 	// standalone Vault keyed off the same raw bytes the MultiVault parses.
 	v1Vault := vaultForKey(t, "v1")
-	// SEC-C1-02: seal under the same row-identity AAD the rotation worker
+	// Seal under the same row-identity AAD the rotation worker
 	// rebuilds from (cred.ID, cred.ProviderID). row1 is cred-1 / prov-1.
 	row1Enc, err := v1Vault.Encrypt("plaintext-row-1", keyderive.ProviderCredentialAAD("cred-1", "prov-1"))
 	if err != nil {
@@ -351,7 +351,7 @@ func TestRotateCredentialsWorker_UpdateFailureContinues(t *testing.T) {
 	}
 }
 
-// F-0084 regression — a credential whose encryption_key_id is no longer in
+// A credential whose encryption_key_id is no longer in
 // CREDENTIAL_KEY_MAP (Decrypt → "unknown encryption key ID") must NOT cause the
 // worker to re-select it every batch forever. It is excluded after the first
 // failure, the healthy rows queued alongside it still migrate, and the run

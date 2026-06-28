@@ -2,7 +2,7 @@
 // Thing communication: config push and shadow reports.
 package ws
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 // --- Hub → Thing messages ---
 

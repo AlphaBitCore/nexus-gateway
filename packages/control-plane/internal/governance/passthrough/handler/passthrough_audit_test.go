@@ -4,13 +4,12 @@
 // DeleteAdapter / DeleteProvider each publish exactly one
 // admin-audit MQ message under the expected (entityType, action,
 // entityId) shape after the upstream mutation commits. Without
-// these tests an absent audit.Writer wiring (the bug fixed in
-// PR-E) regresses silently.
+// these tests an absent audit.Writer wiring regresses silently.
 package passthrough
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"

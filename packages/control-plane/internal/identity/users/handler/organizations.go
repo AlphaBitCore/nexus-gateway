@@ -89,7 +89,7 @@ func (h *Handler) CreateOrganization(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to create organization", "server_error", ""))
 	}
 
-	// e31-s10: invalidate ai-gateway's PolicyCache so OrgParents and the
+	// Invalidate ai-gateway's PolicyCache so OrgParents and the
 	// quota policy list pick up the new org without an ai-gateway restart.
 	if h.hub != nil {
 		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "organizations")
@@ -147,7 +147,7 @@ func (h *Handler) UpdateOrganization(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to update", "server_error", ""))
 	}
 
-	// e31-s10: invalidate ai-gateway's PolicyCache (re-parenting changes
+	// Invalidate ai-gateway's PolicyCache (re-parenting changes
 	// the OrgParents map; rename/disable affects display + enabled flag).
 	if h.hub != nil {
 		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "organizations")
@@ -172,7 +172,7 @@ func (h *Handler) DeleteOrganization(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errJSON("Failed to delete", "server_error", ""))
 	}
 
-	// e31-s10: invalidate ai-gateway's PolicyCache so the deleted org no
+	// Invalidate ai-gateway's PolicyCache so the deleted org no
 	// longer appears in OrgParents.
 	if h.hub != nil {
 		h.hub.InvalidateConfig(c.Request().Context(), "ai-gateway", "organizations")

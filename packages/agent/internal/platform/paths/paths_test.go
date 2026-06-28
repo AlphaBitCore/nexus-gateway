@@ -30,10 +30,12 @@ func TestDefaultPaths(t *testing.T) {
 	}
 
 	// Derived-path invariants the daemon and GUI rely on agreeing about.
-	if p.ConfigFile != p.ConfigDir+"/agent.yaml" {
+	// filepath.Join keeps the comparison separator-agnostic so it holds on
+	// Windows (\) as well as macOS/Linux (/).
+	if p.ConfigFile != filepath.Join(p.ConfigDir, "agent.yaml") {
 		t.Errorf("ConfigFile %q must be ConfigDir/agent.yaml", p.ConfigFile)
 	}
-	if p.UserQuitFlagPath != p.FlagsDir+"/user-quit" {
+	if p.UserQuitFlagPath != filepath.Join(p.FlagsDir, "user-quit") {
 		t.Errorf("UserQuitFlagPath %q must be FlagsDir/user-quit", p.UserQuitFlagPath)
 	}
 	if !strings.HasPrefix(p.FlagsDir, p.StateDir) {

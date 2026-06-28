@@ -7,8 +7,8 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"sync"

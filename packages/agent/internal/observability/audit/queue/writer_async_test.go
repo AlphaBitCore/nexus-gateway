@@ -11,7 +11,7 @@ import (
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 )
 
-// #78 — async writer behaviour: enqueue returns instantly, flush
+// Async writer behaviour: enqueue returns instantly, flush
 // drains, close waits for drain, full channel drops with WARN, and
 // concurrent enqueue from many goroutines doesn't lose events.
 

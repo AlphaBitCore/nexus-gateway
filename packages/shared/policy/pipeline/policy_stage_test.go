@@ -31,7 +31,7 @@ func (*connStageHook) Execute(ctx context.Context, in *core.HookInput) (*core.Ho
 func (*connStageHook) ConnectionStageOK() {}
 
 // TestResolve_ConnectionStage_SkipsIncompatibleHook verifies the
-// availability-first degradation posture (F-0274): a connection-stage config
+// availability-first degradation posture: a connection-stage config
 // bound to a non-ConnectionStageCompatible impl is SKIPPED+LOGGED, not fatal.
 // One misconfigured hook must degrade to "that hook off", never abort the
 // whole connection-stage pipeline build.

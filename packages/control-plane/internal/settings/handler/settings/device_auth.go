@@ -2,7 +2,7 @@ package settings
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 
 	"github.com/labstack/echo/v4"

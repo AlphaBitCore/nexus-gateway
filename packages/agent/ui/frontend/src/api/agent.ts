@@ -432,14 +432,14 @@ export interface Diagnostics {
   certPath: string;
   logTail: string[];
   /** Active kernel/userspace interception mechanism. One of
-   *  "NETransparentProxy" (macOS), "iptables" (Linux), "WinDivert"
+   *  "NETransparentProxy" (macOS), "iptables" (Linux), "NexusWFP"
    *  (Windows kernel driver loaded), or "SystemProxyFallback"
    *  (Windows degraded fallback). Empty when the platform shim
    *  predates the reporter interface. */
   interceptionMode?:
     | 'NETransparentProxy'
     | 'iptables'
-    | 'WinDivert'
+    | 'NexusWFP'
     | 'SystemProxyFallback'
     | string;
   error?: string;

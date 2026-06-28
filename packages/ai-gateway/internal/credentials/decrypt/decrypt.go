@@ -117,14 +117,14 @@ type MultiDecryptor struct {
 // NewMultiDecryptor creates a MultiDecryptor from a comma-separated key map in
 // the format "[*]keyID1:hexKey1,keyID2:hexKey2,...".
 //
-// F-0390 fix: the wire parse (comma-split, first-colon id:value split, leading
+// The wire parse (comma-split, first-colon id:value split, leading
 // "*" current-marker STRIP, blank-entry skip, dup-id / empty-map fail-closed) is
 // delegated to the shared keymap.Parse — the SAME leaf the Control Plane uses to
-// mint via crypto.NewMultiVault. Previously this side hand-rolled the parse and
-// did NOT strip the "*", so an operator's documented "*v2:" current-marker made
-// the gateway store the key under literal id "*v2" while the CP stamped
-// ciphertext id "v2" — every decrypt then 404'd with "unknown key ID". Stripping
-// here restores the CREDENTIAL_KEY_MAP [MUST MATCH] contract: the gateway keys
+// mint via crypto.NewMultiVault. The "*" current-marker MUST be stripped: an
+// operator's documented "*v2:" current-marker would otherwise store the key
+// under literal id "*v2" while the CP stamps ciphertext id "v2", so every
+// decrypt would 404 with "unknown key ID". Stripping here upholds the
+// CREDENTIAL_KEY_MAP [MUST MATCH] contract: the gateway keys
 // by the same stripped id the CP stamps. The gateway has no "current" concept
 // (it opens by the stamped id), so the parsed currentID is intentionally
 // ignored; only the stripped-id → value entries matter.

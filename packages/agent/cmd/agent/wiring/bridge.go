@@ -24,7 +24,7 @@ type ConnectionBridge struct {
 	AuditQueue   *auditqueue.Queue
 	ThingID      string
 
-	// ProviderTrafficNotifier is the live-traffic pulse hook (#69).
+	// ProviderTrafficNotifier is the live-traffic pulse hook.
 	// Called every time a provider-tagged audit event lands. nil
 	// in tests / minimal bring-up; main wires it to
 	// statusCollector.MarkProviderTraffic.

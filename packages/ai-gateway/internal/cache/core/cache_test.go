@@ -5,9 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"strings"
@@ -181,7 +181,7 @@ func TestBuildKey_V3_AllowlistVersionAffectsKey(t *testing.T) {
 	}
 }
 
-// TestBuildScopedKey_TenantIsolation is the F-0051 / F-0229 regression guard.
+// TestBuildScopedKey_TenantIsolation is the regression guard.
 // Two requests with byte-identical bodies but different tenant scopes must hash
 // to DIFFERENT L1 cache keys when a scope is folded in, while an empty scope
 // preserves fleet-wide dedup AND is byte-identical to the legacy BuildKey.

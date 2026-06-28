@@ -73,10 +73,21 @@ func NewHookConfigCache(loader HookConfigLoader, registry *core.HookRegistry, tt
 			for _, v := range c.snap.All() {
 				cfgs = append(cfgs, v)
 			}
-			c.resolver.Swap(cfgs)
+			// Only swap (and recompile hook matchers + union prefilters) when the
+			// content actually changed. This callback fires on EVERY load including
+			// the TTL backstop refresh; a no-change reload must not churn the
+			// generation under load. Real changes (startup, Hub push delta) differ
+			// and swap normally.
+			c.resolver.SwapIfContentChanged(cfgs)
 			c.mu.Lock()
 			c.lastLoad = time.Now()
 			c.mu.Unlock()
+			// Build the (potentially expensive) engines off the request path.
+			// Background and best-effort: it must never block this callback,
+			// which runs both at startup and on a TTL-staleness reload that a
+			// request triggers. The lazy build in resolve() is the fallback if a
+			// request arrives before prewarm finishes. swapGen guards staleness.
+			go c.resolver.Prewarm()
 		}),
 	)
 	return c

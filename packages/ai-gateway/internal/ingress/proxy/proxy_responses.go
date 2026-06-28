@@ -11,9 +11,9 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,7 +33,6 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
@@ -320,21 +319,16 @@ func (h *Handler) handleNonStreamWithSubscription(
 			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
 				rec.BlockingRule = br
 			}
-			// Propagate spans + storage policy so the audit writer redacts
-			// (or drops) the persisted response copies per storageAction.
-			rec.ResponseTransformSpans = hookResult.TransformSpans
-			rec.ResponseStorageAction = string(hookResult.StorageAction)
-			rec.ResponseRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
-			rec.ResponseRedetect = hookResult.Redetect
+			// Carry the single hook action so the audit writer persists the
+			// redacted response copy under redact/block. Derived from the
+			// Decision so a no-match approve still stamps ActionApprove.
+			rec.ResponseAction = hookcore.ActionFromDecision(hookResult.Decision)
 			if h.deps.Metrics != nil {
 				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
 			}
 			switch hookResult.Decision {
 			case hookcore.RejectHard:
 				h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
-				return
-			case hookcore.BlockSoft:
-				h.writeError(w, rec, 246, hookResult.Reason)
 				return
 			case hookcore.Modify:
 				if len(hookResult.ModifiedContent) > 0 {
@@ -529,10 +523,16 @@ func (h *chunkUsageHolder) snapshot() provcore.Usage {
 // this reader (streaming.NewLivePipeline + downstream encoders) will
 // tune the regenerated frame per ingress format.
 type chunkSSEReader struct {
-	ctx           context.Context
-	sub           streamcache.ChunkSubscription
-	usageSink     *chunkUsageHolder
-	buf           []byte
+	ctx       context.Context
+	sub       streamcache.ChunkSubscription
+	usageSink *chunkUsageHolder
+	buf       []byte
+	// scratch is the reusable backing array for the passthrough RawBytes
+	// copy-out. The caller copies r.buf into its own buffer on every Read, so a
+	// chunk's bytes are never retained past the next chunk fetch — the array is
+	// safe to reuse across chunks of this stream, turning a per-chunk frame
+	// allocation (the dominant SSE relay allocator) into one per stream.
+	scratch       []byte
 	closed        bool
 	err           error
 	transcoder    canonicalbridge.StreamTranscoder // non-nil for cross-format; nil for passthrough
@@ -642,7 +642,8 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 				r.buf = b
 			}
 		} else if len(chunk.RawBytes) > 0 {
-			r.buf = append([]byte(nil), chunk.RawBytes...)
+			r.scratch = append(r.scratch[:0], chunk.RawBytes...)
+			r.buf = r.scratch
 		}
 		r.closed = true
 	case r.transcoder != nil:
@@ -661,7 +662,8 @@ func (r *chunkSSEReader) Read(p []byte) (int, error) {
 		r.buf = b
 	case len(chunk.RawBytes) > 0:
 		// Passthrough: stream decoders set RawBytes to a complete SSE frame.
-		r.buf = append([]byte(nil), chunk.RawBytes...)
+		r.scratch = append(r.scratch[:0], chunk.RawBytes...)
+		r.buf = r.scratch
 	case chunk.Delta != "":
 		// Passthrough fallback: synthesise a minimal OpenAI-compat SSE
 		// frame from the canonical Delta when RawBytes are absent

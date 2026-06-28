@@ -9,7 +9,7 @@
 //     pack is intended to catch. We require minRecall of lines to match.
 //     Lines that intentionally rely on AI Guard (out of regex scope) can
 //     be excluded by moving them to an adjacent "needs_ai_guard" file
-//     with a comment marker; see plan Task 13 step 13.2.
+//     with a comment marker.
 //
 // Both gates fail the test outright — DO NOT lower the thresholds. Tighten
 // rules or relabel borderline corpus lines instead.

@@ -82,7 +82,7 @@ class AgentIPCClient {
     /// network-path changes), so we must manually cancel and re-issue
     /// the connection in a retry loop until the socket appears.
     func connect() -> Bool {
-        // E55-T19: 5-minute total budget with exponential backoff.
+        // 5-minute total budget with exponential backoff.
         //
         // Was 25 s in the original implementation, which assumed the
         // daemon was already up when macOS spawned the extension. In
@@ -367,7 +367,7 @@ class AgentIPCClient {
         sendJSON(NEFlowHostUpdateMessage(flowId: flowId, hostname: trimmed))
     }
 
-    /// Notify the agent that a flow has closed. E50 phase fields are
+    /// Notify the agent that a flow has closed. Phase fields are
     /// optional — pass nil when URLSessionTaskMetrics weren't available
     /// (passthrough flows that bypass URLSession entirely).
     func notifyFlowClosed(

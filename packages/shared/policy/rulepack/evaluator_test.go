@@ -92,7 +92,7 @@ func TestEvaluate_CapturesMatchedText(t *testing.T) {
 	}
 }
 
-// --- F-0276: dry-run must surface compile errors, not swallow them ----------
+// --- dry-run must surface compile errors, not swallow them ------------------
 
 func TestEvaluateWithErrors_InvalidPatternSurfaced(t *testing.T) {
 	pack := Pack{Name: "n/p", Version: "v1"}

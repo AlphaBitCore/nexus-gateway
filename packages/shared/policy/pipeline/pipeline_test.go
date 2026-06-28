@@ -316,7 +316,8 @@ func TestPipeline_AllowModify_Preserved(t *testing.T) {
 	}
 }
 
-// TestPipeline_Modify_PreservesHookReasonCode pins the Q5 fix: a Modify
+// TestPipeline_Modify_PreservesHookReasonCode pins the Modify reason-code
+// fix: a Modify
 // hook that supplied its own ReasonCode (e.g. ReasonAIGuardSuggestedVsPolicy
 // stamped at the webhook-forward reconcile) propagates through
 // mergeResults' Modify branch instead of being clobbered by the generic

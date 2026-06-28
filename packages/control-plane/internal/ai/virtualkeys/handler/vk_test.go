@@ -1,8 +1,8 @@
 package virtualkey
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -326,7 +326,7 @@ func TestGetVirtualKey_NoAuth(t *testing.T) {
 // TestCreateVirtualKey_HappyPersonal covers the explicit personal-VK happy
 // path: vkStatus stays "active", projectId/expiresAt are not required. vkType
 // MUST be set explicitly — an omitted vkType now defaults to "application" and
-// is routed through the approval gate (F-0268).
+// is routed through the approval gate.
 func TestCreateVirtualKey_HappyPersonal(t *testing.T) {
 	h, mock, _, aud := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`INSERT INTO "VirtualKey"`).
@@ -394,7 +394,7 @@ func TestCreateVirtualKey_EmptyName(t *testing.T) {
 	}
 }
 
-// TestCreateVirtualKey_OmittedVKType_HitsApprovalGate is the F-0268 regression:
+// TestCreateVirtualKey_OmittedVKType_HitsApprovalGate verifies that
 // an OMITTED vkType defaults to "application" and MUST be routed through the same
 // approval gate (projectId + expiresAt required, status → pending). Previously
 // the gate keyed off the literal request field, so an omitted vkType skipped it
@@ -720,8 +720,8 @@ func TestUpdateVirtualKey_BadExpiresAt(t *testing.T) {
 	assertErrorEnvelope(t, rec, "", "validation_error")
 }
 
-// TestUpdateVirtualKey_ExpiryBeyondCap_Rejected closes the SEC-W2-01 VK-expiry
-// residual. The admin PUT update path must enforce the SAME 3-month ceiling as
+// TestUpdateVirtualKey_ExpiryBeyondCap_Rejected closes the VK-expiry residual.
+// The admin PUT update path must enforce the SAME 3-month ceiling as
 // CreateVirtualKey + RenewVirtualKey for application VKs; without it an edit
 // could set an arbitrarily-far expiry and escape the re-approval cadence. The
 // rejection happens BEFORE any UPDATE / hub-notify / audit side effect.
@@ -1035,7 +1035,7 @@ func TestDeleteVirtualKey_Forbidden(t *testing.T) {
 	}
 }
 
-// TestRevokeVirtualKey_Forbidden_NonOwner locks SEC-M6-05: a non-super-admin
+// TestRevokeVirtualKey_Forbidden_NonOwner locks owner enforcement: a non-super-admin
 // holding virtual-key:revoke cannot revoke a VK owned by another principal —
 // the approval handler now enforces the same owner re-check as Delete.
 func TestRevokeVirtualKey_Forbidden_NonOwner(t *testing.T) {
@@ -1058,7 +1058,7 @@ func TestRevokeVirtualKey_Forbidden_NonOwner(t *testing.T) {
 	}
 }
 
-// TestRenewVirtualKey_Forbidden_NonOwner locks SEC-M6-05 for the renew verb.
+// TestRenewVirtualKey_Forbidden_NonOwner locks owner enforcement for the renew verb.
 func TestRenewVirtualKey_Forbidden_NonOwner(t *testing.T) {
 	h, mock, _, _ := newHandlerWithMockDB(t)
 	mock.ExpectQuery(`SELECT .* FROM "VirtualKey" WHERE id = \$1`).

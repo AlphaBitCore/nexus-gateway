@@ -264,7 +264,7 @@ func TestBuild_NilCtxDefaultsToBackground(t *testing.T) {
 	}
 }
 
-// panickyNormalizer panics inside Normalize. Used to assert #97
+// panickyNormalizer panics inside Normalize. Used to assert
 // panic-safety — Build's wrapper recovers so the SSE pipeline never
 // sees the panic.
 type panickyNormalizer struct{}
@@ -284,13 +284,13 @@ func TestBuild_RegistryPanic_RecoveredAndDropped(t *testing.T) {
 		ContentType: "text/event-stream",
 	})
 
-	// #115/S2 — reset both timeseries so parallel sibling tests bumping
+	// Reset both timeseries so parallel sibling tests bumping
 	// the same labels don't race the +1 / +0 deltas below.
 	normalizePanicTotal.DeleteLabelValues("registry")
 	prehookNormalizeDropTotal.DeleteLabelValues("panicky")
 
-	// #115/S1 — panic counter MUST tick by 1 for location=registry.
-	// #115/S5 disjointness — drop counter MUST stay flat (panic is a
+	// Panic counter MUST tick by 1 for location=registry.
+	// Disjointness — drop counter MUST stay flat (panic is a
 	// distinct category from drop; otherwise admins double-count).
 	beforePanic := testutil.ToFloat64(normalizePanicTotal.WithLabelValues("registry"))
 	beforeDrop := testutil.ToFloat64(prehookNormalizeDropTotal.WithLabelValues("panicky"))
@@ -327,7 +327,8 @@ func (e erroringNormalizer) Normalize(context.Context, []byte, normcore.Meta) (n
 	return normcore.NormalizedPayload{}, e.err
 }
 
-// TestBuild_NormalizeError_BumpsDropCounterAndWarns pins #115/S5:
+// TestBuild_NormalizeError_BumpsDropCounterAndWarns pins the
+// drop-on-normalize-error contract:
 // when Registry.Normalize returns a non-nil non-panic error, the
 // pre-hook callback used to drop silently and the hook executor saw
 // the flat-text fallback. Now it MUST:
@@ -349,7 +350,7 @@ func TestBuild_NormalizeError_BumpsDropCounterAndWarns(t *testing.T) {
 		Logger:      logger,
 	})
 
-	// #115/S2 — reset before snapshot for parallel-safe delta.
+	// Reset before snapshot for parallel-safe delta.
 	prehookNormalizeDropTotal.DeleteLabelValues("erroring")
 
 	before := testutil.ToFloat64(prehookNormalizeDropTotal.WithLabelValues("erroring"))
@@ -385,10 +386,10 @@ func TestBuild_OnPayloadPanic_RecoveredAndDropped(t *testing.T) {
 		},
 	})
 
-	// #115/S2 — reset before snapshot for parallel-safe delta.
+	// Reset before snapshot for parallel-safe delta.
 	normalizePanicTotal.DeleteLabelValues("on_payload")
 
-	// #115/S1 — counter MUST tick by 1 for location=on_payload.
+	// Counter MUST tick by 1 for location=on_payload.
 	before := testutil.ToFloat64(normalizePanicTotal.WithLabelValues("on_payload"))
 
 	ci := &hookcore.HookInput{}

@@ -54,6 +54,21 @@ consumers:
   enabled: true
   batchSize: 100
   flushInterval: 5s
+  # How the traffic-event drain yields CPU to a co-located AI-gateway core path.
+  # After each flush the drain sleeps proportionally so it occupies at most its
+  # duty cycle of wall-clock; NATS file store absorbs the backlog while idle
+  # (audit is delay-tolerant, no-loss preserved by retention). Three modes:
+  #   0.3 (default) = FIXED throttle — reliably yields the single-box's memory
+  #                 bandwidth / loopback / Postgres back to the gateway core path.
+  #   0           = ADAPTIVE — a CPU-pressure probe sets the duty dynamically
+  #                 (full-speed when CPU is free). NOTE: the probe cannot see
+  #                 memory-bandwidth contention on a core-rich box, so on the
+  #                 single-box deployment the fixed 0.3 default extracts more.
+  #   (0,1)       = FIXED throttle at that value.
+  #   >= 1        = OFF (always full-speed; for a dedicated Hub box).
+  # Single-box perf rig: 0.3 lifted gateway 200-VU RPS ~5150 -> ~6300 with no
+  # loss (vs Bifrost 5284). env NEXUS_HUB_AUDIT_DRAIN_DUTY_CYCLE wins.
+  trafficDrainDutyCycle: 0.3
 
 scheduler:
   enabled: true
@@ -115,7 +130,9 @@ log:
   # boot default only. The Hub selfshadow manager (E42 PR1) consumes its own
   # thing row via LISTEN/NOTIFY and calls logging.SetLevel live on every
   # admin push (no restart). See docs/developers/architecture/cross-cutting/foundation/thing-model.md §5.1.1 + §5.3.
-  level: "debug"
+  # warn by default: debug is high-volume under load and floods the log file. Raise
+  # to debug per session (or via the Hub log_level shadow) when actively debugging.
+  level: "warn"
   format: "text"
   file: "logs/nexus-hub.log"
   stackOnError: true

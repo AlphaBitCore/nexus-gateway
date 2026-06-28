@@ -42,7 +42,7 @@ func TestExtractCacheStore_Get_singleton_returnsRow(t *testing.T) {
 }
 
 // WireState is the contract the admin push AND the configreconcile drift loader
-// both depend on (F-0102/F-0345): it must project EXACTLY the three behavioral
+// both depend on: it must project EXACTLY the three behavioral
 // fields and drop bookkeeping columns, or the loader's source-of-truth diff
 // would thrash against the pushed blob every reconcile cycle.
 func TestExtractCacheConfigRow_WireState_projectsThreeFieldsOnly(t *testing.T) {
@@ -92,14 +92,16 @@ func TestExtractCacheStore_Get_noRow_returnsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if !row.Enabled {
-		t.Errorf("default Enabled = false, want true")
+	// Caching is opt-in: a fresh DB with no admin save defaults to OFF so the
+	// gateway runs as a lean passthrough with no cache work on the hot path.
+	if row.Enabled {
+		t.Errorf("default Enabled = true, want false (cache is opt-in)")
 	}
 	if row.TTLSeconds != extractCacheDefaultTTLSeconds {
 		t.Errorf("default TTLSeconds = %d, want %d", row.TTLSeconds, extractCacheDefaultTTLSeconds)
 	}
-	if !row.ApplyFreshnessRules {
-		t.Errorf("default ApplyFreshnessRules = false, want true")
+	if row.ApplyFreshnessRules {
+		t.Errorf("default ApplyFreshnessRules = true, want false (freshness off until cache enabled)")
 	}
 }
 

@@ -2,7 +2,7 @@ package tlsbump
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"time"
@@ -294,8 +294,16 @@ func (x *bumpedExchange) runResponseStage(resp *http.Response) bool {
 					"reason", respResult.Reason,
 				)
 				stampRejectMarkers(x.w.Header(), bo.identity, audCtx.info.TransactionID, x.domainRuleID, cpHookOutcomeFromResult(respResult))
-				WriteRejectResponse(x.w, x.r, bo.rejectConfig, audCtx.info.TransactionID,
-					respResult.Reason, respResult.ReasonCode, http.StatusUnavailableForLegalReasons)
+				if bo.richReject {
+					// respResult.Reason carries the hook's rule-ID/label only —
+					// never the upstream's original sensitive value — so the
+					// attributed body cannot echo what was matched.
+					WriteRejectResponse(x.w, x.r, bo.rejectConfig, audCtx.info.TransactionID,
+						respResult.Reason, respResult.ReasonCode, http.StatusUnavailableForLegalReasons)
+				} else {
+					// Agent on-host interceptor: minimal 403 with no attribution body.
+					http.Error(x.w, "Forbidden", http.StatusForbidden)
+				}
 				resp.Body = io.NopCloser(bytes.NewReader(nil))
 				return true
 			}

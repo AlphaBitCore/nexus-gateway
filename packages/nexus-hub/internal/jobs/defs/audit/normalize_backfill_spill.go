@@ -6,7 +6,7 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"

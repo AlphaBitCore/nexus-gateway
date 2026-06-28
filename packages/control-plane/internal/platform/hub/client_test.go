@@ -2,8 +2,8 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -205,7 +205,7 @@ func TestNotifyConfigChange_exhaustsRetries(t *testing.T) {
 	}
 }
 
-// F-0108: a 4xx response (e.g. 422 on a malformed body) is deterministic — the
+// A 4xx response (e.g. 422 on a malformed body) is deterministic — the
 // identical retry will fail identically — so NotifyConfigChange must NOT retry
 // it. Exactly one attempt is expected, and the error is returned immediately.
 func TestNotifyConfigChange_noRetryOn422(t *testing.T) {
@@ -230,7 +230,7 @@ func TestNotifyConfigChange_noRetryOn422(t *testing.T) {
 	}
 }
 
-// F-0108: a 400 Bad Request is likewise non-retryable.
+// A 400 Bad Request is likewise non-retryable.
 func TestNotifyConfigChange_noRetryOn400(t *testing.T) {
 	var attempts atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -251,7 +251,7 @@ func TestNotifyConfigChange_noRetryOn400(t *testing.T) {
 	}
 }
 
-// F-0108: isRetryable classifies transport errors and 5xx as retryable, 4xx as
+// isRetryable classifies transport errors and 5xx as retryable, 4xx as
 // not. Unit-level guard so the policy is pinned independent of the HTTP harness.
 func TestIsRetryable(t *testing.T) {
 	cases := []struct {
@@ -308,7 +308,7 @@ func TestInvalidateConfig_notConfigured_noPanic(t *testing.T) {
 }
 
 // TestInvalidateConfigE_success verifies the error-returning variant returns
-// nil and reaches Hub on a successful push (F-0099 fail-loud path).
+// nil and reaches Hub on a successful push (fail-loud path).
 func TestInvalidateConfigE_success(t *testing.T) {
 	var called atomic.Bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -327,7 +327,7 @@ func TestInvalidateConfigE_success(t *testing.T) {
 	}
 }
 
-// TestInvalidateConfigE_serverError_returnsErr is the core F-0099 guarantee:
+// TestInvalidateConfigE_serverError_returnsErr is the core guarantee:
 // a failed push surfaces a non-nil error so the security-sensitive handler can
 // return HTTP 502 instead of a false 2xx.
 func TestInvalidateConfigE_serverError_returnsErr(t *testing.T) {

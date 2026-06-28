@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestValidateEmbeddingRowCount pins the F-0220 guard: a request/response
+// TestValidateEmbeddingRowCount pins the guard: a request/response
 // count mismatch is converted into a named error, while a matching count
 // (or an unknown request count) passes.
 func TestValidateEmbeddingRowCount(t *testing.T) {

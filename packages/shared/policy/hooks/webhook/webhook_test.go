@@ -2,7 +2,7 @@ package webhook
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +14,7 @@ import (
 
 // newWebhookHook builds a webhook-forward hook for tests. Production default
 // for webhook-forward without an explicit `onMatch` block is
-// `inflightAction=approve` (advisory ceiling — webhook drives the decision),
+// `action=approve` (advisory ceiling — webhook drives the decision),
 // so tests that don't override `onMatch` exercise the same path admins get
 // when they leave the field off. Reconcile-specific tests pass their own
 // `onMatch` block explicitly to drive a non-default ceiling.
@@ -31,7 +31,7 @@ func newWebhookHook(t *testing.T, endpoint string, extraConfig map[string]any) H
 	}
 	// Execute-path tests dial a 127.0.0.1 httptest server, so they must use an
 	// unguarded client: NewWebhookForward(cfg) installs the AdminEgressExternalOnly
-	// SSRF guard (F-0370) which refuses loopback. The guard itself is covered by
+	// SSRF guard which refuses loopback. The guard itself is covered by
 	// TestWebhookForward_Factory_NilClientInstallsSSRFGuard.
 	h, err := NewWebhookForwardWithClient(cfg, http.DefaultClient)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestWebhookForward_Factory_WithClientUsesProvidedClient(t *testing.T) {
 	}
 }
 
-// TestWebhookForward_Factory_NilClientInstallsSSRFGuard proves F-0370: when no
+// TestWebhookForward_Factory_NilClientInstallsSSRFGuard proves that when no
 // client is supplied the hook builds its own guarded client that refuses to dial
 // a cloud-metadata / private endpoint, so a compliance webhook pointed at
 // 169.254.169.254 cannot exfiltrate captured traffic to the instance-metadata
@@ -164,7 +164,7 @@ func TestWebhookForward_Execute_DecisionMapping(t *testing.T) {
 		{"reject_hard", RejectHard},
 		{"REJECT_HARD", RejectHard}, // case-insensitive
 		{"  reject  ", RejectHard},  // trimmed
-		{"block_soft", BlockSoft},
+		{"block_soft", RejectHard},  // back-compat: soft-block merged into block
 		{"modify", Modify},
 		{"abstain", Abstain},
 		{"approve", Approve},       // explicit approve maps to Approve
@@ -583,8 +583,8 @@ func TestWebhookForward_Reconcile_PolicyCeilingOverridesPermissiveSuggestion(t *
 	if !strings.Contains(res.Reason, "webhook suggested approve") {
 		t.Errorf("Reason should name webhook's suggestion; got %q", res.Reason)
 	}
-	if !strings.Contains(res.Reason, "policy ceiling: block-hard") {
-		t.Errorf("Reason should name policy ceiling in InflightAction vocab; got %q", res.Reason)
+	if !strings.Contains(res.Reason, "policy ceiling: block") {
+		t.Errorf("Reason should name policy ceiling in action vocab; got %q", res.Reason)
 	}
 }
 
@@ -673,15 +673,15 @@ func TestWebhookForward_Reconcile_ModifyCeilingPromotesApproveToModify(t *testin
 		t.Errorf("Reason should name webhook's suggestion; got %q", res.Reason)
 	}
 	if !strings.Contains(res.Reason, "policy ceiling: redact") {
-		t.Errorf("Reason should name policy ceiling in InflightAction vocab; got %q", res.Reason)
+		t.Errorf("Reason should name policy ceiling in action vocab; got %q", res.Reason)
 	}
 }
 
-func TestWebhookForward_Reconcile_BlockSoftCeilingPromotesApprove(t *testing.T) {
-	// Pins the BlockSoft > Modify ordering in StrictestDecision: with a
-	// block-soft ceiling and an approve suggestion, reconcile lands on
-	// BlockSoft, and the Reason renders both halves in InflightAction
-	// vocabulary.
+func TestWebhookForward_Reconcile_LegacyBlockSoftCeilingPromotesApproveToBlock(t *testing.T) {
+	// Back-compat: a legacy block-soft ceiling folds to the single block
+	// action (soft-block merged into block). With an approve suggestion the
+	// reconcile lands on RejectHard, and the Reason renders the ceiling in the
+	// action vocabulary ("block").
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"decision":   "approve",
@@ -697,22 +697,22 @@ func TestWebhookForward_Reconcile_BlockSoftCeilingPromotesApprove(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if res.Decision != BlockSoft {
-		t.Errorf("Decision: got %s want BLOCK_SOFT", res.Decision)
+	if res.Decision != RejectHard {
+		t.Errorf("Decision: got %s want REJECT_HARD (legacy block-soft → block)", res.Decision)
 	}
 	if res.ReasonCode != "AIGUARD_SUGGESTED_VS_POLICY" {
 		t.Errorf("ReasonCode: got %q", res.ReasonCode)
 	}
-	if !strings.Contains(res.Reason, "policy ceiling: block-soft") {
-		t.Errorf("Reason should render ceiling in InflightAction vocab; got %q", res.Reason)
+	if !strings.Contains(res.Reason, "policy ceiling: block") {
+		t.Errorf("Reason should render ceiling in action vocab; got %q", res.Reason)
 	}
 }
 
 func TestWebhookForward_PartialOnMatchStorageOnlyStillGetsApproveCeiling(t *testing.T) {
-	// Pins the Q4 partial-config bypass fix: an `onMatch` block that
-	// only configures storageAction (no inflightAction key) must still
+	// Pins the partial-config bypass fix: an `onMatch` block that
+	// only configures the legacy storageAction (no inflightAction key) must still
 	// trigger the webhook-forward approve-ceiling override. Otherwise a
-	// partial config silently inherits ParseOnMatch's block-hard default
+	// partial config silently inherits ParseOnMatch's block default
 	// and clobbers webhook decisions.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -751,8 +751,8 @@ func TestWebhookForward_PartialOnMatchStorageOnlyStillGetsApproveCeiling(t *test
 }
 
 func TestWebhookForward_DefaultOnMatchIsApproveCeiling(t *testing.T) {
-	// Pins the Q4 fix: webhook-forward overrides ParseOnMatch's
-	// block-hard default to InflightApprove so production admins who
+	// Pins the default-ceiling fix: webhook-forward overrides ParseOnMatch's
+	// block default to the approve action so production admins who
 	// leave `onMatch` off do NOT see every webhook decision clobbered
 	// to RejectHard.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

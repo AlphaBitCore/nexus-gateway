@@ -1,7 +1,7 @@
 package aggregators
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -17,7 +17,7 @@ func strPtr(s string) *string     { return &s }
 func intPtr(i int) *int           { return &i }
 func floatPtr(f float64) *float64 { return &f }
 
-func trafficEvent(t time.Time, traffic *consumer.TrafficEventMessage) *alerteval.Event {
+func trafficEvent(t time.Time, traffic *consumer.AlertView) *alerteval.Event {
 	return &alerteval.Event{
 		Kind:      alerteval.EventTraffic,
 		Source:    alerteval.SourceAITraffic,
@@ -365,12 +365,12 @@ func TestAuthInvalidKeyBurst_OnEventFiltering(t *testing.T) {
 	// nil traffic → ignored.
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Wrong error code → ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		ErrorCode: strPtr("OTHER"),
 		SourceIP:  strPtr("1.2.3.4"),
 	}))
 	// Missing IP → ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		ErrorCode: strPtr("AUTH_INVALID"),
 	}))
 
@@ -384,14 +384,14 @@ func TestAuthInvalidKeyBurst_FiresOnBurst(t *testing.T) {
 	rt := alerteval.NewRuntime("auth.invalid_key_burst", time.Now().Add(-time.Hour))
 	now := time.Now()
 	for range 25 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			ErrorCode: strPtr("AUTH_INVALID"),
 			SourceIP:  strPtr("1.2.3.4"),
 		}))
 	}
 	// Also accepts AUTH_KEY_EXPIRED.
 	for range 5 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			ErrorCode: strPtr("AUTH_KEY_EXPIRED"),
 			SourceIP:  strPtr("1.2.3.4"),
 		}))
@@ -475,7 +475,7 @@ func TestComplianceHookExecutionTimeoutSurge_OnEventAndTick(t *testing.T) {
 	// 25 events each carrying 1 timeout for hook-x.
 	pipe := json.RawMessage(`[{"hookId":"hook-x","error":"deadline exceeded"}]`)
 	for range 25 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			RequestHooksPipeline: pipe,
 		}))
 	}
@@ -511,11 +511,11 @@ func TestCompliancePayloadCaptureFailureRate_FilteringAndFire(t *testing.T) {
 	// nil traffic ignored.
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Empty thingKey (no SourceProcess, no Source) ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		RequestBody: audit.Body{Kind: audit.BodyInline, Truncated: true},
 	}))
 	// Both directions absent ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		SourceProcess: strPtr("p"),
 		RequestBody:   audit.Body{Kind: audit.BodyAbsent},
 		ResponseBody:  audit.Body{Kind: audit.BodyAbsent},
@@ -528,7 +528,7 @@ func TestCompliancePayloadCaptureFailureRate_FilteringAndFire(t *testing.T) {
 	// SourceProcess empty → falls back to t.Source.
 	for range 10 {
 		// non-truncated
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			Source:       "ai-gateway",
 			RequestBody:  audit.Body{Kind: audit.BodyInline},
 			ResponseBody: audit.Body{Kind: audit.BodyInline},
@@ -536,7 +536,7 @@ func TestCompliancePayloadCaptureFailureRate_FilteringAndFire(t *testing.T) {
 	}
 	for range 15 {
 		// truncated on response
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			Source:       "ai-gateway",
 			ResponseBody: audit.Body{Kind: audit.BodyInline, Truncated: true},
 		}))
@@ -565,10 +565,10 @@ func TestExtractCredentialID(t *testing.T) {
 	if extractCredentialID(nil) != "" {
 		t.Error("nil traffic → empty")
 	}
-	if extractCredentialID(&consumer.TrafficEventMessage{}) != "" {
+	if extractCredentialID(&consumer.AlertView{}) != "" {
 		t.Error("nil ptr field → empty")
 	}
-	if got := extractCredentialID(&consumer.TrafficEventMessage{CredentialID: strPtr("cred-1")}); got != "cred-1" {
+	if got := extractCredentialID(&consumer.AlertView{CredentialID: strPtr("cred-1")}); got != "cred-1" {
 		t.Errorf("got %s", got)
 	}
 }
@@ -582,19 +582,19 @@ func TestCredentialAuthFailuresCascade_OnEventAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Missing credID ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		StatusCode: intPtr(401),
 	}))
 
 	// 10 OK responses, 5 401s with no errorCode (= upstream auth fail).
 	for range 10 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			CredentialID: strPtr("c1"),
 			StatusCode:   intPtr(200),
 		}))
 	}
 	for range 5 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			CredentialID: strPtr("c1"),
 			StatusCode:   intPtr(401),
 		}))
@@ -608,7 +608,7 @@ func TestCredentialAuthFailuresCascade_OnEventAndFire(t *testing.T) {
 	// Also: 403 with errorCode (= Nexus-side) does NOT count as auth fail
 	rt2 := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	for range 30 {
-		a.OnEvent(rt2, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt2, trafficEvent(now, &consumer.AlertView{
 			CredentialID: strPtr("c2"),
 			StatusCode:   intPtr(403),
 			ErrorCode:    strPtr("HOOK_REJECT"),
@@ -641,25 +641,25 @@ func TestHookRejectRate_OnEventAndFire(t *testing.T) {
 	// Non-traffic / nil / empty-thing ignored.
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{}))
 
 	for range 50 {
 		// non-reject (decision OK)
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess:       strPtr("ai-gateway-a"),
 			RequestHookDecision: strPtr("ALLOW"),
 		}))
 	}
 	for range 10 {
 		// reject (request)
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess:       strPtr("ai-gateway-a"),
 			RequestHookDecision: strPtr("REJECT_HARD"),
 		}))
 	}
 	for range 5 {
 		// reject (response BLOCK_SOFT)
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess:        strPtr("ai-gateway-a"),
 			ResponseHookDecision: strPtr("BLOCK_SOFT"),
 		}))
@@ -678,7 +678,7 @@ func TestHookRejectRate_FallbackThingKeyFromSource(t *testing.T) {
 	a := NewHookRejectRate()
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		Source:              "ai-gateway", // fallback because SourceProcess nil
 		RequestHookDecision: strPtr("ALLOW"),
 	}))
@@ -707,7 +707,7 @@ func TestLoginFailureFlood_OnEventFiltering(t *testing.T) {
 	now := time.Now()
 
 	// Wrong kind ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{}))
 	// nil audit ignored.
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	// Wrong action ignored.
@@ -812,13 +812,13 @@ func TestModelRateLimitedResponses_OnEventAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// non-429
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{StatusCode: intPtr(200)}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{StatusCode: intPtr(200)}))
 	// 429 but Nexus-classified (errorCode set) ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		StatusCode: intPtr(429), ErrorCode: strPtr("RATE_LIMITED"),
 	}))
 	// 429 but no model
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{StatusCode: intPtr(429)}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{StatusCode: intPtr(429)}))
 
 	if len(rt.Targets()) != 0 {
 		t.Errorf("expected no targets after filtering, got %v", rt.Targets())
@@ -826,7 +826,7 @@ func TestModelRateLimitedResponses_OnEventAndFire(t *testing.T) {
 
 	// 15 upstream 429s for one routed model.
 	for range 15 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			StatusCode:    intPtr(429),
 			RoutedModelID: strPtr("gpt-4o"),
 		}))
@@ -844,7 +844,7 @@ func TestModelRateLimitedResponses_FallbackModelID(t *testing.T) {
 	a := NewModelRateLimitedResponses()
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		StatusCode: intPtr(429),
 		ModelID:    strPtr("claude-3"), // fallback because RoutedModelID is nil
 	}))
@@ -875,11 +875,11 @@ func TestProviderHighLatencyPercentile_FilteringAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// no latency
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		LatencyMs: intPtr(0), ProviderID: strPtr("p"),
 	}))
 	// no provider
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{LatencyMs: intPtr(500)}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{LatencyMs: intPtr(500)}))
 
 	if len(rt.SampleTargets()) != 0 {
 		t.Errorf("expected no sample targets, got %v", rt.SampleTargets())
@@ -893,13 +893,13 @@ func TestProviderHighLatencyPercentile_FilteringAndFire(t *testing.T) {
 	// 0..949 = 500; 950..999 = 8000). basePct=500. alertPct over
 	// 300s lookback = 8000. 8000 > 1.5*500. Fire.
 	for range 950 {
-		a.OnEvent(rt, trafficEvent(now.Add(-30*time.Minute), &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now.Add(-30*time.Minute), &consumer.AlertView{
 			LatencyMs:        intPtr(500),
 			RoutedProviderID: strPtr("openai"),
 		}))
 	}
 	for i := range 50 {
-		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i)*time.Second), &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i)*time.Second), &consumer.AlertView{
 			LatencyMs:        intPtr(8000),
 			RoutedProviderID: strPtr("openai"),
 		}))
@@ -917,7 +917,7 @@ func TestProviderHighLatencyPercentile_FallbackProviderID(t *testing.T) {
 	a := NewProviderHighLatencyPercentile()
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		LatencyMs:  intPtr(500),
 		ProviderID: strPtr("anthropic"), // fallback path
 	}))
@@ -948,7 +948,7 @@ func TestProviderUpstreamError_FilteringAndFire(t *testing.T) {
 	// Filtering branches.
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{StatusCode: intPtr(500)})) // no provider
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{StatusCode: intPtr(500)})) // no provider
 
 	if len(rt.Targets()) != 0 {
 		t.Errorf("expected no targets, got %v", rt.Targets())
@@ -956,21 +956,21 @@ func TestProviderUpstreamError_FilteringAndFire(t *testing.T) {
 
 	// 50 ok responses.
 	for range 50 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			StatusCode:       intPtr(200),
 			RoutedProviderID: strPtr("openai"),
 		}))
 	}
 	// 10 upstream 500s.
 	for range 10 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			StatusCode:       intPtr(503),
 			RoutedProviderID: strPtr("openai"),
 		}))
 	}
 	// 5 Nexus-classified 5xx (not counted as numerator since errorCode set).
 	for range 5 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			StatusCode:       intPtr(503),
 			ErrorCode:        strPtr("HOOK_REJECT"),
 			RoutedProviderID: strPtr("openai"),
@@ -990,7 +990,7 @@ func TestProviderUpstreamError_FallbackProviderID(t *testing.T) {
 	a := NewProviderUpstreamError()
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		StatusCode: intPtr(200),
 		ProviderID: strPtr("anthropic"),
 	}))
@@ -1021,15 +1021,15 @@ func TestProxyCostSpike_FilteringAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Non-vk entity ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("user"), EntityID: strPtr("u1"), EstimatedCostUSD: floatPtr(1.0),
 	}))
 	// vk with empty id ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), EstimatedCostUSD: floatPtr(1.0),
 	}))
 	// Zero cost ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), EntityID: strPtr("v1"),
 	}))
 
@@ -1037,7 +1037,7 @@ func TestProxyCostSpike_FilteringAndFire(t *testing.T) {
 		t.Errorf("expected no targets after filtering, got %v", rt.Targets())
 	}
 
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), EntityID: strPtr("v1"), EstimatedCostUSD: floatPtr(150.0),
 	}))
 	d := fireFromTick(a.Tick(rt, map[string]any{"windowSec": 3600, "thresholdUsd": 100.0}, now))
@@ -1070,19 +1070,19 @@ func TestProxyHighErrorRate_FilteringAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Empty thingKey ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{StatusCode: intPtr(500)}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{StatusCode: intPtr(500)}))
 
 	if len(rt.Targets()) != 0 {
 		t.Errorf("expected no targets, got %v", rt.Targets())
 	}
 
 	for range 20 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess: strPtr("svc-a"), StatusCode: intPtr(200),
 		}))
 	}
 	for range 5 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess: strPtr("svc-a"), StatusCode: intPtr(500),
 		}))
 	}
@@ -1100,7 +1100,7 @@ func TestProxyHighErrorRate_FallbackThingKeyFromSource(t *testing.T) {
 	a := NewProxyHighErrorRate()
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		Source: "compliance-proxy", StatusCode: intPtr(200),
 	}))
 	if got := rt.Targets(); len(got) != 1 || got[0] != "thing:compliance-proxy" {
@@ -1145,6 +1145,50 @@ func TestWalkHooks_VariousInputs(t *testing.T) {
 	}
 }
 
+// TestWalkHooks_NoObjectFastPath locks the H3 fast path: an empty "[]" array (the
+// common hooks-off pipeline that was being json.Unmarshal'd hot) and any array
+// with no object element must skip the parse and return all-false — exactly what a
+// full unmarshal would have produced (empty slice, or error → silent).
+func TestWalkHooks_NoObjectFastPath(t *testing.T) {
+	for _, in := range []any{
+		json.RawMessage(`[]`),
+		json.RawMessage(`[ ]`),
+		[]byte(`[]`),
+		json.RawMessage(`[1,2,3]`), // non-object array → unmarshal would error → silent
+		[]byte("   "),
+	} {
+		if a, b, c := walkHooks(in, nil); a || b || c {
+			t.Errorf("no-object input %q must be all-false, got %v %v %v", in, a, b, c)
+		}
+	}
+	// Sanity: a present object array still parses (slow path) and is detected.
+	if a, b, _ := walkHooks(json.RawMessage(`[{"stage":"x","error":"boom"}]`), nil); !a || !b {
+		t.Error("object array must still parse via the slow path")
+	}
+
+	// `[null]` is the ONLY input where the fast path diverges from a full unmarshal
+	// (no '{' yet decodes to a non-empty zero-value slice → old hasAnyHook=true).
+	// It is UNREACHABLE in production: both the ai-gateway (HooksPipeline
+	// []HookExecRecord) and compliance-proxy (HookResults []HookResult) marshal
+	// VALUE slices, which only ever emit `[{…}]` or `[]`, never `[null]`. Even if it
+	// occurred it would only drop a zero-failure denominator sample — it can never
+	// suppress a real failure (that needs error!="" → an object → '{'). Pin the
+	// chosen skip behavior.
+	if a, b, c := walkHooks(json.RawMessage(`[null]`), nil); a || b || c {
+		t.Errorf("[null] is treated as no-hooks by design (unreachable in prod): %v %v %v", a, b, c)
+	}
+
+	// A '{' inside a STRING forces the slow path (presence of '{' never skips), so
+	// behavior is identical to before the fast path: a non-object array errors on
+	// string→struct decode → silent; a real object is still detected.
+	if a, b, c := walkHooks(json.RawMessage(`["text with { brace"]`), nil); a || b || c {
+		t.Errorf("brace-in-string non-object array must be all-false: %v %v %v", a, b, c)
+	}
+	if a, b, _ := walkHooks(json.RawMessage(`[{"stage":"x","error":"oops {x}"}]`), nil); !a || !b {
+		t.Error("object with a brace in the error string must still detect failure")
+	}
+}
+
 func TestIsTimeoutErr(t *testing.T) {
 	cases := map[string]bool{
 		"context deadline exceeded": true,
@@ -1181,9 +1225,9 @@ func TestProxyHookFailureRate_OnEventAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// No hooks → not counted.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{SourceProcess: strPtr("svc")}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{SourceProcess: strPtr("svc")}))
 	// Has hooks but empty thingKey ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		RequestHooksPipeline: json.RawMessage(`[{"stage":"a","error":""}]`),
 	}))
 
@@ -1194,12 +1238,12 @@ func TestProxyHookFailureRate_OnEventAndFire(t *testing.T) {
 	clean := json.RawMessage(`[{"stage":"a","error":""}]`)
 	failing := json.RawMessage(`[{"stage":"a","error":"x failed"}]`)
 	for range 20 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess: strPtr("svc-a"), RequestHooksPipeline: clean,
 		}))
 	}
 	for range 10 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess: strPtr("svc-a"), RequestHooksPipeline: failing,
 		}))
 	}
@@ -1214,7 +1258,7 @@ func TestProxyHookFailureRate_FallbackThingKey(t *testing.T) {
 	a := NewProxyHookFailureRate()
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		Source:               "compliance-proxy",
 		RequestHooksPipeline: json.RawMessage(`[{"stage":"a","error":""}]`),
 	}))
@@ -1244,9 +1288,9 @@ func TestProxyHookTimeoutRate_OnEventAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// No hooks → not counted.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{SourceProcess: strPtr("svc")}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{SourceProcess: strPtr("svc")}))
 	// Has hooks but empty thingKey ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		RequestHooksPipeline: json.RawMessage(`[{"stage":"a","error":"deadline exceeded"}]`),
 	}))
 
@@ -1257,12 +1301,12 @@ func TestProxyHookTimeoutRate_OnEventAndFire(t *testing.T) {
 	clean := json.RawMessage(`[{"stage":"a","error":""}]`)
 	timing := json.RawMessage(`[{"stage":"a","error":"context deadline exceeded"}]`)
 	for range 30 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess: strPtr("svc-a"), RequestHooksPipeline: clean,
 		}))
 	}
 	for range 5 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			SourceProcess: strPtr("svc-a"), RequestHooksPipeline: timing,
 		}))
 	}
@@ -1277,7 +1321,7 @@ func TestProxyHookTimeoutRate_FallbackThingKey(t *testing.T) {
 	a := NewProxyHookTimeoutRate()
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		Source:               "agent",
 		RequestHooksPipeline: json.RawMessage(`[{"stage":"a","error":""}]`),
 	}))
@@ -1307,15 +1351,15 @@ func TestProxyQuotaRuntimeExceeded_OnEventAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Other error code ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		ErrorCode: strPtr("RATE_LIMITED"), EntityType: strPtr("vk"), EntityID: strPtr("v"),
 	}))
 	// Non-vk entity ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		ErrorCode: strPtr("QUOTA_EXCEEDED"), EntityType: strPtr("user"), EntityID: strPtr("u"),
 	}))
 	// Vk with empty id ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		ErrorCode: strPtr("QUOTA_EXCEEDED"), EntityType: strPtr("vk"),
 	}))
 
@@ -1324,7 +1368,7 @@ func TestProxyQuotaRuntimeExceeded_OnEventAndFire(t *testing.T) {
 	}
 
 	for range 15 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			ErrorCode: strPtr("QUOTA_EXCEEDED"), EntityType: strPtr("vk"), EntityID: strPtr("vk-1"),
 		}))
 	}
@@ -1358,10 +1402,10 @@ func TestProxyRateLimitExceeded_GroupByVK(t *testing.T) {
 	// Filtering branches.
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{ErrorCode: strPtr("OTHER")}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{ErrorCode: strPtr("OTHER")}))
 
 	for range 35 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			ErrorCode:  strPtr("RATE_LIMITED"),
 			EntityType: strPtr("vk"),
 			EntityID:   strPtr("v1"),
@@ -1388,7 +1432,7 @@ func TestProxyRateLimitExceeded_GroupByIP(t *testing.T) {
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
 	for range 35 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			ErrorCode: strPtr("RATE_LIMITED"),
 			SourceIP:  strPtr("1.2.3.4"),
 		}))
@@ -1410,7 +1454,7 @@ func TestProxyRateLimitExceeded_GroupByAll(t *testing.T) {
 	rt := alerteval.NewRuntime(a.RuleID(), time.Now().Add(-time.Hour))
 	now := time.Now()
 	for range 35 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			ErrorCode: strPtr("RATE_LIMITED"),
 		}))
 	}
@@ -1447,14 +1491,14 @@ func TestProxyRoutingNoMatch_FilteringAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Wrong error code ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{ErrorCode: strPtr("OTHER")}))
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{ErrorCode: strPtr("OTHER")}))
 
 	if len(rt.Targets()) != 0 {
 		t.Errorf("expected no targets, got %v", rt.Targets())
 	}
 
 	for range 25 {
-		a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 			ErrorCode: strPtr("ROUTING_NO_MATCH"),
 		}))
 	}
@@ -1488,15 +1532,15 @@ func TestVKLatencyDegradation_FilteringAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Non-vk entity ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("user"), EntityID: strPtr("u"), LatencyMs: intPtr(100),
 	}))
 	// vk with empty id ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), LatencyMs: intPtr(100),
 	}))
 	// Zero latency ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), EntityID: strPtr("v"), LatencyMs: intPtr(0),
 	}))
 
@@ -1506,12 +1550,12 @@ func TestVKLatencyDegradation_FilteringAndFire(t *testing.T) {
 
 	// Baseline + alert burst — see provider test for the math.
 	for range 950 {
-		a.OnEvent(rt, trafficEvent(now.Add(-30*time.Minute), &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now.Add(-30*time.Minute), &consumer.AlertView{
 			EntityType: strPtr("vk"), EntityID: strPtr("vk-x"), LatencyMs: intPtr(500),
 		}))
 	}
 	for i := range 50 {
-		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i)*time.Second), &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i)*time.Second), &consumer.AlertView{
 			EntityType: strPtr("vk"), EntityID: strPtr("vk-x"), LatencyMs: intPtr(8000),
 		}))
 	}
@@ -1545,15 +1589,15 @@ func TestVKTokenUsageSpike_FilteringAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Non-vk entity ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("user"), EntityID: strPtr("u"), TotalTokens: intPtr(100),
 	}))
 	// vk with empty id ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), TotalTokens: intPtr(100),
 	}))
 	// Zero tokens ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), EntityID: strPtr("v"),
 	}))
 
@@ -1561,7 +1605,7 @@ func TestVKTokenUsageSpike_FilteringAndFire(t *testing.T) {
 		t.Errorf("expected no targets, got %v", rt.Targets())
 	}
 
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"), EntityID: strPtr("vk-1"), TotalTokens: intPtr(1500000),
 	}))
 	d := fireFromTick(a.Tick(rt, map[string]any{"windowSec": 3600, "thresholdTokens": 1000000}, now))
@@ -1603,11 +1647,11 @@ func TestVKTrafficSpike_FilteringAndFire(t *testing.T) {
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventAudit, Timestamp: now})
 	a.OnEvent(rt, &alerteval.Event{Kind: alerteval.EventTraffic, Timestamp: now})
 	// Non-vk entity ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("user"), EntityID: strPtr("u"),
 	}))
 	// vk empty id ignored.
-	a.OnEvent(rt, trafficEvent(now, &consumer.TrafficEventMessage{
+	a.OnEvent(rt, trafficEvent(now, &consumer.AlertView{
 		EntityType: strPtr("vk"),
 	}))
 
@@ -1617,13 +1661,13 @@ func TestVKTrafficSpike_FilteringAndFire(t *testing.T) {
 
 	// Baseline: some quiet traffic spread over the past hour.
 	for i := range 12 {
-		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i*5+10)*time.Minute), &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i*5+10)*time.Minute), &consumer.AlertView{
 			EntityType: strPtr("vk"), EntityID: strPtr("vk-burst"),
 		}))
 	}
 	// Burst in last 5 min: 200 events.
 	for i := range 200 {
-		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i)*time.Second), &consumer.TrafficEventMessage{
+		a.OnEvent(rt, trafficEvent(now.Add(-time.Duration(i)*time.Second), &consumer.AlertView{
 			EntityType: strPtr("vk"), EntityID: strPtr("vk-burst"),
 		}))
 	}

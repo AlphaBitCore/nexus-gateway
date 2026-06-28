@@ -7,12 +7,13 @@ package hashchain
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // ErrNonCanonical is returned for values that have no stable canonical form:
@@ -43,6 +44,16 @@ func Canonicalize(raw json.RawMessage) ([]byte, error) {
 	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {
+		// goccy/go-json validates json.Number magnitude eagerly at decode time, so a
+		// number with no finite float64 form (e.g. 1e400 → out of range) fails here
+		// rather than in encodeNumber. goccy stringifies the strconv error into its
+		// own SyntaxError (errors.As/Is don't see the strconv type), so match the
+		// ParseFloat signature: such a value has no canonical JSON form, so classify
+		// it as ErrNonCanonical (not a generic decode fault) — matching how
+		// encodeNumber reports the same condition for numbers that reach it.
+		if strings.Contains(err.Error(), "ParseFloat") {
+			return nil, fmt.Errorf("%w: unrepresentable number: %w", ErrNonCanonical, err)
+		}
 		return nil, fmt.Errorf("canonicalize: %w", err)
 	}
 	if dec.More() {

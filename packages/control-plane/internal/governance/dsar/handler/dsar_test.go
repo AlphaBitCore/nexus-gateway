@@ -3,8 +3,8 @@ package dsar
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -173,7 +173,7 @@ func (f *fakeDB) FulfillDSARErasure(_ context.Context, _ string) (*dsarstore.DSA
 	}
 	return &dsarstore.DSARErasureResult{
 		VKAnonymised: 5, AgentAnonymised: 2, TotalAnonymised: 7,
-		// Account-record deletion stage (F-0335): surfaced in the outcome + audit.
+		// Account-record deletion stage: surfaced in the outcome + audit.
 		VKOwnedDeleted: 3, AdminApiKeysDeleted: 1, FederatedIdentitiesDeleted: 2,
 		RefreshTokensDeleted: 4, ScimTokensDeleted: 1, AccountDeleted: true,
 	}, nil
@@ -769,7 +769,7 @@ func TestFulfillDSAR_ERASURE_HappyPath(t *testing.T) {
 	if outcome["vkAnonymised"].(float64) != 5 {
 		t.Errorf("vkAnonymised = %v; want 5", outcome["vkAnonymised"])
 	}
-	// Account-record deletion counts (F-0335) must surface in the response outcome.
+	// Account-record deletion counts must surface in the response outcome.
 	if outcome["vkOwnedDeleted"].(float64) != 3 {
 		t.Errorf("vkOwnedDeleted = %v; want 3", outcome["vkOwnedDeleted"])
 	}
@@ -816,7 +816,7 @@ func TestFulfillDSAR_ERASURE_UpdateError_Returns500(t *testing.T) {
 	}
 }
 
-// F-0264: a subjectId that does not resolve to a NexusUser must NOT be
+// A subjectId that does not resolve to a NexusUser must NOT be
 // force-completed. The request is marked REJECTED and the response is 422.
 
 func TestFulfillDSAR_ERASURE_UnknownSubject_RejectsNotCompleted(t *testing.T) {
@@ -892,7 +892,7 @@ func TestFulfillDSAR_SubjectExistsError_Returns500(t *testing.T) {
 	}
 }
 
-// F-0263: the audit digest must carry only counts, never the export PII.
+// The audit digest must carry only counts, never the export PII.
 func TestAccessExportDigest_CountsOnly_NoPII(t *testing.T) {
 	exp := &dsarstore.DSARAccessExport{
 		User:      map[string]any{"displayName": "Jane Doe", "email": "jane@x.com"},

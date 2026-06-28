@@ -2,8 +2,9 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
+	"github.com/goccy/go-json"
+	"os"
+	"strconv"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
@@ -11,6 +12,15 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
+
+// perfInlineMax is a THROWAWAY perf-ablation override (NEXUS_PERF_INLINE_MAX,
+// bytes) for the inline-vs-spill cutoff; <= 0 means unset. See recordToMessage.
+var perfInlineMax = func() int64 {
+	if v, err := strconv.ParseInt(os.Getenv("NEXUS_PERF_INLINE_MAX"), 10, 64); err == nil {
+		return v
+	}
+	return 0
+}()
 
 // isBlockingDecision reports whether a hook-stage decision string denotes a
 // rule-pack block. Both REJECT_HARD and BLOCK_SOFT carry a BlockingRule
@@ -39,27 +49,11 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 	//                   owner could be attached so the Hub
 	//                   IdentityEnricher job picks the row up later via
 	//                   DeviceAssignment.ip_address lookup.
-	identity := map[string]any{}
-	if rec.VirtualKeyID != "" {
-		identity["vk"] = map[string]any{"id": rec.VirtualKeyID, "name": rec.VirtualKeyName}
-	}
-	if rec.UserID != "" {
-		identity["user"] = map[string]any{"id": rec.UserID, "name": rec.UserDisplayName}
-	}
-	if rec.ProjectID != "" {
-		identity["project"] = map[string]any{"id": rec.ProjectID, "name": rec.ProjectName}
-	}
-	if rec.CredentialID != "" {
-		identity["apiCredential"] = map[string]any{"id": rec.CredentialID, "name": rec.CredentialName}
-	}
-	// "matched" iff at least one owner foreign key resolved; otherwise
-	// "pending" so the Hub IdentityEnricher's IP-based resolver gets a
-	// chance on the next 5-min tick.
-	if rec.UserID != "" || rec.ProjectID != "" {
-		identity["status"] = "matched"
-	} else {
-		identity["status"] = "pending"
-	}
+	// identity is the typed form of the authoritative "who made this call"
+	// JSONB object; see buildIdentity in message_wire.go for the field/status
+	// derivation. It marshals via go-json's compiled struct encoder rather than
+	// the map-reflection path the previous map[string]any build incurred.
+	identity := buildIdentity(rec)
 
 	// EntityType / EntityID drive the indexed analytics columns
 	// (traffic_event.entity_id has a B-tree index for per-user / per-
@@ -76,26 +70,10 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		entityType, entityID, entityName = "project", rec.ProjectID, rec.ProjectName
 	}
 
-	details := map[string]any{
-		"requestId":              rec.RequestID,
-		"clientRequestId":        rec.ClientRequestID,
-		"sourceApp":              rec.SourceApp,
-		"cacheKey":               rec.CacheKey,
-		"responseHookReason":     rec.ResponseHookReason,
-		"responseHookReasonCode": rec.ResponseHookReasonCode,
-		"routingDecision":        rec.RoutingDecision,
-		"qualitySignals":         rec.QualitySignals,
-		"complianceFlags":        rec.ComplianceFlags,
-		"metadata":               rec.Metadata,
-	}
-	if rec.HookRewritten {
-		details["hookRewritten"] = true
-		details["hookRewriteCount"] = rec.HookRewriteCount
-	}
-	if rec.ResponseHookRewritten {
-		details["responseHookRewritten"] = true
-		details["responseHookRewriteCount"] = rec.ResponseHookRewriteCount
-	}
+	// details is the typed form of the traffic_event.details JSONB object; see
+	// buildDetails in message_wire.go. Same key-for-key shape as the prior
+	// map[string]any build, but marshaled via the compiled struct encoder.
+	details := buildDetails(rec)
 
 	msg := &mq.TrafficEventMessage{
 		ID:     rec.RequestID,
@@ -124,6 +102,7 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		OrgName:           rec.OrganizationName,
 		Identity:          identity,
 		EndpointType:      rec.EndpointType,
+		IngressFormat:     rec.IngressFormat,
 		ProviderID:        rec.ProviderID,
 		ProviderName:      rec.ProviderName,
 		ModelID:           rec.ModelID,
@@ -254,56 +233,27 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 	if w.payloadCapture != nil {
 		threshold = w.payloadCapture.Get().MaxInlineBodyBytes
 	}
+	// THROWAWAY perf-ablation (NEXUS_PERF_INLINE_MAX=<bytes>): force the
+	// inline-vs-spill cutoff low so large captured bodies spill to the wired
+	// backend instead of riding inline in the NATS audit message. Tests the
+	// hypothesis that the audit drain stall is NATS publish VOLUME (50 KB inline
+	// per record). Never set in production (it overrides admin policy). Remove
+	// with the other perf guards.
+	if perfInlineMax > 0 {
+		threshold = perfInlineMax
+	}
 	ctx := context.Background()
-	// The RAW payload copy obeys the operator's storage policy before any
-	// byte leaves the process: under "redact" only the proxy-supplied
-	// redacted wire copy may persist, under "drop-content" nothing may.
-	// The captured (pre-hook) bytes below still feed normalization — the
-	// normalized copy gets span-level redaction in redact.ApplyStorageAction.
+	// The RAW payload copy obeys the hook action before any byte leaves the
+	// process: approve persists the captured bytes, redact/block persist only
+	// the proxy-supplied redacted wire copy, anything else persists nothing.
+	// The normalized projection is never persisted — the control plane
+	// recomputes it at view time from this (already-redacted) raw body.
 	msg.RequestBody = spillstore.EmitBody(ctx, w.spill, threshold,
-		redact.StorageRawBody(rec.RequestBody, rec.RequestBodyRedacted, rec.RequestStorageAction),
+		redact.StorageRawBody(rec.RequestBody, rec.RequestBodyRedacted, rec.RequestAction),
 		rec.RequestContentType, rec.RequestID, "request", rec.RequestTruncated, w.logger)
 	msg.ResponseBody = spillstore.EmitBody(ctx, w.spill, threshold,
-		redact.StorageRawBody(rec.ResponseBody, rec.ResponseBodyRedacted, rec.ResponseStorageAction),
+		redact.StorageRawBody(rec.ResponseBody, rec.ResponseBodyRedacted, rec.ResponseAction),
 		rec.ResponseContentType, rec.RequestID, "response", rec.ResponseTruncated, w.logger)
-	// Produce normalized payloads when a normalizer is wired and we have raw
-	// bytes for the direction. Failures populate status + error_reason but
-	// never block the wire message (normalize is observability, not a gate).
-	// When the request's effective passthrough config has BypassNormalize=true,
-	// skip the response-side normalize emission. Request-side normalize still
-	// runs — it happens before passthrough is resolved, and the resulting
-	// payload helps incident triage even when response normalize is bypassed.
-	skipResponseNormalize := false
-	for _, f := range rec.PassthroughFlags {
-		if f == "bypassNormalize" {
-			skipResponseNormalize = true
-			break
-		}
-	}
-	if w.normalize != nil {
-		stream := strings.Contains(strings.ToLower(rec.ResponseContentType), "event-stream")
-		if len(rec.RequestBody) > 0 {
-			raw, status, errReason := w.normalize("request", rec.RequestContentType,
-				normalizeAdapterType(rec), rec.ModelName, rec.Path, false, rec.RequestBody)
-			raw, redactionSpans := redact.ApplyStorageAction(raw, rec.RequestStorageAction, rec.RequestTransformSpans, rec.RequestRedactRuleIDs, rec.RequestRedetect)
-			msg.RequestNormalized = raw
-			msg.RequestRedactionSpans = redact.MarshalSpans(redactionSpans)
-			msg.RequestNormalizeStatus = status
-			msg.RequestNormalizeError = errReason
-		}
-		if len(rec.ResponseBody) > 0 && !skipResponseNormalize {
-			raw, status, errReason := w.normalize("response", rec.ResponseContentType,
-				normalizeAdapterType(rec), rec.ModelName, rec.Path, stream, rec.ResponseBody)
-			raw, redactionSpans := redact.ApplyStorageAction(raw, rec.ResponseStorageAction, rec.ResponseTransformSpans, rec.ResponseRedactRuleIDs, rec.ResponseRedetect)
-			msg.ResponseNormalized = raw
-			msg.ResponseRedactionSpans = redact.MarshalSpans(redactionSpans)
-			msg.ResponseNormalizeStatus = status
-			msg.ResponseNormalizeError = errReason
-		}
-		if msg.RequestNormalized != nil || msg.ResponseNormalized != nil {
-			msg.NormalizeVersion = normalizeWireVersion
-		}
-	}
 	if rec.InternalPurpose != "" {
 		p := rec.InternalPurpose
 		msg.InternalPurpose = &p

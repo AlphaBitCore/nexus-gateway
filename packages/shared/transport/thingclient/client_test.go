@@ -2,8 +2,8 @@ package thingclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -842,13 +842,12 @@ func TestReconnect_Jitter(t *testing.T) {
 // 13. TestReconnect_OnReconnectHook
 
 // TestReconnect_OnReconnectHook asserts the OnReconnect callback fires on the
-// initial connect as well as on every subsequent reconnect. Earlier behavior
-// gated the first invocation on reportedVer > 0 (so the very first dial
-// after process start would skip the callback); the gate was removed because
-// every in-tree caller (agent diag-buffer drain, static_info re-push,
-// alert-envelope replay) needs fresh-connect coverage. The HTTP-fallback
-// recovery path in http.go always fired regardless, so the runLoop is now
-// consistent with it.
+// initial connect as well as on every subsequent reconnect. The first
+// invocation is not gated on reportedVer > 0 (such a gate would make the very
+// first dial after process start skip the callback), because every in-tree
+// caller (agent diag-buffer drain, static_info re-push, alert-envelope replay)
+// needs fresh-connect coverage. The HTTP-fallback recovery path in http.go
+// fires regardless, so the runLoop is consistent with it.
 func TestReconnect_OnReconnectHook(t *testing.T) {
 	t.Parallel()
 

@@ -11,7 +11,7 @@ import (
 )
 
 // TestAcquireConfigVersionLock asserts the per-type advisory lock that
-// serializes desired_ver allocation (F-0109): the exact SQL form, the type key
+// serializes desired_ver allocation: the exact SQL form, the type key
 // argument, and the error wrap. The distinct-version OUTCOME this lock
 // guarantees is exercised end-to-end against real Postgres in the manager
 // package's TestManager_UpdateConfig_DistinctVersionsUnderConcurrency.

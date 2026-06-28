@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -108,8 +108,8 @@ func (approveHook) Execute(_ context.Context, _ *goHooks.HookInput) (*goHooks.Ho
 	return &goHooks.HookResult{Decision: goHooks.Approve}, nil
 }
 
-// TestRunRequestHooks_UsesIngressFormatTrafficAdapter verifies the
-// headline S5 regression: with a registered traffic adapter registry,
+// TestRunRequestHooks_UsesIngressFormatTrafficAdapter verifies that
+// with a registered traffic adapter registry,
 // `runRequestHooks` selects the adapter whose ID matches the ingress
 // BodyFormat — Anthropic-in uses the `anthropic` adapter, GLM-in uses
 // `glm`, not the hard-coded `openai-compat`. The fake metric

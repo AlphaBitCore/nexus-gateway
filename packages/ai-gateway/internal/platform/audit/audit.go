@@ -14,20 +14,21 @@ import (
 	"strings"
 	"time"
 
-	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
 const (
-	defaultFlushInterval = 5 * time.Second
-	defaultBatchSize     = 100
-	// maxQueueSize bounds the in-memory record buffer. On overflow Enqueue
-	// applies bounded backpressure and then spills to the durable NDJSON
-	// sink (never a silent drop). Sized for a high-concurrency burst: large
-	// enough to absorb a multi-second drain hiccup at thousands of req/s
-	// before backpressure even engages (records are pointers, so the memory
-	// cost is modest).
-	maxQueueSize = 50000
+	// maxQueueSize is the DEFAULT in-memory record-buffer cap (overridable per
+	// Writer via WithMaxQueuedRecords / AuditConfig.MaxQueuedRecords). On overflow
+	// Enqueue spills to the durable NDJSON sink (never a silent drop). Each queued
+	// record PINS its pooled ~50 KB request/response body until it is marshaled, so
+	// the cap directly bounds the audit body pool's working set: at the old 50000 a
+	// slow-publish burst pinned ~5 GB of bodies (the dominant gw retained heap);
+	// 10000 holds the pool near ~1 GB with the same measured spill/drop rate and a
+	// ~70% lower GC pause. The buffer of last resort is NATS (disk) + the spill
+	// sink, NOT this in-heap queue — keep it bounded, raise it only where a
+	// memory-rich box wants extra absorption headroom.
+	maxQueueSize = 10000
 
 	// flushHighWater triggers an immediate flush once the buffer reaches
 	// this depth, instead of waiting for the next ticker. Without it a
@@ -36,25 +37,74 @@ const (
 	// well below maxQueueSize so a spike flushes early.
 	flushHighWater = 1000
 
-	// publishConcurrency bounds how many records a single flush publishes
-	// to MQ in parallel. The per-record cost (normalize + spill + one
-	// JetStream publish-and-ack RTT) is the drain ceiling; fanning it out
-	// lifts that ceiling roughly publishConcurrency-fold. js.Publish is
-	// safe for concurrent use on one connection.
-	publishConcurrency = 32
+	// Audit loss modes (AuditConfig.LossMode). Every default is zero-loss, because
+	// durable audit is a product promise + a compliance requirement — the gateway
+	// must never silently drop an audit record. Two distinct "defaults" exist and
+	// must not be confused: the CONFIG default (config.defaults(), what an
+	// unset AI_GATEWAY_AUDIT_LOSS_MODE resolves to) is "spillblock"; the
+	// WithLossMode FALLBACK for an empty/unrecognised string is "block" (the most
+	// conservative no-loss mode, so a config typo can never start dropping). The
+	// lossy modes are an explicit opt-out for callers that do NOT need compliance
+	// audit and prefer raw throughput.
+	//   - spillblock (CONFIG default): like spill, but on a full spill channel it
+	//     back-pressures the request goroutine until a slot frees instead of
+	//     dropping (bounded by backpressureMaxWait → durable spill). Lossless up to
+	//     disk-write success, throttling ingest to the disk rate; spills to disk
+	//     before it ever blocks. Identical to spill in the normal regime; differs
+	//     only at the extreme where spill would drop.
+	//   - block (empty/unknown fallback): when the in-heap buffer is full, Enqueue
+	//     BACK-PRESSURES the request path (bounded wait for the flush to free space;
+	//     durable spill only if the pipeline is genuinely wedged past the wait).
+	//     Admission self-throttles to the audit persistence rate; nothing is
+	//     dropped. NATS (disk) is the burst buffer; the gw slows rather than loses.
+	//   - spill: no wait — overflow is handed to the async spill worker (durable
+	//     NDJSON, off the request path); a bounded drop only if the spill is also
+	//     saturated. Higher throughput, bounded loss only under extreme overload.
+	//   - drop: no wait — overflow is a counted bounded drop. Max throughput,
+	//     audit-lossy. For non-compliance callers only.
+	lossModeBlock      = "block"
+	lossModeSpill      = "spill"
+	lossModeDrop       = "drop"
+	lossModeSpillBlock = "spillblock"
 
-	// backpressureWait bounds how long Enqueue spends slowing the producer
-	// (waiting for the flush loop to free buffer space) before spilling the
-	// record to disk. Short enough that a request goroutine is never held
-	// long after the client already has its response; long enough to ride
-	// out a brief drain hiccup. backpressurePoll is the retry granularity.
-	backpressureWait = 200 * time.Millisecond
-	backpressurePoll = 10 * time.Millisecond
+	// backpressureMaxWait bounds how long Enqueue back-pressures on a full buffer
+	// before falling back to a durable spill (so a genuinely wedged pipeline — e.g.
+	// NATS down — cannot hang a request goroutine forever). Under healthy NATS the
+	// flush frees space in well under this, so the wait is short and the request
+	// path simply throttles to the drain rate. backpressureTick re-checks for space
+	// between flush wakeups.
+	backpressureMaxWait = 10 * time.Second
 
-	// normalizeWireVersion stamps TrafficEventMessage.NormalizeVersion so
-	// the Hub db-writer persists the version used to produce the payload.
-	// Kept in sync with normcore.SchemaVersion.
-	normalizeWireVersion = normcore.SchemaVersion
+	// consumerLinger bounds how long a consumer worker waits to fill a partial
+	// batch before publishing it. Under load a batch reaches batchMaxCount long
+	// before this fires (so publishes stay full-sized); when traffic is light it
+	// bounds the per-record audit latency. 100 ms balances batch fullness against
+	// tail latency on a near-idle pipeline.
+	consumerLinger = 100 * time.Millisecond
+
+	// spillFlushBytes / spillFlushInterval shape the spill worker's batching: it
+	// accumulates marshaled record bytes up to spillFlushBytes (or
+	// spillFlushInterval, whichever trips first) and writes them to the durable
+	// spool in ONE large sequential write (ndjson.WriteBatch). Batching by BYTES,
+	// not record count — audit records vary widely in size (a 50 KB body vs a tiny
+	// metadata row), so a fixed count gives uneven writes; a fixed byte budget
+	// gives uniform, IOPS-efficient large writes.
+	//
+	// Sized LARGE (128 MiB), not a few MiB: a flush is a disk write, and writing
+	// frequently is itself the slow path — the per-record write saturated disk
+	// write %util ~90% (~800 writes/s) under load. A big budget collapses that to a
+	// handful of very large sequential writes. The trade is RAM: the accumulation
+	// buffer holds up to spillFlushBytes of pending audit bytes, but that buffer is
+	// cheap relative to dropping audit, and spill is the overflow path (it only
+	// fills under burst). Tunable via AI_GATEWAY_AUDIT_SPILL_FLUSH_MB.
+	spillFlushBytes    = 128 << 20 // 128 MiB
+	spillFlushInterval = 250 * time.Millisecond
+
+	// dropLogEvery throttles the buffer-overflow drop log: one line per this
+	// many drops (the dropped_total metric stays exact). A per-record
+	// stack-trace Error was itself a top allocator under the overload it
+	// reports — see Writer.Enqueue.
+	dropLogEvery = 2000
 )
 
 // EndpointType is the typed-string alias used to classify the API

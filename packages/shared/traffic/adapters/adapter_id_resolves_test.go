@@ -9,12 +9,12 @@ import (
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
-// TestEveryBuiltinAdapterIDResolvesThroughRegistry (#98 binding) is the
+// TestEveryBuiltinAdapterIDResolvesThroughRegistry is the
 // agent / compliance-proxy side of the cross-service compliance
 // consistency assertion (the ai-gateway side lives in
 // packages/ai-gateway/internal/providers/core/format_normalize_consistency_test.go).
 //
-// The PreHookCallback path (#93 responseprehook.Build) feeds the
+// The PreHookCallback path (responseprehook.Build) feeds the
 // Registry with Meta.AdapterType = strings.ToLower(audCtx.adapter.ID())
 // for SSE responses that agent + compliance-proxy capture. If a
 // builtin traffic adapter is added without coverage on EITHER side —

@@ -1,8 +1,8 @@
 package replicate
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 
 	"github.com/tidwall/gjson"

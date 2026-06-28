@@ -6,14 +6,14 @@ import (
 )
 
 // normalizePanicTotal counts panics recovered inside the response
-// pre-hook callback. Two locations carry recover() guards (#97
-// panic-safety): the Registry.Normalize call and the OnPayload
+// pre-hook callback. Two locations carry recover() guards for
+// panic-safety: the Registry.Normalize call and the OnPayload
 // caller-supplied stamp closure. The label `location` distinguishes
 // them so admins can tell whether the bug is in normalize codecs or
 // in the per-service audit-stamp closure.
 //
 // Without this counter the WARN log was the only signal — easy to
-// miss in a busy log stream. #115/S1 architect review.
+// miss in a busy log stream.
 //
 // Single shared registration covers all three data planes because
 // every service routes its pre-hook through responseprehook.Build;
@@ -35,8 +35,8 @@ func recordPanic(location string) {
 // tier hard-error), so the pre-hook callback dropped without
 // stamping ci.Normalized. Downstream hook executors then see the
 // flat-text fallback payload buildCheckpointInput produces, not the
-// structured Normalized claim. PR #24 architect review S5: without
-// this counter the silent-drop path is invisible — admins running
+// structured Normalized claim. Without this counter the silent-drop
+// path is invisible — admins running
 // Modify hooks on flat text would never know they're operating on
 // degraded input.
 //

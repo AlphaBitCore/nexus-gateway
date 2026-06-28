@@ -93,7 +93,7 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 		}
 	}
 
-	// F-0365 grant ceiling: an admin API key whose ownerUserId is set
+	// Grant ceiling: an admin API key whose ownerUserId is set
 	// authenticates AS that owner (authn.EffectivePrincipal). Minting a key for
 	// an owner OTHER than the caller would let a narrowly-scoped caller inherit a
 	// more-powerful principal's authority (e.g. mint a super-admin-owned key with

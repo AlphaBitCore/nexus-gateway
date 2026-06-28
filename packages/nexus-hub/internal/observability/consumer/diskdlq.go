@@ -1,8 +1,8 @@
 package consumer
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"os"
 	"path/filepath"
 	"sync"

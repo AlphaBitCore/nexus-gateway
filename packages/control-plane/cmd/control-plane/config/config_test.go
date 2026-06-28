@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// TestLoad_SecretCustody_CommandUnwrapsCrownJewel pins the SEC-W2-03 Layer C
+// TestLoad_SecretCustody_CommandUnwrapsCrownJewel pins the secret-custody
 // wiring: with secretCustody.provider="command", Load() resolves the crown-jewel
 // env vars as base64 wrapped blobs and unwraps each once at boot. `cat {file}` is
 // an identity decrypt, so a base64-encoded plaintext round-trips into the config
@@ -66,9 +66,9 @@ func TestLoad_SecretCustody_CommandFailClosed(t *testing.T) {
 func setRequiredEnvBaseline(t *testing.T) {
 	t.Helper()
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
-	// SEC-W2-02 FIX-5/C: HubConfigToken is now a required env input.
+	// HubConfigToken is a required env input.
 	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
-	// SEC-W2-03 Layer C: ADMIN_KEY_HMAC_SECRET is now a required validate() input
+	// ADMIN_KEY_HMAC_SECRET is a required validate() input
 	// (it is injected into the apikey hashing layer at boot). Resolved through the
 	// custody loader; under the default noop provider this plaintext passes through.
 	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
@@ -79,8 +79,8 @@ func setRequiredEnvBaseline(t *testing.T) {
 	t.Setenv("NATS_URL", "nats://localhost:4222")
 }
 
-// TestLoad_HMACSecret_RequiredFailClosed is the SEC-W2-03 Layer C regression:
-// validate() now hard-fails when ADMIN_KEY_HMAC_SECRET is unset, so an operator
+// TestLoad_HMACSecret_RequiredFailClosed is the regression guard:
+// validate() hard-fails when ADMIN_KEY_HMAC_SECRET is unset, so an operator
 // who forgets it can never boot a Control Plane that would otherwise hash every
 // admin key + VK under an empty secret. Previously the only gate read the env var
 // directly in the bootstrap layer; the requirement now lives in config.validate()
@@ -333,8 +333,8 @@ func TestLoad_YAMLFieldsParsed(t *testing.T) {
 	// stamp the required fields yaml cannot supply (env-only secrets).
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
 	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
-	// SEC-W2-03 Layer C: ADMIN_KEY_HMAC_SECRET is an env-only required secret
-	// validate() now enforces — yaml cannot supply it.
+	// ADMIN_KEY_HMAC_SECRET is an env-only required secret
+	// validate() enforces — yaml cannot supply it.
 	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
 	dir := t.TempDir()
 	p := filepath.Join(dir, "full.yaml")
@@ -501,7 +501,7 @@ bff:
 	if cfg.Auth.InternalServiceToken != "tok" {
 		t.Errorf("Auth.InternalServiceToken = %q; expected env value \"tok\" (yaml \"y-ist\" must be dropped, env must win)", cfg.Auth.InternalServiceToken)
 	}
-	// SEC-W2-03 Layer C: HMACSecret is required + custody-resolved. The env
+	// HMACSecret is required + custody-resolved. The env
 	// baseline sets "test-hmac-secret"; the yaml "y-hmac" must be dropped.
 	if cfg.Auth.HMACSecret != "test-hmac-secret" {
 		t.Errorf("Auth.HMACSecret = %q; expected env value \"test-hmac-secret\" (yaml \"y-hmac\" must be dropped, env must win)", cfg.Auth.HMACSecret)
@@ -731,7 +731,7 @@ func TestValidate_RequiredFields(t *testing.T) {
 			wantInErr: "auth.internalServiceToken is required",
 		},
 		{
-			// SEC-W2-02 FIX-5/C: CP must fail closed at config load without the
+			// CP must fail closed at config load without the
 			// dedicated config token — an empty token would 403 every Hub config
 			// push (and Hub itself refuses to boot without it).
 			name: "missing Auth.HubConfigToken",

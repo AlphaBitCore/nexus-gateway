@@ -16,6 +16,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/assistant"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/aiguard/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/exemptions/handler"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/patternperf"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/governance/rulepacks/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/handler"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/revocation"
@@ -151,6 +152,9 @@ func InitRoutes(e *echo.Echo, d RoutesDeps) (*handler.AdminHandler, error) {
 			Logger: d.Logger,
 		})
 		adminHandler.RulePacks = rulepacks.New(rulepack.NewStore(d.DB.Pool), d.AuditWriter, d.HubClient)
+		if cfg.BFF.AIGatewayURL != "" {
+			adminHandler.PatternPerf = patternperf.New(cfg.BFF.AIGatewayURL, cfg.Auth.InternalServiceToken, d.Logger)
+		}
 		adminHandler.Exemption = exemption.New(exemption.Deps{
 			DataLayer: func() exemption.DataLayer {
 				if adminHandler.ExemptionStore != nil {

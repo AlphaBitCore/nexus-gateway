@@ -2,11 +2,10 @@
 // from the Go SSOT in packages/shared/policy/systembundles. It reads
 // systembundles.ProtectedBundles plus its normalize()/related() matching
 // semantics and emits SystemBundles.generated.swift into the NexusAgentExtension
-// directory so the Swift fast-decline set can NEVER drift from the Go set
-// (closes F-0392 / F-0368 by construction).
+// directory so the Swift fast-decline set can NEVER drift from the Go set.
 //
 // The protected set is a HARDCODED FLOOR on both sides: it is intentionally
-// NOT shadow-controllable. That immutability is the SEC-M8-01 A3-defense — an
+// NOT shadow-controllable. That immutability is the A3-defense — an
 // attacker who can push the agent_settings shadow cannot widen a kill-list to
 // close UDP for a system daemon, because the floor is compiled in, not config.
 //

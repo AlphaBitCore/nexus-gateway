@@ -348,7 +348,7 @@ func TestSmart_RouterReturnsProviderModelID_AmbiguousFallsBack(t *testing.T) {
 	}
 }
 
-// TestSmartConfig_TimeoutMsDefault (F-0237) — the built-in router-LLM timeout
+// TestSmartConfig_TimeoutMsDefault — the built-in router-LLM timeout
 // default is 3000ms (3s). Smart routing sits on the request hot path, so the
 // default must be low; 10s would stall every smart-routed request behind a slow
 // router provider.
@@ -359,7 +359,7 @@ func TestSmartConfig_TimeoutMsDefault(t *testing.T) {
 	}
 }
 
-// TestSmartConfig_TimeoutMsOverride (F-0237) — an operator-provided TimeoutMs
+// TestSmartConfig_TimeoutMsOverride — an operator-provided TimeoutMs
 // overrides the built-in default.
 func TestSmartConfig_TimeoutMsOverride(t *testing.T) {
 	cfg := &SmartConfig{TimeoutMs: 7500}
@@ -368,7 +368,7 @@ func TestSmartConfig_TimeoutMsOverride(t *testing.T) {
 	}
 }
 
-// TestSmart_DefaultTimeoutPropagatesToDecider (F-0237) — the 3s default flows
+// TestSmart_DefaultTimeoutPropagatesToDecider — the 3s default flows
 // through Evaluate into the router-LLM call budget when the node omits TimeoutMs.
 func TestSmart_DefaultTimeoutPropagatesToDecider(t *testing.T) {
 	decider := &fakeDecider{
