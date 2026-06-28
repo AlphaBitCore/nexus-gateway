@@ -1,15 +1,21 @@
 /* ── InfraNodesPage ──────────────────────────────────────────────── */
 
 .filterSelect {
-  height: 36px;
-  padding: 0 var(--g-space-3);
+  height: 38px;
+  padding: 0 36px 0 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   background: var(--color-surface);
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
+  line-height: 24px;
   cursor: pointer;
+}
+
+.refreshButton {
+  height: 38px;
+  min-height: 38px;
 }
 
 .filterSelect:focus-visible {
@@ -21,19 +27,81 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--g-space-3) var(--g-space-4) 0;
+  padding: 0;
   gap: var(--g-space-3);
 }
 
-.tabBarRight {
-  padding-bottom: var(--g-space-2);
-  flex-shrink: 0;
+.tabsList {
+  width: 100%;
 }
 
-.totalBadge {
+.listCount {
+  margin-top: 8px;
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
   white-space: nowrap;
+}
+
+.tabContent {
+  padding-top: 8px;
+}
+
+.nodesTable :global(th:last-child),
+.nodesTable :global(td:last-child) {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  width: 56px;
+  min-width: 56px;
+  max-width: 56px;
+  padding-left: 8px;
+  padding-right: 8px;
+  text-align: center;
+  background: var(--color-surface);
+  box-shadow: -10px 0 14px -14px color-mix(in srgb, var(--color-text) 35%, transparent);
+}
+
+.nodesTable :global(th:last-child) {
+  z-index: 3;
+}
+
+.nodesTable :global([class*='tableScroll'])::after {
+  display: none;
+}
+
+.detailActionCell {
+  text-align: center;
+}
+
+.detailActionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.detailActionButton:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.detailActionButton:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.detailActionButton svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* ── Name cell (two-line) ────────────────────────────────────────── */
@@ -46,7 +114,7 @@
 }
 
 .nodeName {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
@@ -69,7 +137,7 @@
   align-items: center;
   gap: 4px;
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   padding: 2px 8px;
   border-radius: var(--g-radius-sm);
   white-space: nowrap;
@@ -101,7 +169,7 @@
   padding: 1px 6px;
   border-radius: var(--g-radius-sm);
   font-size: var(--g-font-size-xxs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-surface);
   background: var(--color-danger);
 }
@@ -119,19 +187,22 @@
   color: var(--color-text-muted);
 }
 
-/* ── Has-overrides filter toggle (toolbar pill) ──────────────────── */
+/* ── Has-overrides filter toggle ─────────────────────────────────── */
 
 .filterToggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: var(--g-font-size-xs);
-  font-weight: 500;
-  padding: 4px 10px;
-  border-radius: var(--g-radius-full);
+  justify-content: center;
+  height: 38px;
+  gap: 6px;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: 24px;
+  padding: 0 14px;
+  border-radius: var(--g-radius-md);
   border: 1px solid var(--color-border);
-  background: transparent;
-  color: var(--color-text-muted);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
   cursor: pointer;
   white-space: nowrap;
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
@@ -143,8 +214,9 @@
 }
 
 .filterToggle:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
+  border-color: var(--color-border);
+  box-shadow: none;
+  outline: none;
 }
 
 .filterToggle[data-active='true'] {

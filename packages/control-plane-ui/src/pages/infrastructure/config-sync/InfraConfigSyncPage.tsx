@@ -5,7 +5,7 @@ import { useMutation } from '@/hooks/useMutation';
 import { hubApi } from '@/api/services/infrastructure/nodes/hub';
 import type { ConfigHistoryEvent, ConfigCatalogResponse, OutOfSyncItem } from '@/api/services/infrastructure/nodes/hub';
 import {
-  PageHeader, Stack, Card, Button, Badge, Select,
+  PageHeader, Stack, Button, Badge, Select,
   Tabs, TabsList, TabsTrigger, TabsContent,
   DataTable, LoadingSpinner, ErrorBanner,
 } from '@/components/ui';
@@ -40,7 +40,7 @@ export default function InfraConfigSyncPage() {
   const ALL = '__all__';
 
   const nodeTypeOptions = useMemo(() => {
-    const base = [{ value: ALL, label: t('pages:infrastructure.filterAll') }];
+    const base = [{ value: ALL, label: t('pages:infrastructure.filterAllTypes') }];
     const types = (catalog?.entries ?? []).map((e) => ({ value: e.nodeType, label: e.nodeType }));
     return [...base, ...types];
   }, [catalog, t]);
@@ -51,7 +51,7 @@ export default function InfraConfigSyncPage() {
   // Either way an explicit "All" is always the first option so the user can
   // clear the filter from any state.
   const configKeyOptions = useMemo(() => {
-    const base = [{ value: ALL, label: t('pages:infrastructure.filterAll') }];
+    const base = [{ value: ALL, label: t('pages:infrastructure.filterAllConfigKeys', 'All Config Key') }];
     const entries = catalog?.entries ?? [];
     let keys: string[];
     if (filterType) {
@@ -152,13 +152,13 @@ export default function InfraConfigSyncPage() {
   ];
 
   return (
-    <Stack gap="lg">
+    <Stack gap="lg" className={styles.pageStack}>
       <PageHeader
         title={t('pages:infrastructure.configSyncTitle')}
         subtitle={t('pages:infrastructure.configSyncDescription')}
       />
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tab} onValueChange={setTab} className={styles.tabs}>
         <TabsList>
           <TabsTrigger value="history">
             {t('pages:infrastructure.changeHistory', 'Change History')}
@@ -171,30 +171,26 @@ export default function InfraConfigSyncPage() {
         {/* ── Change History ──────────────────────────────────── */}
         <TabsContent value="history">
           <Stack gap="md">
-            <Card>
-              <div className={styles.filterBar}>
-                <div className={styles.filterField}>
-                  <span className={styles.filterLabel}>{t('pages:infrastructure.nodeType')}:</span>
-                  <Select
-                    value={filterType || ALL}
-                    onValueChange={handleTypeChange}
-                    options={nodeTypeOptions}
-                    placeholder={t('pages:infrastructure.allTypes', 'All types')}
-                    className={styles.filterSelect}
-                  />
-                </div>
-                <div className={`${styles.filterField} ${styles['filterField--spaced']}`}>
-                  <span className={styles.filterLabel}>{t('pages:infrastructure.configKey', 'Config Key')}:</span>
-                  <Select
-                    value={filterKey || ALL}
-                    onValueChange={handleKeyChange}
-                    options={configKeyOptions}
-                    placeholder={t('pages:infrastructure.allKeys', 'All keys')}
-                    className={styles.filterSelect}
-                  />
-                </div>
+            <div className={styles.filterBar}>
+              <div className={styles.filterField}>
+                <Select
+                  value={filterType || ALL}
+                  onValueChange={handleTypeChange}
+                  options={nodeTypeOptions}
+                  placeholder={t('pages:infrastructure.allTypes', 'All types')}
+                  className={styles.filterSelect}
+                />
               </div>
-            </Card>
+              <div className={`${styles.filterField} ${styles['filterField--spaced']}`}>
+                <Select
+                  value={filterKey || ALL}
+                  onValueChange={handleKeyChange}
+                  options={configKeyOptions}
+                  placeholder={t('pages:infrastructure.allKeys', 'All keys')}
+                  className={styles.filterSelect}
+                />
+              </div>
+            </div>
 
             {historyLoading && !history ? (
               <LoadingSpinner />

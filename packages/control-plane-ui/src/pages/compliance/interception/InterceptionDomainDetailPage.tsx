@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import styles from './InterceptionDomainDetailPage.module.css';
 
 import { useApi } from '@/hooks/useApi';
@@ -26,10 +26,13 @@ import {
   Card,
   DataTable,
   ErrorBanner,
-  PageHeader,
+  EditActionIcon,
   Skeleton,
   Stack,
   Switch,
+  RowActions,
+  RowActionIconButton,
+  RowDeleteAction,
   statusToVariant,
   type DataTableColumn,
 } from '@/components/ui';
@@ -47,7 +50,6 @@ function SummaryField({ label, value }: { label: string; value: React.ReactNode 
 
 export function InterceptionDomainDetailPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { id = '' } = useParams<{ id: string }>();
 
   const { data, loading, error, refetch } = useApi<InterceptionDomain>(
@@ -149,57 +151,53 @@ export function InterceptionDomainDetailPage() {
     },
     {
       key: 'actions',
-      label: '',
+      label: t('common:actions', 'Actions'),
       sortable: false,
       render: (r) => (
-        <Stack direction="horizontal" gap="xs">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setEditingPath(r)}
-          >
-            {t('common:edit', 'Edit')}
-          </Button>
-          <Button
-            size="sm"
-            variant="danger"
-            onClick={() => setDeletingPath(r)}
-          >
-            {t('common:delete', 'Delete')}
-          </Button>
-        </Stack>
+        <RowActions>
+          <RowActionIconButton label={t('common:edit', 'Edit')} onAction={() => setEditingPath(r)}>
+            <EditActionIcon />
+          </RowActionIconButton>
+          <RowDeleteAction label={t('common:delete', 'Delete')} onAction={() => setDeletingPath(r)} />
+        </RowActions>
       ),
     },
   ];
 
   return (
     <Stack gap="lg">
-      <PageHeader
-        title={data.name}
-        subtitle={data.description ?? undefined}
-        action={
-          <Stack direction="horizontal" gap="sm">
-            <Button
-              variant="ghost"
-              onClick={() => navigate('/compliance/interception-domains')}
-            >
-              {t('common:back', 'Back')}
-            </Button>
-            <Button variant="primary" onClick={() => setEditing(true)}>
-              {t('pages:interceptionDomains.editDomain', 'Edit domain')}
-            </Button>
-          </Stack>
-        }
-      />
-
-      <Card className={styles.infoCallout}>
-        <div className={styles.infoCalloutBody}>
-          {t(
-            'pages:interceptionDomains.allowlistNote',
-            'Enabled domains with matching host_pattern automatically appear in the compliance-proxy domain allowlist — no separate configuration needed.',
-          )}
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link
+            to="/compliance/interception-domains"
+            className={styles.backLink}
+            aria-label={t('common:back', 'Back')}
+          >
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{data.name}</h1>
+            {data.description ? <p className={styles.detailSubtitle}>{data.description}</p> : null}
+            <div className={styles.infoCallout}>
+              <div className={styles.infoCalloutBody}>
+                {t(
+                  'pages:interceptionDomains.allowlistNote',
+                  'Enabled domains with matching host_pattern automatically appear in the compliance-proxy domain allowlist — no separate configuration needed.',
+                )}
+              </div>
+            </div>
+          </div>
         </div>
-      </Card>
+      </section>
+
+      <div className={styles.detailToolbar}>
+        <Button variant="primary" onClick={() => setEditing(true)}>
+          {t('pages:interceptionDomains.editDomain', 'Edit domain')}
+        </Button>
+      </div>
 
       <Card>
         <div className={styles.summaryGrid}>
@@ -282,18 +280,22 @@ export function InterceptionDomainDetailPage() {
         </div>
       </Card>
 
-      <PageHeader
-        title={t('pages:interceptionDomains.paths', 'Paths')}
-        subtitle={t(
-          'pages:interceptionDomains.pathsSubtitle',
-          'Rules applied to requests whose host matches this domain. Evaluated in priority order; unmatched requests fall back to the domain default.',
-        )}
-        action={
+      <div className={styles.pathsHeader}>
+        <div className={styles.pathsHeaderCopy}>
+          <h2 className={styles.pathsTitle}>{t('pages:interceptionDomains.paths', 'Paths')}</h2>
+          <p className={styles.pathsSubtitle}>
+            {t(
+              'pages:interceptionDomains.pathsSubtitle',
+              'Rules applied to requests whose host matches this domain. Evaluated in priority order; unmatched requests fall back to the domain default.',
+            )}
+          </p>
+        </div>
+        <div className={styles.pathsHeaderAction}>
           <Button variant="primary" onClick={() => setAddingPath(true)}>
             {t('pages:interceptionDomains.addPath', 'Add path')}
           </Button>
-        }
-      />
+        </div>
+      </div>
 
       <Card padding="none">
         <DataTable

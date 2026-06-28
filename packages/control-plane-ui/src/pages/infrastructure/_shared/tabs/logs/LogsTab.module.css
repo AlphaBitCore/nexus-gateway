@@ -15,15 +15,136 @@
 
 .filterLabel {
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
 }
 
 .searchField {
-  flex: 1 1 200px;
-  min-width: 200px;
+  flex: 0 1 480px;
+  width: min(100%, 480px);
+  min-width: 240px;
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.searchIcon {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  margin: 0 8px 0 17px;
+  flex: 0 0 15px;
+  border: 1.8px solid var(--color-text-muted);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.searchIcon::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  width: 7px;
+  height: 1.8px;
+  border-radius: var(--g-radius-xs);
+  background: var(--color-text-muted);
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+
+.searchInput {
+  height: 36px;
+  min-width: 0;
+  min-height: 36px;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 0;
+  padding: 0 10px 0 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.advancedTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.advancedTrigger:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.advancedTrigger:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.advancedPopover {
+  width: 480px;
+}
+
+.advancedFilters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
+.advancedActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--g-space-2);
+  padding-top: var(--g-space-1);
+}
+
+.advancedActionButton,
+.advancedActionButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.advancedActionButton {
+  height: 32px;
+  min-height: 32px;
+}
+
+.searchInput:focus,
+.searchInput:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+
+.searchBox:focus-within {
+  border-color: var(--color-link);
+}
+
+.refreshButton,
+.refreshButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.refreshButton {
+  height: 38px;
+  min-height: 38px;
 }
 
 .rangeButtons {
@@ -45,7 +166,7 @@
   text-align: left;
   border-bottom: 1px solid var(--color-border);
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -103,7 +224,7 @@
 
 .detailMeta dt {
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   color: var(--color-text-muted);
@@ -116,7 +237,7 @@
 
 .subHeading {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   margin: var(--g-space-3) 0 var(--g-space-1);
 }
 

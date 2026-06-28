@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '@/hooks/useApi';
@@ -67,7 +67,7 @@ function ReorderButtons({
   );
 }
 
-function StepCard({ step }: { step: HookChainStep }) {
+function StepCard({ step, actions }: { step: HookChainStep; actions?: ReactNode }) {
   const { t } = useTranslation();
   return (
     <div className={step.enabled ? styles.stepCardEnabled : styles.stepCardDisabled}>
@@ -97,6 +97,11 @@ function StepCard({ step }: { step: HookChainStep }) {
           )}
         </div>
       )}
+      {actions ? (
+        <div className={styles.stepCardActions}>
+          {actions}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -162,16 +167,18 @@ export function HookPipelinePanel() {
                   <div className={styles.stepsColumn}>
                     {node.steps.map((step, idx) => (
                       <div key={step.hookConfigId} className={styles.stepRow}>
-                        {node.steps.length > 1 && (
-                          <ReorderButtons
-                            phase={node.phase}
-                            steps={node.steps}
-                            index={idx}
-                            disabled={reorderLoading}
-                            onApplyIds={reorderHooks}
-                          />
-                        )}
-                        <StepCard step={step} />
+                        <StepCard
+                          step={step}
+                          actions={node.steps.length > 1 ? (
+                            <ReorderButtons
+                              phase={node.phase}
+                              steps={node.steps}
+                              index={idx}
+                              disabled={reorderLoading}
+                              onApplyIds={reorderHooks}
+                            />
+                          ) : undefined}
+                        />
                       </div>
                     ))}
                   </div>

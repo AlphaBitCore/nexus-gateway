@@ -57,8 +57,6 @@
   bottom: 0;
   transform: none;
   border-radius: 0;
-  border-top-left-radius: var(--g-radius-lg);
-  border-bottom-left-radius: var(--g-radius-lg);
   border-right: none;
   width: 100%;
   max-height: 100vh;
@@ -70,8 +68,15 @@
 
 .drawer.content > .body {
   flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   margin-top: var(--g-space-4);
+  scrollbar-width: none;
+}
+
+.drawer.content > .body::-webkit-scrollbar {
+  display: none;
 }
 
 @keyframes slideInRight {
@@ -113,6 +118,10 @@
   margin-top: var(--g-space-4);
 }
 
+.footer {
+  flex: 0 0 auto;
+}
+
 /* ── Close button ────────────────────────────────────────────────────────── */
 
 .close {
@@ -128,7 +137,7 @@
   background: transparent;
   border-radius: var(--g-radius-sm);
   color: var(--color-text-muted);
-  font-size: 18px;
+  font-size: var(--g-font-size-lg);
   cursor: pointer;
   transition:
     background var(--g-transition-fast),

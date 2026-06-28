@@ -188,7 +188,7 @@ describe('InfraOverridesPage', () => {
 
     await waitFor(() => expect(screen.getByText('proxy-west-1')).toBeInTheDocument());
 
-    const aiGwChip = screen.getByRole('button', { name: 'ai-gateway' });
+    const aiGwChip = screen.getByRole('tab', { name: 'ai-gateway' });
     await user.click(aiGwChip);
 
     await waitFor(() => expect(calls).toContain('ai-gateway'));
@@ -243,7 +243,11 @@ describe('InfraOverridesPage', () => {
     await waitFor(() => expect(screen.getByText('gateway-east-1')).toBeInTheDocument());
 
     const row = screen.getByText('gateway-east-1').closest('tr')!;
-    const viewBtn = within(row).getByRole('button', { name: /^view$/i });
+    // The row exposes two affordances that navigate to the node's Configuration
+    // tab: the textual "View" action button and a trailing chevron icon button
+    // (aria-label "View"). Either satisfies the navigation intent; click the
+    // textual one.
+    const viewBtn = within(row).getAllByRole('button', { name: /^view$/i })[0];
     await user.click(viewBtn);
 
     await waitFor(() => expect(screen.getByTestId('detail-page')).toBeInTheDocument());

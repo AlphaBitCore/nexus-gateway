@@ -1,13 +1,43 @@
+.sectionTitle {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 24px;
+}
+
 .subtitleText {
   font-size: 0.875rem;
   color: var(--color-text-secondary);
   margin: 0.25rem 0 0;
 }
 
+.runButton,
+.runButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.detectorSelectWrap {
+  width: 50%;
+  min-width: 280px;
+}
+
+.contentTextarea {
+  background: var(--color-bg);
+}
+
+@media (max-width: 720px) {
+  .detectorSelectWrap {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 .jsonPre {
   background: var(--color-surface-muted);
   padding: 0.5rem;
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   font-size: 0.75rem;
   overflow: auto;
   max-height: 320px;

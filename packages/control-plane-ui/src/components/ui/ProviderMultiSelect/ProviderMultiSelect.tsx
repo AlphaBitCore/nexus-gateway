@@ -12,6 +12,7 @@ export interface ProviderMultiSelectProps {
   disabled?: boolean;
   /** Toggle inline search input (on by default). */
   searchable?: boolean;
+  className?: string;
 }
 
 /**
@@ -26,6 +27,7 @@ export function ProviderMultiSelect({
   emptyLabel,
   disabled,
   searchable = true,
+  className,
 }: ProviderMultiSelectProps) {
   const { t } = useTranslation();
 
@@ -50,6 +52,7 @@ export function ProviderMultiSelect({
       emptyLabel={emptyLabel ?? t('common:selectProviders')}
       searchable={searchable}
       searchPlaceholder={t('common:searchProviders')}
+      className={className}
     />
   );
 }

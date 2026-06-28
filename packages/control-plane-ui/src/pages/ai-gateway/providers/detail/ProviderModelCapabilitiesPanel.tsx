@@ -312,7 +312,7 @@ export function ProviderModelCapabilitiesPanel({
   // ── Embedding model panel ────────────────────────────────────────────────
   if (modelType === 'embedding') {
     return (
-      <div className={capStyles.panel}>
+      <div className={`${capStyles.panel} ${capStyles.editorPanel}`}>
         <div className={styles.sectionTitle}>
           {t('providers.capabilities.sectionTitle')}
         </div>
@@ -458,16 +458,15 @@ export function ProviderModelCapabilitiesPanel({
   // ── Chat model panel ─────────────────────────────────────────────────────
   if (modelType === 'chat') {
     return (
-      <div className={capStyles.panel}>
-        <div className={styles.sectionTitle}>
-          {t('providers.capabilities.sectionTitle')}
+      <div className={capStyles.infoPanel}>
+        <div className={capStyles.infoContent}>
+          <p className={capStyles.infoDescription}>
+            {t('providers.capabilities.chatSubtitle')}
+          </p>
+          <p className={capStyles.infoHint}>
+            {t('providers.capabilities.chatCapabilitiesHint')}
+          </p>
         </div>
-        <p className={capStyles.subtitle}>
-          {t('providers.capabilities.chatSubtitle')}
-        </p>
-        <p className={capStyles.fieldHint}>
-          {t('providers.capabilities.chatCapabilitiesHint')}
-        </p>
       </div>
     );
   }

@@ -113,10 +113,12 @@ export function ConditionalRoutingEditor({
   value,
   onChange,
   providerGroups,
+  hideModeToggle = false,
 }: {
   value: ConditionalEditorHydration;
   onChange: (next: ConditionalEditorHydration) => void;
   providerGroups: AdminModelsByProvider[];
+  hideModeToggle?: boolean;
 }) {
   const { t } = useTranslation();
   const OPERATOR_OPTIONS = useOperatorOptions();
@@ -163,9 +165,11 @@ export function ConditionalRoutingEditor({
             className={styles.jsonTextarea}
           />
         </div>
-        <Button variant="secondary" size="sm" onClick={switchToForm}>
-          {t('pages:routing.useStructuredEditor')}
-        </Button>
+        {!hideModeToggle && (
+          <Button variant="secondary" size="sm" onClick={switchToForm}>
+            {t('pages:routing.useStructuredEditor')}
+          </Button>
+        )}
       </div>
     );
   }
@@ -175,11 +179,13 @@ export function ConditionalRoutingEditor({
 
   return (
     <div className={styles.colGapLg}>
-      <div className={styles.justifyEnd}>
-        <Button variant="secondary" size="sm" onClick={switchToJson}>
-          {t('pages:routing.editAsRawJson')}
-        </Button>
-      </div>
+      {!hideModeToggle && (
+        <div className={styles.justifyEnd}>
+          <Button variant="secondary" size="sm" onClick={switchToJson}>
+            {t('pages:routing.editAsRawJson')}
+          </Button>
+        </div>
+      )}
 
       <div>
         <div className={styles.sectionLabel}>{t('pages:routing.defaultRoute')}</div>

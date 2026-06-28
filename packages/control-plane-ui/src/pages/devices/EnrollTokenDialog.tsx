@@ -38,7 +38,7 @@ export function EnrollTokenDialog({ open, onOpenChange }: { open: boolean; onOpe
   }, [token]);
 
   return (
-    <Dialog open={open} onOpenChange={handleClose} title={t('pages:devices.enrollDevice')} size="md">
+    <Dialog open={open} onOpenChange={handleClose} title={t('pages:devices.enrollDevice')} size="md" className={styles.enrollDialog}>
       {!token ? (
         <form onSubmit={form.handleSubmit((data) => generate(data))}>
           <Stack gap="md">

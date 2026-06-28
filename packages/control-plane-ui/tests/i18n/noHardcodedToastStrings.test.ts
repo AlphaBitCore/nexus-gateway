@@ -1,5 +1,5 @@
 /**
- * i18n blind-spot guard (F-0285).
+ * i18n blind-spot guard.
  *
  * The locale-parity CI scans JSX text + user-facing attributes, so a hardcoded
  * English string passed as an ARGUMENT to `addToast(...)` in a plain `.ts` file

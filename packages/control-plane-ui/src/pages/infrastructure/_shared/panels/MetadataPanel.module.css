@@ -6,12 +6,6 @@
  *   3. Raw JSON — collapsed by default, expanded via summary toggle.
  */
 
-.title {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 var(--g-space-3);
-}
-
 .empty {
   color: var(--color-text-muted);
   font-size: var(--g-font-size-sm);
@@ -20,7 +14,7 @@
 
 .subhead {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   color: var(--color-text-muted);
@@ -49,7 +43,7 @@
 .label {
   flex: 0 0 160px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;

@@ -166,7 +166,7 @@ export function AccountProfileTab() {
 
   return (
     <Stack gap="lg">
-      <Card>
+      <section className={styles.accountSection}>
         <div className={styles.sectionHeader}>
           <h2 className={styles.sectionTitle}>{t('pages:account.profileTitle')}</h2>
           {canEdit && !editing && (
@@ -174,89 +174,91 @@ export function AccountProfileTab() {
           )}
         </div>
 
-        {saveSuccess && <p className={styles.successText}>{saveSuccess}</p>}
+        <Card>
+          {saveSuccess && <p className={styles.successText}>{saveSuccess}</p>}
 
-        {editing ? (
-          <div className={styles.editForm}>
-            <div className={styles.formField}>
-              <label className={styles.formLabel}>{t('pages:account.displayName')}</label>
-              <input
-                className={styles.formInput}
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-              />
+          {editing ? (
+            <div className={`${styles.editForm} ${styles.profileEditForm}`}>
+              <div className={styles.formField}>
+                <label className={styles.formLabel}>{t('pages:account.displayName')}</label>
+                <input
+                  className={styles.formInput}
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                />
+              </div>
+              <div className={styles.formField}>
+                <label className={styles.formLabel}>{t('pages:account.email')}</label>
+                <input
+                  className={styles.formInput}
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+              <div className={styles.formField}>
+                <label className={styles.formLabel}>{t('pages:account.preferredTimezone')}</label>
+                <select
+                  className={styles.formInput}
+                  value={preferredTimezone}
+                  onChange={(e) => setPreferredTimezone(e.target.value)}
+                >
+                  <option value="">{t('pages:account.preferredTimezoneBrowser', { tz: browserTZ() })}</option>
+                  {TIMEZONE_GROUPS.map((g) => (
+                    <optgroup key={g.region} label={g.region}>
+                      {g.zones.map((tz) => (
+                        <option key={tz} value={tz}>{tz}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              {saveError && <p className={`${styles.errorText} ${styles.profileEditFormFull}`}>{saveError}</p>}
+              <Stack direction="horizontal" gap="sm" className={styles.profileEditFormFull}>
+                <Button onClick={() => void saveProfile()} loading={saving}>{t('common:save')}</Button>
+                <Button variant="secondary" onClick={cancelEdit}>{t('common:cancel')}</Button>
+              </Stack>
             </div>
-            <div className={styles.formField}>
-              <label className={styles.formLabel}>{t('pages:account.email')}</label>
-              <input
-                className={styles.formInput}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div className={styles.formField}>
-              <label className={styles.formLabel}>{t('pages:account.preferredTimezone')}</label>
-              <select
-                className={styles.formInput}
-                value={preferredTimezone}
-                onChange={(e) => setPreferredTimezone(e.target.value)}
-              >
-                <option value="">{t('pages:account.preferredTimezoneBrowser', { tz: browserTZ() })}</option>
-                {TIMEZONE_GROUPS.map((g) => (
-                  <optgroup key={g.region} label={g.region}>
-                    {g.zones.map((tz) => (
-                      <option key={tz} value={tz}>{tz}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </div>
-            {saveError && <p className={styles.errorText}>{saveError}</p>}
-            <Stack direction="horizontal" gap="sm">
-              <Button onClick={() => void saveProfile()} loading={saving}>{t('common:save')}</Button>
-              <Button variant="secondary" onClick={cancelEdit}>{t('common:cancel')}</Button>
-            </Stack>
-          </div>
-        ) : (
-          <div className={styles.kvGrid}>
-            <div>
-              <div className={styles.kvLabel}>{t('pages:account.displayName')}</div>
-              <div className={styles.kvValue}>{user.displayName || '--'}</div>
-            </div>
-            <div>
-              <div className={styles.kvLabel}>{t('pages:account.email')}</div>
-              <div className={styles.kvValue}>{user.email || '--'}</div>
-            </div>
-            <div>
-              <div className={styles.kvLabel}>{t('pages:account.role')}</div>
-              <div className={styles.kvValue}>
-                <span className={styles.roleBadge}>{user.roles?.join(', ') || '--'}</span>
+          ) : (
+            <div className={styles.kvGrid}>
+              <div>
+                <div className={styles.kvLabel}>{t('pages:account.displayName')}</div>
+                <div className={styles.kvValue}>{user.displayName || '--'}</div>
+              </div>
+              <div>
+                <div className={styles.kvLabel}>{t('pages:account.email')}</div>
+                <div className={styles.kvValue}>{user.email || '--'}</div>
+              </div>
+              <div>
+                <div className={styles.kvLabel}>{t('pages:account.role')}</div>
+                <div className={styles.kvValue}>
+                  <span className={styles.roleBadge}>{user.roles?.join(', ') || '--'}</span>
+                </div>
+              </div>
+              <div>
+                <div className={styles.kvLabel}>{t('pages:account.status')}</div>
+                <div className={styles.kvValue}>{user.status}</div>
+              </div>
+              <div>
+                <div className={styles.kvLabel}>{t('pages:account.createdAt')}</div>
+                <div className={styles.kvValue}>{fmtDate(user.createdAt)}</div>
+              </div>
+              <div>
+                <div className={styles.kvLabel}>{t('pages:account.preferredTimezone')}</div>
+                <div className={styles.kvValue}>
+                  {effectiveTZ}
+                  {!user.preferredTimezone && (
+                    <span className={styles.helperText}> {t('pages:account.preferredTimezoneAutoSuffix')}</span>
+                  )}
+                </div>
               </div>
             </div>
-            <div>
-              <div className={styles.kvLabel}>{t('pages:account.status')}</div>
-              <div className={styles.kvValue}>{user.status}</div>
-            </div>
-            <div>
-              <div className={styles.kvLabel}>{t('pages:account.createdAt')}</div>
-              <div className={styles.kvValue}>{fmtDate(user.createdAt)}</div>
-            </div>
-            <div>
-              <div className={styles.kvLabel}>{t('pages:account.preferredTimezone')}</div>
-              <div className={styles.kvValue}>
-                {effectiveTZ}
-                {!user.preferredTimezone && (
-                  <span className={styles.helperText}> {t('pages:account.preferredTimezoneAutoSuffix')}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </Card>
+          )}
+        </Card>
+      </section>
 
       {canEdit && (
-        <Card>
+        <section className={styles.accountSection}>
           <div className={styles.sectionHeader}>
             <h2 className={styles.sectionTitle}>{t('pages:account.changePassword')}</h2>
             {!isSsoAccount && !changingPassword && (
@@ -266,40 +268,44 @@ export function AccountProfileTab() {
             )}
           </div>
 
-          {isSsoAccount && (
-            <p className={styles.helperText}>{t('pages:account.passwordSsoManaged')}</p>
-          )}
+          {(isSsoAccount || pwSuccess || changingPassword) && (
+            <Card>
+              {isSsoAccount && (
+                <p className={styles.helperText}>{t('pages:account.passwordSsoManaged')}</p>
+              )}
 
-          {!isSsoAccount && pwSuccess && <p className={styles.successText}>{pwSuccess}</p>}
+              {!isSsoAccount && pwSuccess && <p className={styles.successText}>{pwSuccess}</p>}
 
-          {!isSsoAccount && changingPassword && (
-            <div className={styles.editForm}>
-              <div className={styles.formField}>
-                <label className={styles.formLabel}>{t('pages:account.currentPassword')}</label>
-                <input
-                  className={styles.formInput}
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                />
-              </div>
-              <div className={styles.formField}>
-                <label className={styles.formLabel}>{t('pages:account.newPassword')}</label>
-                <input
-                  className={styles.formInput}
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-              </div>
-              {pwError && <p className={styles.errorText}>{pwError}</p>}
-              <Stack direction="horizontal" gap="sm">
-                <Button variant="danger" onClick={() => void savePassword()} loading={pwSaving}>{t('common:save')}</Button>
-                <Button variant="secondary" onClick={() => { setChangingPassword(false); setPwError(''); }}>{t('common:cancel')}</Button>
-              </Stack>
-            </div>
+              {!isSsoAccount && changingPassword && (
+                <div className={`${styles.editForm} ${styles.passwordForm}`}>
+                  <div className={styles.formField}>
+                    <label className={styles.formLabel}>{t('pages:account.currentPassword')}</label>
+                    <input
+                      className={styles.formInput}
+                      type="password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                    />
+                  </div>
+                  <div className={styles.formField}>
+                    <label className={styles.formLabel}>{t('pages:account.newPassword')}</label>
+                    <input
+                      className={styles.formInput}
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                  </div>
+                  {pwError && <p className={`${styles.errorText} ${styles.passwordFormFull}`}>{pwError}</p>}
+                  <Stack direction="horizontal" gap="sm" className={styles.passwordFormFull}>
+                    <Button variant="danger" onClick={() => void savePassword()} loading={pwSaving}>{t('common:save')}</Button>
+                    <Button variant="secondary" onClick={() => { setChangingPassword(false); setPwError(''); }}>{t('common:cancel')}</Button>
+                  </Stack>
+                </div>
+              )}
+            </Card>
           )}
-        </Card>
+        </section>
       )}
     </Stack>
   );

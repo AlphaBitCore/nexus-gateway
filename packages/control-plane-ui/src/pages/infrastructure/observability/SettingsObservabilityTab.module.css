@@ -1,0 +1,72 @@
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-base);
+}
+
+.itemTitle {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+}
+
+.configGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.configItem {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.itemValue {
+  min-height: 20px;
+  color: var(--color-text-secondary);
+  font-family: var(--g-font-mono);
+  font-size: var(--g-font-size-base);
+  overflow-wrap: anywhere;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.formField {
+  min-width: 0;
+}
+
+.formField :global(label) {
+  font-size: var(--g-font-size-sm);
+}
+
+.saveButton,
+.saveButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+@media (max-width: 720px) {
+  .configGrid,
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -28,18 +28,7 @@ import { MatchModelSelector } from './MatchModelSelector';
 import { CreatePolicyModelSelect } from './CreatePolicyModelSelect';
 import { CreatePolicyProviderCheckboxes } from './CreatePolicyProviderCheckboxes';
 import { ProviderModelSelect } from './ProviderModelSelect';
-
-function useStrategyOptions() {
-  const { t } = useTranslation();
-  return [
-    { value: 'single', label: t('pages:routing.strategySingle') },
-    { value: 'fallback', label: t('pages:routing.strategyFallback') },
-    { value: 'loadbalance', label: t('pages:routing.strategyLoadbalance') },
-    { value: 'conditional', label: t('pages:routing.strategyConditional') },
-    { value: 'ab_split', label: t('pages:routing.strategyAbSplit') },
-    { value: 'smart', label: t('pages:routing.strategySmart') },
-  ];
-}
+import { useStrategyOptions } from '../_shared/useStrategyOptions';
 
 /* ── Component ──────────────────────────────────────────────────────────── */
 

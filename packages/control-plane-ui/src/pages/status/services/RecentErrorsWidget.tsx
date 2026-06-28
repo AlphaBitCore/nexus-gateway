@@ -5,13 +5,13 @@
  * The widget reads from `/api/admin/diag-events?level=error&limit=5`. The CP
  * handler validates levels individually (no combined `error,fatal` filter),
  * so this view shows ERROR rows only — the dedicated Recent Errors page
- * (T36) renders the full ERROR + FATAL stream with filters and pagination.
+ * renders the full ERROR + FATAL stream with filters and pagination.
  *
  * Visibility rules:
  *   - 0 events → an "empty" hint sits in place of the table.
  *   - Any auth/IAM error from the API surfaces silently as the empty state;
  *     full-page errors are owned by the dedicated page.
- *   - The "View all" link points at `/infrastructure/errors` (added in T36).
+ *   - The "View all" link points at `/infrastructure/errors`.
  */
 
 import { Link } from 'react-router-dom';

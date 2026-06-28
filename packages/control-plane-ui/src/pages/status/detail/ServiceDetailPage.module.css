@@ -26,8 +26,8 @@
 }
 
 .serviceName {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text);
 }
 
@@ -56,14 +56,14 @@
 }
 
 .metricValue {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text);
 }
 
 .metricLabel {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -84,8 +84,8 @@
 }
 
 .breakdownTitle {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .breakdownSelect {
@@ -112,7 +112,7 @@
 
 .breakdownTable th {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -125,8 +125,8 @@
 /* ── Section titles ───────────────────────────────────────────────── */
 
 .sectionTitle {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   margin-bottom: var(--g-space-2);
 }
 
@@ -155,7 +155,7 @@
 
 .instanceTable th {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;

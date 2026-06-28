@@ -15,7 +15,7 @@ import type {
 } from '@/api/services/infrastructure/diag/diagevents';
 import {
   Card, Stack, Button, Badge, Select, Input, Dialog,
-  LoadingSpinner, ErrorBanner,
+  LoadingSpinner, ErrorBanner, Popover, PopoverTrigger, PopoverContent,
 } from '@/components/ui';
 import styles from './LogsTab.module.css';
 
@@ -109,6 +109,7 @@ export function LogsTab({ thingId }: LogsTabProps) {
   const [sourceFilter, setSourceFilter] = useState<string>('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [cursors, setCursors] = useState<CursorState>({ errorCursor: null, fatalCursor: null });
   const [streamPages, setStreamPages] = useState<DiagEvent[]>([]);
@@ -218,6 +219,19 @@ export function LogsTab({ thingId }: LogsTabProps) {
     setSearch(searchInput);
   };
 
+  const resetFilters = () => {
+    setRange(DEFAULT_RANGE);
+    setLevel('error+fatal');
+    setSourceFilter('');
+    setSearchInput('');
+    setSearch('');
+  };
+
+  const confirmSearch = () => {
+    setSearch(searchInput);
+    setAdvancedOpen(false);
+  };
+
   const events = streamPages.length > 0 ? streamPages : (firstPage.data ?? []);
   const hasMore = level === 'error+fatal'
     ? !(doneError && doneFatal)
@@ -225,78 +239,87 @@ export function LogsTab({ thingId }: LogsTabProps) {
 
   return (
     <Stack gap="lg">
-      <Card>
-        <form onSubmit={submitSearch}>
-          <div className={styles.filterBar}>
-            <div className={styles.filterField}>
-              <span className={styles.filterLabel}>{t('infrastructure.logsTab.filterTimeRange')}</span>
-              <div className={styles.rangeButtons}>
-                {RANGE_PRESETS.map((range) => (
-                  <Button
-                    key={range.key}
-                    type="button"
-                    size="sm"
-                    variant={range.key === activeRangeKey ? 'primary' : 'secondary'}
-                    aria-pressed={range.key === activeRangeKey}
-                    onClick={() => setRange(range)}
-                  >
-                    {t(`infrastructure.logsTab.${range.labelKey}`)}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className={styles.filterField}>
-              <span className={styles.filterLabel}>{t('infrastructure.logsTab.filterLevel')}</span>
-              <Select
-                value={level}
-                onValueChange={setLevel}
-                options={LEVEL_OPTIONS.map((opt) => ({
-                  value: opt.value,
-                  label: t(`infrastructure.logsTab.${opt.key}`),
-                }))}
-              />
-            </div>
-
-            <div className={styles.filterField}>
-              <span className={styles.filterLabel}>{t('infrastructure.logsTab.filterSource')}</span>
-              <Select
-                value={sourceFilter || ALL}
-                onValueChange={(value) => setSourceFilter(value === ALL ? '' : value)}
-                options={[
-                  { value: ALL, label: t('infrastructure.filterAll') },
-                  ...SOURCE_OPTIONS.map((source) => ({ value: source, label: source })),
-                ]}
-              />
-            </div>
-
-            <div className={`${styles.filterField} ${styles.searchField}`}>
-              <span className={styles.filterLabel}>{t('infrastructure.logsTab.filterSearch')}</span>
+      <form onSubmit={submitSearch}>
+        <div className={styles.filterBar}>
+          <div className={`${styles.filterField} ${styles.searchField}`}>
+            <div className={styles.searchBox}>
+              <span className={styles.searchIcon} aria-hidden="true" />
               <Input
                 type="search"
                 placeholder={t('infrastructure.logsTab.searchPlaceholder')}
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
                 aria-label={t('infrastructure.logsTab.filterSearch')}
+                className={styles.searchInput}
               />
-            </div>
+              <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                <PopoverTrigger asChild>
+                  <button type="button" className={styles.advancedTrigger}>
+                    {t('common:advancedFilters')}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" sideOffset={8} className={styles.advancedPopover}>
+                  <div className={styles.advancedFilters}>
+                    <div className={styles.filterField}>
+                      <span className={styles.filterLabel}>{t('infrastructure.logsTab.filterTimeRange')}</span>
+                      <div className={styles.rangeButtons}>
+                        {RANGE_PRESETS.map((range) => (
+                          <Button
+                            key={range.key}
+                            type="button"
+                            size="sm"
+                            variant={range.key === activeRangeKey ? 'primary' : 'secondary'}
+                            aria-pressed={range.key === activeRangeKey}
+                            onClick={() => setRange(range)}
+                          >
+                            {t(`infrastructure.logsTab.${range.labelKey}`)}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
 
-            <div className={styles.filterField}>
-              <span className={styles.filterLabel}>&nbsp;</span>
-              <Button type="submit" variant="primary" size="sm">
-                {t('infrastructure.logsTab.applyFilters')}
-              </Button>
-            </div>
+                    <div className={styles.filterField}>
+                      <span className={styles.filterLabel}>{t('infrastructure.logsTab.filterLevel')}</span>
+                      <Select
+                        value={level}
+                        onValueChange={setLevel}
+                        options={LEVEL_OPTIONS.map((opt) => ({
+                          value: opt.value,
+                          label: t(`infrastructure.logsTab.${opt.key}`),
+                        }))}
+                      />
+                    </div>
 
-            <div className={styles.filterField}>
-              <span className={styles.filterLabel}>&nbsp;</span>
-              <Button type="button" variant="secondary" size="sm" onClick={() => firstPage.refetch()}>
-                {t('infrastructure.logsTab.refresh')}
-              </Button>
+                    <div className={styles.filterField}>
+                      <span className={styles.filterLabel}>{t('infrastructure.logsTab.filterSource')}</span>
+                      <Select
+                        value={sourceFilter || ALL}
+                        onValueChange={(value) => setSourceFilter(value === ALL ? '' : value)}
+                        options={[
+                          { value: ALL, label: t('infrastructure.filterAll') },
+                          ...SOURCE_OPTIONS.map((source) => ({ value: source, label: source })),
+                        ]}
+                      />
+                    </div>
+
+                    <div className={styles.advancedActions}>
+                      <Button type="button" variant="secondary" size="sm" className={styles.advancedActionButton} onClick={resetFilters}>
+                        {t('common:reset')}
+                      </Button>
+                      <Button type="button" variant="primary" size="sm" className={styles.advancedActionButton} onClick={confirmSearch}>
+                        {t('common:confirmSearch')}
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
-        </form>
-      </Card>
+          <Button type="button" variant="secondary" size="sm" className={styles.refreshButton} onClick={() => firstPage.refetch()}>
+            {t('common:refresh')}
+          </Button>
+        </div>
+      </form>
 
       <Card>
         <Stack gap="sm">

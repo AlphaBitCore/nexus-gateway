@@ -20,7 +20,7 @@ export function browserTZ(): string {
 
 /**
  * The user's preferred display TZ. Default = browser TZ. Set via
- * [setDisplayTZ] from the user-profile bootstrap (Phase 5). Reading
+ * [setDisplayTZ] from the user-profile bootstrap. Reading
  * is a synchronous fallback so non-React utility callers don't need
  * to thread a hook through.
  */
@@ -142,15 +142,22 @@ export function formatCompact(n: number, locale?: string): string {
 }
 
 /**
- * Format a token count with automatic K/M scaling.
+ * Format a token count with automatic K/M/B/T scaling.
  * Trailing zeros are trimmed so round numbers stay clean ("128K" not "128.0K").
- *   ≥ 1 000 000 → 2-decimal M  ("1.93M", "2M")
- *   ≥ 1 000     → 1-decimal K  ("45.6K", "128K")
- *   < 1 000     → plain number ("842")
- *   null/undefined → "—"
+ *   ≥ 1 000 000 000 000 → 2-decimal T  ("1.31T")
+ *   ≥ 1 000 000 000     → 2-decimal B  ("130.66B")  ← aggregate dashboard totals
+ *   ≥ 1 000 000         → 2-decimal M  ("1.93M", "2M")
+ *   ≥ 1 000             → 1-decimal K  ("45.6K", "128K")
+ *   < 1 000             → plain number ("842")
+ *   null/undefined      → "—"
+ *
+ * Without the B/T tiers a large aggregate (e.g. 130.66 billion tokens) rendered
+ * as "130656.64M" — neither separated nor scaled.
  */
 export function formatTokens(v: number | null | undefined): string {
   if (v == null) return '—';
+  if (v >= 1_000_000_000_000) return `${parseFloat((v / 1_000_000_000_000).toFixed(2))}T`;
+  if (v >= 1_000_000_000) return `${parseFloat((v / 1_000_000_000).toFixed(2))}B`;
   if (v >= 1_000_000) return `${parseFloat((v / 1_000_000).toFixed(2))}M`;
   if (v >= 1_000) return `${parseFloat((v / 1_000).toFixed(1))}K`;
   return String(v);

@@ -82,120 +82,123 @@ export function DryRunPanel({ currentConfig: _currentConfig }: DryRunPanelProps)
   };
 
   return (
-    <Card>
-      <Stack gap="md">
-        <div>
-          <h2 style={{ margin: 'var(--g-space-0)' }}>
-            {t('pages:settings.aiGuard.dryRun.title', 'Dry run')}
-          </h2>
-          <p className={styles.subtitleText}>
-            {t(
-              'pages:settings.aiGuard.dryRun.subtitle',
-              'Probe the classifier without touching live hooks. Returns the same payload as /v1/ai-guard/classify.',
-            )}
-          </p>
-        </div>
-
-        <FormField
-          label={t('pages:settings.aiGuard.dryRun.detectorType', 'Detector type')}
-        >
-          <div style={{ maxWidth: 280 }}>
-            <Select
-              value={detectorType}
-              onValueChange={(v) => setDetectorType(v as DetectorType)}
-              options={detectorOptions}
-            />
-          </div>
-        </FormField>
-
-        <FormField
-          label={t('pages:settings.aiGuard.dryRun.content', 'Content')}
-        >
-          <Textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            rows={6}
-            placeholder={t(
-              'pages:settings.aiGuard.dryRun.contentPlaceholder',
-              'Paste the text to classify',
-            )}
-          />
-        </FormField>
-
-        <div>
-          <Button
-            onClick={onRun}
-            loading={loading}
-            disabled={loading || content.trim() === ''}
+    <Stack gap="md">
+      <div>
+        <h2 className={styles.sectionTitle}>
+          {t('pages:settings.aiGuard.dryRun.title', 'Dry run')}
+        </h2>
+        <p className={styles.subtitleText}>
+          {t(
+            'pages:settings.aiGuard.dryRun.subtitle',
+            'Probe the classifier without touching live hooks. Returns the same payload as /v1/ai-guard/classify.',
+          )}
+        </p>
+      </div>
+      <Card>
+        <Stack gap="md">
+          <FormField
+            label={t('pages:settings.aiGuard.dryRun.detectorType', 'Detector type')}
           >
-            {t('pages:settings.aiGuard.dryRun.run', 'Run')}
-          </Button>
-        </div>
-
-        {errorMessage && <ErrorBanner message={errorMessage} />}
-
-        {result && (
-          <Stack gap="sm">
-            <div
-              style={{
-                display: 'flex',
-                gap: 'var(--g-space-4)',
-                flexWrap: 'wrap',
-                fontSize: 'var(--g-font-size-base)',
-              }}
-            >
-              <div>
-                <strong>
-                  {t('pages:settings.aiGuard.dryRun.decision', 'Decision')}:
-                </strong>{' '}
-                <span data-testid="dry-run-decision">{result.response.decision}</span>
-              </div>
-              <div>
-                <strong>
-                  {t('pages:settings.aiGuard.dryRun.latency', 'Latency')}:
-                </strong>{' '}
-                <span data-testid="dry-run-latency">
-                  {result.response.metadata.judge_latency_ms}
-                </span>{' '}
-                ms
-              </div>
-              <div>
-                <strong>
-                  {t('pages:settings.aiGuard.dryRun.cache', 'Cache')}:
-                </strong>{' '}
-                {result.response.metadata.cache_hit
-                  ? t('pages:settings.aiGuard.dryRun.cacheHit', 'hit')
-                  : t('pages:settings.aiGuard.dryRun.cacheMiss', 'miss')}
-              </div>
+            <div className={styles.detectorSelectWrap}>
+              <Select
+                value={detectorType}
+                onValueChange={(v) => setDetectorType(v as DetectorType)}
+                options={detectorOptions}
+              />
             </div>
+          </FormField>
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 'var(--g-space-3)',
-              }}
+          <FormField
+            label={t('pages:settings.aiGuard.dryRun.content', 'Content')}
+          >
+            <Textarea
+              className={styles.contentTextarea}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              rows={6}
+              placeholder={t(
+                'pages:settings.aiGuard.dryRun.contentPlaceholder',
+                'Paste the text to classify',
+              )}
+            />
+          </FormField>
+
+          <div>
+            <Button
+              className={styles.runButton}
+              onClick={onRun}
+              loading={loading}
+              disabled={loading || content.trim() === ''}
             >
-              <div>
-                <h3 style={{ fontSize: 'var(--g-font-size-base)', marginBottom: 'var(--g-space-1)' }}>
-                  {t('pages:settings.aiGuard.dryRun.requestJson', 'Request')}
-                </h3>
-                <pre className={styles.jsonPre}>
-                  {JSON.stringify(result.request, null, 2)}
-                </pre>
+              {t('pages:settings.aiGuard.dryRun.run', 'Run')}
+            </Button>
+          </div>
+
+          {errorMessage && <ErrorBanner message={errorMessage} />}
+
+          {result && (
+            <Stack gap="sm">
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 'var(--g-space-4)',
+                  flexWrap: 'wrap',
+                  fontSize: 'var(--g-font-size-base)',
+                }}
+              >
+                <div>
+                  <strong>
+                    {t('pages:settings.aiGuard.dryRun.decision', 'Decision')}:
+                  </strong>{' '}
+                  <span data-testid="dry-run-decision">{result.response.decision}</span>
+                </div>
+                <div>
+                  <strong>
+                    {t('pages:settings.aiGuard.dryRun.latency', 'Latency')}:
+                  </strong>{' '}
+                  <span data-testid="dry-run-latency">
+                    {result.response.metadata.judge_latency_ms}
+                  </span>{' '}
+                  ms
+                </div>
+                <div>
+                  <strong>
+                    {t('pages:settings.aiGuard.dryRun.cache', 'Cache')}:
+                  </strong>{' '}
+                  {result.response.metadata.cache_hit
+                    ? t('pages:settings.aiGuard.dryRun.cacheHit', 'hit')
+                    : t('pages:settings.aiGuard.dryRun.cacheMiss', 'miss')}
+                </div>
               </div>
-              <div>
-                <h3 style={{ fontSize: 'var(--g-font-size-base)', marginBottom: 'var(--g-space-1)' }}>
-                  {t('pages:settings.aiGuard.dryRun.responseJson', 'Response')}
-                </h3>
-                <pre className={styles.jsonPre}>
-                  {JSON.stringify(result.response, null, 2)}
-                </pre>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 'var(--g-space-3)',
+                }}
+              >
+                <div>
+                  <h3 style={{ fontSize: 'var(--g-font-size-base)', marginBottom: 'var(--g-space-1)' }}>
+                    {t('pages:settings.aiGuard.dryRun.requestJson', 'Request')}
+                  </h3>
+                  <pre className={styles.jsonPre}>
+                    {JSON.stringify(result.request, null, 2)}
+                  </pre>
+                </div>
+                <div>
+                  <h3 style={{ fontSize: 'var(--g-font-size-base)', marginBottom: 'var(--g-space-1)' }}>
+                    {t('pages:settings.aiGuard.dryRun.responseJson', 'Response')}
+                  </h3>
+                  <pre className={styles.jsonPre}>
+                    {JSON.stringify(result.response, null, 2)}
+                  </pre>
+                </div>
               </div>
-            </div>
-          </Stack>
-        )}
-      </Stack>
-    </Card>
+            </Stack>
+          )}
+        </Stack>
+      </Card>
+    </Stack>
   );
 }

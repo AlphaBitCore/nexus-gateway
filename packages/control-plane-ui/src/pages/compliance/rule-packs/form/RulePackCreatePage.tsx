@@ -13,11 +13,13 @@ import {
   ErrorBanner,
   FormField,
   Input,
+  Select,
   Stack,
   Textarea,
 } from '@/components/ui';
 import { useMutation } from '@/hooks/useMutation';
 
+import { SEVERITY_OPTIONS } from './severityOptions';
 import styles from './RulePackCreatePage.module.css';
 import {
   draftsToRules,
@@ -203,7 +205,7 @@ export function RulePackCreatePage() {
                 error={parsedJson.error ?? undefined}
                 helpText={t(
                   'pages:hooks.rulePacks.createRulesHelp',
-                  'Each rule requires ruleId, category, severity (hard|soft|info), pattern. Optional: flags, description, labels.',
+                  'Each rule requires ruleId, category, severity (hard|soft|warn), pattern. Optional: flags, description, labels.',
                 )}
               >
                 <Textarea
@@ -240,10 +242,21 @@ export function RulePackCreatePage() {
                       </FormField>
                     </div>
                     <div className={styles.row}>
-                      <FormField label={t('pages:hooks.rulePacks.colSeverity', 'Severity')} required>
-                        <Input
+                      <FormField
+                        label={t('pages:hooks.rulePacks.colSeverity', 'Severity')}
+                        required
+                        tooltip={t(
+                          'pages:hooks.rulePacks.severityTip',
+                          'Severity is a classification signal, not the enforced action. The bound hook’s onMatch Action policy decides whether a match blocks, redacts, or is flagged.',
+                        )}
+                      >
+                        <Select
                           value={rule.severity}
-                          onChange={(e) => updateDraft(index, 'severity', e.target.value)}
+                          onValueChange={(value) => updateDraft(index, 'severity', value)}
+                          options={SEVERITY_OPTIONS.map((opt) => ({
+                            value: opt.value,
+                            label: t(opt.labelKey, opt.fallback),
+                          }))}
                         />
                       </FormField>
                       <FormField label={t('pages:hooks.rulePacks.colPattern', 'Pattern')} required>

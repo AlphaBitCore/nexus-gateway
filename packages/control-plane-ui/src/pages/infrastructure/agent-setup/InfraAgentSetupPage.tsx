@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PageHeader, Stack, Card, Button } from '@/components/ui';
+import { PageHeader, Stack, Card, Button, Tabs, TabsList, TabsTrigger } from '@/components/ui';
 import { useApi } from '@/hooks/useApi';
 import { serviceUrlsApi, type ServicePublicURLs } from '@/api/services';
 import { devicesApi, type MyAgentDevice } from '@/api/services/devices/devices';
@@ -61,7 +61,7 @@ const DOWNLOAD_FILENAME_KEY: Record<Platform, string> = {
 // Direct download URLs hosted at /downloads/ on the same origin as
 // the admin UI:
 //   - macOS: signed + notarized .pkg
-//   - Windows: WiX v4 MSI — registers Windows Service + WinDivert driver +
+//   - Windows: WiX v4 MSI — registers Windows Service + NexusWFP kernel driver +
 //     sets NEXUS_DEVICE_CA_PEM / NODE_EXTRA_CA_CERTS / REQUESTS_CA_BUNDLE /
 //     SSL_CERT_FILE system-wide so Node / Python / Go clients trust the agent.
 //   - Linux: raw Go binary; operators run it under their own systemd unit.
@@ -122,7 +122,7 @@ const PLATFORM_FAQ: Record<Platform, PlatformFaqMeta[]> = {
     { id: 'systemExtensionBlocked', category: 'lifecycle' },
   ],
   windows: [
-    { id: 'windivertFailed', category: 'lifecycle' },
+    { id: 'wfpDriverFailed', category: 'lifecycle' },
     { id: 'msiHang', category: 'lifecycle' },
   ],
   linux: [
@@ -203,21 +203,18 @@ export default function InfraAgentSetupPage() {
       />
 
       {/* ─── Install card — platform-scoped install/enroll/verify flow ─── */}
-      <Card>
-        <Stack gap="md">
-          <div className={styles.platformRow}>
-            {PLATFORMS.map((p) => (
-              <Button
-                key={p}
-                variant={platform === p ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setPlatform(p)}
-              >
-                {t(PLATFORM_LABEL_KEYS[p])}
-              </Button>
-            ))}
-          </div>
+      <Tabs value={platform} onValueChange={(value) => setPlatform(value as Platform)} className={styles.platformTabs}>
+        <TabsList className={styles.platformTabsList}>
+          {PLATFORMS.map((p) => (
+            <TabsTrigger key={p} value={p}>
+              {t(PLATFORM_LABEL_KEYS[p])}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
+      <Card className={styles.installCard}>
+        <Stack gap="md">
           {/* 1. Download */}
           <section>
             <h3 className={styles.sectionHeading}>

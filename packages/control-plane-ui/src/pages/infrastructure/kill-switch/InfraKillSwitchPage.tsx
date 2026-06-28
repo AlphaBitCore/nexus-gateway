@@ -6,7 +6,7 @@ import { hubApi } from '@/api/services/infrastructure/nodes/hub';
 import type { ConfigHistoryEvent, Node } from '@/api/services/infrastructure/nodes/hub';
 import { complianceApi } from '@/api/services/compliance/compliance';
 import {
-  PageHeader, Stack, Card, Button, Badge, AlertDialog,
+  Stack, Card, Button, Badge, AlertDialog,
   DataTable, LoadingSpinner, ErrorBanner,
 } from '@/components/ui';
 import type { DataTableColumn } from '@/components/ui';
@@ -211,92 +211,95 @@ export default function InfraKillSwitchPage() {
 
   return (
     <Stack gap="lg">
-      <PageHeader
-        title={t('infrastructure.killSwitchTitle')}
-        subtitle={t('infrastructure.killSwitchDescription')}
-      />
-
-      {/* Toggle control */}
-      <Card>
-        <div className={styles.toggleSection}>
+      <div className={styles.pageHeader}>
+        <div className={styles.headerText}>
+          <div className={styles.titleRow}>
+            <h1 className={styles.pageTitle}>{t('infrastructure.killSwitchTitle')}</h1>
           <Badge variant={fleetEngaged ? 'danger' : 'success'}>
             {fleetEngaged
               ? t('infrastructure.killSwitchEngaged', 'ENGAGED')
               : t('infrastructure.killSwitchDisengaged', 'Normal operation')}
           </Badge>
-          <Button
-            variant={fleetEngaged ? 'secondary' : 'danger'}
-            size="md"
-            loading={toggleMutation.loading}
-            onClick={() => setConfirmOpen(true)}
-          >
-            {fleetEngaged
-              ? t('infrastructure.disengageKillSwitch', 'Disengage Kill Switch')
-              : t('infrastructure.engageKillSwitch', 'Engage Kill Switch')}
-          </Button>
+          </div>
+          <p className={styles.pageSubtitle}>{t('infrastructure.killSwitchDescription')}</p>
         </div>
-      </Card>
+        <Button
+          variant={fleetEngaged ? 'secondary' : 'danger'}
+          size="md"
+          className={styles.headerActionButton}
+          loading={toggleMutation.loading}
+          onClick={() => setConfirmOpen(true)}
+        >
+          {fleetEngaged
+            ? t('infrastructure.disengageKillSwitch', 'Disengage Kill Switch')
+            : t('infrastructure.engageKillSwitch', 'Engage Kill Switch')}
+        </Button>
+      </div>
 
       {/* Per-type status breakdown */}
-      <Card>
+      <section className={styles.contentSection}>
         <div className={styles.sectionTitle}>{t('infrastructure.currentStatus', 'Current Status')}</div>
-        <div className={styles.statusGrid}>
-          <div>
-            <div className={styles.kvLabel}>{t('infrastructure.killSwitchStatusComplianceProxy', 'Compliance Proxies')}</div>
-            <div className={styles.kvValue}>
-              {proxyRollup.engaged > 0
-                ? t('infrastructure.killSwitchStatusEngaged', { count: proxyRollup.engaged, total: proxyRollup.total })
-                : t('infrastructure.killSwitchStatusActive', { count: proxyRollup.active, total: proxyRollup.total })}
-            </div>
-          </div>
-          <div>
-            <div className={styles.kvLabel}>{t('infrastructure.killSwitchStatusAgent', 'Agents')}</div>
-            <div className={styles.kvValue}>
-              {agentRollup.engaged > 0
-                ? t('infrastructure.killSwitchStatusEngaged', { count: agentRollup.engaged, total: agentRollup.total })
-                : t('infrastructure.killSwitchStatusActive', { count: agentRollup.active, total: agentRollup.total })}
-            </div>
-          </div>
-          <div>
-            <div className={styles.kvLabel}>{t('infrastructure.changedBy', 'Changed By')}</div>
-            <div className={styles.kvValue}>{killSwitchMeta.changedBy || '—'}</div>
-          </div>
-          <div>
-            <div className={styles.kvLabel}>{t('infrastructure.changedAt', 'Changed At')}</div>
-            <div className={styles.kvValue}>
-              {killSwitchMeta.changedAt ? new Date(killSwitchMeta.changedAt).toLocaleString() : '—'}
-            </div>
-          </div>
-          {killSwitchMeta.reason && (
+        <Card>
+          <div className={styles.statusGrid}>
             <div>
-              <div className={styles.kvLabel}>{t('infrastructure.reason', 'Reason')}</div>
-              <div className={styles.kvValue}>{killSwitchMeta.reason}</div>
+              <div className={styles.kvLabel}>{t('infrastructure.killSwitchStatusComplianceProxy', 'Compliance Proxies')}</div>
+              <div className={styles.kvValue}>
+                {proxyRollup.engaged > 0
+                  ? t('infrastructure.killSwitchStatusEngaged', { count: proxyRollup.engaged, total: proxyRollup.total })
+                  : t('infrastructure.killSwitchStatusActive', { count: proxyRollup.active, total: proxyRollup.total })}
+              </div>
             </div>
-          )}
-        </div>
-      </Card>
+            <div>
+              <div className={styles.kvLabel}>{t('infrastructure.killSwitchStatusAgent', 'Agents')}</div>
+              <div className={styles.kvValue}>
+                {agentRollup.engaged > 0
+                  ? t('infrastructure.killSwitchStatusEngaged', { count: agentRollup.engaged, total: agentRollup.total })
+                  : t('infrastructure.killSwitchStatusActive', { count: agentRollup.active, total: agentRollup.total })}
+              </div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('infrastructure.changedBy', 'Changed By')}</div>
+              <div className={styles.kvValue}>{killSwitchMeta.changedBy || '—'}</div>
+            </div>
+            <div>
+              <div className={styles.kvLabel}>{t('infrastructure.changedAt', 'Changed At')}</div>
+              <div className={styles.kvValue}>
+                {killSwitchMeta.changedAt ? new Date(killSwitchMeta.changedAt).toLocaleString() : '—'}
+              </div>
+            </div>
+            {killSwitchMeta.reason && (
+              <div>
+                <div className={styles.kvLabel}>{t('infrastructure.reason', 'Reason')}</div>
+                <div className={styles.kvValue}>{killSwitchMeta.reason}</div>
+              </div>
+            )}
+          </div>
+        </Card>
+      </section>
 
       {/* Merged history */}
-      <Card>
+      <section className={styles.contentSection}>
         <div className={styles.sectionTitle}>{t('infrastructure.killSwitchHistory', 'Kill Switch History')}</div>
-        {(proxyHistoryLoading || agentHistoryLoading) && mergedHistory.length === 0 ? (
-          <LoadingSpinner size="sm" />
-        ) : (proxyHistoryError || agentHistoryError) && mergedHistory.length === 0 ? (
-          <ErrorBanner
-            message={(proxyHistoryError ?? agentHistoryError)?.message ?? 'history error'}
-            onRetry={() => { refetchProxyHistory(); refetchAgentHistory(); }}
-          />
-        ) : (
-          <DataTable<ConfigHistoryEvent>
-            columns={historyColumns}
-            data={mergedHistory}
-            hideSearch
-            emptyMessage={t('infrastructure.noHistory', 'No kill switch history')}
-            loading={proxyHistoryLoading || agentHistoryLoading}
-            frameless
-          />
-        )}
-      </Card>
+        <Card>
+          {(proxyHistoryLoading || agentHistoryLoading) && mergedHistory.length === 0 ? (
+            <LoadingSpinner size="sm" />
+          ) : (proxyHistoryError || agentHistoryError) && mergedHistory.length === 0 ? (
+            <ErrorBanner
+              message={(proxyHistoryError ?? agentHistoryError)?.message ?? 'history error'}
+              onRetry={() => { refetchProxyHistory(); refetchAgentHistory(); }}
+            />
+          ) : (
+            <DataTable<ConfigHistoryEvent>
+              columns={historyColumns}
+              data={mergedHistory}
+              hideSearch
+              emptyMessage={t('infrastructure.noHistory', 'No kill switch history')}
+              loading={proxyHistoryLoading || agentHistoryLoading}
+              frameless
+            />
+          )}
+        </Card>
+      </section>
 
       {/* Confirmation dialog */}
       <AlertDialog

@@ -19,7 +19,7 @@
  * ERROR events at the same time"). Range buttons rewrite both params at once.
  *
  * Retention awareness: on mount we fetch the 11-layer retention config
- * (T39's `retentionApi.get`) and gray out range buttons whose window exceeds
+ * (via `retentionApi.get`) and gray out range buttons whose window exceeds
  * the relevant tier — for example, when `runtime_1h` = 90 days the "1y"
  * button is disabled because no buckets older than 90 days exist.
  *
@@ -39,7 +39,7 @@ import type {
 } from '@/api/services/infrastructure/ops/opsmetrics';
 import { retentionApi } from '@/api/services/infrastructure/ops/retention';
 import type { RetentionGetResponse } from '@/api/services/infrastructure/ops/retention';
-import { Card, Stack, Button, ErrorBanner } from '@/components/ui';
+import { Stack, Button, ErrorBanner } from '@/components/ui';
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart';
 import type {
   TimeSeriesPoint, TimeSeriesUnit,
@@ -305,39 +305,34 @@ export function MetricsTab({ thingId, thingType }: MetricsTabProps) {
   return (
     <Stack gap="lg">
       {/* ── Time range chrome ── */}
-      <Card>
-        <div className={styles.rangeBar}>
-          <span className={styles.rangeLabel}>
-            {t('pages:infrastructure.metricsTab.timeRange')}
-          </span>
-          <div className={styles.rangeButtons}>
-            {RANGE_PRESETS.map((r) => {
-              const disabled = rangeButtonDisabled(r.ms);
-              const isActive = activeRangeKey === r.key;
-              return (
-                <Button
-                  key={r.key}
-                  type="button"
-                  size="sm"
-                  variant={isActive ? 'primary' : 'secondary'}
-                  disabled={disabled}
-                  onClick={() => setRange(r.ms)}
-                  aria-pressed={isActive}
-                  title={disabled ? t('pages:infrastructure.metricsTab.rangeBeyondRetention') : undefined}
-                >
-                  {t(`pages:infrastructure.metricsTab.${r.labelKey}`)}
-                </Button>
-              );
-            })}
-          </div>
+      <div className={styles.rangeBar}>
+        <div className={styles.rangeButtons}>
+          {RANGE_PRESETS.map((r) => {
+            const disabled = rangeButtonDisabled(r.ms);
+            const isActive = activeRangeKey === r.key;
+            return (
+              <Button
+                key={r.key}
+                type="button"
+                size="sm"
+                variant={isActive ? 'primary' : 'secondary'}
+                disabled={disabled}
+                onClick={() => setRange(r.ms)}
+                aria-pressed={isActive}
+                title={disabled ? t('pages:infrastructure.metricsTab.rangeBeyondRetention') : undefined}
+              >
+                {t(`pages:infrastructure.metricsTab.${r.labelKey}`)}
+              </Button>
+            );
+          })}
         </div>
         {retentionError ? (
           <ErrorBanner error={retentionError} />
         ) : null}
-      </Card>
+      </div>
 
       {/* ── Runtime small-multiples ── */}
-      <Card>
+      <section>
         <h2 className={styles.sectionTitle}>
           {t('pages:infrastructure.metricsTab.runtimeHeading')}
         </h2>
@@ -352,10 +347,10 @@ export function MetricsTab({ thingId, thingType }: MetricsTabProps) {
             />
           ))}
         </div>
-      </Card>
+      </section>
 
       {/* ── Business per-type ── */}
-      <Card>
+      <section>
         <h2 className={styles.sectionTitle}>
           {t('pages:infrastructure.metricsTab.businessHeading')}
         </h2>
@@ -376,7 +371,7 @@ export function MetricsTab({ thingId, thingType }: MetricsTabProps) {
             ))}
           </div>
         )}
-      </Card>
+      </section>
     </Stack>
   );
 }

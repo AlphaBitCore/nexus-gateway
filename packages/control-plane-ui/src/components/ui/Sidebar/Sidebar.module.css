@@ -73,7 +73,7 @@
   color: var(--color-primary-foreground);
   font-family: var(--g-font-display);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: 0;
   flex-shrink: 0;
   box-shadow: var(--shadow-sm);
@@ -126,7 +126,7 @@
 .brandName {
   font-family: var(--g-font-display);
   color: var(--sidebar-text-active);
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   font-size: 17px;
   letter-spacing: 0;
   line-height: 1.15;
@@ -135,7 +135,7 @@
 .brandSubtitle {
   color: var(--sidebar-text-active);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   margin-top: 2px;
   letter-spacing: 0;
   opacity: 0.6;
@@ -201,8 +201,7 @@
   box-shadow: var(--g-effect-glow-active);
 }
 
-.sectionToggle:active,
-.sectionToggleOpen {
+.sectionToggle:active {
   background: var(--sidebar-active-bg) !important;
   background-color: var(--sidebar-active-bg) !important;
   color: var(--sidebar-text-active) !important;

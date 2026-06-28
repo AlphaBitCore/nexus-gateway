@@ -7,6 +7,7 @@ import { useMutation } from '@/hooks/useMutation';
 import { deviceGroupsApi, type DeviceGroup } from '@/api/services';
 
 import { DeviceGroupBasicsFields } from './DeviceGroupBasicsFields';
+import styles from './DeviceGroupForm.module.css';
 
 interface Props {
   open: boolean;
@@ -82,10 +83,10 @@ export function DeviceGroupForm({
             disabled={loading}
           />
           <Stack direction="horizontal" gap="sm" justify="end">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={loading}>
+            <Button className={styles.dialogActionButton} type="button" variant="secondary" onClick={onClose} disabled={loading}>
               {t('common:cancel')}
             </Button>
-            <Button type="submit" variant="primary" loading={loading} disabled={!name.trim()}>
+            <Button className={styles.dialogActionButton} type="submit" variant="primary" loading={loading} disabled={!name.trim()}>
               {t('common:save')}
             </Button>
           </Stack>

@@ -37,6 +37,7 @@ import { decodeAccessToken } from '../tokens/claims';
 import { startLogin } from '../pkce/pkceFlow';
 import { useIdleTimeout } from '../context/useIdleTimeout';
 import { setDisplayTZ } from '@/lib/format';
+import { withPrefix } from '@/lib/deploymentPrefix';
 
 interface AuthState {
   status: 'loading' | 'authenticated' | 'unauthenticated';
@@ -182,9 +183,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'AUTH_GONE' });
     if (typeof window === 'undefined') return;
     if (ssoIdp) {
-      window.location.assign(`/authserver/idp/${encodeURIComponent(ssoIdp)}/logout`);
+      window.location.assign(withPrefix(`/authserver/idp/${encodeURIComponent(ssoIdp)}/logout`));
     } else if (!window.location.pathname.startsWith('/login')) {
-      window.location.assign('/login');
+      window.location.assign(withPrefix('/login'));
     }
   }, []);
 

@@ -1,0 +1,34 @@
+.dialog {
+  overflow: hidden;
+  padding-bottom: 0 !important;
+}
+
+.formShell {
+  display: flex;
+  flex-direction: column;
+  max-height: min(72vh, 720px);
+  margin: 0 -24px;
+}
+
+.formContent {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px 16px;
+}
+
+.actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  min-height: 56px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.actions :global(button),
+.actions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+

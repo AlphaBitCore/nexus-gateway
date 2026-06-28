@@ -117,24 +117,19 @@ export default function InfraCrashReportsPage() {
         subtitle={t('infrastructure.crashReports.description')}
       />
 
-      <Card>
-        <div className={styles.filterBar}>
-          <div className={styles.filterField}>
-            <span className={styles.filterLabel}>
-              {t('infrastructure.crashReports.filterTimeRange')}
-            </span>
-            <Select
-              value={timeRange}
-              onValueChange={setTimeRange}
-              options={[
-                { value: '24h', label: t('infrastructure.crashReports.range24h') },
-                { value: '7d', label: t('infrastructure.crashReports.range7d') },
-                { value: '30d', label: t('infrastructure.crashReports.range30d') },
-              ]}
-            />
-          </div>
+      <div className={styles.filterBar}>
+        <div className={styles.filterField}>
+          <Select
+            value={timeRange}
+            onValueChange={setTimeRange}
+            options={[
+              { value: '24h', label: t('infrastructure.crashReports.range24h') },
+              { value: '7d', label: t('infrastructure.crashReports.range7d') },
+              { value: '30d', label: t('infrastructure.crashReports.range30d') },
+            ]}
+          />
         </div>
-      </Card>
+      </div>
 
       <Card>
         <Stack gap="sm">

@@ -1,0 +1,3 @@
+.filterToolbar {
+  margin-bottom: calc(16px - var(--g-space-6));
+}

@@ -7,20 +7,6 @@ import type { AdminModelsByProvider } from '@/api/types';
 import styles from './RoutingRuleDetail.module.css';
 import { HelpIconButton } from '@nexus-gateway/ui-shared';
 
-/* ── useStrategyOptions ─────────────────────────────────────────── */
-
-export function useStrategyOptions() {
-  const { t } = useTranslation();
-  return useMemo<Array<{ value: string; label: string }>>(() => [
-    { value: 'single', label: t('pages:routing.strategySingle') },
-    { value: 'fallback', label: t('pages:routing.strategyFallback') },
-    { value: 'loadbalance', label: t('pages:routing.strategyLoadbalance') },
-    { value: 'conditional', label: t('pages:routing.strategyConditional') },
-    { value: 'ab_split', label: t('pages:routing.strategyAbSplit') },
-    { value: 'smart', label: t('pages:routing.strategySmart') },
-  ], [t]);
-}
-
 /* ── KvRow ──────────────────────────────────────────────────────── */
 
 export function KvRow({
@@ -59,11 +45,13 @@ export function MatchModelSelector({
   onChange,
   providerGroups,
   excludeModels,
+  className,
 }: {
   selected: string[];
   onChange: (v: string[]) => void;
   providerGroups: AdminModelsByProvider[];
   excludeModels: Set<string>;
+  className?: string;
 }) {
   const { t } = useTranslation();
 
@@ -92,6 +80,7 @@ export function MatchModelSelector({
       emptyLabel={t('pages:routing.addModelToMatch')}
       searchable
       searchPlaceholder={t('common:searchModels')}
+      className={className}
     />
   );
 }

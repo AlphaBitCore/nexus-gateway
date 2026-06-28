@@ -63,7 +63,8 @@ describe('QuotaOverrideEdit', () => {
       targetType: 'user', targetId: 'u1', reason: 'temp bump', costLimitUsd: 100, tokenLimit: 5000,
       enforcementMode: undefined, periodType: undefined,
     })));
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/ai-gateway/quota-overrides'));
+    // on success the edit form returns to the override's detail page
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/ai-gateway/quota-overrides/o1'));
   });
 
   it('cancel navigates back to the list', () => {

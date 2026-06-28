@@ -29,12 +29,13 @@ import {
   DataTable,
   DEFAULT_ADMIN_LIST_PAGE_SIZE,
   ErrorBanner,
+  Input,
   ListEnabledSwitchCell,
-  ListFilterToolbar,
   ListPagination,
+  OpenActionIcon,
   PageHeader,
   RowActions,
-  RowActionTextButton,
+  RowActionIconButton,
   RowDeleteAction,
   Skeleton,
   Stack,
@@ -42,6 +43,7 @@ import {
   type DataTableColumn,
 } from '@/components/ui';
 import { InterceptionDomainForm } from './InterceptionDomainForm';
+import styles from './InterceptionDomainsPage.module.css';
 
 export function InterceptionDomainsPage() {
   const { t } = useTranslation();
@@ -180,7 +182,9 @@ export function InterceptionDomainsPage() {
       sortable: false,
       render: (r) => (
         <RowActions>
-          <RowActionTextButton label={t('common:edit', 'Edit')} onAction={() => navigate(`/compliance/interception-domains/${r.id}`)} />
+          <RowActionIconButton label={t('common:edit', 'Edit')} onAction={() => navigate(`/compliance/interception-domains/${r.id}`)}>
+            <OpenActionIcon />
+          </RowActionIconButton>
           <RowDeleteAction label={t('common:delete', 'Delete')} onAction={() => setDeleting(r)} />
         </RowActions>
       ),
@@ -189,61 +193,87 @@ export function InterceptionDomainsPage() {
 
   return (
     <Stack gap="lg">
-      <PageHeader
-        title={t('pages:interceptionDomains.title', 'Interception Domains')}
-        subtitle={t(
-          'pages:interceptionDomains.subtitle',
-          'Hosts + path rules the compliance proxy intercepts and passes through the traffic adapter pipeline.',
-        )}
-        action={
-          <Button variant="primary" onClick={() => setShowCreate(true)}>
-            {t('pages:interceptionDomains.create', 'Create')}
-          </Button>
-        }
-      />
-
-      <ListFilterToolbar
-        searchPlaceholder={t(
-          'pages:interceptionDomains.searchPlaceholder',
-          'Search name, host pattern, adapter…',
-        )}
-        searchValue={search}
-        onSearchChange={onSearchChange}
-        meta={t(
-          'pages:interceptionDomains.pageMeta',
-          'Showing {{count}} of {{total}}',
-          { count: rows.length, total },
-        )}
-      >
-        <select
-          aria-label={t('pages:interceptionDomains.filterByStatus', 'Filter by status')}
-          value={enabledFilter}
-          onChange={onEnabledFilterChange}
-        >
-          <option value="">{t('pages:interceptionDomains.filterAll', 'All')}</option>
-          <option value="enabled">
-            {t('pages:interceptionDomains.filterEnabled', 'Enabled only')}
-          </option>
-          <option value="disabled">
-            {t('pages:interceptionDomains.filterDisabled', 'Disabled only')}
-          </option>
-        </select>
-      </ListFilterToolbar>
-
-      <Card padding="none">
-        <DataTable
-          hideSearch
-          frameless
-          pageSize={pageLimit}
-          columns={columns}
-          data={rows}
-          emptyMessage={t(
-            'pages:interceptionDomains.noDomains',
-            'No interception domains configured',
+      <div className={styles.pageHeader}>
+        <PageHeader
+          title={t('pages:interceptionDomains.title', 'Interception Domains')}
+          subtitle={t(
+            'pages:interceptionDomains.subtitle',
+            'Hosts + path rules the compliance proxy intercepts and passes through the traffic adapter pipeline.',
           )}
-          onRowClick={(r) => navigate(`/compliance/interception-domains/${r.id}`)}
+          subtitleClassName={styles.headerSubtitle}
+          action={
+            <Button variant="primary" onClick={() => setShowCreate(true)}>
+              {t('pages:interceptionDomains.create', 'Create')}
+            </Button>
+          }
         />
-      </Card>
+      </div>
+
+      <div className={styles.listSection}>
+        <div className={styles.filterBar}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon} aria-hidden />
+            <Input
+              type="text"
+              className={styles.searchInput}
+              placeholder={t(
+                'pages:interceptionDomains.searchPlaceholder',
+                'Search name, host pattern, adapter…',
+              )}
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+            />
+            {search.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className={styles.clearSearchButton}
+                aria-label={t('common:clear')}
+                title={t('common:clear')}
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <select
+            className={styles.filterSelect}
+            aria-label={t('pages:interceptionDomains.filterByStatus', 'Filter by status')}
+            value={enabledFilter}
+            onChange={onEnabledFilterChange}
+          >
+            <option value="">{t('pages:interceptionDomains.filterAll', 'All')}</option>
+            <option value="enabled">
+              {t('pages:interceptionDomains.filterEnabled', 'Enabled only')}
+            </option>
+            <option value="disabled">
+              {t('pages:interceptionDomains.filterDisabled', 'Disabled only')}
+            </option>
+          </select>
+        </div>
+
+        <p className={styles.listMeta}>
+          {t(
+            'pages:interceptionDomains.pageMeta',
+            'Showing {{count}} of {{total}}',
+            { count: rows.length, total },
+          )}
+        </p>
+
+        <Card padding="none">
+          <DataTable
+            hideSearch
+            frameless
+            pageSize={pageLimit}
+            columns={columns}
+            data={rows}
+            emptyMessage={t(
+              'pages:interceptionDomains.noDomains',
+              'No interception domains configured',
+            )}
+            onRowClick={(r) => navigate(`/compliance/interception-domains/${r.id}`)}
+          />
+        </Card>
+      </div>
 
       <ListPagination
         offset={offset}

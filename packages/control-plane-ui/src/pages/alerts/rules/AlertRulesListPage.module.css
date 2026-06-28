@@ -3,20 +3,239 @@
   font-size: 0.8125rem;
   background: var(--color-surface);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   border: 1px solid var(--color-border);
 }
 
-.filterSelect {
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: var(--color-bg);
+.listSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.filterToolbar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.searchBox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: min(100%, 480px);
+  max-width: 100%;
+  height: 38px;
+  overflow: visible;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-surface);
+}
+
+.searchIcon {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin: 0 8px 0 17px;
+  border: 1.8px solid var(--color-text-muted);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.searchIcon::after {
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  width: 7px;
+  height: 1.8px;
+  border-radius: var(--g-radius-xs);
+  background: var(--color-text-muted);
+  content: '';
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+
+.searchInput {
+  min-width: 0;
+  min-height: 36px;
+  height: 36px;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--g-font-size-sm);
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
+.searchInput:focus,
+.searchInput:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.searchBox:focus-within {
+  border-color: var(--color-link);
+}
+
+.clearSearchButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--g-space-2);
+  border: 0;
+  border-radius: var(--g-radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.clearSearchButton:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.clearSearchButton span,
+.clearSearchButton span::after {
+  position: absolute;
+  width: 12px;
+  height: 1.5px;
+  border-radius: var(--g-radius-full);
+  background: currentColor;
+  content: '';
+}
+
+.clearSearchButton span {
+  transform: rotate(45deg);
+}
+
+.clearSearchButton span::after {
+  left: 0;
+  top: 0;
+  transform: rotate(90deg);
+}
+
+.advancedButton {
+  align-self: stretch;
+  padding: 0 var(--g-space-4);
+  border: 0;
+  border-radius: 0 8px 8px 0;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.advancedButton:hover {
+  background: var(--color-surface-hover);
+}
+
+.advancedPanel {
+  position: absolute;
+  top: 42px;
+  left: 0;
+  z-index: 20;
+  width: min(480px, calc(100vw - 48px));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg);
+  box-shadow: var(--g-shadow-lg);
+}
+
+.advancedGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--g-space-3);
+  padding: var(--g-space-4);
+  background: var(--color-surface);
+}
+
+.advancedFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--g-space-3);
+  padding: var(--g-space-3) var(--g-space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.advancedFooterButton,
+.advancedFooterButton :global(*) {
+  height: 32px !important;
+  min-height: 32px !important;
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.filterField {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--g-space-2);
+}
+
+.filterLabel {
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+  line-height: 18px;
+}
+
+.filterSelect {
+  appearance: none;
+  width: 100%;
+  height: 36px;
+  padding: 0 36px 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background-color: var(--color-bg);
+  background-image: url('/icons/chevron-down.svg');
+  background-position: calc(100% - 12px) 50%;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-sm);
   outline: none;
 }
+
 .filterSelect:focus {
   border-color: var(--color-primary);
+}
+
+.listMeta {
+  margin: 20px 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  line-height: 18px;
+}
+
+.listMeta + :global(*) {
+  margin-top: 8px;
+}
+
+.paginationWrap {
+  margin-top: 12px;
+}
+
+@media (max-width: 720px) {
+  .searchBox {
+    width: 100%;
+  }
+
+  .advancedGrid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -17,58 +17,84 @@ export function IdentityCard({ device, copyToClipboard, onTagsSaved }: IdentityC
         bound user. Replaces the old simple kvGrid. */
     <Card>
       <div className={styles.kvGrid}>
-        <span className={styles.kvLabel}>{t('pages:devices.identity.hostname')}</span>
-        <span className={styles.kvValue}>{device.hostname}</span>
+        <div>
+          <div className={styles.kvLabel}>{t('pages:devices.identity.hostname')}</div>
+          <div className={styles.kvValue}>{device.hostname}</div>
+        </div>
         {device.boundUserDisplayName && (
-          <>
-            <span className={styles.kvLabel}>{t('pages:devices.identity.boundUser')}</span>
-            <span className={styles.kvValue}>
+          <div>
+            <div className={styles.kvLabel}>{t('pages:devices.identity.boundUser')}</div>
+            <div className={styles.kvValue}>
               {device.boundUserDisplayName}
               {device.boundUserEmail && <span style={{ color: 'var(--color-text-muted)' }}>{' · '}{device.boundUserEmail}</span>}
-            </span>
-          </>
+            </div>
+          </div>
         )}
         {device.physicalId && (
-          <>
-            <span className={styles.kvLabel}>{t('pages:devices.identity.physicalId')}</span>
-            <span className={styles.kvValue}>
+          <div>
+            <div className={styles.kvLabel}>{t('pages:devices.identity.physicalId')}</div>
+            <div className={styles.kvValue}>
               <code>{device.physicalId}</code>
               <button
                 type="button"
                 onClick={() => copyToClipboard(device.physicalId!)}
                 title={t('common:copy')}
-                style={{ marginLeft: 'var(--g-space-2)', padding: 'var(--g-space-0-5) var(--g-space-1-5)', border: '1px solid var(--color-border)', borderRadius: 'var(--g-radius-sm)', background: 'none', cursor: 'pointer' }}
-              >⧉</button>
-            </span>
-          </>
+                aria-label={t('common:copy')}
+                data-tooltip={t('common:copy')}
+                className={styles.copyButton}
+              >
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden>
+                  <rect x="7" y="6" width="8" height="10" rx="2.5" stroke="currentColor" strokeWidth="1.4" />
+                  <rect x="4" y="3" width="8" height="10" rx="2.5" stroke="currentColor" strokeWidth="1.4" />
+                </svg>
+              </button>
+            </div>
+          </div>
         )}
-        <span className={styles.kvLabel}>{t('pages:devices.identity.thingId')}</span>
-        <span className={styles.kvValue}>
-          <code>{device.id}</code>
-          <button
-            type="button"
-            onClick={() => copyToClipboard(device.id)}
-            title={t('common:copy')}
-            style={{ marginLeft: 'var(--g-space-2)', padding: 'var(--g-space-0-5) var(--g-space-1-5)', border: '1px solid var(--color-border)', borderRadius: 'var(--g-radius-sm)', background: 'none', cursor: 'pointer' }}
-          >⧉</button>
-        </span>
+        <div>
+          <div className={styles.kvLabel}>{t('pages:devices.identity.thingId')}</div>
+          <div className={styles.kvValue}>
+            <code>{device.id}</code>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(device.id)}
+              title={t('common:copy')}
+              aria-label={t('common:copy')}
+              data-tooltip={t('common:copy')}
+              className={styles.copyButton}
+            >
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden>
+                <rect x="7" y="6" width="8" height="10" rx="2.5" stroke="currentColor" strokeWidth="1.4" />
+                <rect x="4" y="3" width="8" height="10" rx="2.5" stroke="currentColor" strokeWidth="1.4" />
+              </svg>
+            </button>
+          </div>
+        </div>
         {device.primaryIp && (
-          <>
-            <span className={styles.kvLabel}>{t('pages:devices.identity.ip')}</span>
-            <span className={styles.kvValue}><code>{device.primaryIp}</code></span>
-          </>
+          <div>
+            <div className={styles.kvLabel}>{t('pages:devices.identity.ip')}</div>
+            <div className={styles.kvValue}><code>{device.primaryIp}</code></div>
+          </div>
         )}
-        <span className={styles.kvLabel}>{t('pages:fleet.os')}</span>
-        <span className={styles.kvValue}>{device.os === 'darwin' ? 'macOS' : device.os} {device.osVersion}</span>
-        <span className={styles.kvLabel}>{t('pages:fleet.agentVersion')}</span>
-        <span className={styles.kvValue}>{device.agentVersion}</span>
-        <span className={styles.kvLabel}>{t('pages:fleet.lastHeartbeat')}</span>
-        <span className={styles.kvValue}>{device.lastHeartbeat ? new Date(device.lastHeartbeat).toLocaleString() : '—'}</span>
-        <span className={styles.kvLabel}>{t('pages:devices.enrolledAt')}</span>
-        <span className={styles.kvValue}>{new Date(device.enrolledAt).toLocaleString()} {device.enrolledBy ? `· ${device.enrolledBy}` : ''}</span>
+        <div>
+          <div className={styles.kvLabel}>{t('pages:fleet.os')}</div>
+          <div className={styles.kvValue}>{device.os === 'darwin' ? 'macOS' : device.os} {device.osVersion}</div>
+        </div>
+        <div>
+          <div className={styles.kvLabel}>{t('pages:fleet.agentVersion')}</div>
+          <div className={styles.kvValue}>{device.agentVersion}</div>
+        </div>
+        <div>
+          <div className={styles.kvLabel}>{t('pages:fleet.lastHeartbeat')}</div>
+          <div className={styles.kvValue}>{device.lastHeartbeat ? new Date(device.lastHeartbeat).toLocaleString() : '—'}</div>
+        </div>
+        <div>
+          <div className={styles.kvLabel}>{t('pages:devices.enrolledAt')}</div>
+          <div className={styles.kvValue}>{new Date(device.enrolledAt).toLocaleString()} {device.enrolledBy ? `· ${device.enrolledBy}` : ''}</div>
+        </div>
       </div>
       {/* Tag editor — below the kvGrid so it stays inside the Identity card */}
-      <div style={{ marginTop: 'var(--g-space-4)', paddingTop: 'var(--g-space-3)', borderTop: '1px solid var(--color-border)' }}>
+      <div className={styles.tagSection} style={{ marginTop: 'var(--g-space-4)', paddingTop: 'var(--g-space-3)', borderTop: '1px solid var(--color-border)' }}>
         <div style={{ fontSize: 'var(--g-font-size-sm)', fontWeight: 'var(--g-font-weight-semibold)', marginBottom: 'var(--g-space-2)' }}>
           {t('pages:devices.tagsLabel', 'Tags')}
         </div>

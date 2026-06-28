@@ -31,7 +31,7 @@
 
 .range {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   white-space: nowrap;
 }
@@ -101,7 +101,7 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-size: var(--g-font-size-md);
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -115,7 +115,7 @@
   composes: pagePill;
   background: var(--color-border-light);
   color: var(--color-primary);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .pagePillActive:hover {

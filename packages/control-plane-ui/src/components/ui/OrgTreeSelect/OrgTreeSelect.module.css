@@ -41,7 +41,7 @@
   flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
   font-family: var(--g-font-sans);
 }
@@ -62,7 +62,7 @@
   background: transparent;
   color: var(--color-text);
   font-family: var(--g-font-sans);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   outline: none;
 }
 
@@ -83,7 +83,7 @@
   padding: 1px 6px;
   background: var(--color-muted);
   border-radius: var(--g-radius-sm);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   line-height: 1.4;
   white-space: nowrap;
   max-width: 200px;
@@ -101,10 +101,10 @@
   border: none;
   background: transparent;
   color: var(--color-info);
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   line-height: 1;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--g-radius-xs);
   flex-shrink: 0;
 }
 
@@ -124,7 +124,7 @@
   border: none;
   background: transparent;
   color: var(--color-info);
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   line-height: 1;
   cursor: pointer;
   border-radius: var(--g-radius-sm);
@@ -161,7 +161,7 @@
   padding: 0 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   font-family: var(--g-font-sans);
   color: var(--color-text);
   background: var(--color-surface);
@@ -181,7 +181,7 @@
 
 .statusMessage {
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
 }
 
@@ -193,7 +193,7 @@
   gap: 4px;
   padding: 5px 8px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
   border: none;
   background: transparent;
@@ -248,11 +248,11 @@
 
 .nodeCode {
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 .highlight {
   background: var(--color-warning);
-  border-radius: 2px;
+  border-radius: var(--g-radius-xs);
   padding: 0 1px;
 }

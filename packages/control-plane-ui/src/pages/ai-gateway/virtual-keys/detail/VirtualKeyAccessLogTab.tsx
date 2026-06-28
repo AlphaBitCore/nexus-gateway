@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { DataTable, Card } from '@/components/ui';
+import { DataTable, Card, Stack } from '@/components/ui';
 import { LatencyMini } from '@/components/charts/LatencyMini';
 import type { TrafficEvent } from '@/api/types';
 import { formatDateTime } from '@/lib/format';
@@ -13,10 +13,11 @@ export function VirtualKeyAccessLogTab({ auditLogs }: VirtualKeyAccessLogTabProp
   const { t } = useTranslation();
 
   return (
-    <Card>
+    <Stack gap="md">
       <h2 className={styles.widgetTitle}>{t('pages:virtualKeys.recentAccessLogs')}</h2>
-      <div className={styles.accessLogSection}>
+      <Card padding="none">
         <DataTable hideSearch
+          frameless
           columns={[
             { key: 'timestamp', label: t('pages:virtualKeys.colTime'), render: r => formatDateTime(r.timestamp) },
             { key: 'method', label: t('pages:virtualKeys.colMethod') },
@@ -41,7 +42,7 @@ export function VirtualKeyAccessLogTab({ auditLogs }: VirtualKeyAccessLogTabProp
           data={auditLogs}
           emptyMessage={t('pages:virtualKeys.noRecentAccessLogs')}
         />
-      </div>
-    </Card>
+      </Card>
+    </Stack>
   );
 }

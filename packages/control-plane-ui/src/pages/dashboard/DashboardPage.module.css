@@ -76,7 +76,7 @@
   margin: 0 0 var(--g-space-1);
   color: var(--color-primary-foreground);
   font-size: 28px;
-  font-weight: 800;
+  font-weight: var(--g-font-weight-bold);
   letter-spacing: -0.02em;
   line-height: 36px;
 }
@@ -132,8 +132,8 @@
 .heroStatValue {
   order: 1;
   color: var(--color-primary-foreground);
-  font-size: 24px;
-  font-weight: 700;
+  font-size: var(--g-font-size-2xl);
+  font-weight: var(--g-font-weight-bold);
   font-variant-numeric: tabular-nums;
   line-height: 28px;
 }
@@ -182,7 +182,7 @@
   padding: 4px 12px;
   border-radius: calc(var(--g-radius-md) - 2px);
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-family: var(--g-font-display);
   color: var(--color-text-muted);
   transition: background var(--g-transition-fast), color var(--g-transition-fast);
@@ -270,7 +270,7 @@
   gap: 6px;
   font-size: var(--g-font-size-xs);
   font-family: var(--g-font-display);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -285,8 +285,8 @@
 }
 
 .metricValue {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: var(--g-font-size-2xl);
+  font-weight: var(--g-font-weight-bold);
   font-family: var(--g-font-display);
   color: var(--color-text);
   line-height: 1.1;
@@ -330,7 +330,7 @@
   border-radius: 50%;
   border: 1px solid var(--color-border);
   font-size: 9px;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text-muted);
   cursor: default;
   flex-shrink: 0;
@@ -351,9 +351,9 @@
 }
 
 .sectionTitle {
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   font-family: var(--g-font-display);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   letter-spacing: 0;
   color: var(--color-text);
   margin: 0;
@@ -370,7 +370,7 @@
 .splitBar {
   display: flex;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--g-radius-xs);
   overflow: hidden;
   margin-top: 8px;
   background: var(--color-muted);
@@ -436,7 +436,7 @@
   text-align: left;
   padding: var(--g-space-2) var(--g-space-3);
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   color: var(--color-text-muted);
@@ -456,8 +456,8 @@
   color: var(--color-text);
 }
 
-.tdBold { composes: td; font-weight: 600; max-width: 200px; }
-.tdMono { composes: td; font-family: var(--g-font-mono); font-weight: 500; font-variant-numeric: tabular-nums; }
+.tdBold { composes: td; font-weight: var(--g-font-weight-semibold); max-width: 200px; }
+.tdMono { composes: td; font-family: var(--g-font-mono); font-weight: var(--g-font-weight-medium); font-variant-numeric: tabular-nums; }
 
 .tableRow {
   border-bottom: 1px solid var(--color-border-light);

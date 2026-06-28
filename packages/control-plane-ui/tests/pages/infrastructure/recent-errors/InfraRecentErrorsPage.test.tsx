@@ -84,8 +84,8 @@ describe('InfraRecentErrorsPage', () => {
 
     await waitFor(() => screen.getAllByText(errorGroup.sampleMessage)[0]);
 
-    // Filters panel is collapsed by default — expand it before the toggle is in the DOM.
-    await user.click(screen.getByText(/Filters|过滤|Filtros/));
+    // The "Show silenced" toggle lives inline on the issue-list header; clicking
+    // it flips hideSilenced=false so the silenced group becomes visible.
     await user.click(screen.getByText(/Show silenced|显示 silenced|Mostrar silenciados/));
 
     await waitFor(() => {

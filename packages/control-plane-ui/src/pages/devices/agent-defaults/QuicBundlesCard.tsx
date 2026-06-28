@@ -21,15 +21,18 @@ export function QuicBundlesCard({
   const { t } = useTranslation();
 
   return (
-    <Card>
-      <Stack gap="md">
-        <h3 style={{ margin: 'var(--g-space-0)' }}>
+    <div className={styles.settingsSection}>
+      <div className={styles.sectionHeader}>
+        <h3 className={styles.sectionTitle}>
           {t('pages:settings.quicFallback.title', 'QUIC fallback bundles (macOS)')}
         </h3>
         <p className={styles.helpTextSecondary}>
           {t('pages:settings.quicFallback.desc', 'macOS bundle IDs of apps whose UDP flows the agent will close to force HTTP/3 → HTTP/2 fallback. Browsers and Electron AI clients prefer h3 to QUIC-friendly endpoints (ChatGPT, Claude.ai, Cloudflare-fronted services); without this list the agent\'s TCP path never sees their requests. Add Chromium-based desktop apps you also want intercepted (Cursor, Claude Desktop, etc.). NEVER add system processes (com.apple.mDNSResponder, dhcpcd, etc.) — that breaks DNS and takes the host network down.')}
         </p>
+      </div>
 
+      <Card>
+        <Stack gap="md">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--g-space-2)' }}>
           {quicBundles.map((b) => (
             <span
@@ -112,7 +115,8 @@ export function QuicBundlesCard({
         <p className={styles.helpTextSecondarySmall}>
           {t('pages:settings.quicFallback.howToFind', 'Find a Mac app\'s bundle ID with: defaults read /Applications/SomeApp.app/Contents/Info.plist CFBundleIdentifier')}
         </p>
-      </Stack>
-    </Card>
+        </Stack>
+      </Card>
+    </div>
   );
 }

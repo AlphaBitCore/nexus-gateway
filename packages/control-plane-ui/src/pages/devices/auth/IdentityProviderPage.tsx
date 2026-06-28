@@ -126,39 +126,41 @@ export function ScimTokenSection({ idp }: { idp: IdentityProvider }) {
         </Button>
       </div>
 
-      <div style={{ marginBottom: 'var(--g-space-4)' }}>
-        <FormField label={t('pages:identityProvider.scimEndpoint')}>
-          <div style={{ display: 'flex', gap: 'var(--g-space-2)', alignItems: 'center' }}>
-            <code style={{
-              flex: 1, padding: 'var(--g-space-2) var(--g-space-3)', background: 'var(--color-bg-subtle)',
-              border: '1px solid var(--color-border)', borderRadius: 'var(--g-radius-sm)',
-              fontSize: 'var(--g-font-size-sm)', userSelect: 'all',
-            }}>
-              {endpoint}
-            </code>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => navigator.clipboard.writeText(endpoint)}
-            >
-              {t('common:copy')}
-            </Button>
-          </div>
-        </FormField>
-      </div>
+      <Card>
+        <div style={{ marginBottom: 'var(--g-space-4)' }}>
+          <FormField label={t('pages:identityProvider.scimEndpoint')}>
+            <div style={{ display: 'flex', gap: 'var(--g-space-2)', alignItems: 'center' }}>
+              <code style={{
+                flex: 1, padding: 'var(--g-space-2) var(--g-space-3)', background: 'var(--color-bg-subtle)',
+                border: '1px solid var(--color-border)', borderRadius: 'var(--g-radius-sm)',
+                fontSize: 'var(--g-font-size-sm)', userSelect: 'all',
+              }}>
+                {endpoint}
+              </code>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => navigator.clipboard.writeText(endpoint)}
+              >
+                {t('common:copy')}
+              </Button>
+            </div>
+          </FormField>
+        </div>
 
-      {loading && <Skeleton.Box width="100%" height={80} />}
-      {error && <ErrorBanner message={error.message} onRetry={refetch} />}
-      {!loading && !error && (
-        <DataTable
-          hideSearch
-          frameless
-          serverPaginated
-          columns={columns}
-          data={data?.data ?? []}
-          emptyMessage={t('pages:identityProvider.noTokens')}
-        />
-      )}
+        {loading && <Skeleton.Box width="100%" height={80} />}
+        {error && <ErrorBanner message={error.message} onRetry={refetch} />}
+        {!loading && !error && (
+          <DataTable
+            hideSearch
+            frameless
+            serverPaginated
+            columns={columns}
+            data={data?.data ?? []}
+            emptyMessage={t('pages:identityProvider.noTokens')}
+          />
+        )}
+      </Card>
 
       {/* Create token dialog */}
       <Dialog
@@ -297,7 +299,7 @@ export function GroupMappingSection({ idp }: { idp: IdentityProvider }) {
   ];
 
   return (
-    <div style={{ marginTop: 'var(--g-space-6)', paddingTop: 'var(--g-space-6)', borderTop: '1px solid var(--color-border)' }}>
+    <div style={{ marginTop: 'var(--g-space-6)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--g-space-3)' }}>
         <div>
           <h3 style={{ margin: 'var(--g-space-0)', fontSize: 'var(--g-font-size-md)', fontWeight: 'var(--g-font-weight-semibold)' }}>
@@ -312,18 +314,20 @@ export function GroupMappingSection({ idp }: { idp: IdentityProvider }) {
         </Button>
       </div>
 
-      {loading && <Skeleton.Box width="100%" height={80} />}
-      {error && <ErrorBanner message={error.message} onRetry={refetch} />}
-      {!loading && !error && (
-        <DataTable
-          hideSearch
-          frameless
-          serverPaginated
-          columns={columns}
-          data={data?.data ?? []}
-          emptyMessage={t('pages:identityProvider.noMappings')}
-        />
-      )}
+      <Card>
+        {loading && <Skeleton.Box width="100%" height={80} />}
+        {error && <ErrorBanner message={error.message} onRetry={refetch} />}
+        {!loading && !error && (
+          <DataTable
+            hideSearch
+            frameless
+            serverPaginated
+            columns={columns}
+            data={data?.data ?? []}
+            emptyMessage={t('pages:identityProvider.noMappings')}
+          />
+        )}
+      </Card>
 
       {/* Add mapping dialog */}
       <Dialog
@@ -389,9 +393,10 @@ export function GroupMappingSection({ idp }: { idp: IdentityProvider }) {
 /* ── IdP card ────────────────────────────────────────────────────────────── */
 
 function IdpTypeLabel({ type }: { type: string }) {
+  const { t } = useTranslation();
   if (type === 'oidc') return <Badge variant="info">OIDC</Badge>;
   if (type === 'saml') return <Badge variant="info">SAML</Badge>;
-  return <Badge variant="default">Local</Badge>;
+  return <Badge variant="default">{t('common:local')}</Badge>;
 }
 
 /**
@@ -401,14 +406,14 @@ function IdpTypeLabel({ type }: { type: string }) {
  * the system (Providers, Routing Rules, Hooks all use dedicated
  * detail routes).
  */
-function IdentityProviderCard({ idp }: { idp: IdentityProvider }) {
+function IdentityProviderCard({ idp, onDelete }: { idp: IdentityProvider; onDelete: (idp: IdentityProvider) => void }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const target = idpDetailRoute(idp.id);
 
   return (
     <Card
-      style={{ marginBottom: 'var(--g-space-6)', cursor: 'pointer' }}
+      style={{ cursor: 'pointer' }}
       onClick={() => navigate(target)}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -419,13 +424,22 @@ function IdentityProviderCard({ idp }: { idp: IdentityProvider }) {
             {idp.enabled ? t('pages:identityProvider.enabled') : t('pages:identityProvider.disabled')}
           </Badge>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={(e) => { e.stopPropagation(); navigate(target); }}
-        >
-          {t('common:view', 'View')}
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-2)' }}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); navigate(target); }}
+          >
+            {t('common:view', 'View')}
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); onDelete(idp); }}
+          >
+            {t('common:delete', 'Delete')}
+          </Button>
+        </div>
       </div>
       <p style={{ margin: 'var(--g-space-2) var(--g-space-0) var(--g-space-0)', fontSize: 'var(--g-font-size-sm)', color: 'var(--color-text-muted)' }}>
         {t('pages:identityProvider.idpId')}: <code style={{ fontSize: 'var(--g-font-size-sm)' }}>{idp.id}</code>
@@ -484,7 +498,7 @@ function HowItWorksTip() {
 function LocalFallbackCard({ idp }: { idp: IdentityProvider }) {
   const { t } = useTranslation();
   return (
-    <Card style={{ marginBottom: 'var(--g-space-6)' }}>
+    <Card>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--g-space-3)', marginBottom: 'var(--g-space-2)' }}>
         <h2 style={{ margin: 'var(--g-space-0)', fontSize: 'var(--g-font-size-md)', fontWeight: 'var(--g-font-weight-semibold)' }}>{idp.name}</h2>
         <Badge variant="info">{t('pages:identityProvider.localFallbackBadge', 'Built-in')}</Badge>
@@ -528,10 +542,21 @@ function EmptyState() {
 export function IdentityProviderPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [deleteTarget, setDeleteTarget] = useState<IdentityProvider | null>(null);
 
   const { data, loading, error, refetch } = useApi<{ data: IdentityProvider[]; total: number }>(
     () => iamApi.listIdentityProviders(),
     ['admin', 'identity-providers', 'list'],
+  );
+
+  const { mutate: doDelete, loading: deleting } = useMutation(
+    () => iamApi.deleteIdentityProvider(deleteTarget!.id),
+    {
+      onSuccess: () => {
+        setDeleteTarget(null);
+        refetch();
+      },
+    },
   );
 
   const allIdps = data?.data ?? [];
@@ -543,6 +568,7 @@ export function IdentityProviderPage() {
       <PageHeader
         title={t('pages:identityProvider.title')}
         subtitle={t('pages:identityProvider.subtitle')}
+        subtitleClassName="max-w-none whitespace-nowrap"
         action={
           <Button onClick={() => navigate(IDP_NEW_ROUTE)}>
             {t('pages:identityProvider.addIdp', 'Add Identity Provider')}
@@ -557,13 +583,26 @@ export function IdentityProviderPage() {
 
       {!loading && !error && (
         <>
-          {localIdp && <LocalFallbackCard idp={localIdp} />}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'calc(var(--g-space-1) + var(--g-space-0-5))' }}>
+            {localIdp && <LocalFallbackCard idp={localIdp} />}
+            {externalIdps.map((idp) => (
+              <IdentityProviderCard key={idp.id} idp={idp} onDelete={setDeleteTarget} />
+            ))}
+          </div>
           {externalIdps.length === 0 && <EmptyState />}
-          {externalIdps.map((idp) => (
-            <IdentityProviderCard key={idp.id} idp={idp} />
-          ))}
         </>
       )}
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title={t('pages:identityProvider.confirmDeleteIdpTitle', 'Delete Identity Provider')}
+        description={t('pages:identityProvider.confirmDeleteIdpBody', 'Users linked to this IdP will lose access on their next request. SCIM tokens scoped to this IdP will be revoked. This action cannot be undone.')}
+        confirmLabel={t('common:delete', 'Delete')}
+        variant="danger"
+        onConfirm={() => void doDelete(undefined)}
+        loading={deleting}
+      />
     </div>
   );
 }

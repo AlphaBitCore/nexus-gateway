@@ -1,8 +1,102 @@
+.sectionHeader {
+  margin-bottom: calc(12px - var(--g-space-4));
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 24px;
+}
+
+.sectionSubtitle {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+  align-items: start;
+}
+
+.formGrid > * {
+  min-width: 0;
+}
+
+.formGrid :global(input) {
+  width: 100%;
+  height: 36px;
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg);
+}
+
 .nativeSelect {
+  width: 100%;
+  height: 36px;
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: var(--g-radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--color-bg);
   color: var(--color-text);
   font-size: 0.875rem;
+}
+
+.switchGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--g-space-4);
+}
+
+.switchField {
+  min-width: 0;
+}
+
+.switchTitle {
+  margin-bottom: var(--g-space-2);
+  color: var(--color-text);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-normal);
+  line-height: 18px;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-2);
+}
+
+.switchHelp {
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-xs);
+  line-height: 18px;
+}
+
+.saveButton,
+.saveButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+@media (max-width: 1100px) {
+  .formGrid,
+  .switchGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .sectionSubtitle {
+    white-space: normal;
+  }
+
+  .formGrid,
+  .switchGrid {
+    grid-template-columns: 1fr;
+  }
 }

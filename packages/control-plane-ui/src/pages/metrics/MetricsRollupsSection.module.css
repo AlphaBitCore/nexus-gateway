@@ -77,9 +77,9 @@
 }
 
 .sectionHeading {
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   font-family: var(--g-font-display);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   letter-spacing: 0;
   margin: 0;
@@ -131,9 +131,9 @@
 
 .chartPanelTitle {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   font-family: var(--g-font-display);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
   letter-spacing: 0;
   line-height: 24px;
@@ -148,7 +148,7 @@
 
 .chartPanelEmpty {
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   flex: 1;
   display: flex;
   align-items: center;
@@ -174,22 +174,22 @@
 
 .statLabel {
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   letter-spacing: 0;
   margin-bottom: 4px;
 }
 
 .statValue {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: var(--g-font-size-2xl);
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text);
   line-height: 1.2;
   letter-spacing: 0;
 }
 
 .statSubtitle {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
   margin-top: 4px;
   line-height: 1.5;

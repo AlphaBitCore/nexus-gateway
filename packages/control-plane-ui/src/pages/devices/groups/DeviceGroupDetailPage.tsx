@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
@@ -9,7 +9,6 @@ import {
   type DeviceGroupDetail,
 } from '@/api/services';
 import {
-  PageHeader,
   DataTable,
   AlertDialog,
   Dialog,
@@ -17,12 +16,14 @@ import {
   ErrorBanner,
   Button,
   Stack,
-  Card,
   SearchableCombobox,
+  RowActions,
+  RowDeleteAction,
   type DataTableColumn,
 } from '@/components/ui';
 import { DeviceGroupForm } from './DeviceGroupForm';
 import { SmartMembershipCard, GroupBulkActionsCard } from './GroupAdvancedSections';
+import styles from './DeviceGroupDetailPage.module.css';
 
 export function DeviceGroupDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -120,77 +121,69 @@ export function DeviceGroupDetailPage() {
     },
     {
       key: 'actions',
-      label: '',
+      label: t('common:actions', 'Actions'),
       render: (m) => canUpdate ? (
-        <Button variant="danger" onClick={() => setRemovingMember({ deviceId: m.device.id, hostname: m.device.hostname })}>
-          {t('common:remove')}
-        </Button>
+        <RowActions>
+          <RowDeleteAction
+            label={t('common:remove')}
+            onAction={() => setRemovingMember({ deviceId: m.device.id, hostname: m.device.hostname })}
+          />
+        </RowActions>
       ) : null,
     },
   ];
 
   return (
     <Stack gap="lg">
-      <PageHeader
-        title={data.name}
-        subtitle={data.description ?? undefined}
-        action={
-          <Stack direction="horizontal" gap="sm">
-            <Button variant="ghost" onClick={() => navigate('/devices/groups')}>
-              {t('common:back')}
-            </Button>
-            {canUpdate && (
-              <Button variant="primary" onClick={() => setEditBasicsOpen(true)}>
-                {t('pages:deviceGroups.editBasics')}
-              </Button>
-            )}
-            {canDelete && (
-              <Button
-                variant="danger"
-                disabled={deleteGroupLoading}
-                onClick={() => setDeleteGroupOpen(true)}
-              >
-                {t('pages:deviceGroups.deleteGroup')}
-              </Button>
-            )}
-          </Stack>
-        }
-      />
-
-      <Card>
-        <Stack gap="md">
-          <div style={{ fontSize: 'var(--g-font-size-base)', fontWeight: 'var(--g-font-weight-semibold)' }}>
-            {t('pages:deviceGroups.summarySection')}
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/devices/groups" className={styles.backLink} aria-label={t('common:back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{data.name}</h1>
+            {data.description ? <p className={styles.detailSubtitle}>{data.description}</p> : null}
           </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-              gap: 'var(--g-space-4)',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                {t('pages:deviceGroups.created')}
+          <div className={styles.headerAside}>
+            <Stack direction="horizontal" gap="sm" justify="end">
+              {canUpdate && (
+                <Button variant="primary" onClick={() => setEditBasicsOpen(true)}>
+                  {t('pages:deviceGroups.editBasics')}
+                </Button>
+              )}
+              {canDelete && (
+                <Button
+                  variant="danger"
+                  disabled={deleteGroupLoading}
+                  onClick={() => setDeleteGroupOpen(true)}
+                >
+                  {t('pages:deviceGroups.deleteGroup')}
+                </Button>
+              )}
+            </Stack>
+            <div className={styles.headerMeta}>
+              <div className={styles.headerMetaItem}>
+                <span>{t('pages:deviceGroups.created')}</span>
+                <strong>{new Date(data.createdAt).toLocaleString()}</strong>
               </div>
-              <div style={{ fontSize: 'var(--g-font-size-base)' }}>{new Date(data.createdAt).toLocaleString()}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-secondary)' }}>
-                {t('pages:deviceGroups.updated')}
+              <div className={styles.headerMetaItem}>
+                <span>{t('pages:deviceGroups.updated')}</span>
+                <strong>{new Date(data.updatedAt).toLocaleString()}</strong>
               </div>
-              <div style={{ fontSize: 'var(--g-font-size-base)' }}>{new Date(data.updatedAt).toLocaleString()}</div>
             </div>
           </div>
-        </Stack>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
+      <section className={styles.membersSection}>
         <Stack gap="md">
           <Stack direction="horizontal" gap="md">
-            <h3 style={{ flex: 1, margin: 'var(--g-space-0)' }}>{t('pages:deviceGroups.membersSection')}</h3>
+            <h3 className={styles.membersTitle}>{t('pages:deviceGroups.membersSection')}</h3>
             {canUpdate && (
-              <Button onClick={() => setShowAddMember(!showAddMember)}>
+              <Button className={styles.addDeviceButton} onClick={() => setShowAddMember(!showAddMember)}>
                 {showAddMember ? t('common:cancel') : t('pages:deviceGroups.addMember')}
               </Button>
             )}
@@ -218,7 +211,7 @@ export function DeviceGroupDetailPage() {
           )}
           <DataTable columns={memberColumns} data={data.memberships} hideSearch />
         </Stack>
-      </Card>
+      </section>
 
       {/* Advanced sections — smart membership / group config / bulk actions */}
       <SmartMembershipCard

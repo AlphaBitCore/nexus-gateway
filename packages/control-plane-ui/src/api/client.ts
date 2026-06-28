@@ -26,8 +26,14 @@
  *     drop-in replacement.
  */
 
-import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '../auth/tokens/tokenStore';
-import { OAUTH_CLIENT_ID } from '../auth/pkce/pkceFlow';
+import { getAccessToken } from '../auth/tokens/tokenStore';
+import { withPrefix } from '../lib/deploymentPrefix';
+import { refreshAccessToken, scheduleProactiveRefresh } from './client_refresh';
+
+// Re-export the proactive-refresh scheduler so existing callers that import it
+// from `./client` keep resolving unchanged after the refresh subsystem moved to
+// `./client_refresh`.
+export { scheduleProactiveRefresh };
 
 /** IAM / RBAC denial payload from gateway 403 responses (when present). */
 export interface ApiForbiddenDetails {
@@ -58,117 +64,6 @@ function buildHeaders(hasBody: boolean): Record<string, string> {
   return headers;
 }
 
-/** Shape of a successful POST /oauth/token response. */
-interface TokenResponseBody {
-  access_token: string;
-  refresh_token?: string;
-  token_type: string;
-  expires_in?: number;
-}
-
-/** Serialize concurrent refreshes. Null when no refresh is currently in flight. */
-let refreshInFlight: Promise<boolean> | null = null;
-
-/**
- * Rotate the refresh token exactly once (serialized across concurrent callers).
- *
- * Returns `true` on success (new access + refresh tokens stored), `false` on
- * any failure. On failure, also clears both tokens so subsequent API calls
- * short-circuit without hitting the wire again.
- */
-async function refreshAccessToken(): Promise<boolean> {
-  if (refreshInFlight) return refreshInFlight;
-
-  // Resolve the no-refresh-token case BEFORE assigning `refreshInFlight`.
-  // That path returns synchronously (no `await`), so if it ran inside the
-  // IIFE below its `finally { refreshInFlight = null }` would execute *before*
-  // the outer `refreshInFlight = (…)()` assignment completed — the assignment
-  // would then re-latch the resolved-false promise and it would never be
-  // nulled. The result: a single no-refresh-token 401 permanently disables
-  // refresh for the page's lifetime, so even after the user re-authenticates
-  // every later 401 short-circuits at the guard above. Keeping the check out
-  // here means the slot is never latched on the synchronous failure path.
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) {
-    clearTokens();
-    return false;
-  }
-
-  refreshInFlight = (async (): Promise<boolean> => {
-    try {
-      const body = new URLSearchParams();
-      body.set('grant_type', 'refresh_token');
-      body.set('refresh_token', refreshToken);
-      body.set('client_id', OAUTH_CLIENT_ID);
-      const res = await fetch(new URL('/oauth/token', window.location.origin).toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-      });
-      if (!res.ok) {
-        clearTokens();
-        return false;
-      }
-      const json = (await res.json()) as TokenResponseBody;
-      if (!json.access_token || !json.refresh_token) {
-        clearTokens();
-        return false;
-      }
-      setTokens({ accessToken: json.access_token, refreshToken: json.refresh_token });
-      return true;
-    } catch {
-      clearTokens();
-      return false;
-    } finally {
-      // Release the serialization slot for subsequent 401s. The `await fetch`
-      // above guarantees this runs after the assignment below, not before it.
-      refreshInFlight = null;
-    }
-  })();
-  return refreshInFlight;
-}
-
-/** Decode the `exp` claim (Unix seconds) from a JWT without verifying the signature. */
-function getTokenExp(token: string): number | null {
-  try {
-    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const payload = JSON.parse(atob(part)) as Record<string, unknown>;
-    return typeof payload.exp === 'number' ? payload.exp : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Proactively refresh the access token 60 s before it expires.
- * Self-reschedules after each successful rotation. Returns a cleanup
- * function that cancels the pending timer (call it on logout / unmount).
- */
-export function scheduleProactiveRefresh(): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  function schedule(): void {
-    const token = getAccessToken();
-    if (!token) return;
-    const exp = getTokenExp(token);
-    if (!exp) return;
-    const msUntilRefresh = exp * 1000 - Date.now() - 600_000;
-    const runRefresh = () => {
-      refreshAccessToken().then((ok) => {
-        if (ok) schedule();
-      });
-    };
-    if (msUntilRefresh <= 0) {
-      runRefresh();
-      return;
-    }
-    timer = setTimeout(runRefresh, msUntilRefresh);
-  }
-
-  schedule();
-  return () => clearTimeout(timer);
-}
-
 /**
  * Bearer-authenticated `fetch` for callers that need the raw `Response` —
  * SSE streams, blob downloads, and best-effort fire-and-forget POSTs (the
@@ -183,9 +78,13 @@ export async function authorizedFetch(
   input: string,
   init: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> } = {},
 ): Promise<Response> {
+  // Prepend the deployment sub-path prefix so requests resolve correctly when
+  // Nexus is served behind a reverse proxy at e.g. /nexus/ (same contract as
+  // `request` above). Root-relative paths only; absolute URLs pass through.
+  const url = /^https?:\/\//.test(input) ? input : withPrefix(input);
   const run = (): Promise<Response> => {
     const token = getAccessToken();
-    return fetch(input, {
+    return fetch(url, {
       ...init,
       headers: { ...init.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
@@ -196,8 +95,8 @@ export async function authorizedFetch(
     const refreshed = await refreshAccessToken();
     if (refreshed) {
       res = await run();
-    } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-      window.location.assign('/login');
+    } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith(withPrefix('/login'))) {
+      window.location.assign(withPrefix('/login'));
     }
   }
   return res;
@@ -246,7 +145,7 @@ async function request<T>(
   body?: unknown,
   params?: Record<string, string>,
 ): Promise<T> {
-  const url = new URL(path, window.location.origin);
+  const url = new URL(withPrefix(path), window.location.origin);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== '') url.searchParams.set(k, v);
@@ -271,11 +170,11 @@ async function request<T>(
     const refreshed = await refreshAccessToken();
     if (refreshed) {
       res = await run();
-    } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith(withPrefix('/login'))) {
       // Refresh failed — kick the user to the login page so the next click
       // starts a fresh PKCE flow. We still throw below so any in-flight
       // render can unmount cleanly.
-      window.location.assign('/login');
+      window.location.assign(withPrefix('/login'));
     }
   }
 
@@ -321,7 +220,7 @@ async function getBlob(
   path: string,
   params?: Record<string, string>,
 ): Promise<{ blob: Blob; filename: string | null }> {
-  const url = new URL(path, window.location.origin);
+  const url = new URL(withPrefix(path), window.location.origin);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== '') url.searchParams.set(k, v);
@@ -336,8 +235,8 @@ async function getBlob(
     const refreshed = await refreshAccessToken();
     if (refreshed) {
       res = await run();
-    } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-      window.location.assign('/login');
+    } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith(withPrefix('/login'))) {
+      window.location.assign(withPrefix('/login'));
     }
   }
   if (!res.ok) {

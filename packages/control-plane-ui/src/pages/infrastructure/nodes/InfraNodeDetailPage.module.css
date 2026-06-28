@@ -1,27 +1,92 @@
 /* ── InfraNodeDetailPage ─────────────────────────────────────────── */
 
-/* ── Header ──────────────────────────────────────────────────────── */
+/* ── Detail header ───────────────────────────────────────────────── */
 
-.headerRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
 }
 
-.headerName {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--color-text);
-  margin: 0;
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.detailTitle {
+  margin: var(--g-space-0);
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
+}
+
+.headerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 /* ── Section titles ──────────────────────────────────────────────── */
 
+.overviewSections {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .sectionTitle {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 var(--g-space-3);
+  font-size: 1rem;
+  font-weight: var(--g-font-weight-semibold);
+  margin: 0;
 }
 
 /* ── Info grid (two-column dl) ───────────────────────────────────── */
@@ -44,7 +109,7 @@
 .infoLabel {
   flex: 0 0 160px;
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -95,7 +160,7 @@
   text-align: left;
   border-bottom: 1px solid var(--color-border);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;

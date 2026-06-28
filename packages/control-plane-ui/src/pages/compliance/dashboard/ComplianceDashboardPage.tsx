@@ -6,16 +6,16 @@ import { complianceApi } from '../../../api/services/compliance/compliance';
 import { useToast } from '../../../context/ToastContext';
 import type { TrinityLayerStats } from '../../../api/services/compliance/compliance';
 import {
-  PageHeader, LoadingSpinner, ErrorBanner, Card, Stack, Button, Select, Input, AnimatedNumber,
+  PageHeader, LoadingSpinner, ErrorBanner, Card, Stack, Button, Input, AnimatedNumber,
 } from '@/components/ui';
 import styles from './ComplianceDashboardPage.module.css';
 
-type RangePreset = '24h' | '7d' | '30d' | 'custom';
+type RangePreset = '1h' | '24h' | '7d' | 'custom';
 
 const PRESET_KEYS: Array<{ value: string; labelKey: string; fallback: string }> = [
-  { value: '24h', labelKey: 'pages:proxy.compliance.presetLast24h', fallback: 'Last 24 hours' },
-  { value: '7d', labelKey: 'pages:proxy.compliance.presetLast7d', fallback: 'Last 7 days' },
-  { value: '30d', labelKey: 'pages:proxy.compliance.presetLast30d', fallback: 'Last 30 days' },
+  { value: '1h', labelKey: 'pages:proxy.compliance.presetLast1h', fallback: '1h' },
+  { value: '24h', labelKey: 'pages:proxy.compliance.presetLast24h', fallback: '24h' },
+  { value: '7d', labelKey: 'pages:proxy.compliance.presetLast7d', fallback: '7d' },
   { value: 'custom', labelKey: 'pages:proxy.compliance.presetCustom', fallback: 'Custom' },
 ];
 
@@ -23,9 +23,9 @@ function presetToRange(preset: Exclude<RangePreset, 'custom'>): { start: string;
   const end = new Date();
   const start = new Date(end);
   switch (preset) {
+    case '1h': start.setHours(start.getHours() - 1); break;
     case '24h': start.setHours(start.getHours() - 24); break;
     case '7d': start.setDate(start.getDate() - 7); break;
-    case '30d': start.setDate(start.getDate() - 30); break;
   }
   return { start: start.toISOString(), end: end.toISOString() };
 }
@@ -84,7 +84,7 @@ function TrinityCard({ label, layer, showBump }: TrinityCardProps) {
       <div className={styles.trinityCard}>
         <div className={styles.trinityLayerLabel}>{label}</div>
 
-        <div style={{ display: 'flex', gap: 'var(--g-space-6)', flexWrap: 'wrap' }}>
+        <div className={styles.trinityMetrics}>
           <div className={styles.trinityMetric}>
             <div className={styles.trinityMetricLabel}>{t('pages:proxy.compliance.trinityTotal', 'Events')}</div>
             <div className={styles.trinityMetricValue}><AnimatedNumber value={layer.totalEvents ?? 0} /></div>
@@ -184,8 +184,8 @@ export function ComplianceDashboardPage() {
     [t],
   );
 
-  const initial = useMemo(() => presetToRange('7d'), []);
-  const [preset, setPreset] = useState<RangePreset>('7d');
+  const initial = useMemo(() => presetToRange('24h'), []);
+  const [preset, setPreset] = useState<RangePreset>('24h');
   const [startTime, setStartTime] = useState(initial.start);
   const [endTime, setEndTime] = useState(initial.end);
   const [topTab, setTopTab] = useState<TopBlockedTab>('target');
@@ -204,6 +204,14 @@ export function ComplianceDashboardPage() {
     () => complianceApi.getOverview(startTime, endTime),
     ['admin', 'compliance-overview', startTime, endTime],
   );
+
+  const handleRefreshClick = useCallback(() => {
+    const { start, end } = presetToRange('24h');
+    setPreset('24h');
+    setStartTime(start);
+    setEndTime(end);
+    refetch();
+  }, [refetch]);
 
   const { addToast } = useToast();
   const [exporting, setExporting] = useState(false);
@@ -256,22 +264,39 @@ export function ComplianceDashboardPage() {
           'pages:proxy.compliance.subtitle',
           'Global enforcement health across AI Gateway, Network Proxy, and Agent — Trinity decisions, TLS coverage, and block statistics.',
         )}
+        subtitleClassName={styles.headerSubtitle}
+        action={
+          <Button variant="primary" loading={exporting} onClick={handleExport}>
+            <span className={styles.exportButtonContent}>
+              <svg className={styles.exportIcon} width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <path d="M8 2v7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                <path d="M5.25 6.75 8 9.5l2.75-2.75" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M3 10.5v2.25c0 .69.56 1.25 1.25 1.25h7.5c.69 0 1.25-.56 1.25-1.25V10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+              {t('pages:proxy.compliance.exportCsv', 'Export CSV')}
+            </span>
+          </Button>
+        }
       />
 
-      <Stack gap="md">
+      <Stack gap="lg" className={styles.pageStack}>
         {/* Filter bar */}
-        <Card>
-          <Stack gap="sm">
-            <div className={styles.sectionTitle}>
-              {t('pages:proxy.compliance.filterTitle', 'Time Range')}
-            </div>
-            <div className={styles.filterBar}>
-              <label className={styles.filterField}>
-                {t('pages:proxy.compliance.preset', 'Preset')}
-                <Select value={preset} onValueChange={handlePresetChange} options={presetOptions} />
-              </label>
-              <label className={styles.filterField}>
-                {t('pages:proxy.compliance.startTime', 'Start')}
+        <div className={styles.filterBar}>
+          <div className={styles.presetButtons}>
+            {presetOptions.map((option) => (
+              <Button
+                key={option.value}
+                variant={preset === option.value ? 'primary' : 'secondary'}
+                onClick={() => handlePresetChange(option.value)}
+                className={styles.presetButton}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+          {preset === 'custom' ? (
+            <div className={styles.customRange}>
+              <label className={styles.dateField} aria-label={t('pages:proxy.compliance.startTime', 'Start')}>
                 <Input
                   type="datetime-local"
                   value={toLocalInput(startTime)}
@@ -281,8 +306,7 @@ export function ComplianceDashboardPage() {
                   }}
                 />
               </label>
-              <label className={styles.filterField}>
-                {t('pages:proxy.compliance.endTime', 'End')}
+              <label className={styles.dateField} aria-label={t('pages:proxy.compliance.endTime', 'End')}>
                 <Input
                   type="datetime-local"
                   value={toLocalInput(endTime)}
@@ -292,92 +316,83 @@ export function ComplianceDashboardPage() {
                   }}
                 />
               </label>
-              <Button variant="ghost" onClick={refetch}>
-                {t('common:refresh', 'Refresh')}
-              </Button>
-              <Button variant="primary" loading={exporting} onClick={handleExport}>
-                {t('pages:proxy.compliance.exportCsv', 'Export CSV')}
-              </Button>
             </div>
-            <div style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}>
-              {t(
-                'pages:proxy.compliance.windowHint',
-                'Time window is capped at 366 days. CSV export covers all enforcement layers.',
-              )}
-            </div>
-          </Stack>
-        </Card>
+          ) : null}
+          <Button variant="ghost" onClick={handleRefreshClick} className={styles.refreshButton}>
+            {t('common:refresh', 'Refresh')}
+          </Button>
+        </div>
 
         {error && <ErrorBanner message={error.message} onRetry={refetch} />}
         {loading && !data && <LoadingSpinner />}
 
         {/* KPI row */}
         {kpis && (
-          <div className={styles.kpiRow}>
-            <div className={styles.kpiCard}>
-              <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiRequests', 'Total Requests')}</div>
-              <div className={styles.kpiValue}><AnimatedNumber value={kpis.totalRequests ?? 0} /></div>
-              <div className={styles.kpiSub}>{t('pages:proxy.compliance.kpiRequestsSub', 'All enforcement layers')}</div>
-            </div>
-            <div className={styles.kpiCard}>
-              <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiBlocked', 'Blocked')}</div>
-              <div className={`${styles.kpiValue} ${kpis.totalBlocked > 0 ? styles.kpiValueDanger : ''}`}>
-                <AnimatedNumber value={kpis.totalBlocked ?? 0} />
+          <section className={styles.sectionBlock}>
+            <h2 className={styles.sectionTitle}>{t('pages:proxy.compliance.summaryTitle', 'Summary')}</h2>
+            <div className={styles.kpiRow}>
+              <div className={styles.kpiCard}>
+                <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiRequests', 'Total Requests')}</div>
+                <div className={styles.kpiValue}><AnimatedNumber value={kpis.totalRequests ?? 0} /></div>
+                <div className={styles.kpiSub}>{t('pages:proxy.compliance.kpiRequestsSub', 'All enforcement layers')}</div>
               </div>
-              <div className={styles.kpiSub}>{formatRate(kpis.overallBlockRate)} {t('pages:proxy.compliance.kpiBlockRate', 'block rate')}</div>
-            </div>
-            <div className={styles.kpiCard}>
-              <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiTlsCoverage', 'TLS Coverage')}</div>
-              <div className={`${styles.kpiValue} ${kpis.tlsCoveragePercent >= 90 ? styles.kpiValueSuccess : styles.kpiValueWarning}`}>
-                <AnimatedNumber value={kpis.tlsCoveragePercent ?? 0} precision={1} format={(n) => `${n.toFixed(1)}%`} />
+              <div className={styles.kpiCard}>
+                <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiBlocked', 'Blocked')}</div>
+                <div className={`${styles.kpiValue} ${kpis.totalBlocked > 0 ? styles.kpiValueDanger : ''}`}>
+                  <AnimatedNumber value={kpis.totalBlocked ?? 0} />
+                </div>
+                <div className={styles.kpiSub}>{formatRate(kpis.overallBlockRate)} {t('pages:proxy.compliance.kpiBlockRate', 'block rate')}</div>
               </div>
-              <div className={styles.kpiSub}>{t('pages:proxy.compliance.kpiTlsSub', 'Network Proxy + Agent')}</div>
-            </div>
-            <div className={styles.kpiCard}>
-              <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiHookErrors', 'Hook Errors')}</div>
-              <div className={`${styles.kpiValue} ${kpis.hookErrorRate > 0.01 ? styles.kpiValueDanger : ''}`}>
-                <AnimatedNumber value={(kpis.hookErrorRate ?? 0) * 100} precision={1} format={(n) => `${n.toFixed(1)}%`} />
+              <div className={styles.kpiCard}>
+                <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiTlsCoverage', 'TLS Coverage')}</div>
+                <div className={`${styles.kpiValue} ${kpis.tlsCoveragePercent >= 90 ? styles.kpiValueSuccess : styles.kpiValueWarning}`}>
+                  <AnimatedNumber value={kpis.tlsCoveragePercent ?? 0} precision={1} format={(n) => `${n.toFixed(1)}%`} />
+                </div>
+                <div className={styles.kpiSub}>{t('pages:proxy.compliance.kpiTlsSub', 'Network Proxy + Agent')}</div>
               </div>
-              <div className={styles.kpiSub}>{t('pages:proxy.compliance.kpiHookErrorsSub', 'of hook evaluations')}</div>
+              <div className={styles.kpiCard}>
+                <div className={styles.kpiLabel}>{t('pages:proxy.compliance.kpiHookErrors', 'Hook Errors')}</div>
+                <div className={`${styles.kpiValue} ${kpis.hookErrorRate > 0.01 ? styles.kpiValueDanger : ''}`}>
+                  <AnimatedNumber value={(kpis.hookErrorRate ?? 0) * 100} precision={1} format={(n) => `${n.toFixed(1)}%`} />
+                </div>
+                <div className={styles.kpiSub}>{t('pages:proxy.compliance.kpiHookErrorsSub', 'of hook evaluations')}</div>
+              </div>
             </div>
-          </div>
+          </section>
         )}
 
         {/* Enforcement Trinity */}
-        <Card>
-          <Stack gap="sm">
-            <div className={styles.sectionTitle}>
-              {t('pages:proxy.compliance.trinityTitle', 'Enforcement Trinity')}
-            </div>
-            <div style={{ fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)', marginBottom: 'var(--g-space-2)' }}>
+        <section className={styles.sectionBlock}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.sectionTitle}>{t('pages:proxy.compliance.trinityTitle', 'Enforcement Trinity')}</h2>
+            <p className={styles.sectionDesc}>
               {t('pages:proxy.compliance.trinitySubtitle', 'Per-layer compliance activity for the selected time window')}
-            </div>
-            <div className={styles.trinityGrid}>
-              <TrinityCard
-                label={t('pages:proxy.compliance.trinityAIGateway', 'AI Gateway')}
-                layer={trinity?.aiGateway}
-                showBump={false}
-              />
-              <TrinityCard
-                label={t('pages:proxy.compliance.trinityNetworkProxy', 'Network Proxy')}
-                layer={trinity?.complianceProxy}
-                showBump
-              />
-              <TrinityCard
-                label={t('pages:proxy.compliance.trinityAgent', 'Agent')}
-                layer={trinity?.agent}
-                showBump
-              />
-            </div>
-          </Stack>
-        </Card>
+            </p>
+          </div>
+          <div className={styles.trinityGrid}>
+            <TrinityCard
+              label={t('pages:proxy.compliance.trinityAIGateway', 'AI Gateway')}
+              layer={trinity?.aiGateway}
+              showBump={false}
+            />
+            <TrinityCard
+              label={t('pages:proxy.compliance.trinityNetworkProxy', 'Network Proxy')}
+              layer={trinity?.complianceProxy}
+              showBump
+            />
+            <TrinityCard
+              label={t('pages:proxy.compliance.trinityAgent', 'Agent')}
+              layer={trinity?.agent}
+              showBump
+            />
+          </div>
+        </section>
 
         {/* Hook Decision Health */}
-        <Card>
-          <Stack gap="sm">
-            <div className={styles.sectionTitle}>
-              {t('pages:proxy.compliance.hookHealthTitle', 'Hook Decision Health')}
-            </div>
+        <section className={styles.sectionBlock}>
+          <h2 className={styles.sectionTitle}>
+            {t('pages:proxy.compliance.hookHealthTitle', 'Hook Decision Health')}
+          </h2>
             {hookHealth ? (
               <Stack gap="md">
                 <div className={styles.hookStatRow}>
@@ -446,15 +461,15 @@ export function ComplianceDashboardPage() {
             ) : (
               <div className={styles.noData}>—</div>
             )}
-          </Stack>
-        </Card>
+        </section>
 
         {/* Top Blocked */}
-        <Card>
-          <Stack gap="sm">
-            <div className={styles.sectionTitle}>
-              {t('pages:proxy.compliance.topBlockedTitle', 'Top Blocked')}
-            </div>
+        <section className={styles.sectionBlock}>
+          <h2 className={styles.sectionTitle}>
+            {t('pages:proxy.compliance.topBlockedTitle', 'Top Blocked')}
+          </h2>
+          <Card>
+            <Stack gap="sm">
             <div className={styles.topBlockedTabs}>
               {(
                 [
@@ -478,8 +493,9 @@ export function ComplianceDashboardPage() {
               labelHeader={topTableHeader}
               emptyLabel={t('pages:proxy.compliance.emptyNone', 'None')}
             />
-          </Stack>
-        </Card>
+            </Stack>
+          </Card>
+        </section>
       </Stack>
     </>
   );

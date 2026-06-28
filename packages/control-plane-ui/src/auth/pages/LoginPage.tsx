@@ -13,6 +13,7 @@ import {
   type AuthserverErrorCode,
   type IdpEntry,
 } from '@/api/services';
+import { withPrefix } from '@/lib/deploymentPrefix';
 import { useTheme } from '@/theme/useTheme';
 import { useAuth } from '../context/AuthContext';
 import { getAccessToken } from '../tokens/tokenStore';
@@ -54,11 +55,18 @@ export function LoginPage() {
     return '/';
   }, [location.state]);
 
+  // witchIDP=<idp_id|true> — when present, silently start SSO via the named
+  // (or first available) external IdP without user interaction. Intent is
+  // persisted in sessionStorage so it survives the /oauth/authorize round-trip
+  // that mints a fresh authctx (the param is not in the URL on return).
+  const witchIdp = searchParams.get('witchIDP') ?? '';
+
   const [mounted, setMounted] = useState(false);
   const [providers, setProviders] = useState<IdpEntry[]>([]);
   const [loadErrorKey, setLoadErrorKey] = useState<string | null>(null);
   const [providersLoading, setProvidersLoading] = useState(true);
   const [authctxRecoveryTriggered, setAuthctxRecoveryTriggered] = useState(false);
+  const [switchIdpTriggered, setSwitchIdpTriggered] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -130,8 +138,32 @@ export function LoginPage() {
   useEffect(() => {
     if (status === 'loading' || status === 'authenticated') return;
     if (authctx) return;
+    // Persist witchIDP intent before the /oauth/authorize round-trip strips it
+    // from the URL. The returning /login?authctx=xxx will no longer carry the
+    // param; sessionStorage bridges the gap.
+    if (witchIdp) sessionStorage.setItem('_nexus_switch_idp', witchIdp);
     void login(postAuthPath);
-  }, [authctx, login, postAuthPath, status]);
+  }, [authctx, login, postAuthPath, status, witchIdp]);
+
+  // Auto-start SSO once authctx is live and providers are loaded.
+  // Reads the witchIDP intent from sessionStorage (set above before the
+  // /oauth/authorize redirect). If the stored value matches a known IdP id we
+  // use that provider; otherwise we fall back to the first external provider.
+  // The intent is cleared immediately so a manual page-refresh doesn't re-fire.
+  useEffect(() => {
+    if (!authctx || providersLoading || loadErrorKey) return;
+    if (externalProviders.length === 0) return;
+    if (switchIdpTriggered) return;
+    const intent = sessionStorage.getItem('_nexus_switch_idp');
+    if (!intent) return;
+    sessionStorage.removeItem('_nexus_switch_idp');
+    setSwitchIdpTriggered(true);
+    const target = externalProviders.find((p) => p.id === intent) ?? externalProviders[0];
+    if (!target) return;
+    const url = new URL(withPrefix(`/authserver/idp/${encodeURIComponent(target.id)}/start`), window.location.origin);
+    url.searchParams.set('authctx', authctx);
+    window.location.assign(url.toString());
+  }, [authctx, providersLoading, loadErrorKey, externalProviders, switchIdpTriggered]);
 
   useEffect(() => {
     if (!authctx) return;
@@ -158,7 +190,7 @@ export function LoginPage() {
   }, [authctxRecoveryTriggered, loadErrorKey, login, postAuthPath, status]);
 
   const handleExternal = (provider: IdpEntry) => {
-    const url = new URL(`/authserver/idp/${encodeURIComponent(provider.id)}/start`, window.location.origin);
+    const url = new URL(withPrefix(`/authserver/idp/${encodeURIComponent(provider.id)}/start`), window.location.origin);
     url.searchParams.set('authctx', authctx);
     window.location.assign(url.toString());
   };
@@ -185,7 +217,7 @@ export function LoginPage() {
     }
   };
 
-  const isRedirecting = !authctx || loadErrorKey === 'loginErrors.authctxExpired' || authctxRecoveryTriggered;
+  const isRedirecting = !authctx || loadErrorKey === 'loginErrors.authctxExpired' || authctxRecoveryTriggered || switchIdpTriggered;
   const isLoading = isRedirecting || (!loadErrorKey && providersLoading);
   const hasBothSides = Boolean(localProvider) && externalProviders.length > 0;
 

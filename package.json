@@ -9,7 +9,7 @@
     "tools/db-migrate"
   ],
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
+    "prepare": "node scripts/setup-git-hooks.mjs",
     "db:push": "cd tools/db-migrate && npm run db:push",
     "dev:control-plane-ui": "npm run dev --workspace=packages/control-plane-ui",
     "dev": "npm run dev:control-plane-ui",
@@ -44,6 +44,8 @@
     "check:jobs-catalogue": "bash scripts/check-jobs-catalogue.sh",
     "check:no-prod-todos": "node scripts/check-no-prod-todos.mjs",
     "check:no-prod-todos:strict": "node scripts/check-no-prod-todos.mjs --strict",
+    "check:comment-program-refs": "node scripts/check-comment-program-refs.mjs",
+    "check:comment-program-refs:strict": "node scripts/check-comment-program-refs.mjs --strict",
     "check:no-yaml-secrets": "node scripts/check-no-yaml-secrets.mjs",
     "check:no-yaml-secrets:strict": "node scripts/check-no-yaml-secrets.mjs --strict",
     "check:dev-asset-urls": "node scripts/check-no-dev-asset-urls.mjs",
@@ -54,7 +56,7 @@
     "check:coverage:ui": "bash scripts/check-ui-coverage.sh",
     "check:file-size": "bash scripts/check-file-size-ratchet.sh",
     "check:file-size:staged": "bash scripts/check-file-size-ratchet.sh --staged",
-    "check:all": "npm-run-all -p check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:arch-doc-triggers check:e2e-matrix check:iam-routes check:doc-lockstep check:openapi-semantics check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:no-yaml-secrets check:dev-asset-urls check:coverage check:coverage:core check:coverage:ui check:file-size || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
+    "check:all": "npm-run-all -p check:i18n check:design-tokens check:theme-completeness check:brand-strings check:effect-tokens check:tz check:terminology check:json-dupkeys check:arch-doc-triggers check:e2e-matrix check:iam-routes check:doc-lockstep check:openapi-semantics check:migration-timestamps check:useapi-querykey check:no-redis-pubsub check:ui-shared-boundary check:sidebar-icon-mapping check:workspace-replace check:jobs-catalogue check:no-prod-todos check:comment-program-refs check:no-yaml-secrets check:dev-asset-urls check:coverage check:coverage:core check:coverage:ui check:file-size || node -e \"console.log('Some checks failed; install npm-run-all or run individually')\""
   },
   "engines": {
     "node": ">=20.0.0"

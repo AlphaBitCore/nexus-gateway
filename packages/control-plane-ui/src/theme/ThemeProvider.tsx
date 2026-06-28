@@ -105,6 +105,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 }
 
 // Re-export the context so legacy local imports of `useTheme` keep working
-// during the rename sweep (S1.5). Once that sweep lands, useTheme.ts becomes
+// during the rename sweep. Once that sweep lands, useTheme.ts becomes
 // a pure re-export from @nexus-gateway/ui-shared.
 export { ThemeContext };

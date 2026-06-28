@@ -4,8 +4,8 @@ import type { Credential } from '@/api/types';
 import styles from './ReliabilityCell.module.css';
 
 // ReliabilityCell renders a single compact badge summarising a credential's
-// circuit + health state, with a rich hover card. One cell, one badge, one
-// click to drill down to the Reliability tab.
+// circuit + health state, with a rich hover card. Click drills down to the
+// Reliability tab.
 
 type Tone = 'good' | 'warn' | 'bad' | 'idle';
 

@@ -16,3 +16,9 @@
   font-size: 0.8rem;
   word-break: break-all;
 }
+
+.enrollDialog :global(button),
+.enrollDialog :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}

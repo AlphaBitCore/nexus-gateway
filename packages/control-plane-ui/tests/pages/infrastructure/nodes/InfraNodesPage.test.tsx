@@ -101,8 +101,8 @@ describe('InfraNodesPage', () => {
     });
   });
 
-  // (Overrides column tests removed — the column was dropped in commit
-  // f4c59452 / Phase 1 thing-identity refactor; the Has-overrides toggle
+  // (Overrides column tests removed — the column was dropped in the
+  // thing-identity refactor; the Has-overrides toggle
   // and detail-page Overrides view still cover the underlying feature.)
 
   it('Has-overrides toggle sends hasOverrides=true and refetches', async () => {

@@ -1,14 +1,15 @@
 /* ── InfraJobsPage ───────────────────────────────────────────────── */
 
 .filterSelect {
-  height: 36px;
-  padding: 0 var(--g-space-3);
+  height: 38px;
+  padding: 0 36px 0 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-md);
   background: var(--color-surface);
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   font-size: var(--g-font-size-sm);
   font-family: var(--g-font-sans);
+  line-height: 24px;
   cursor: pointer;
 }
 
@@ -18,14 +19,26 @@
 }
 
 .refreshNote {
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
   font-style: italic;
 }
 
+.tableSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.resultMeta {
+  margin-top: 12px;
+  margin-bottom: 8px;
+  font-size: var(--g-font-size-sm);
+  color: var(--color-text-muted);
+}
+
 .errorCount {
   color: var(--color-danger-text);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .nameCell {
@@ -35,7 +48,7 @@
 }
 
 .nameText {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 

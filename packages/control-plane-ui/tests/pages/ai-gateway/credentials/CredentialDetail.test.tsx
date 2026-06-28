@@ -59,7 +59,9 @@ describe('CredentialDetail', () => {
 
   it('the enable/disable toggle flips the enabled flag', async () => {
     wrap();
-    fireEvent.click(screen.getByRole('button', { name: i18n.t('pages:credentials.disable') }));
+    // the toggle button shows the credential's current state ("Enabled") and
+    // clicking it flips the flag to the opposite value
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('common:enabled') }));
     await waitFor(() => expect(mutateCalls.list).toContainEqual({ enabled: false }));
   });
 

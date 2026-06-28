@@ -8,7 +8,7 @@
  */
 
 export { providerApi } from './ai-gateway/providers';
-export type { CreateProviderInput, UpdateProviderInput, ProviderListParams, ProviderConnectivityResult } from './ai-gateway/providers';
+export type { CreateProviderInput, UpdateProviderInput, ProviderListParams, ProviderConnectivityResult, DiscoveredModel, DiscoverModelsResult } from './ai-gateway/providers';
 
 export { routingApi } from './ai-gateway/routing';
 export type {
@@ -37,8 +37,11 @@ export type {
   RulePackPreviewResult,
   RulePackImportResult,
   RulePackInstall,
+  RulePackUpgradeResult,
   RulePackOverride,
   EffectiveRuleSet,
+  PatternPerfResult,
+  PatternPerfFinding,
 } from './compliance/rulepacks';
 
 export { analyticsApi } from './overview/analytics';

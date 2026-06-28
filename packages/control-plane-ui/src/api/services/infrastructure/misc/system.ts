@@ -2,6 +2,7 @@
  * System API service — audit, health, cache, config, settings.
  */
 import { api } from '../../../client';
+import { withPrefix } from '@/lib/deploymentPrefix';
 import type {
   AdminAuditEntry,
   AdminAuditExportResponse,
@@ -346,7 +347,7 @@ export const systemApi = {
     // and any reverse proxy rule on /api/* forward it transparently
     // without a separate config entry. Same handler also serves /ready
     // for k8s probes / load-balancer checks.
-    const res = await fetch(new URL('/api/admin/ready', window.location.origin).toString(), {
+    const res = await fetch(new URL(withPrefix('/api/admin/ready'), window.location.origin).toString(), {
       credentials: 'include',
     });
     const body = (await res.json().catch(() => ({}))) as { status?: string; checks?: Record<string, string> };

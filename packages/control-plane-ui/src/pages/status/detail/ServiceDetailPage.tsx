@@ -61,8 +61,8 @@ export function ServiceDetailPage() {
   // Live process telemetry comes from /ops-metrics/current; the flat
   // sample stream is reshaped per-service by groupOpsSamples() below
   // so this page keeps its current cell layout. Histogram-derived p50/p99
-  // are zero in the new shape — the dedicated per-thing detail page in
-  // T36-T41 layers timeseries fetches on top.
+  // are zero in the new shape — a dedicated per-thing detail page
+  // layers timeseries fetches on top.
   const { data: opsCurrent, loading: metricsLoading } = useApi<OpsMetricSample[]>(
     () => opsMetricsApi.current().catch((): OpsMetricSample[] => []),
     ['admin', 'ops-metrics', 'current', 'service-detail'],
@@ -169,7 +169,7 @@ export function ServiceDetailPage() {
                 <thead>
                   <tr>
                     <th>{activeBreakdown.label}</th>
-                    <th>Count</th>
+                    <th>{t('common:count')}</th>
                     {activeBreakdown.items.some((it) => it.p50Ms != null) && <th>p50</th>}
                     {activeBreakdown.items.some((it) => it.p99Ms != null) && <th>p99</th>}
                   </tr>

@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { iamApi } from '@/api/services';
 import type { IamAddGroupMemberInput, IamAttachPolicyInput, IamGroupUpdateInput } from '@/api/services';
 import { useApi } from '../../../hooks/useApi';
 import { useMutation } from '../../../hooks/useMutation';
 import {
-  PageHeader, DataTable, Skeleton, ErrorBanner, AlertDialog,
-  Breadcrumb, Button, Stack, Card, Badge,
+  DataTable, Skeleton, ErrorBanner, AlertDialog,
+  Button, Stack, Card, Badge,
   Tabs, TabsList, TabsTrigger, TabsContent,
   ListPagination, Input,
+  RowActions, RowActionIconButton, OpenActionIcon, DeleteActionIcon,
 } from '@/components/ui';
 import type { IamGroupDetail as IamGroupDetailType, IamPolicy } from '../../../api/types';
 import { formatDate, formatDateTime } from '@/lib/format';
@@ -129,14 +130,26 @@ export function IamRoleDetail() {
 
   return (
     <Stack gap="lg">
-      <Breadcrumb items={[
-        { label: t('pages:iam.roles'), to: '/iam/roles' },
-        { label: role.name },
-      ]} />
+      <section className={styles.detailHeader}>
+        <div className={styles.detailHeaderRow}>
+          <Link to="/iam/roles" className={styles.detailBackLink} aria-label={t('common:back')}>
+            <svg className={styles.detailBackIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.detailHeaderText}>
+            <h1 className={styles.detailTitle}>{role.name}</h1>
+            <div className={styles.detailMeta}>
+              <Badge variant="outline">{t('pages:iam.members')} · {totalMembers}</Badge>
+              <Badge variant="outline">{t('pages:iam.attachedPolicies')} · {policyAttachments.length}</Badge>
+              {role.description && <Badge variant="default">{role.description}</Badge>}
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <PageHeader title={role.name} subtitle={role.description ?? undefined} />
-
-      <Tabs defaultValue="info">
+      <Tabs defaultValue="info" className={styles.detailTabs}>
         <TabsList>
           <TabsTrigger value="info">{t('pages:iam.information')}</TabsTrigger>
           <TabsTrigger value="members">{t('pages:iam.members')} ({totalMembers})</TabsTrigger>
@@ -145,42 +158,43 @@ export function IamRoleDetail() {
 
         {/* ── Info Tab ─────────────────────────────────────────── */}
         <TabsContent value="info">
+          {!isEditing && (
+            <div className={styles.roleEditButtonRow}>
+              <Button onClick={startEditing}>{t('common:edit')}</Button>
+            </div>
+          )}
           <Card>
             {isEditing ? (
-              <Stack gap="md">
-                <div>
+              <div className={styles.roleInfoEdit}>
+                <div className={styles.roleEditFormGrid}>
+                  <div>
                   <label className={styles.formLabel}>{t('pages:iam.name')}</label>
                   <Input
-                    className={styles.filterSelect}
-                    style={{ width: '100%' }}
+                    className={styles.roleEditInput}
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                   />
-                </div>
-                <div>
+                  </div>
+                  <div className={styles.roleEditDescriptionField}>
                   <label className={styles.formLabel}>{t('pages:iam.description')}</label>
                   <textarea
-                    className={styles.filterSelect}
-                    style={{ width: '100%', minHeight: 80 }}
+                    className={styles.roleEditTextarea}
                     value={editDescription}
                     onChange={(e) => setEditDescription(e.target.value)}
                   />
+                  </div>
                 </div>
-                <Stack direction="horizontal" gap="sm">
+                <div className={styles.roleInfoActions}>
                   <Button onClick={handleSave} disabled={updateLoading || !editName.trim()}>
                     {updateLoading ? t('common:saving') : t('common:save')}
                   </Button>
                   <Button variant="secondary" onClick={() => setIsEditing(false)}>
                     {t('common:cancel')}
                   </Button>
-                </Stack>
-              </Stack>
-            ) : (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--g-space-2)' }}>
-                  <Button variant="secondary" onClick={startEditing}>{t('common:edit')}</Button>
                 </div>
-                <div className={styles.kvGrid}>
+              </div>
+            ) : (
+              <div className={`${styles.kvGrid} ${styles.roleInfoGrid}`}>
                   <div>
                     <div className={styles.kvLabel}>{t('pages:iam.name')}</div>
                     <div className={styles.kvValue}>{role.name}</div>
@@ -212,14 +226,13 @@ export function IamRoleDetail() {
                     </div>
                   )}
                 </div>
-              </>
             )}
           </Card>
         </TabsContent>
 
         {/* ── Members Tab ──────────────────────────────────────── */}
         <TabsContent value="members">
-          <Card>
+          <section className={styles.roleMembersSection}>
             <div className={styles.memberBtnRow}>
               <Button onClick={() => setShowAddMember(!showAddMember)}>
                 {t('pages:iam.addMember')}
@@ -282,11 +295,23 @@ export function IamRoleDetail() {
                 },
                 {
                   key: 'actions',
-                  label: '',
+                  label: t('common:actions', 'Actions'),
                   render: (r) => (
-                    <Button variant="danger" size="sm" onClick={() => setRemovingMember({ id: r.id, principalId: r.principalId })}>
-                      {t('pages:iam.remove')}
-                    </Button>
+                    <RowActions>
+                      <RowActionIconButton
+                        label={t('common:view', 'View')}
+                        onAction={() => navigate(`/iam/users/${r.principalId}`)}
+                      >
+                        <OpenActionIcon />
+                      </RowActionIconButton>
+                      <RowActionIconButton
+                        label={t('pages:iam.remove')}
+                        tone="danger"
+                        onAction={() => setRemovingMember({ id: r.id, principalId: r.principalId })}
+                      >
+                        <DeleteActionIcon />
+                      </RowActionIconButton>
+                    </RowActions>
                   ),
                 },
               ]}
@@ -301,12 +326,12 @@ export function IamRoleDetail() {
               onOffsetChange={setMemberOffset}
               onLimitChange={setMemberLimit}
             />
-          </Card>
+          </section>
         </TabsContent>
 
         {/* ── Policies Tab ─────────────────────────────────────── */}
         <TabsContent value="policies">
-          <Card>
+          <section className={styles.rolePoliciesSection}>
             <div className={styles.memberBtnRow}>
               <Button onClick={() => setShowAttachPolicy(!showAttachPolicy)}>
                 {t('pages:iam.attachPolicy')}
@@ -368,18 +393,30 @@ export function IamRoleDetail() {
                 },
                 {
                   key: 'actions',
-                  label: '',
+                  label: t('common:actions', 'Actions'),
                   render: (r) => (
-                    <Button variant="danger" size="sm" onClick={() => setRemovingPolicy({ id: r.id, name: r.policy?.name ?? r.policyId })}>
-                      {t('pages:iam.detach')}
-                    </Button>
+                    <RowActions>
+                      <RowActionIconButton
+                        label={t('common:view', 'View')}
+                        onAction={() => navigate(`/iam/policies/${r.policyId}`)}
+                      >
+                        <OpenActionIcon />
+                      </RowActionIconButton>
+                      <RowActionIconButton
+                        label={t('pages:iam.detach')}
+                        tone="danger"
+                        onAction={() => setRemovingPolicy({ id: r.id, name: r.policy?.name ?? r.policyId })}
+                      >
+                        <DeleteActionIcon />
+                      </RowActionIconButton>
+                    </RowActions>
                   ),
                 },
               ]}
               data={policyAttachments}
               emptyMessage={t('pages:iam.noPoliciesAttachedToRole')}
             />
-          </Card>
+          </section>
         </TabsContent>
       </Tabs>
 

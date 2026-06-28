@@ -205,38 +205,41 @@ export default function ObservabilityRetention() {
   if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
 
   return (
-    <Stack gap="lg">
+    <Stack gap="lg" className={styles.page}>
       <PageHeader
         title={t('settings.observabilityRetention.title')}
         subtitle={t('settings.observabilityRetention.description')}
+        subtitleClassName={styles.pageSubtitle}
       />
 
-      <Card>
-        <Stack gap="md">
+      <div className={styles.sectionGrid}>
+        <section className={styles.contentSection}>
           <h3 className={styles.sectionTitle}>
             {t('settings.observabilityRetention.runtimeGroup')}
           </h3>
-          <LayerSection keys={RUNTIME_LAYERS} layers={layers} errors={errors} onChange={updateLayer} />
-        </Stack>
-      </Card>
+          <Card>
+            <LayerSection keys={RUNTIME_LAYERS} layers={layers} errors={errors} onChange={updateLayer} />
+          </Card>
+        </section>
 
-      <Card>
-        <Stack gap="md">
+        <section className={styles.contentSection}>
           <h3 className={styles.sectionTitle}>
             {t('settings.observabilityRetention.businessGroup')}
           </h3>
-          <LayerSection keys={BUSINESS_LAYERS} layers={layers} errors={errors} onChange={updateLayer} />
-        </Stack>
-      </Card>
+          <Card>
+            <LayerSection keys={BUSINESS_LAYERS} layers={layers} errors={errors} onChange={updateLayer} />
+          </Card>
+        </section>
 
-      <Card>
-        <Stack gap="md">
+        <section className={styles.contentSection}>
           <h3 className={styles.sectionTitle}>
             {t('settings.observabilityRetention.diagGroup')}
           </h3>
-          <LayerSection keys={DIAG_LAYERS} layers={layers} errors={errors} onChange={updateLayer} />
-        </Stack>
-      </Card>
+          <Card>
+            <LayerSection keys={DIAG_LAYERS} layers={layers} errors={errors} onChange={updateLayer} />
+          </Card>
+        </section>
+      </div>
 
       <div className={styles.actions}>
         <Button

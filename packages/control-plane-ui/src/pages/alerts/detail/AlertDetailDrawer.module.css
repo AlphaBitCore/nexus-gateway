@@ -18,7 +18,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(640px, 100vw);
+  width: min(560px, 100vw);
   background: var(--color-bg);
   box-shadow: -2px 0 8px var(--shadow-sm);
   display: flex;
@@ -87,7 +87,7 @@
 }
 
 .metaLabel {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   min-width: 140px;
   color: var(--color-text-secondary);
   font-size: 0.875rem;
@@ -102,14 +102,14 @@
 .sectionHeading {
   margin: 1rem 0 0 0;
   font-size: 0.9375rem;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
 .detailsBlock {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   padding: 0.75rem;
   font-family: var(--g-font-mono);
   font-size: 0.8125rem;
@@ -136,7 +136,7 @@
 }
 
 .dispatchTable th {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-secondary);
 }
 
@@ -156,4 +156,22 @@
 .errorText {
   color: var(--color-danger);
   font-size: 0.875rem;
+}
+
+.footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--g-space-3);
+  padding: var(--g-space-3) var(--g-space-6);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+  box-shadow: 0 -8px 16px color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+
+.footerButton,
+.footerButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
 }

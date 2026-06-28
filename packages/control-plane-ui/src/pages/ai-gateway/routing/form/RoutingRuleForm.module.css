@@ -15,8 +15,8 @@
 }
 
 .fieldLabel {
-  font-weight: 500;
-  font-size: 13px;
+  font-weight: var(--g-font-weight-medium);
+  font-size: var(--g-font-size-xs);
   color: var(--color-text);
   line-height: 1.5;
 }
@@ -36,7 +36,7 @@
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
@@ -83,13 +83,13 @@
 }
 
 .sectionTitle {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .miniLabel {
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -101,7 +101,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
   font-family: var(--g-font-mono);
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
 }
 
 .threeColGrid {
@@ -176,9 +176,9 @@
   padding: 2px 8px;
   background: var(--color-primary);
   color: var(--color-primary-foreground);
-  border-radius: 12px;
+  border-radius: var(--g-radius-xl);
   font-size: var(--g-font-size-xs);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .tagRemove {
@@ -187,7 +187,7 @@
   color: var(--color-primary-foreground);
   cursor: pointer;
   padding: 0 2px;
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   line-height: 1;
   opacity: 0.8;
 }
@@ -204,7 +204,7 @@
 
 .entryHeaderRow {
   margin-bottom: var(--g-space-1);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
 }

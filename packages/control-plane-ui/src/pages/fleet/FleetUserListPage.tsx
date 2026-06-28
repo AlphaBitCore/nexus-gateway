@@ -43,7 +43,7 @@ export function FleetUserListPage() {
 
   const columns: DataTableColumn<AgentUserSafe>[] = [
     { key: 'displayName', label: t('pages:fleet.displayName') },
-    { key: 'email', label: 'Email', render: (r) => r.email ?? '—' },
+    { key: 'email', label: t('common:email'), render: (r) => r.email ?? '—' },
     { key: 'status', label: t('pages:fleet.status'), render: (r) => (
       <Badge variant={r.status === 'active' ? 'success' : r.status === 'suspended' ? 'warning' : 'default'}>{r.status}</Badge>
     )},

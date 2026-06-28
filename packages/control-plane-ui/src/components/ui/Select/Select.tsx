@@ -32,16 +32,19 @@ export function Select({
         <RadixSelect.Icon className={styles.icon}>&#x25BE;</RadixSelect.Icon>
       </RadixSelect.Trigger>
       <RadixSelect.Portal>
-        <RadixSelect.Content className={styles.content} position="popper" sideOffset={4}>
-          <RadixSelect.Viewport className={styles.viewport}>
+        <RadixSelect.Content className={styles.content} position="popper" sideOffset={4} translate="no">
+          <RadixSelect.Viewport className={styles.viewport} translate="no">
             {options.filter((opt) => opt.value !== '').map((opt) => (
               <RadixSelect.Item
                 key={opt.value}
                 value={opt.value}
                 disabled={opt.disabled}
                 className={styles.item}
+                translate="no"
               >
-                <RadixSelect.ItemText>{opt.label}</RadixSelect.ItemText>
+                <RadixSelect.ItemText translate="no">
+                  <span translate="no">{opt.label}</span>
+                </RadixSelect.ItemText>
                 <RadixSelect.ItemIndicator className={styles.indicator}>
                   &#x2713;
                 </RadixSelect.ItemIndicator>

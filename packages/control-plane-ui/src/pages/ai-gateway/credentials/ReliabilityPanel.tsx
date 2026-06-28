@@ -32,6 +32,16 @@ type OverrideForm = Required<{
   [K in keyof ReliabilityThresholds]: string;
 }>;
 
+const THRESHOLD_FIELDS: { key: keyof OverrideForm; helper: string }[] = [
+  { key: 'authFailThreshold', helper: 'authFailThresholdHelp' },
+  { key: 'rateLimitCooldownSeconds', helper: 'rateLimitCooldownSecondsHelp' },
+  { key: 'healthyThresholdPct', helper: 'healthyThresholdPctHelp' },
+  { key: 'degradedThresholdPct', helper: 'degradedThresholdPctHelp' },
+  { key: 'healthMinSamples', helper: 'healthMinSamplesHelp' },
+  { key: 'healthWindowSeconds', helper: 'healthWindowSecondsHelp' },
+  { key: 'healthSustainedDegradedSeconds', helper: 'healthSustainedDegradedSecondsHelp' },
+];
+
 function emptyForm(): OverrideForm {
   return {
     authFailThreshold: '',
@@ -128,15 +138,15 @@ export function ReliabilityPanel({ credentialId, canEdit, seed }: ReliabilityPan
 
   return (
     <Stack gap="lg">
+      <div className={styles.sectionHeaderRow}>
+        <h2 className={styles.widgetTitle}>{t('pages:credentials.reliabilityCurrent')}</h2>
+        <span className={styles.refreshNote}>{t('pages:credentials.autoRefreshes8s')}</span>
+      </div>
       <Card>
-        <div className={styles.headerRow}>
-          <h2 className={styles.widgetTitle}>{t('pages:credentials.reliabilityCurrent')}</h2>
-          <span className={styles.refreshNote}>{t('pages:credentials.autoRefreshes8s')}</span>
-        </div>
         <ReliabilitySummary c={c} />
 
         {canEdit && (
-          <Stack direction="horizontal" gap="sm" className={styles.actionRow}>
+          <Stack direction="horizontal" gap="sm" className={`${styles.actionRow} ${styles.probeActionRow}`}>
             <Button variant="secondary" size="sm" onClick={() => runProbe(undefined as never)} loading={probing}>
               {t('pages:credentials.testCredential')}
             </Button>
@@ -151,15 +161,15 @@ export function ReliabilityPanel({ credentialId, canEdit, seed }: ReliabilityPan
         {probe && <ProbeResultPanel result={probe} />}
       </Card>
 
+      <div className={styles.sectionHeaderRow}>
+        <h2 className={styles.widgetTitle}>{t('pages:credentials.thresholdOverridesTitle')}</h2>
+        {canEdit && !editing && (
+          <Button onClick={() => setEditing(true)}>
+            {t('common:edit')}
+          </Button>
+        )}
+      </div>
       <Card>
-        <div className={styles.headerRow}>
-          <h2 className={styles.widgetTitle}>{t('pages:credentials.thresholdOverridesTitle')}</h2>
-          {canEdit && !editing && (
-            <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
-              {t('common:edit')}
-            </Button>
-          )}
-        </div>
         <p className={styles.helpText}>{t('pages:credentials.thresholdOverridesHelp')}</p>
 
         {editing ? (
@@ -198,88 +208,98 @@ function ReliabilitySummary({ c }: { c: Credential }) {
   const rate1h = c.healthSuccessRate1h;
   const samples = c.healthSamplesObserved ?? 0;
   return (
-    <dl className={styles.summaryGrid}>
-      <dt>{t('pages:credentials.health')}</dt>
-      <dd>
-        <span className={clsx(styles.statusBadge, toneClass(c))}>
-          {t(`pages:credentials.health_${c.healthStatus ?? 'unknown'}`, { defaultValue: c.healthStatus ?? 'unknown' })}
-        </span>
-        {c.healthTrend && (
-          <span className={styles.trendInline}>
-            {' '}
-            ({t(`pages:credentials.trend_${c.healthTrend}`, { defaultValue: c.healthTrend })})
+    <div className={styles.summaryGrid}>
+      <div className={styles.summaryItem}>
+        <div className={styles.summaryLabel}>{t('pages:credentials.health')}</div>
+        <div className={styles.summaryValue}>
+          <span className={clsx(styles.statusBadge, toneClass(c))}>
+            {t(`pages:credentials.health_${c.healthStatus ?? 'unknown'}`, { defaultValue: c.healthStatus ?? 'unknown' })}
           </span>
-        )}
-      </dd>
+          {c.healthTrend && (
+            <span className={styles.trendInline}>
+              {' '}
+              ({t(`pages:credentials.trend_${c.healthTrend}`, { defaultValue: c.healthTrend })})
+            </span>
+          )}
+        </div>
+      </div>
 
-      <dt>{t('pages:credentials.rate5m')}</dt>
-      <dd>
-        {rate5m != null
-          ? `${(rate5m * 100).toFixed(1)}%`
-          : rate1h != null
-            ? <span className={styles.mutedText}>{t('pages:credentials.rate5mIdle', { defaultValue: 'idle · no traffic in last 5 min' })}</span>
-            : '—'}
-      </dd>
+      <div className={styles.summaryItem}>
+        <div className={styles.summaryLabel}>{t('pages:credentials.rate5m')}</div>
+        <div className={styles.summaryValue}>
+          {rate5m != null
+            ? `${(rate5m * 100).toFixed(1)}%`
+            : rate1h != null
+              ? <span className={styles.mutedText}>{t('pages:credentials.rate5mIdle', { defaultValue: 'idle · no traffic in last 5 min' })}</span>
+              : '—'}
+        </div>
+      </div>
 
-      <dt>{t('pages:credentials.rate1h')}</dt>
-      <dd>{rate1h != null ? `${(rate1h * 100).toFixed(1)}%` : '—'}</dd>
+      <div className={styles.summaryItem}>
+        <div className={styles.summaryLabel}>{t('pages:credentials.rate1h')}</div>
+        <div className={styles.summaryValue}>{rate1h != null ? `${(rate1h * 100).toFixed(1)}%` : '—'}</div>
+      </div>
 
-      <dt>{t('pages:credentials.samples')}</dt>
-      <dd>
-        {samples > 0
-          ? <>{samples}{samples < 5 && <> · {t('pages:credentials.collectingProgress', { observed: samples, target: 5 })}</>}</>
-          : rate1h != null
-            ? <span className={styles.mutedText}>{t('pages:credentials.samplesIdle', { defaultValue: '0 in last 5 min · see 1h rate above' })}</span>
-            : '—'}
-      </dd>
+      <div className={styles.summaryItem}>
+        <div className={styles.summaryLabel}>{t('pages:credentials.samples')}</div>
+        <div className={styles.summaryValue}>
+          {samples > 0
+            ? <>{samples}{samples < 5 && <> · {t('pages:credentials.collectingProgress', { observed: samples, target: 5 })}</>}</>
+            : rate1h != null
+              ? <span className={styles.mutedText}>{t('pages:credentials.samplesIdle', { defaultValue: '0 in last 5 min · see 1h rate above' })}</span>
+              : '—'}
+        </div>
+      </div>
 
       {c.healthDominantError && c.healthDominantError !== 'none' && (
-        <>
-          <dt>{t('pages:credentials.dominantError')}</dt>
-          <dd>{t(`pages:credentials.dominantError_${c.healthDominantError}`, { defaultValue: c.healthDominantError })}</dd>
-        </>
+        <div className={styles.summaryItem}>
+          <div className={styles.summaryLabel}>{t('pages:credentials.dominantError')}</div>
+          <div className={styles.summaryValue}>{t(`pages:credentials.dominantError_${c.healthDominantError}`, { defaultValue: c.healthDominantError })}</div>
+        </div>
       )}
 
-      <dt>{t('pages:credentials.circuit')}</dt>
-      <dd>
-        <span className={clsx(styles.statusBadge, toneClass(c))}>
-          {t(`pages:credentials.circuit_${c.circuitState ?? 'closed'}`, { defaultValue: c.circuitState ?? 'closed' })}
-        </span>
-        {c.circuitReason && (
-          <span className={styles.mutedText}>
-            {' '}· {t(`pages:credentials.circuitReason_${c.circuitReason}`, { defaultValue: c.circuitReason })}
+      <div className={styles.summaryItem}>
+        <div className={styles.summaryLabel}>{t('pages:credentials.circuit')}</div>
+        <div className={styles.summaryValue}>
+          <span className={clsx(styles.statusBadge, toneClass(c))}>
+            {t(`pages:credentials.circuit_${c.circuitState ?? 'closed'}`, { defaultValue: c.circuitState ?? 'closed' })}
           </span>
-        )}
-      </dd>
+          {c.circuitReason && (
+            <span className={styles.mutedText}>
+              {' '}· {t(`pages:credentials.circuitReason_${c.circuitReason}`, { defaultValue: c.circuitReason })}
+            </span>
+          )}
+        </div>
+      </div>
 
       {c.circuitOpenedAt && (
-        <>
-          <dt>{t('pages:credentials.openedAt')}</dt>
-          <dd>{new Date(c.circuitOpenedAt).toLocaleString(i18n.language)}</dd>
-        </>
+        <div className={styles.summaryItem}>
+          <div className={styles.summaryLabel}>{t('pages:credentials.openedAt')}</div>
+          <div className={styles.summaryValue}>{new Date(c.circuitOpenedAt).toLocaleString(i18n.language)}</div>
+        </div>
       )}
 
       {c.circuitNextProbeAt && c.circuitReason === 'rate_limit' && (
-        <>
-          <dt>{t('pages:credentials.nextProbeAt')}</dt>
-          <dd>{new Date(c.circuitNextProbeAt).toLocaleString(i18n.language)}</dd>
-        </>
+        <div className={styles.summaryItem}>
+          <div className={styles.summaryLabel}>{t('pages:credentials.nextProbeAt')}</div>
+          <div className={styles.summaryValue}>{new Date(c.circuitNextProbeAt).toLocaleString(i18n.language)}</div>
+        </div>
       )}
 
       {c.liveCircuit && c.liveCircuit.authFailsCurrent > 0 && (
-        <>
-          <dt>{t('pages:credentials.liveAuthFails')}</dt>
-          <dd>{c.liveCircuit.authFailsCurrent}</dd>
-        </>
+        <div className={styles.summaryItem}>
+          <div className={styles.summaryLabel}>{t('pages:credentials.liveAuthFails')}</div>
+          <div className={styles.summaryValue}>{c.liveCircuit.authFailsCurrent}</div>
+        </div>
       )}
 
       {c.healthCheckedAt && (
-        <>
-          <dt>{t('pages:credentials.checkedAt')}</dt>
-          <dd>{new Date(c.healthCheckedAt).toLocaleString(i18n.language)}</dd>
-        </>
+        <div className={styles.summaryItem}>
+          <div className={styles.summaryLabel}>{t('pages:credentials.checkedAt')}</div>
+          <div className={styles.summaryValue}>{new Date(c.healthCheckedAt).toLocaleString(i18n.language)}</div>
+        </div>
       )}
-    </dl>
+    </div>
   );
 }
 
@@ -313,21 +333,11 @@ function ThresholdEditor({ form, setForm }: { form: OverrideForm; setForm: (f: O
   const update = (key: keyof OverrideForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm({ ...form, [key]: e.target.value });
 
-  const fields: { key: keyof OverrideForm; helper: string }[] = [
-    { key: 'authFailThreshold', helper: 'authFailThresholdHelp' },
-    { key: 'rateLimitCooldownSeconds', helper: 'rateLimitCooldownSecondsHelp' },
-    { key: 'healthyThresholdPct', helper: 'healthyThresholdPctHelp' },
-    { key: 'degradedThresholdPct', helper: 'degradedThresholdPctHelp' },
-    { key: 'healthMinSamples', helper: 'healthMinSamplesHelp' },
-    { key: 'healthWindowSeconds', helper: 'healthWindowSecondsHelp' },
-    { key: 'healthSustainedDegradedSeconds', helper: 'healthSustainedDegradedSecondsHelp' },
-  ];
-
   return (
     <div className={styles.editGrid}>
-      {fields.map((f) => (
+      {THRESHOLD_FIELDS.map((f) => (
         <FormField key={f.key} label={t(`pages:credentials.${f.key}`)} helpText={t(`pages:credentials.${f.helper}`)}>
-          <Input type="number" min="0" value={form[f.key]} onChange={update(f.key)} placeholder={t('pages:credentials.useGlobal')} />
+          <Input type="number" min="0" value={form[f.key]} onChange={update(f.key)} placeholder={t('pages:credentials.useGlobal').replace(/[（）()]/g, '')} />
         </FormField>
       ))}
     </div>
@@ -335,19 +345,20 @@ function ThresholdEditor({ form, setForm }: { form: OverrideForm; setForm: (f: O
 }
 
 function ThresholdDisplay({ overrides, t }: { overrides: ReliabilityThresholds | null; t: ReturnType<typeof useTranslation>['t'] }) {
-  if (!overrides || Object.values(overrides).every((v) => v == null)) {
-    return <p className={styles.mutedText}>{t('pages:credentials.noOverrides')}</p>;
-  }
   return (
-    <dl className={styles.summaryGrid}>
-      {(Object.entries(overrides) as [keyof ReliabilityThresholds, number | undefined][])
-        .filter(([, v]) => typeof v === 'number' && v! > 0)
-        .map(([k, v]) => (
-          <span className={styles.dlRow} key={k}>
-            <dt>{t(`pages:credentials.${k}`)}</dt>
-            <dd>{v}</dd>
-          </span>
-        ))}
-    </dl>
+    <div className={styles.thresholdGrid}>
+      {THRESHOLD_FIELDS.map(({ key }) => {
+        const value = overrides?.[key];
+        const hasOverride = typeof value === 'number' && value > 0;
+        return (
+          <div className={styles.thresholdItem} key={key}>
+            <div className={styles.thresholdLabel}>{t(`pages:credentials.${key}`)}</div>
+            <div className={hasOverride ? styles.thresholdValue : styles.thresholdInherited}>
+              {hasOverride ? value : t('pages:credentials.useGlobal').replace(/[（）()]/g, '')}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }

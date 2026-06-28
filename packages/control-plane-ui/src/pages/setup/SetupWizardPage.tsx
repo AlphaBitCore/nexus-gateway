@@ -42,11 +42,13 @@ export function SetupWizardPage() {
         {t('pages:setup.subtitle', { productName: brand.productName })}
       </p>
 
-      <SetupStepBar
-        currentStep={wizard.currentStep}
-        results={wizard.results}
-        onStepClick={wizard.goToStep}
-      />
+      <Card className={styles.stepBarCard}>
+        <SetupStepBar
+          currentStep={wizard.currentStep}
+          results={wizard.results}
+          onStepClick={wizard.goToStep}
+        />
+      </Card>
 
       <div className={styles.stepPanel} role="tabpanel">
         {currentStepId === 'health_check' && (

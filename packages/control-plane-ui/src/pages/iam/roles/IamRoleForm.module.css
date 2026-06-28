@@ -7,7 +7,7 @@
   align-items: center;
   gap: 6px;
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   margin-bottom: var(--g-space-2);
 }
 
@@ -37,7 +37,7 @@
 .typeBadge {
   display: inline-block;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   border-radius: var(--g-radius-md);
   color: var(--color-primary-foreground);
   margin-left: var(--g-space-1);

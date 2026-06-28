@@ -30,9 +30,9 @@
 }
 
 .message {
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
-  font-weight: 400;
+  font-weight: var(--g-font-weight-normal);
 }
 
 @keyframes spin {

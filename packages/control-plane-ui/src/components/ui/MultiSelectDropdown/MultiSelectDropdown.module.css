@@ -5,8 +5,8 @@
 
 .label {
   display: block;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   margin-bottom: 4px;
 }
@@ -27,6 +27,14 @@
   position: relative;
 }
 
+.trigger:hover:not(:disabled),
+.trigger:focus-visible,
+.trigger[aria-expanded='true'] {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+  outline: none;
+}
+
 .trigger:disabled {
   background: var(--color-muted);
   cursor: not-allowed;
@@ -38,6 +46,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.triggerPlaceholder {
+  color: var(--color-text-placeholder);
 }
 
 .triggerArrow {
@@ -100,7 +112,7 @@
 .groupHeader {
   padding: 6px 8px 2px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;

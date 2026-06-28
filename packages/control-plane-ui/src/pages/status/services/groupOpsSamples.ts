@@ -8,8 +8,8 @@
  * the single source for live process telemetry, but it returns one row per
  * (nodeId, metricName, dimensionKey) sample — the cards still want
  * per-`serviceName` cells. Aggregating in the UI keeps the rewire
- * narrowly scoped to T35; subsequent UI tasks (T36-T41) introduce
- * richer per-node views that consume samples directly.
+ * narrowly scoped; richer per-node views that consume samples
+ * directly can layer on top later.
  *
  * Aggregation policy:
  *   - Counters (`*_total`, `requests_total`, ...) — SUM `value` across
@@ -104,7 +104,7 @@ function buildMetricRecord(state: aggregateState, serviceName: string): Record<s
   m.errorsTotal = num(state.counters.get('errors_total')) || num(state.counters.get('http.errors_total'));
 
   // Histogram p50/p99: not available from /current — keep at 0 so cards render
-  // a stable shape; rich timeseries views land in T36-T41.
+  // a stable shape; rich timeseries views can layer on top later.
   m.requestDurationP50Ms = 0;
   m.requestDurationP99Ms = 0;
   m.tlsHandshakeP50Ms = 0;

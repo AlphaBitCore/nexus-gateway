@@ -1,8 +1,13 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { rulePacksApi, type RulePackInstall } from '@/api/services';
+import {
+  rulePacksApi,
+  type RulePackInstall,
+  type RulePackUpgradeResult,
+} from '@/api/services';
 import { Button, Card, ErrorBanner, Stack, Switch } from '@/components/ui';
+import { useToast } from '@/context/ToastContext';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 
@@ -23,8 +28,10 @@ export interface HookRulePacksPanelProps {
 
 export function HookRulePacksPanel({ hookId }: HookRulePacksPanelProps) {
   const { t } = useTranslation();
+  const { addToast } = useToast();
   const [bindOpen, setBindOpen] = useState(false);
   const [selectedInstall, setSelectedInstall] = useState<RulePackInstall | null>(null);
+  const [upgradingId, setUpgradingId] = useState<string | null>(null);
 
   const { data, loading, error, refetch } = useApi<RulePackInstall[]>(
     () => rulePacksApi.listInstallsForHook(hookId),
@@ -50,6 +57,38 @@ export function HookRulePacksPanel({ hookId }: HookRulePacksPanelProps) {
 
   function onToggle(install: RulePackInstall, next: boolean) {
     patchInstall({ installId: install.id, enabled: next });
+  }
+
+  async function onUpgrade(install: RulePackInstall) {
+    setUpgradingId(install.id);
+    try {
+      const res: RulePackUpgradeResult = await rulePacksApi.upgradeInstall(install.id);
+      if (res.upgraded) {
+        addToast(
+          t('pages:hooks.rulePacks.upgradeSuccess', {
+            defaultValue: 'Upgraded {{name}} from {{from}} to {{to}}',
+            name: res.packName,
+            from: res.fromVersion,
+            to: res.toVersion,
+          }),
+          'success',
+        );
+        refetch();
+      } else {
+        addToast(
+          t('pages:hooks.rulePacks.upgradeNoop', {
+            defaultValue: '{{name}} is already on the latest version ({{to}})',
+            name: res.packName || install.packName,
+            to: res.toVersion || install.pinVersion,
+          }),
+          'info',
+        );
+      }
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setUpgradingId(null);
+    }
   }
 
   function onUninstall(install: RulePackInstall) {
@@ -132,6 +171,15 @@ export function HookRulePacksPanel({ hookId }: HookRulePacksPanelProps) {
                         {selectedInstall?.id === install.id
                           ? t('pages:hooks.rulePacks.hideOverrides', 'Hide overrides')
                           : t('pages:hooks.rulePacks.manageOverrides', 'Manage overrides')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onUpgrade(install)}
+                        loading={upgradingId === install.id}
+                        disabled={upgradingId !== null}
+                      >
+                        {t('pages:hooks.rulePacks.upgradeButton', 'Upgrade to latest')}
                       </Button>
                       <Button
                         variant="ghost"

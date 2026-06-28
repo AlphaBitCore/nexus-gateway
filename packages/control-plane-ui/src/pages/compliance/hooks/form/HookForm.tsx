@@ -234,22 +234,30 @@ export function HookForm({ hook, onClose, onSaved, embedded, onCreateSuccess }: 
 
   const formInner = (
     <Stack gap="md">
-      <FormInput form={form} name="name" label={t('pages:hooks.nameLabel')} required />
+      <div className={styles.basicFieldsGrid}>
+        <FormInput form={form} name="name" label={t('pages:hooks.nameLabel')} required />
+
+        <FormSelect form={form} name="type" label={t('pages:hooks.formTypeLabel')} required helpText={t('pages:hooks.formTypeHelp')} options={HOOK_SELECT_TYPE_OPTIONS} />
+
+        <FormSelect form={form} name="stage" label={t('pages:hooks.formStageLabel')} required helpText={t('pages:hooks.formStageHelp')} options={HOOK_SELECT_STAGE_OPTIONS} />
+      </div>
 
       {hook?.classification && (
         <div className={styles.classificationBox}>
           <div className={styles.classificationTitle}>{t('pages:hooks.classificationTitle')}</div>
-          <div>
-            <strong>{t('pages:hooks.effectiveCategory')}</strong> {hook.classification.categoryLabel} ({hook.classification.category})
-            <span className={styles.categorySourceHint}>
-              {' '}({t('pages:hooks.categorySource', { source: hook.classification.categorySource })})
-            </span>
-          </div>
-          <div>
-            <strong>{t('pages:hooks.phaseThisRow')}</strong> {hook.classification.phaseLabel}
-          </div>
-          <div>
-            <strong>{t('pages:hooks.implementationClassLabel')}</strong> {hook.classification.implementationLabel ?? hook.classification.implementationId ?? HOOK_UI_EMPTY}
+          <div className={styles.classificationGrid}>
+            <div>
+              <strong>{t('pages:hooks.effectiveCategory')}</strong> {hook.classification.categoryLabel} ({hook.classification.category})
+              <span className={styles.categorySourceHint}>
+                {' '}({t('pages:hooks.categorySource', { source: hook.classification.categorySource })})
+              </span>
+            </div>
+            <div>
+              <strong>{t('pages:hooks.phaseThisRow')}</strong> {hook.classification.phaseLabel}
+            </div>
+            <div>
+              <strong>{t('pages:hooks.implementationClassLabel')}</strong> {hook.classification.implementationLabel ?? hook.classification.implementationId ?? HOOK_UI_EMPTY}
+            </div>
           </div>
           {hook.classification.logicalHookType ? (
             <div>
@@ -265,44 +273,47 @@ export function HookForm({ hook, onClose, onSaved, embedded, onCreateSuccess }: 
         </div>
       )}
 
-      <FormSelect form={form} name="type" label={t('pages:hooks.formTypeLabel')} required helpText={t('pages:hooks.formTypeHelp')} options={HOOK_SELECT_TYPE_OPTIONS} />
+      <div className={styles.basicFieldsGrid}>
+        <FormSelect form={form} name="category" label={t('pages:hooks.categoryOverrideLabel')} helpText={t('pages:hooks.categoryOverrideHint')} options={categorySelectOptions} />
 
-      <FormSelect form={form} name="stage" label={t('pages:hooks.formStageLabel')} required helpText={t('pages:hooks.formStageHelp')} options={HOOK_SELECT_STAGE_OPTIONS} />
+        <FormInput form={form} name="priority" label={t('pages:hooks.formPriorityLabel')} helpText={t('pages:hooks.formPriorityHelp')} type="number" />
 
-      <FormSelect form={form} name="category" label={t('pages:hooks.categoryOverrideLabel')} helpText={t('pages:hooks.categoryOverrideHint')} options={categorySelectOptions} />
+        <FormInput form={form} name="timeoutMs" label={t('pages:hooks.formTimeoutLabel')} helpText={t('pages:hooks.formTimeoutHelp')} type="number" />
+      </div>
 
-      <FormInput form={form} name="priority" label={t('pages:hooks.formPriorityLabel')} helpText={t('pages:hooks.formPriorityHelp')} type="number" />
+      <div className={styles.basicFieldsGrid}>
+        <FormSelect form={form} name="failBehavior" label={t('pages:hooks.formFailBehaviorLabel')} helpText={t('pages:hooks.formFailBehaviorHelp')} options={HOOK_SELECT_FAIL_OPTIONS} />
 
-      <FormInput form={form} name="timeoutMs" label={t('pages:hooks.formTimeoutLabel')} helpText={t('pages:hooks.formTimeoutHelp')} type="number" />
+        <div className={styles.switchField}>
+          <Stack direction="horizontal" gap="sm" className={styles.enabledRow}>
+            <label className={styles.enabledLabel}>{t('pages:hooks.formEnabledLabel')}</label>
+            <Tooltip content={t('pages:hooks.formEnabledTooltip')}>
+              <HelpIconButton aria-label={t('pages:hooks.formEnabledLabel')} />
+            </Tooltip>
+          </Stack>
+          <Switch
+            checked={enabled}
+            onCheckedChange={(v) => form.setValue('enabled', v)}
+          />
+        </div>
 
-      <FormSelect form={form} name="failBehavior" label={t('pages:hooks.formFailBehaviorLabel')} helpText={t('pages:hooks.formFailBehaviorHelp')} options={HOOK_SELECT_FAIL_OPTIONS} />
-
-      <Stack direction="horizontal" gap="sm" className={styles.enabledRow}>
-        <label className={styles.enabledLabel}>{t('pages:hooks.formEnabledLabel')}</label>
-        <Tooltip content={t('pages:hooks.formEnabledTooltip')}>
-          <HelpIconButton aria-label={t('pages:hooks.formEnabledLabel')} />
-        </Tooltip>
-        <Switch
-          checked={enabled}
-          onCheckedChange={(v) => form.setValue('enabled', v)}
-        />
-      </Stack>
-
-      <FormField
-        label={t('pages:hooks.applicableIngressLabel')}
-        helpText={t('pages:hooks.applicableIngressHelp')}
-        required
-      >
-        <MultiSelectDropdown
+        <FormField
           label={t('pages:hooks.applicableIngressLabel')}
-          options={applicableIngressOptions}
-          value={applicableIngress}
-          onChange={(next) => {
-            setApplicableIngress((prev) => normalizeApplicableIngress(next, prev));
-          }}
-          emptyLabel={t('pages:hooks.applicableIngressEmpty')}
-        />
-      </FormField>
+          helpText={t('pages:hooks.applicableIngressHelp')}
+          required
+        >
+          <MultiSelectDropdown
+            label={t('pages:hooks.applicableIngressLabel')}
+            options={applicableIngressOptions}
+            value={applicableIngress}
+            className={styles.applicableIngressSelect}
+            onChange={(next) => {
+              setApplicableIngress((prev) => normalizeApplicableIngress(next, prev));
+            }}
+            emptyLabel={t('pages:hooks.applicableIngressEmpty')}
+          />
+        </FormField>
+      </div>
 
       <ConfigSection
         form={form}
@@ -328,9 +339,6 @@ export function HookForm({ hook, onClose, onSaved, embedded, onCreateSuccess }: 
   if (embedded) {
     return (
       <div className={styles.pageWrap}>
-        <div className={styles.sectionTitleNoMargin}>
-          {hook ? t('pages:hooks.editHook') : t('pages:hooks.newHook')}
-        </div>
         {formInner}
         <div className={styles.footerActions}>
           {footerButtons}

@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { AnimatedNumber } from '@/components/ui';
-import { formatTokens } from '@/lib/format';
+import { formatTokens, formatUsd } from '@/lib/format';
 import styles from './DashboardPage.module.css';
 import { WINDOW_OPTIONS, type TimeWindow } from './dashboardShared';
 
@@ -68,7 +68,7 @@ export function HeroSection({
           )}
         </div>
         <div className={styles.heroStat}>
-          <span className={styles.heroStatValue}>${(animCost100x / 100).toFixed(2)}</span>
+          <span className={styles.heroStatValue}>{formatUsd(animCost100x / 100)}</span>
           {renderStatMeta(t('pages:dashboard.totalCostLabel'), t('pages:dashboard.estimated'))}
         </div>
         <div className={styles.heroStat}>

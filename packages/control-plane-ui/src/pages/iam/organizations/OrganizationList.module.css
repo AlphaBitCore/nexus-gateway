@@ -1,5 +1,9 @@
+.filterToolbar {
+  margin-bottom: 0;
+}
+
 .filterSelect {
-  height: 36px;
+  height: 38px;
   min-width: 148px;
   padding: 0 var(--g-space-3);
   border: 1px solid var(--color-border);
@@ -12,17 +16,31 @@
   box-sizing: border-box;
 }
 
+.listCount {
+  margin-bottom: -8px;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-sm);
+}
+
 .tableHeader {
   text-align: left;
   padding: 8px 12px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0;
   color: var(--color-text-muted);
   white-space: nowrap;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg);
+}
+
+.tableHeader:first-child {
+  border-top-left-radius: var(--g-radius-lg);
+}
+
+.tableHeader:last-child {
+  border-top-right-radius: var(--g-radius-lg);
 }
 
 .tableCell {
@@ -58,12 +76,20 @@
 }
 
 .highlightedName {
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .codeCell {
   font-family: var(--g-font-mono);
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
+}
+
+.actionsCell {
+  text-align: left;
+}
+
+.actionsCell :global([class*='iconButtonDanger']) {
+  color: var(--color-danger);
 }
 
 .disabledDelete {
@@ -94,8 +120,8 @@
   color: var(--color-text-inverse);
   padding: var(--g-space-1-5) var(--g-space-3);
   border-radius: var(--g-radius-md);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   max-width: 280px;
   box-shadow: 0 4px 12px var(--shadow-md);
   pointer-events: none;

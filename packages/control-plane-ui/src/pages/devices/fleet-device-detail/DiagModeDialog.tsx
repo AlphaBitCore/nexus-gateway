@@ -21,7 +21,7 @@ export function DiagModeDialog({
 }: DiagModeDialogProps) {
   const { t } = useTranslation();
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={t('pages:fleet.diagMode')}>
+    <Dialog open={open} onOpenChange={onOpenChange} title={t('pages:fleet.diagMode')} className={styles.fleetDialog}>
       <Stack gap="md">
         <p>
           {diagPreset === '30m' && t('pages:fleet.diagModeEnable30m')}

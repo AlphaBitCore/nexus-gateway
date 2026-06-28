@@ -46,13 +46,14 @@ export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
   };
 
   return (
-    <Card>
-      <div className={styles.toolbarEnd}>
+    <div className={styles.modelTabStack}>
+      <div className={styles.toolbarStart}>
         {canCreateModel && (
           <Button onClick={() => setShowModelForm(true)}>{t('pages:providers.addModel')}</Button>
         )}
       </div>
 
+      <Card>
       {models.length === 0 ? (
         <div className={styles.emptyState}>{t('pages:providers.noModels')}</div>
       ) : (
@@ -76,6 +77,11 @@ export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
                       ? t(`pages:providers.modelStatus${(m.status ?? 'active').charAt(0).toUpperCase() + (m.status ?? 'active').slice(1)}`, m.status ?? 'active')
                       : t('common:disabled')}
                   </Badge>
+                  {m.inputPricePerMillion == null && (
+                    <Badge variant="warning">
+                      {t('pages:providers.pricingNotSet')}
+                    </Badge>
+                  )}
                 </Stack>
               </div>
               {m.description && <div className={styles.modelCardDesc}>{m.description}</div>}
@@ -167,6 +173,7 @@ export function ProviderModelsTab({ detail }: ProviderModelsTabProps) {
       )}
 
       <ModelFormDrawer detail={detail} mode={drawerMode} open={drawerOpen} onClose={closeDrawer} />
-    </Card>
+      </Card>
+    </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   Card, Stack, Button, Badge,
 } from '@/components/ui';
 import { deviceGroupsApi, type BulkActionResponse, type BulkActionResult } from '@/api/services';
+import styles from './DeviceGroupDetailPage.module.css';
 
 // Smart Membership
 
@@ -119,10 +120,14 @@ export function SmartMembershipCard({ groupId, currentQuery, canUpdate, onSaved 
         </Stack>
 
         <textarea
+          aria-label={t('pages:deviceGroups.smartPredicateLabel', 'Smart membership predicate')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={EXAMPLE_TAG_OS}
           rows={10}
+          readOnly={!canUpdate}
+          aria-readonly={!canUpdate}
+          tabIndex={canUpdate ? undefined : -1}
           style={{
             fontFamily: 'monospace',
             fontSize: 'var(--g-font-size-sm)',
@@ -131,8 +136,8 @@ export function SmartMembershipCard({ groupId, currentQuery, canUpdate, onSaved 
             borderRadius: 'var(--g-radius-sm)',
             border: '1px solid var(--color-border)',
             background: 'var(--color-bg-subtle)',
+            ...(canUpdate ? {} : { pointerEvents: 'none', cursor: 'default' }),
           }}
-          disabled={!canUpdate}
         />
 
         {canUpdate && (
@@ -252,10 +257,10 @@ export function GroupBulkActionsCard({ groupId, canUpdate }: GroupBulkActionsCar
           </div>
         </div>
         <Stack direction="horizontal" gap="sm">
-          <Button variant="secondary" onClick={() => forceRefresh(undefined)} loading={refreshing}>
+          <Button className={styles.actionButtonText} variant="secondary" onClick={() => forceRefresh(undefined)} loading={refreshing}>
             {t('pages:deviceGroups.bulkForceRefresh', 'Force config refresh')}
           </Button>
-          <Button variant="secondary" onClick={() => rotateCert(undefined)} loading={rotating}>
+          <Button className={styles.actionButtonText} variant="secondary" onClick={() => rotateCert(undefined)} loading={rotating}>
             {t('pages:deviceGroups.bulkRotateCert', 'Rotate certs')}
           </Button>
         </Stack>

@@ -126,10 +126,12 @@ export function IamSimulator() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setResult(null);
     setSimulationError(null);
     try {
       await simulate(undefined as never);
     } catch (err) {
+      setResult(null);
       setSimulationError(err instanceof Error ? err.message : t('pages:iam.simulationFailed'));
     }
   };
@@ -141,6 +143,7 @@ export function IamSimulator() {
       <PageHeader
         title={t('pages:iam.simulator')}
         subtitle={t('pages:iam.simulatorSubtitle')}
+        subtitleClassName={styles.pageSubtitle}
       />
       <div className={styles.grid}>
         {/* Form */}
@@ -260,12 +263,19 @@ export function IamSimulator() {
         </Card>
 
         {/* Result */}
-        <Card aria-label={t('pages:iam.ariaSimulationResult')} aria-live="polite">
+        <Card className={styles.resultCard} aria-label={t('pages:iam.ariaSimulationResult')} aria-live="polite">
           <div className={styles.resultHeader}>
-            <h3 className={styles.resultHeaderTitle}>{t('pages:iam.result')}</h3>
-            <Tooltip content={t('pages:iam.resultTooltip')}>
-              <button type="button" aria-label={t('pages:iam.ariaHelpSimulationResult')} className={styles.helpIconBtn}>&#9432;</button>
-            </Tooltip>
+            <div className={styles.resultHeaderTitleWrap}>
+              <h3 className={styles.resultHeaderTitle}>{t('pages:iam.result')}</h3>
+              <Tooltip content={t('pages:iam.resultTooltip')}>
+                <button type="button" aria-label={t('pages:iam.ariaHelpSimulationResult')} className={styles.helpIconBtn}>&#9432;</button>
+              </Tooltip>
+            </div>
+            {result && (
+              <span className={result.decision === 'Allow' ? styles.decisionAllow : styles.decisionDeny}>
+                {result.decision}
+              </span>
+            )}
           </div>
 
           {simulationError && (
@@ -276,10 +286,6 @@ export function IamSimulator() {
             <div className={styles.emptyResult}>{t('pages:iam.runSimulation')}</div>
           ) : result ? (
             <div className={styles.resultColumn}>
-              <span className={result.decision === 'Allow' ? styles.decisionAllow : styles.decisionDeny}>
-                {result.decision}
-              </span>
-
               <p className={styles.reason}>{result.reason}</p>
 
               {/* Backend returns `null` for matchedStatements when no

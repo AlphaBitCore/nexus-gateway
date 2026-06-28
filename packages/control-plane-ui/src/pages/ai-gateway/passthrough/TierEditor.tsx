@@ -30,20 +30,19 @@ export function TierEditor({
   };
   return (
     <Stack gap="md">
-      <FormField label={t('pages:passthrough.fields.enabled')} helpText={t('pages:passthrough.fields.enabledHint')}>
-        <Switch
-          checked={form.enabled}
-          disabled={disabled}
-          onCheckedChange={v => {
-            const next = { ...form, enabled: v };
-            // First enable in this session: prefill expires + reset reason char counter.
-            if (v && !form.expiresAt) next.expiresAt = defaultExpiresAt();
-            setForm(next);
-          }}
-        />
-      </FormField>
-
       <div className={styles.flagGrid}>
+        <FormField label={t('pages:passthrough.fields.enabled')} helpText={t('pages:passthrough.fields.enabledHint')}>
+          <Switch
+            checked={form.enabled}
+            disabled={disabled}
+            onCheckedChange={v => {
+              const next = { ...form, enabled: v };
+              // First enable in this session: prefill expires + reset reason char counter.
+              if (v && !form.expiresAt) next.expiresAt = defaultExpiresAt();
+              setForm(next);
+            }}
+          />
+        </FormField>
         <FormField label={t('pages:passthrough.fields.bypassHooks')} helpText={t('pages:passthrough.fields.bypassHooksHint')}>
           <Switch checked={form.bypassHooks} disabled={disabled} onCheckedChange={v => setBypass('bypassHooks', v)} />
         </FormField>

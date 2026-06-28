@@ -32,6 +32,7 @@ import {
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE,
 } from '@/components/ui';
 import type { AdminListPageSize, DataTableColumn } from '@/components/ui';
+import styles from './InfraDlqPage.module.css';
 
 function fmtTime(iso: string): string {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
@@ -122,6 +123,10 @@ export default function InfraDlqPage() {
       />
 
       <ListFilterToolbar
+        variant="boxed"
+        className={styles.filterToolbar}
+        searchWidth={420}
+        hideClearButton
         searchPlaceholder={t('infrastructure.dlq.subjectPlaceholder')}
         searchValue={subject}
         onSearchChange={(v) => { setSubject(v); setOffset(0); }}

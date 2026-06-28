@@ -13,7 +13,7 @@ type DraftRow = {
   severityOverride: string;
 };
 
-const SEVERITY_OPTIONS = ['', 'info', 'soft', 'hard'] as const;
+const SEVERITY_OPTIONS = ['', 'hard', 'soft', 'warn'] as const;
 
 function buildBaseline(data: EffectiveRuleSet | null): Record<string, DraftRow> {
   const out: Record<string, DraftRow> = {};

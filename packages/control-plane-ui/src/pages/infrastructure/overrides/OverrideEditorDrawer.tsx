@@ -4,7 +4,7 @@
  * "+ Add override" / "Edit" actions fire.
  *
  * Layout (spec §8.3):
- *   - Right-aligned drawer, ~55vw / max 720px wide. Full-width on ≤900px.
+ *   - Right-aligned drawer, 560px wide with a viewport-width cap.
  *   - Header: title `Override · <configKey> · <thingId>` + close (×).
  *   - Body: two stacked panes — read-only Template default (left/top) and
  *     editable JSON Override (right/bottom). The override pane has actions

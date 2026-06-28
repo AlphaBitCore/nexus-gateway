@@ -8,6 +8,44 @@
   border: 1px solid var(--color-border);
 }
 
+.editorPanel {
+  display: block;
+}
+
+.infoPanel {
+  margin-top: 0;
+  padding: var(--g-space-4);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border-radius: var(--g-radius-md);
+}
+
+.infoContent {
+  min-width: 0;
+}
+
+.infoTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 24px;
+}
+
+.infoDescription {
+  margin: var(--g-space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+}
+
+.infoHint {
+  margin: var(--g-space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+  line-height: 18px;
+}
+
 .subtitle {
   font-size: var(--g-font-size-sm);
   color: var(--color-text-secondary);
@@ -54,8 +92,8 @@
   align-items: center;
   gap: 4px;
   padding: 3px 10px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   border: 1px solid var(--color-border);
   border-radius: var(--g-radius-sm);
   background: transparent;
@@ -98,7 +136,7 @@
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--g-font-size-sm);
   line-height: 1;
   padding: 0;
   margin-left: 2px;
@@ -142,7 +180,7 @@
 }
 
 .kvEquals {
-  font-size: 13px;
+  font-size: var(--g-font-size-xs);
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
@@ -151,7 +189,7 @@
   background: transparent;
   border: none;
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--g-font-size-base);
   color: var(--color-text-muted);
   padding: 0 4px;
   transition: color var(--g-transition-fast);

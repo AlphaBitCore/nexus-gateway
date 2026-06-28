@@ -43,6 +43,18 @@ describe('SmartMembershipCard', () => {
     expect(screen.getByRole('button', { name: i18n.t('pages:deviceGroups.revertStatic', 'Revert to static') })).toBeInTheDocument();
   });
 
+  it('renders the predicate viewer as non-interactive without update permission', () => {
+    render(<I18n><SmartMembershipCard groupId="g1" currentQuery={{ all: [] }} canUpdate={false} onSaved={vi.fn()} /></I18n>);
+    const viewer = screen.getByRole('textbox');
+
+    expect(viewer).toHaveValue(JSON.stringify({ all: [] }, null, 2));
+    expect(viewer).toHaveAttribute('readonly');
+    expect(viewer).toHaveAttribute('aria-readonly', 'true');
+    expect(viewer).toHaveAttribute('tabindex', '-1');
+    expect(viewer).not.toBeDisabled();
+    expect(viewer).toHaveStyle({ pointerEvents: 'none', cursor: 'default' });
+  });
+
   it('preview with valid JSON queries previewMembership + shows the match count', async () => {
     render(<I18n><SmartMembershipCard groupId="g1" currentQuery={null} canUpdate onSaved={vi.fn()} /></I18n>);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '{"all":[]}' } });

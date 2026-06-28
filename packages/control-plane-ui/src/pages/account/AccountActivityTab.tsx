@@ -123,7 +123,8 @@ export function AccountActivityTab() {
         searchValue=""
         onSearchChange={() => {}}
         hideSearch
-        meta={<span className={styles.mutedText}>{t('pages:account.newestFirst')}</span>}
+        variant="boxed"
+        className={styles.activityFilterToolbar}
       >
         <select
           aria-label={t('pages:account.filterByAction')}
@@ -178,6 +179,7 @@ export function AccountActivityTab() {
             {t('pages:account.clearFilters')}
           </Button>
         )}
+        <span className={styles.activitySortMeta}>{t('pages:account.newestFirst')}</span>
       </ListFilterToolbar>
 
       <Card padding="none">

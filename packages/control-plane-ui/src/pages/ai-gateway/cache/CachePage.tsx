@@ -235,7 +235,6 @@ export function CachePage() {
         saveDisabled={saveDisabled}
       />
 
-      {/* Card: Freshness rules */}
       <FreshnessRulesCard />
 
       {/* Card: Recent admin negative-feedback ("Mark as bad cache hit"). */}

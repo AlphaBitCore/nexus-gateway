@@ -106,7 +106,7 @@ export interface ThingStatsCatalogEntry {
   trends: TrendSpec[];
 }
 
-// Note: Hub rollup_5m emits status counts with `_count` suffix
+// Hub rollup_5m emits status counts with `_count` suffix
 // (status_2xx_count / status_4xx_count / status_5xx_count) — see
 // packages/shared/metrics/types.go. Earlier code read the unsuffixed
 // names and silently returned null on every Thing, leaving the Stats
@@ -160,7 +160,7 @@ const SHARED_KPIS: KpiSpec[] = [
     labelKey: 'pages:thingStats.kpi.avgLatency',
     derive: LATENCY_AVG_MS,
   },
-  // Note: bytesIn / bytesOut intentionally live in the agent KPI block,
+  // bytesIn / bytesOut intentionally live in the agent KPI block,
   // not here — only the agent local rollup writes bytes_in_sum /
   // bytes_out_sum (see packages/agent/internal/localrollup). Hub rollup_5m
   // never emits them, so the tiles were dead-on-arrival for ai-gateway
@@ -233,7 +233,7 @@ const SHARED_TREND_LATENCY_SUM: TrendSpec = {
 // not just a traffic surge. Preferred over plotting the raw `_sum` line which
 // conflates request volume with per-request cost.
 //
-// Note: rollups currently carry us / upstream_ttfb / upstream_total but NOT
+// Rollups currently carry us / upstream_ttfb / upstream_total but NOT
 // hooks (the rollup writer doesn't emit latency_hooks_* yet). The hooks trend
 // is wired so it lights up automatically once that producer ships; until then
 // it renders an empty card like any other "data not yet available" trend.

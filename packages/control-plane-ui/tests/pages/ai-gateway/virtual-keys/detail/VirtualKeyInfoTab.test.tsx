@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
 import { VirtualKeyInfoTab, type VirtualKeyInfoTabProps } from '@/pages/ai-gateway/virtual-keys/detail/VirtualKeyInfoTab';
+import { expiryBounds } from '@/pages/ai-gateway/virtual-keys/expiryBounds';
 
 const vk = {
   id: 'vk-1', name: 'prod-key', keyPrefix: 'nx_abc', sourceApp: 'cli',
@@ -122,5 +123,51 @@ describe('VirtualKeyInfoTab — edit mode + GroupedModelSelect', () => {
     fireEvent.click(screen.getByRole('button', { name: i18n.t('common:cancel') }));
     expect(handleSave).toHaveBeenCalled();
     expect(cancelEditing).toHaveBeenCalled();
+  });
+
+  /* ── Expiration: no Never-expires affordance (application VKs) ───────── */
+
+  it('does not render a "Never expires" checkbox in edit mode', () => {
+    wrap(baseProps({ isEditing: true }));
+    expect(screen.queryByText(i18n.t('pages:virtualKeys.neverExpires'))).not.toBeInTheDocument();
+    // Only checkboxes come from the model selector — none for never-expires
+    const checkboxes = screen.queryAllByRole('checkbox');
+    // No never-expires checkbox: the model checkboxes have labels like "GPT-4o"
+    for (const cb of checkboxes) {
+      const label = cb.closest('label');
+      expect(label?.textContent).not.toContain('never');
+      expect(label?.textContent?.toLowerCase()).not.toContain('expires');
+    }
+  });
+
+  /* ── Expiration: max attribute caps at ~3 months ────────────────────── */
+
+  it('sets max on the expiration date input to within 3 months from now', () => {
+    wrap(baseProps({ isEditing: true, editExpiresAt: '2026-09-01' }));
+    // The date input has type="date" and the editExpiresAt value is shown
+    const dateInput = screen.getByDisplayValue('2026-09-01') as HTMLInputElement;
+    const maxAttr = dateInput.max;
+    expect(maxAttr).toBeTruthy();
+    const maxMs = new Date(`${maxAttr}T00:00:00Z`).getTime();
+    const threeMonths = new Date();
+    threeMonths.setMonth(threeMonths.getMonth() + 3);
+    expect(maxMs).toBeLessThan(threeMonths.getTime());
+    expect(maxAttr).toBe(expiryBounds().max);
+  });
+
+  it('sets min on the expiration date input to tomorrow', () => {
+    wrap(baseProps({ isEditing: true, editExpiresAt: '2026-09-01' }));
+    const dateInput = screen.getByDisplayValue('2026-09-01') as HTMLInputElement;
+    expect(dateInput.min).toBe(expiryBounds().min);
+  });
+
+  /* ── Project field: required asterisk ───────────────────────────────── */
+
+  it('renders a required asterisk (*) next to the Project label in edit mode', () => {
+    wrap(baseProps({ isEditing: true }));
+    const projectLabel = screen.getByText(i18n.t('pages:virtualKeys.project'), { selector: 'label' });
+    const asterisk = projectLabel.querySelector('span[aria-hidden="true"]');
+    expect(asterisk).not.toBeNull();
+    expect(asterisk!.textContent).toContain('*');
   });
 });

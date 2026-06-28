@@ -58,13 +58,13 @@
   position: relative;
   z-index: 1;
   font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   padding-left: var(--g-space-1);
 }
 
 .sectionTitle {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
   margin: 0 0 var(--g-space-3) 0;
   color: var(--color-text);
 }

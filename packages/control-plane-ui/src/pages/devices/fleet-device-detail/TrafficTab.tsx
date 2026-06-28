@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import type { AgentAuditEvent } from '@/api/types';
 import type { AdminListPageSize } from '@/components/ui';
-import { Card, Stack, DataTable, ListPagination } from '@/components/ui';
+import { Stack, DataTable, ListPagination } from '@/components/ui';
 import { ThingStatsTab } from '@/pages/infrastructure/_shared/tabs/metrics/ThingStatsTab';
 import { buildTrafficColumns } from './columns';
 import styles from '../FleetDeviceDetailPage.module.css';
@@ -32,24 +32,22 @@ export function TrafficTab({
   return (
     <Stack gap="md">
       {canViewStats && (
-        <Card>
+        <div className={styles.statsSection}>
           <ThingStatsTab thingId={id} thingType="agent" />
-        </Card>
+        </div>
       )}
-      <Card>
-        <Stack gap="sm">
-          <h4 className={styles.sectionTitle}>{t('pages:fleet.trafficEventsTitle')}</h4>
-          <p className={styles.dim}>{t('pages:fleet.trafficEventsSubtitle')}</p>
-          <DataTable columns={trafficColumns} data={allEvents} hideSearch />
-          <ListPagination
-            total={eventsTotal}
-            offset={eventsOffset}
-            limit={eventsLimit}
-            onOffsetChange={onOffsetChange}
-            onLimitChange={onLimitChange}
-          />
-        </Stack>
-      </Card>
+      <Stack gap="sm" className={styles.trafficEventsSection}>
+        <h4 className={styles.sectionTitle}>{t('pages:fleet.trafficEventsTitle')}</h4>
+        <p className={styles.trafficEventsSubtitle}>{t('pages:fleet.trafficEventsSubtitle')}</p>
+        <DataTable columns={trafficColumns} data={allEvents} hideSearch />
+        <ListPagination
+          total={eventsTotal}
+          offset={eventsOffset}
+          limit={eventsLimit}
+          onOffsetChange={onOffsetChange}
+          onLimitChange={onLimitChange}
+        />
+      </Stack>
     </Stack>
   );
 }

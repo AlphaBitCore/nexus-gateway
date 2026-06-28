@@ -13,8 +13,7 @@
  * Terminology note: "Alert" here is the unified runtime model from the
  * unified-alerting effort. It replaces the legacy `QuotaAlert` model
  * (quota-scoped, CP-local) and the `ProxyAlert` model (proxy-scoped,
- * returned from `GET /api/admin/proxy/alerts`). Both predecessors were
- * deleted in the same change set that introduced this service.
+ * returned from `GET /api/admin/proxy/alerts`).
  */
 
 import { api } from '../../client';
@@ -169,7 +168,7 @@ export const alertsApi = {
     if (params?.offset !== undefined) u.set('offset', String(params.offset));
     if (params?.search) u.set('search', params.search);
     if (params?.enabled !== undefined) u.set('enabled', String(params.enabled));
-    if (params?.severity) u.set('severity', params.severity);
+    if (params?.severity) u.set('severity', params.severity.toUpperCase());
     if (params?.sourceType) u.set('sourceType', params.sourceType);
     const qs = u.toString();
     return api.get<{ rules: AlertRule[]; total: number; limit: number; offset: number }>(

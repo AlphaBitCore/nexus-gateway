@@ -14,7 +14,7 @@ export function emptyRuleDraft(): RuleDraft {
   return {
     ruleId: '',
     category: '',
-    severity: '',
+    severity: 'hard',
     pattern: '',
     flags: '',
     description: '',

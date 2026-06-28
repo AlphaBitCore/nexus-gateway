@@ -30,6 +30,9 @@ vi.mock('@/hooks/useApi', () => ({
 vi.mock('@/hooks/useMutation', () => ({
   useMutation: () => ({ mutate: (arg: unknown) => mutateCalls.push(arg), loading: false }),
 }));
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ setQueryData: vi.fn() }),
+}));
 vi.mock('@/hooks/usePermission', () => ({ usePermission: () => true }));
 vi.mock('@/hooks/useSyncFeedback', () => ({ useSyncFeedback: () => vi.fn() }));
 vi.mock('@/hooks/useUnsavedChangesWarning', () => ({ useUnsavedChangesWarning: () => {} }));

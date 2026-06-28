@@ -28,6 +28,10 @@ import {
   Skeleton,
   ErrorBanner,
   AlertDialog,
+  RowActions,
+  RowActionIconButton,
+  RowDeleteAction,
+  OpenActionIcon,
 } from '@/components/ui';
 import type { BadgeProps, DataTableColumn } from '@/components/ui';
 import { useToast } from '@/context/ToastContext';
@@ -45,6 +49,14 @@ function severityVariant(s: AlertSeverity): BadgeProps['variant'] {
     default:
       return 'default';
   }
+}
+
+function TestActionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polygon points="6 4 20 12 6 20 6 4" />
+    </svg>
+  );
 }
 
 interface UpdateEnabledInput {
@@ -214,39 +226,19 @@ export function AlertChannelsListPage() {
       label: t('pages:alerts.channels.columns.actions'),
       sortable: false,
       render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(r);
-            }}
+        <RowActions>
+          <RowActionIconButton label={t('common:edit')} onAction={() => onEdit(r)}>
+            <OpenActionIcon />
+          </RowActionIconButton>
+          <RowActionIconButton
+            label={t('pages:alerts.channels.actions.test')}
+            disabled={testingId === r.id}
+            onAction={() => void onTest(r)}
           >
-            {t('common:edit')}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={testingId === r.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              void onTest(r);
-            }}
-          >
-            {t('pages:alerts.channels.actions.test')}
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              setDeleteTarget(r);
-            }}
-          >
-            {t('common:delete')}
-          </Button>
-        </Stack>
+            <TestActionIcon />
+          </RowActionIconButton>
+          <RowDeleteAction label={t('common:delete')} onAction={() => setDeleteTarget(r)} />
+        </RowActions>
       ),
     },
   ];

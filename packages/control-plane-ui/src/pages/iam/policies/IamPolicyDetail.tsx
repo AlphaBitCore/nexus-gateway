@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { iamApi } from '@/api/services';
 import { useApi } from '../../../hooks/useApi';
 import { usePermission } from '../../../hooks/usePermission';
 import {
-  PageHeader, Badge, statusToVariant, Skeleton, ErrorBanner,
-  Tooltip, DataTable, Breadcrumb, Button, Stack, Card,
+  Badge, statusToVariant, Skeleton, ErrorBanner,
+  Tooltip, DataTable, Button, Stack, Card,
 } from '@/components/ui';
 import type { IamPolicy } from '../../../api/types';
 import { formatDateTime } from '@/lib/format';
@@ -87,17 +87,30 @@ export function IamPolicyDetail() {
 
   return (
     <Stack gap="lg">
-      <Breadcrumb items={[
-        { label: t('pages:iam.iamPolicies'), to: '/iam/policies' },
-        { label: policy.name },
-      ]} />
-
-      <PageHeader
-        title={policy.name}
-        subtitle={policy.description || undefined}
-        action={
-          <Stack direction="horizontal" gap="sm" className={styles.policyHeaderActions}>
-            <span className={policy.type === 'managed' ? styles.typeBadgeManaged : styles.typeBadgeCustom}>{policy.type}</span>
+      <section className={styles.detailHeader}>
+        <div className={styles.detailHeaderRow}>
+          <Link to="/iam/policies" className={styles.detailBackLink} aria-label={t('common:back')}>
+            <svg className={styles.detailBackIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.detailHeaderText}>
+            <div className={styles.policyTitleRow}>
+              <h1 className={styles.detailTitle}>{policy.name}</h1>
+              <span className={policy.type === 'managed' ? styles.typeBadgeManaged : styles.typeBadgeCustom}>
+                {policy.type}
+              </span>
+            </div>
+            <div className={styles.detailMeta}>
+              {policy.description && <Badge variant="default">{policy.description}</Badge>}
+              <Badge variant={statusToVariant(policy.enabled ? 'enabled' : 'disabled')}>
+                {policy.enabled ? t('common:enabled') : t('common:disabled')}
+              </Badge>
+              <Badge variant="outline">{t('pages:iam.statements')} · {statements.length}</Badge>
+            </div>
+          </div>
+          <Stack direction="horizontal" gap="sm" className={`${styles.policyHeaderActions} ${styles.detailHeaderActions}`}>
             <Button variant="secondary" onClick={handleCopy}>
               {copied ? t('pages:iam.copied') : t('pages:iam.copyPolicy')}
             </Button>
@@ -110,8 +123,8 @@ export function IamPolicyDetail() {
               </Button>
             )}
           </Stack>
-        }
-      />
+        </div>
+      </section>
 
       <div className={styles.tabBar} role="tablist" aria-label={t('pages:iam.ariaPolicySections')}>
         {(
@@ -138,8 +151,8 @@ export function IamPolicyDetail() {
       </div>
 
       {activeTab === 'info' && (
-        <Card>
-          <div className={styles.kvGrid}>
+        <Card className={styles.policyInfoCard}>
+          <div className={`${styles.kvGrid} ${styles.policyInfoGrid}`}>
             <div>
               <div className={styles.kvLabelRow}>
                 <span className={styles.kvLabel}>{t('pages:iam.policyId')}</span>
@@ -191,7 +204,7 @@ export function IamPolicyDetail() {
               </div>
               <div className={styles.kvValue}>{statements.length}</div>
             </div>
-            <div className={styles.fullSpan}>
+            <div>
               <div className={styles.kvLabelRow}>
                 <span className={styles.kvLabel}>{t('pages:iam.description')}</span>
                 <Tooltip content={t('pages:iam.descriptionTooltip')}>
@@ -223,7 +236,7 @@ export function IamPolicyDetail() {
       )}
 
       {activeTab === 'statements' && (
-        <Card>
+        <section className={styles.policyTabSection}>
           <h2 className={styles.sectionHeading}>{t('pages:iam.statements')} ({statements.length})</h2>
           <div className={styles.statementsPanel}>
             {statements.length === 0 ? (
@@ -233,80 +246,80 @@ export function IamPolicyDetail() {
             ) : (
               statements.map((stmt, idx) => (
                 <div key={idx} className={styles.statementCard}>
-                  <Stack direction="horizontal" gap="sm" className={styles.stmtHeader}>
-                    <span className={stmt.Effect === 'Allow' ? styles.effectAllow : styles.effectDeny}>{stmt.Effect}</span>
-                    <Tooltip content={t('pages:iam.effectTooltip')}>
-                      <span className={styles.tooltipIcon}>&#x24D8;</span>
-                    </Tooltip>
-                    {stmt.Sid && (
-                      <span className={`${styles.mono} ${styles.stmtSidMono}`}>
-                        {stmt.Sid}
-                      </span>
-                    )}
-                  </Stack>
-
-                  <div className={styles.stmtSection}>
-                    <div className={styles.kvLabelRow}>
-                      <span className={styles.kvLabel}>{t('pages:iam.actionsLabel')}</span>
-                      <Tooltip content={t('pages:iam.actionsTooltip')}>
-                        <span className={styles.tooltipIcon}>&#x24D8;</span>
-                      </Tooltip>
-                    </div>
-                    <div className={styles.chipRow}>
-                      {/* Action + Resource are StringList — accept both
-                          single string (canonical length-1 form) and array. */}
-                      {(Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action]).filter(Boolean).map((a: string, i: number) => (
-                        <span key={i} className={styles.codeChip}>{a}</span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className={stmt.Condition ? styles.stmtSection : styles.stmtLastSection}>
-                    <div className={styles.kvLabelRow}>
-                      <span className={styles.kvLabel}>{t('pages:iam.resourcesLabel')}</span>
-                      <Tooltip content={t('pages:iam.resourcesTooltip')}>
-                        <span className={styles.tooltipIcon}>&#x24D8;</span>
-                      </Tooltip>
-                    </div>
-                    <div className={styles.chipRow}>
-                      {(Array.isArray(stmt.Resource) ? stmt.Resource : [stmt.Resource]).filter(Boolean).map((r: string, i: number) => (
-                        <span key={i} className={styles.codeChip}>{r}</span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {stmt.Condition && (
-                    <div>
-                      <div className={styles.kvLabelRow}>
-                        <span className={styles.kvLabel}>{t('pages:iam.conditionsLabel')}</span>
-                        <Tooltip content={t('pages:iam.conditionsTooltip')}>
+                  <div className={styles.statementInlineGrid}>
+                    <div className={styles.statementField}>
+                      <div className={`${styles.kvLabelRow} ${styles.statementLabelRow}`}>
+                        <span className={styles.kvLabel}>{stmt.Sid || t('pages:iam.effect')}</span>
+                        <Tooltip content={t('pages:iam.effectTooltip')}>
                           <span className={styles.tooltipIcon}>&#x24D8;</span>
                         </Tooltip>
                       </div>
-                      {Object.entries(stmt.Condition).map(([operator, conditions]) => (
-                        <div key={operator} className={styles.conditionRow}>
-                          <span className={styles.conditionChip}>{operator}</span>
-                          {Object.entries(conditions as Record<string, unknown>).map(([k, v]) => (
-                            <span
-                              key={k}
-                              className={styles.conditionKeyValue}
-                            >
-                              {k} = {String(v)}
-                            </span>
-                          ))}
-                        </div>
-                      ))}
+                      <span className={stmt.Effect === 'Allow' ? styles.effectAllow : styles.effectDeny}>{stmt.Effect}</span>
                     </div>
-                  )}
+
+                    <div className={styles.statementField}>
+                      <div className={`${styles.kvLabelRow} ${styles.statementLabelRow}`}>
+                        <span className={styles.kvLabel}>{t('pages:iam.actionsLabel')}</span>
+                        <Tooltip content={t('pages:iam.actionsTooltip')}>
+                          <span className={styles.tooltipIcon}>&#x24D8;</span>
+                        </Tooltip>
+                      </div>
+                      <div className={styles.chipRow}>
+                        {/* Action + Resource are StringList — accept both
+                            single string (canonical length-1 form) and array. */}
+                        {(Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action]).filter(Boolean).map((a: string, i: number) => (
+                          <span key={i} className={styles.codeChip}>{a}</span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className={styles.statementField}>
+                      <div className={`${styles.kvLabelRow} ${styles.statementLabelRow}`}>
+                        <span className={styles.kvLabel}>{t('pages:iam.resourcesLabel')}</span>
+                        <Tooltip content={t('pages:iam.resourcesTooltip')}>
+                          <span className={styles.tooltipIcon}>&#x24D8;</span>
+                        </Tooltip>
+                      </div>
+                      <div className={styles.chipRow}>
+                        {(Array.isArray(stmt.Resource) ? stmt.Resource : [stmt.Resource]).filter(Boolean).map((r: string, i: number) => (
+                          <span key={i} className={styles.codeChip}>{r}</span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {stmt.Condition && (
+                      <div className={styles.statementConditionBlock}>
+                        <div className={styles.kvLabelRow}>
+                          <span className={styles.kvLabel}>{t('pages:iam.conditionsLabel')}</span>
+                          <Tooltip content={t('pages:iam.conditionsTooltip')}>
+                            <span className={styles.tooltipIcon}>&#x24D8;</span>
+                          </Tooltip>
+                        </div>
+                        {Object.entries(stmt.Condition).map(([operator, conditions]) => (
+                          <div key={operator} className={styles.conditionRow}>
+                            <span className={styles.conditionChip}>{operator}</span>
+                            {Object.entries(conditions as Record<string, unknown>).map(([k, v]) => (
+                              <span
+                                key={k}
+                                className={styles.conditionKeyValue}
+                              >
+                                {k} = {String(v)}
+                              </span>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))
             )}
           </div>
-        </Card>
+        </section>
       )}
 
       {activeTab === 'attachments' && (
-        <Card>
+        <section className={styles.policyTabSection}>
           <h2 className={styles.sectionHeading}>{t('pages:iam.attachedTo')}</h2>
           <p className={styles.attachmentsIntro}>
             {t('pages:iam.attachmentsIntro')}
@@ -389,7 +402,7 @@ export function IamPolicyDetail() {
               />
             </div>
           )}
-        </Card>
+        </section>
       )}
     </Stack>
   );

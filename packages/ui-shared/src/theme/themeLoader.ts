@@ -21,9 +21,22 @@ const STYLE_ELEMENT_ID = 'nexus-theme-overrides';
 const FONT_LINK_ID = 'nexus-theme-font';
 
 /**
+ * Returns the deployment base prefix from the <base href> tag injected by nginx.
+ * "/nexus/" when behind a sub-path proxy, "/" otherwise.
+ * Used to prefix fetch() paths so static assets resolve under the correct origin path.
+ */
+function getBasePrefix(): string {
+  if (typeof document === 'undefined') return '/';
+  return document.querySelector('base')?.getAttribute('href') ?? '/';
+}
+
+/**
  * Built-in default. Used when /theme.json and /themes/default.json both
  * fail (offline, asset 404, parse error). Keeps the UI rendering instead
  * of crashing on the very first paint.
+ *
+ * Brand URLs are relative (no leading /) so the browser resolves them via
+ * <base href>, which nginx sets to the deployment prefix (e.g. /nexus/).
  */
 export const DEFAULT_THEME: ThemeConfig = {
   id: 'default',
@@ -31,10 +44,10 @@ export const DEFAULT_THEME: ThemeConfig = {
   brand: {
     productName: 'AlphaBitCore',
     tagline: 'Innovate. Invest. Thrive',
-    logoMark: '/brand/prime-console/logo-mark.svg',
-    logoFull: '/brand/prime-console/logo-wordmark.svg',
-    logoTagline: '/brand/prime-console/logo-tagline.svg',
-    favicon: '/brand/prime-console/logo-mark.svg',
+    logoMark: 'brand/prime-console/logo-mark.svg',
+    logoFull: 'brand/prime-console/logo-wordmark.svg',
+    logoTagline: 'brand/prime-console/logo-tagline.svg',
+    favicon: 'brand/prime-console/logo-mark.svg',
   },
 };
 
@@ -43,9 +56,11 @@ export const DEFAULT_THEME: ThemeConfig = {
  * crashes on a missing/malformed theme file.
  */
 export async function loadTheme(themeId: string): Promise<ThemeConfig> {
+  const base = getBasePrefix();
+
   // Deployment-level override takes absolute priority.
   try {
-    const response = await fetch('/theme.json');
+    const response = await fetch(`${base}theme.json`);
     if (response.ok) {
       const config = (await response.json()) as ThemeConfig;
       return { ...DEFAULT_THEME, ...config };
@@ -57,7 +72,7 @@ export async function loadTheme(themeId: string): Promise<ThemeConfig> {
   // Named theme from the catalogue.
   if (themeId && themeId !== 'default') {
     try {
-      const response = await fetch(`/themes/${themeId}.json`);
+      const response = await fetch(`${base}themes/${themeId}.json`);
       if (response.ok) {
         const config = (await response.json()) as ThemeConfig;
         return { ...DEFAULT_THEME, ...config };
@@ -69,7 +84,7 @@ export async function loadTheme(themeId: string): Promise<ThemeConfig> {
 
   // Try default.json explicitly — operators may customise it.
   try {
-    const response = await fetch('/themes/default.json');
+    const response = await fetch(`${base}themes/default.json`);
     if (response.ok) {
       const config = (await response.json()) as ThemeConfig;
       return { ...DEFAULT_THEME, ...config };

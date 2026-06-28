@@ -20,7 +20,7 @@
   padding: 14px 16px;
   background: var(--color-surface);
   border: 1px solid var(--color-border-muted);
-  border-radius: 8px;
+  border-radius: var(--g-radius-lg);
   min-height: 76px;
 }
 
@@ -33,7 +33,7 @@
 
 .heroValue {
   font-size: 1.5rem;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   color: var(--color-text);
   line-height: 1.15;
 }
@@ -45,12 +45,12 @@
 
 .heroSubUp {
   color: var(--color-danger-text);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .heroSubDown {
   color: var(--color-success);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .heroSparkRow {
@@ -58,29 +58,129 @@
 }
 
 /* Issue list */
+.issuesSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .issuesHeader {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
 }
 
-.issuesSearch {
-  max-width: 260px;
+.issuesSearchBox {
+  display: flex;
+  align-items: center;
+  width: 420px;
+  max-width: 100%;
+  height: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-md);
+  background: var(--color-bg-input);
+  overflow: hidden;
 }
 
-.silencesPill {
-  background: var(--color-warning-bg);
-  border-color: var(--color-warning);
-  color: var(--color-warning-text);
-  font-weight: 600;
-  white-space: nowrap;
+.issuesSearchIcon {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin: 0 8px 0 12px;
+  flex: 0 0 14px;
+  border: 1.7px solid var(--color-text-muted);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.issuesSearchIcon::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  bottom: -2px;
+  width: 7px;
+  height: 1.7px;
+  border-radius: var(--g-radius-xs);
+  background: var(--color-text-muted);
+  transform: rotate(45deg);
+}
+
+.issuesSearch {
+  height: 34px;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-left: 0;
+}
+
+.issuesSearch::placeholder {
+  color: var(--color-text-placeholder);
+  opacity: 1;
+}
+
+.issuesSearch:focus,
+.issuesSearch:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.issuesSearchBox:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.issuesControls {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.issuesHeaderRight {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   flex-shrink: 0;
 }
 
+.issuesDivider {
+  width: 1px;
+  height: 12px;
+  background: var(--color-border);
+}
+
+.showSilencedButton,
+.showSilencedButton :global(*) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+.showSilencedButton {
+  height: 36px;
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.silencesPill {
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-link);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-normal);
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: none;
+}
+
 .silencesPill:hover {
-  background: var(--color-warning);
-  color: var(--color-warning-contrast);
+  background: transparent;
+  color: var(--color-link);
 }
 
 .issueList {
@@ -129,18 +229,18 @@
 .issueHead {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .issueMsg {
-  font-size: var(--g-font-size-md);
-  font-weight: 500;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -164,18 +264,26 @@
   gap: 6px;
 }
 
+.buttonIcon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
 .newBadge {
   background: var(--color-warning);
   color: var(--color-warning-contrast);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: var(--g-font-weight-bold);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--g-radius-xs);
   letter-spacing: 0;
   text-transform: uppercase;
 }
 
-/* Filter panel (collapsed by default) */
+/* Global filters */
 .filterToggle {
   display: flex;
   align-items: center;
@@ -192,7 +300,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--g-space-3);
-  align-items: flex-end;
+  align-items: center;
+  padding: 0;
 }
 
 .filterField {
@@ -212,10 +321,11 @@
 }
 
 .sectionTitle {
-  font-size: var(--g-font-size-md);
-  font-weight: 600;
-  color: var(--color-text);
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-normal);
+  color: var(--color-text-muted);
   margin: 0;
+  white-space: nowrap;
 }
 
 .codeCell {
@@ -241,6 +351,32 @@
   word-break: break-all;
 }
 
+.drawerBody {
+  padding-bottom: 0;
+}
+
+.drawerFooter {
+  flex: 0 0 auto;
+  margin-top: 0;
+  margin-right: calc(var(--g-space-6) * -1);
+  margin-bottom: calc(var(--g-space-6) * -1);
+  margin-left: calc(var(--g-space-6) * -1);
+  padding: 12px var(--g-space-6);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  box-shadow: 0 -8px 16px -16px color-mix(in srgb, var(--color-text) 35%, transparent);
+}
+
+.drawerFooterActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawerFooterActions :global(button),
+.drawerFooterActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
 .detailJson,
 .detailStack {
   font-family: var(--g-font-mono);
@@ -249,7 +385,7 @@
   word-break: break-word;
   background: var(--color-surface-muted);
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--g-radius-sm);
   max-height: 320px;
   overflow: auto;
   margin: 4px 0 0 0;
@@ -263,6 +399,7 @@
 
 .empty {
   color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
   text-align: center;
   padding: 24px 0;
 }

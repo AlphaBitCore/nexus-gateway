@@ -1,5 +1,78 @@
+.formCard {
+  padding-bottom: var(--g-space-6);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.fullWidthField {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
 .redirectRow {
   align-items: flex-start;
+  flex-wrap: nowrap;
+}
+
+.redirectRow :global(input) {
+  min-width: 0;
+}
+
+.redirectField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-2);
+  min-width: 0;
+  width: 100%;
+}
+
+.redirectTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--g-space-3);
+}
+
+.fieldLabel {
+  display: block;
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-medium);
+}
+
+.fieldError {
+  margin: var(--g-space-1) 0 0;
+  color: var(--color-danger);
+  font-size: var(--g-font-size-xs);
+}
+
+.addRedirectButton {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-link);
+  font-family: var(--g-font-sans);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-normal);
+  cursor: pointer;
+}
+
+.addRedirectButton:hover {
+  text-decoration: underline;
+}
+
+.addRedirectButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  text-decoration: none;
 }
 
 .checkboxRow {
@@ -12,11 +85,52 @@
 }
 
 .fieldHint {
+  margin: var(--g-space-1) 0 0;
   color: var(--color-text-muted);
   font-size: var(--g-font-size-xs);
 }
 
+.switchRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-space-2);
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-sm);
+}
+
+.scopesInput :global([class*='chipList']) {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.scopesInput :global([class*='chip']),
+.scopesInput :global([class*='chipInvalid']) {
+  flex: 0 0 auto;
+}
+
+.scopesInput :global([class*='field']) {
+  min-width: 120px;
+}
+
 .formActions {
-  justify-content: flex-end;
-  margin-top: var(--g-space-3);
+  justify-content: flex-start;
+  margin-top: 20px;
+}
+
+.formActions :global(button),
+.formActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+}
+
+@media (max-width: 1200px) {
+  .formGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
 }

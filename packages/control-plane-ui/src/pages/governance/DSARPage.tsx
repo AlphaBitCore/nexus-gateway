@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import clsx from 'clsx';
 import { useApi } from '../../hooks/useApi';
 import { dsarApi } from '../../api/services/compliance/dsar';
 import { iamApi } from '../../api/services';
@@ -11,9 +10,9 @@ import type {
   DSARFulfillResponse,
 } from '../../api/services/compliance/dsar';
 import {
-  PageHeader, LoadingSpinner, ErrorBanner, Card, Stack, Button, Input,
+  LoadingSpinner, ErrorBanner, Card, Stack, Button, Input, Badge,
   Dialog, AlertDialog, FormField, Textarea, RowActions,
-  RowActionTextLinkButton, RowActionTerminal,
+  RowActionIconButton, RowActionTerminal, RevokeActionIcon,
   ListPagination, DEFAULT_ADMIN_LIST_PAGE_SIZE,
 } from '@/components/ui';
 import type { AdminListPageSize } from '@/components/ui';
@@ -21,7 +20,7 @@ import { useToast } from '@/context/ToastContext';
 import styles from '../compliance/dashboard/ComplianceDashboardPage.module.css';
 
 /**
- * S42 — DSAR (Data Subject Access Request) management page.
+ * DSAR (Data Subject Access Request) management page.
  *
  * Compliance officers file, triage, and fulfill GDPR/CCPA requests
  * through this page. ACCESS exports the subject's audit rows; ERASURE
@@ -48,13 +47,34 @@ function useTypeOptions() {
   ];
 }
 
-function statusClass(s: DSARRequestStatus, css: Record<string, string>): string {
+function statusBadgeVariant(s: DSARRequestStatus): 'success' | 'warning' | 'danger' | 'info' {
   switch (s) {
-    case 'PENDING':     return css.dsarStatusPending;
-    case 'IN_PROGRESS': return css.dsarStatusInProgress;
-    case 'COMPLETED':   return css.dsarStatusCompleted;
-    case 'REJECTED':    return css.dsarStatusRejected;
+    case 'PENDING':
+      return 'warning';
+    case 'IN_PROGRESS':
+      return 'info';
+    case 'COMPLETED':
+      return 'success';
+    case 'REJECTED':
+      return 'danger';
   }
+}
+
+function StartActionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M8 5v14l11-7L8 5Z" />
+    </svg>
+  );
+}
+
+function FulfillActionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <path d="m8 12 2.5 2.5L16 9" />
+    </svg>
+  );
 }
 
 export function DSARPage() {
@@ -167,43 +187,44 @@ export function DSARPage() {
 
   return (
     <>
-      <PageHeader
-        title={t('pages:security.dsar.title', 'Data Subject Requests')}
-        subtitle={t(
-          'pages:security.dsar.subtitle',
-          'Manage GDPR/CCPA data subject access and erasure requests. Fulfilment runs against both Virtual Key gateway and compliance-proxy audit tables and writes its outcome to the AdminAuditLog.',
-        )}
-      />
+      <div className={styles.dsarPageHeader}>
+        <div className={styles.dsarPageHeaderText}>
+          <h1 className={styles.dsarPageTitle}>
+            {t('pages:security.dsar.title', 'Data Subject Requests')}
+          </h1>
+          <p className={styles.headerSubtitle}>
+            {t(
+              'pages:security.dsar.subtitle',
+              'Manage GDPR/CCPA access and erasure requests.',
+            )}
+          </p>
+        </div>
+        <div className={styles.dsarPageHeaderActions}>
+          <Button variant="primary" onClick={openCreate}>
+            + {t('pages:security.dsar.fileRequest', 'File request')}
+          </Button>
+        </div>
+      </div>
 
-      <Stack gap="md">
-        <Card>
-          <Stack gap="sm">
-            <div className={styles.sectionTitle}>
-              {t('pages:security.dsar.queueTitle', 'Request Queue')} ({total})
-            </div>
-            <div className={styles.filterBar}>
-              <label className={styles.filterField}>
-                {t('pages:security.dsar.filterStatus', 'Status filter')}
-                <select
-                  value={statusFilter}
-                  onChange={(e) => {
-                    setStatusFilter(e.target.value as DSARRequestStatus | '');
-                    setOffset(0);
-                  }}
-                  style={{ marginLeft: 'var(--g-space-2)', padding: 'var(--g-space-1) var(--g-space-2)' }}
-                >
-                  {STATUS_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </label>
-              <Button variant="ghost" onClick={refetch}>
-                {t('common:refresh', 'Refresh')}
-              </Button>
-              <Button variant="primary" onClick={openCreate}>
-                + {t('pages:security.dsar.fileRequest', 'File request')}
-              </Button>
-            </div>
+      <Stack gap="md" className={styles.dsarContent}>
+        <div className={styles.filterBar}>
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as DSARRequestStatus | '');
+              setOffset(0);
+            }}
+            className={styles.dsarStatusSelect}
+            aria-label={t('pages:security.dsar.filterStatus', 'Status filter')}
+          >
+            {STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className={styles.dsarQueueMeta}>
+          {t('pages:security.dsar.queueTitle', 'Request Queue')} ({total})
+        </div>
             {requests.length === 0 ? (
               <div className={styles.noData}>
                 {t('pages:security.dsar.empty', 'No DSAR requests in this view.')}
@@ -218,8 +239,8 @@ export function DSARPage() {
                       <th>{t('pages:security.dsar.colStatus')}</th>
                       <th>{t('pages:security.dsar.colFiled')}</th>
                       <th>{t('pages:security.dsar.colCompleted')}</th>
-                      <th>{t('pages:security.dsar.colNotes')}</th>
-                      <th></th>
+                      <th className={styles.dsarNotesCol}>{t('pages:security.dsar.colNotes')}</th>
+                      <th className={styles.dsarActionsCol}>{t('common:actions', 'Actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -236,34 +257,42 @@ export function DSARPage() {
                             </div>
                           )}
                         </td>
-                        <td>{r.type}</td>
-                        <td className={clsx(statusClass(r.status, styles))}>
-                          {r.status}
+                        <td>
+                          <Badge variant={r.type === 'ACCESS' ? 'info' : 'warning'}>
+                            {r.type}
+                          </Badge>
+                        </td>
+                        <td>
+                          <Badge variant={statusBadgeVariant(r.status)}>
+                            {r.status}
+                          </Badge>
                         </td>
                         <td>{new Date(r.createdAt).toLocaleString()}</td>
                         <td>{r.completedAt ? new Date(r.completedAt).toLocaleString() : '—'}</td>
-                        <td style={{ fontSize: 'var(--g-font-size-xs)', maxWidth: '20rem' }}>
+                        <td className={styles.dsarNotesCell}>
                           {r.notes ?? '—'}
                         </td>
-                        <td>
+                        <td className={styles.dsarActionsCell}>
                           {r.status === 'PENDING' && (
-                            <RowActions variant="text">
-                              <RowActionTextLinkButton label={t('pages:security.dsar.start', 'Start')} onAction={() => handleAdvance(r, 'IN_PROGRESS')} />
-                              <RowActionTextLinkButton label={t('pages:security.dsar.reject', 'Reject')} tone="danger" onAction={() => handleAdvance(r, 'REJECTED')} />
+                            <RowActions>
+                              <RowActionIconButton label={t('pages:security.dsar.start', 'Start')} onAction={() => handleAdvance(r, 'IN_PROGRESS')}>
+                                <StartActionIcon />
+                              </RowActionIconButton>
+                              <RowActionIconButton label={t('pages:security.dsar.reject', 'Reject')} tone="danger" onAction={() => handleAdvance(r, 'REJECTED')}>
+                                <RevokeActionIcon />
+                              </RowActionIconButton>
                             </RowActions>
                           )}
                           {r.status === 'IN_PROGRESS' && (
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              onClick={() => { setFulfilling(r); setFulfillResult(null); }}
-                            >
-                              {t('pages:security.dsar.fulfill', 'Fulfill')}
-                            </Button>
+                            <RowActions>
+                              <RowActionIconButton label={t('pages:security.dsar.fulfill', 'Fulfill')} onAction={() => { setFulfilling(r); setFulfillResult(null); }}>
+                                <FulfillActionIcon />
+                              </RowActionIconButton>
+                            </RowActions>
                           )}
                           {(r.status === 'COMPLETED' || r.status === 'REJECTED') && (
                             <RowActions variant="text">
-                              <RowActionTerminal>{t('pages:security.dsar.terminal')}</RowActionTerminal>
+                              <RowActionTerminal>—</RowActionTerminal>
                             </RowActions>
                           )}
                         </td>
@@ -280,23 +309,23 @@ export function DSARPage() {
               onOffsetChange={(v) => setOffset(v)}
               onLimitChange={(v) => { setPageLimit(v); setOffset(0); }}
             />
-          </Stack>
-        </Card>
       </Stack>
 
       <Dialog
         open={creating}
         onOpenChange={(open) => { if (!open) setCreating(false); }}
         title={t('pages:security.dsar.fileRequest', 'File DSAR Request')}
+        className={styles.dsarDialog}
       >
-        <Stack gap="md">
+        <div className={styles.dsarDialogShell}>
+        <Stack gap="md" className={styles.dsarDialogContent}>
           <FormField label={t('pages:security.dsar.subjectId', 'Data Subject (User)')}>
             <select
+              className={styles.dsarDialogSelect}
               value={draft.subjectId}
               onChange={(e) => setDraft({ ...draft, subjectId: e.target.value })}
-              style={{ width: '100%', padding: 'var(--g-space-1-5) var(--g-space-2)' }}
             >
-              <option value="">{t('pages:security.dsar.selectUser')}</option>
+                <option value="">请选择</option>
               {(usersData?.data ?? []).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.displayName}{u.email ? ` (${u.email})` : ''}
@@ -313,9 +342,9 @@ export function DSARPage() {
           </FormField>
           <FormField label={t('pages:security.dsar.requestType', 'Request type')}>
             <select
+              className={styles.dsarDialogSelect}
               value={draft.type}
               onChange={(e) => setDraft({ ...draft, type: e.target.value as DSARRequestType })}
-              style={{ width: '100%', padding: 'var(--g-space-1-5) var(--g-space-2)' }}
             >
               {TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -329,15 +358,16 @@ export function DSARPage() {
               rows={3}
             />
           </FormField>
-          <Stack direction="horizontal" gap="sm" justify="end">
-            <Button variant="ghost" onClick={() => setCreating(false)} disabled={saving}>
+        </Stack>
+          <Stack direction="horizontal" gap="sm" justify="end" className={styles.dsarDialogActions}>
+            <Button variant="secondary" onClick={() => setCreating(false)} disabled={saving}>
               {t('common:cancel', 'Cancel')}
             </Button>
             <Button variant="primary" onClick={handleCreate} disabled={saving}>
               {saving ? t('common:saving', 'Saving…') : t('common:save', 'Save')}
             </Button>
           </Stack>
-        </Stack>
+        </div>
       </Dialog>
 
       <AlertDialog

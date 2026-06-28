@@ -16,7 +16,7 @@
 .link {
   text-decoration: underline;
   color: inherit;
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .dismissBtn {

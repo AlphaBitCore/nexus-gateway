@@ -22,17 +22,20 @@ import {
   PageHeader,
   DataTable,
   Badge,
-  Button,
   Stack,
   Card,
   Switch,
   Skeleton,
   ErrorBanner,
-  ListFilterToolbar,
+  Input,
   ListPagination,
+  RowActions,
+  RowActionIconButton,
+  OpenActionIcon,
   DEFAULT_ADMIN_LIST_PAGE_SIZE,
 } from '@/components/ui';
 import type { AdminListPageSize, BadgeProps, DataTableColumn } from '@/components/ui';
+import { AlertRulesAdvancedFilters } from './AlertRulesListPage.AdvancedFilters';
 import styles from './AlertRulesListPage.module.css';
 
 function severityVariant(s: AlertSeverity): BadgeProps['variant'] {
@@ -54,8 +57,6 @@ interface UpdateEnabledInput {
   enabled: boolean;
 }
 
-const ALL_SEVERITIES: AlertSeverity[] = ['critical', 'high', 'medium', 'low', 'info'];
-
 export function AlertRulesListPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -66,6 +67,10 @@ export function AlertRulesListPage() {
   const [enabledFilter, setEnabledFilter] = useState<'' | 'true' | 'false'>('');
   const [severityFilter, setSeverityFilter] = useState<'' | AlertSeverity>('');
   const [sourceTypeFilter, setSourceTypeFilter] = useState('');
+  const [draftEnabledFilter, setDraftEnabledFilter] = useState<'' | 'true' | 'false'>('');
+  const [draftSeverityFilter, setDraftSeverityFilter] = useState<'' | AlertSeverity>('');
+  const [draftSourceTypeFilter, setDraftSourceTypeFilter] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const resetPage = useCallback(() => setOffset(0), []);
 
@@ -115,6 +120,34 @@ export function AlertRulesListPage() {
     },
     [navigate],
   );
+
+  const onSearchChange = useCallback((value: string) => {
+    setSearchInput(value);
+    resetPage();
+  }, [resetPage]);
+
+  const clearSearch = useCallback(() => onSearchChange(''), [onSearchChange]);
+
+  const openAdvancedFilters = useCallback(() => {
+    setDraftEnabledFilter(enabledFilter);
+    setDraftSeverityFilter(severityFilter);
+    setDraftSourceTypeFilter(sourceTypeFilter);
+    setAdvancedOpen((open) => !open);
+  }, [enabledFilter, severityFilter, sourceTypeFilter]);
+
+  const resetAdvancedFilters = useCallback(() => {
+    setDraftEnabledFilter('');
+    setDraftSeverityFilter('');
+    setDraftSourceTypeFilter('');
+  }, []);
+
+  const confirmAdvancedFilters = useCallback(() => {
+    setEnabledFilter(draftEnabledFilter);
+    setSeverityFilter(draftSeverityFilter);
+    setSourceTypeFilter(draftSourceTypeFilter);
+    resetPage();
+    setAdvancedOpen(false);
+  }, [draftEnabledFilter, draftSeverityFilter, draftSourceTypeFilter, resetPage]);
 
   if (loading && !data) return <Skeleton.ListPageSkeleton />;
   if (error) return <ErrorBanner message={error.message} onRetry={refetch} />;
@@ -174,18 +207,11 @@ export function AlertRulesListPage() {
       label: t('pages:alerts.rules.columns.actions'),
       sortable: false,
       render: (r) => (
-        <Stack direction="horizontal" gap="xs" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(r);
-            }}
-          >
-            {t('common:edit')}
-          </Button>
-        </Stack>
+        <RowActions>
+          <RowActionIconButton label={t('common:edit')} onAction={() => onEdit(r)}>
+            <OpenActionIcon />
+          </RowActionIconButton>
+        </RowActions>
       ),
     },
   ];
@@ -197,69 +223,78 @@ export function AlertRulesListPage() {
         subtitle={t('pages:alerts.rules.subtitle')}
       />
 
-      <ListFilterToolbar
-        searchPlaceholder={t('pages:alerts.rules.searchPlaceholder')}
-        searchValue={searchInput}
-        onSearchChange={(v) => { setSearchInput(v); resetPage(); }}
-        meta={
-          total === 0
-            ? undefined
-            : t('pages:alerts.rules.showingMeta', { count: rows.length, total })
-        }
-      >
-        <select
-          aria-label={t('pages:alerts.rules.filterEnabledAria')}
-          value={enabledFilter}
-          onChange={(e) => { setEnabledFilter(e.target.value as '' | 'true' | 'false'); resetPage(); }}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:alerts.rules.filterEnabledAll')}</option>
-          <option value="true">{t('pages:alerts.rules.filterEnabledOnly')}</option>
-          <option value="false">{t('pages:alerts.rules.filterDisabledOnly')}</option>
-        </select>
-        <select
-          aria-label={t('pages:alerts.rules.filterSeverityAria')}
-          value={severityFilter}
-          onChange={(e) => { setSeverityFilter(e.target.value as '' | AlertSeverity); resetPage(); }}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:alerts.rules.filterSeverityAll')}</option>
-          {ALL_SEVERITIES.map((s) => (
-            <option key={s} value={s}>{severityLabel[s]}</option>
-          ))}
-        </select>
-        <select
-          aria-label={t('pages:alerts.rules.filterSourceTypeAria')}
-          value={sourceTypeFilter}
-          onChange={(e) => { setSourceTypeFilter(e.target.value); resetPage(); }}
-          className={styles.filterSelect}
-        >
-          <option value="">{t('pages:alerts.rules.filterSourceTypeAll')}</option>
-          {sourceTypeOptions.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-      </ListFilterToolbar>
-
-      <Card padding="none">
-        <DataTable
-          hideSearch
-          frameless
-          columns={columns}
-          data={rows}
-          onRowClick={onEdit}
-          emptyMessage={t('pages:alerts.rules.empty')}
-        />
-        <div style={{ padding: 'var(--g-space-0) var(--g-space-4) var(--g-space-2)' }}>
-          <ListPagination
-            offset={offset}
-            limit={pageLimit}
-            total={total}
-            onOffsetChange={(v) => setOffset(v)}
-            onLimitChange={(v) => { setPageLimit(v); setOffset(0); }}
-          />
+      <div className={styles.listSection}>
+        <div className={styles.filterToolbar} role="search">
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon} aria-hidden="true" />
+            <Input
+              type="text"
+              enterKeyHint="search"
+              autoComplete="off"
+              aria-label={t('pages:alerts.rules.searchPlaceholder')}
+              placeholder={t('pages:alerts.rules.searchPlaceholder')}
+              value={searchInput}
+              onChange={(event) => onSearchChange(event.target.value)}
+              className={styles.searchInput}
+            />
+            {searchInput.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={clearSearch}
+                className={styles.clearSearchButton}
+                aria-label={t('common:clear')}
+                title={t('common:clear')}
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.advancedButton}
+              onClick={openAdvancedFilters}
+            >
+              {t('common:advancedFilter')}
+            </button>
+            {advancedOpen && (
+              <AlertRulesAdvancedFilters
+                draftEnabledFilter={draftEnabledFilter}
+                setDraftEnabledFilter={setDraftEnabledFilter}
+                draftSeverityFilter={draftSeverityFilter}
+                setDraftSeverityFilter={setDraftSeverityFilter}
+                draftSourceTypeFilter={draftSourceTypeFilter}
+                setDraftSourceTypeFilter={setDraftSourceTypeFilter}
+                severityLabel={severityLabel}
+                sourceTypeOptions={sourceTypeOptions}
+                onReset={resetAdvancedFilters}
+                onConfirm={confirmAdvancedFilters}
+              />
+            )}
+          </div>
         </div>
-      </Card>
+        {total > 0 && (
+          <p className={styles.listMeta}>{t('pages:alerts.rules.showingMeta', { count: rows.length, total })}</p>
+        )}
+
+        <Card padding="none">
+          <DataTable
+            hideSearch
+            frameless
+            columns={columns}
+            data={rows}
+            onRowClick={onEdit}
+            emptyMessage={t('pages:alerts.rules.empty')}
+          />
+        </Card>
+      </div>
+      <div className={styles.paginationWrap}>
+        <ListPagination
+          offset={offset}
+          limit={pageLimit}
+          total={total}
+          onOffsetChange={(v) => setOffset(v)}
+          onLimitChange={(v) => { setPageLimit(v); setOffset(0); }}
+        />
+      </div>
     </Stack>
   );
 }

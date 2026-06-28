@@ -46,7 +46,7 @@ function SetupSection({
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    <Card className={styles.setupSectionCard}>
       <Stack gap="md">
         <div className={styles.sectionHeader}>
           <div className={styles.stepCircle}>{step}</div>

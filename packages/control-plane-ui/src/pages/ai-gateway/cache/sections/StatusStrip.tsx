@@ -171,12 +171,18 @@ export function StatusStrip({ semanticEnabled, canDisable }: Props) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="danger" size="sm" disabled={!canDisable || disabling}>
-              {t('pages:aiGateway.cache.statusStrip.disableMenuTrigger')}
+              <span className={styles.disableMenuLabel}>
+                {t('pages:aiGateway.cache.statusStrip.disableMenuTrigger')}
+                <svg className={styles.disableMenuIcon} width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {semanticEnabled && (
               <DropdownMenuItem
+                className={styles.disableMenuItem}
                 onSelect={(e) => {
                   e.preventDefault();
                   setPendingAction('semantic');
@@ -187,6 +193,7 @@ export function StatusStrip({ semanticEnabled, canDisable }: Props) {
             )}
             {extractEnabled && (
               <DropdownMenuItem
+                className={styles.disableMenuItem}
                 onSelect={(e) => {
                   e.preventDefault();
                   setPendingAction('extract');
@@ -197,6 +204,7 @@ export function StatusStrip({ semanticEnabled, canDisable }: Props) {
             )}
             {semanticEnabled && extractEnabled && (
               <DropdownMenuItem
+                className={styles.disableMenuItem}
                 onSelect={(e) => {
                   e.preventDefault();
                   setPendingAction('all');

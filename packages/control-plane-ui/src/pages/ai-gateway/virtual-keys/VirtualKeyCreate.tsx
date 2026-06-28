@@ -9,10 +9,11 @@ import { useMutation } from '@/hooks/useMutation';
 import { useZodForm, FormInput, FormSwitch } from '@/lib/forms';
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import {
-  PageHeader, Breadcrumb, Button, Stack, Card, Tooltip, Input,
+  PageHeader, Breadcrumb, Button, Stack, Card, Tooltip, Input, FormField,
 } from '@/components/ui';
 import type { AdminModelsByProvider, Project, VirtualKeyAllowedModelRef } from '@/api/types';
 import { ADMIN_LIST_FULL_PAGE_PARAMS } from '@/constants/admin-api';
+import { expiryBounds } from './expiryBounds';
 import styles from './VirtualKeyCreate.module.css';
 
 /* ── Grouped Model Selector ───────────────────────────────────────────── */
@@ -134,12 +135,11 @@ function GroupedModelSelect({
 
 const schema = z.object({
   name: z.string().min(1, 'Name is required'),
-  projectId: z.string().optional().default(''),
+  projectId: z.string().min(1, 'Project is required'),
   sourceApp: z.string().optional().default(''),
   enabled: z.boolean(),
   rateLimitRpm: z.string().optional().default(''),
-  expiresAt: z.string().optional().default(''),
-  neverExpires: z.boolean(),
+  expiresAt: z.string().min(1, 'Expiration is required'),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -150,6 +150,12 @@ export function VirtualKeyCreate() {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
+  const defaultExpiresAt = (() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+
   const form = useZodForm({
     schema,
     defaultValues: {
@@ -158,8 +164,7 @@ export function VirtualKeyCreate() {
       sourceApp: '',
       enabled: true,
       rateLimitRpm: '',
-      expiresAt: '',
-      neverExpires: true,
+      expiresAt: defaultExpiresAt,
     },
   });
 
@@ -193,16 +198,13 @@ export function VirtualKeyCreate() {
     },
   );
 
-  const neverExpires = form.watch('neverExpires');
-
   const onSubmit = (values: FormValues) => {
     // <Input type="date"> produces "YYYY-MM-DD" while the backend
     // unmarshals into time.Time and demands RFC3339. Stamp end-of-day
     // UTC so "expires on May 2" remains usable through that calendar
     // day; without this the bind fails with "Invalid request body".
-    const expiresAt = values.neverExpires || !values.expiresAt
-      ? undefined
-      : `${values.expiresAt}T23:59:59Z`;
+    // Application VKs always require an expiry (backend enforces ≤3 months).
+    const expiresAt = `${values.expiresAt}T23:59:59Z`;
 
     mutate({
       name: values.name,
@@ -273,18 +275,16 @@ export function VirtualKeyCreate() {
           <Stack gap="md">
             <FormInput form={form} name="name" label={t('pages:virtualKeys.name')} required helpText={t('pages:virtualKeys.nameHelpText')} placeholder={t('pages:virtualKeys.namePlaceholder')} />
 
-            <div>
-              <label className={styles.tooltipLabel}>
-                {t('pages:virtualKeys.project')}
-                <Tooltip content={t('pages:virtualKeys.projectTooltip')}>
-                  <span role="presentation">&#9432;</span>
-                </Tooltip>
-              </label>
+            <FormField
+              label={t('pages:virtualKeys.project')}
+              required
+              tooltip={t('pages:virtualKeys.projectTooltip')}
+            >
               <select value={form.watch('projectId')} onChange={e => form.setValue('projectId', e.target.value)} className={`${styles.filterSelect} ${styles.projectSelect}`}>
-                <option value="">{t('pages:virtualKeys.none')}</option>
+                <option value="">{t('pages:virtualKeys.selectProject')}</option>
                 {(projectsData?.data ?? []).map(p => <option key={p.id} value={p.id}>{p.name}{p.organization ? ` (${p.organization.name})` : ''}</option>)}
               </select>
-            </div>
+            </FormField>
 
             <FormInput form={form} name="sourceApp" label={t('pages:virtualKeys.sourceApp')} placeholder={t('pages:virtualKeys.placeholderSourceApp')} />
 
@@ -292,22 +292,20 @@ export function VirtualKeyCreate() {
 
             <FormInput form={form} name="rateLimitRpm" label={t('pages:virtualKeys.rateLimitRpm')} helpText={t('pages:virtualKeys.rateLimitHelpText')} type="number" placeholder={t('pages:virtualKeys.placeholderRpm')} />
 
-            <div>
-              <label className={styles.tooltipLabel}>
-                {t('pages:virtualKeys.expiration')}
-                <Tooltip content={t('pages:virtualKeys.expirationTooltip')}>
-                  <span role="presentation">&#9432;</span>
-                </Tooltip>
-              </label>
-              <Stack direction="horizontal" gap="xs" className={styles.enabledRow}>
-                <Input type="date" value={form.watch('expiresAt')} onChange={e => form.setValue('expiresAt', e.target.value)} disabled={neverExpires}
-                  className={styles.expirationDateInput} />
-                <label className={styles.neverExpiresLabel}>
-                  <input type="checkbox" checked={neverExpires} onChange={e => { form.setValue('neverExpires', e.target.checked); if (e.target.checked) form.setValue('expiresAt', ''); }} />
-                  {t('pages:virtualKeys.neverExpires')}
-                </label>
-              </Stack>
-            </div>
+            <FormField
+              label={t('pages:virtualKeys.expiration')}
+              required
+              tooltip={t('pages:virtualKeys.expirationTooltip')}
+            >
+              <Input
+                type="date"
+                value={form.watch('expiresAt')}
+                onChange={e => form.setValue('expiresAt', e.target.value)}
+                min={expiryBounds().min}
+                max={expiryBounds().max}
+                className={styles.expirationDateInput}
+              />
+            </FormField>
 
             <FormSwitch form={form} name="enabled" label={t('common:enabled')} />
 

@@ -86,7 +86,7 @@ export function LiveTrafficFilterPanel({
         <Input
           type="search"
           aria-label={t('pages:traffic.labelTargetHost')}
-          placeholder="Search..."
+          placeholder={`${t('common:search')}...`}
           value={v.targetHost}
           onChange={(e) => onPatch({ targetHost: e.target.value })}
           onKeyDown={(e) => {
@@ -114,10 +114,10 @@ export function LiveTrafficFilterPanel({
 
           <div className={css.actionBar}>
             <Button variant="secondary" size="sm" aria-label={t('pages:traffic.clearFilters')} onClick={onClear} className={css.resetButton}>
-              Reset
+              {t('common:reset')}
             </Button>
             <Button variant="primary" size="sm" disabled={applyDisabled} onClick={handleConfirmSearch} className={css.confirmButton}>
-              Confirm Search
+              {t('common:confirmSearch')}
             </Button>
           </div>
         </div>

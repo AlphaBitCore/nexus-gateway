@@ -34,7 +34,7 @@ export function ProviderUsageTab({ detail }: ProviderUsageTabProps) {
   const byVirtualKey = analyticsData.byVirtualKey ?? [];
 
   return (
-    <div>
+    <div className={styles.usageStack}>
       {/* Summary cards */}
       <div style={{ marginBottom: 'var(--g-space-2)', fontSize: 'var(--g-font-size-xs)', color: 'var(--color-text-muted)' }}>
         {t('pages:providers.cacheWindowNote30d')}
@@ -63,8 +63,9 @@ export function ProviderUsageTab({ detail }: ProviderUsageTabProps) {
       </div>
 
       {/* Daily requests chart */}
-      <Card padding="lg">
+      <section className={styles.usageSection}>
         <div className={styles.sectionTitle}>{t('pages:providers.dailyRequests')}</div>
+      <Card padding="lg">
         {analyticsData.daily.length === 0 ? (
           <div className={styles.emptyState}>{t('pages:providers.noDataLast30Days')}</div>
         ) : (
@@ -81,6 +82,7 @@ export function ProviderUsageTab({ detail }: ProviderUsageTabProps) {
           </ResponsiveContainer>
         )}
       </Card>
+      </section>
 
       {/* Daily cost chart */}
       {analyticsData.daily.some(d => (d as { estimatedCostUsd?: number }).estimatedCostUsd != null) && (
@@ -103,8 +105,9 @@ export function ProviderUsageTab({ detail }: ProviderUsageTabProps) {
       )}
 
       {/* Project breakdown */}
-      <Card>
+      <section className={styles.usageSection}>
         <div className={styles.sectionTitle}>{t('pages:providers.usageByProject')}</div>
+      <Card>
         {byProject.length === 0 ? (
           <div className={styles.emptyState}>{t('pages:providers.noProjectUsage')}</div>
         ) : (
@@ -140,10 +143,12 @@ export function ProviderUsageTab({ detail }: ProviderUsageTabProps) {
           </div>
         )}
       </Card>
+      </section>
 
       {/* Virtual key breakdown */}
-      <Card>
+      <section className={styles.usageSection}>
         <div className={styles.sectionTitle}>{t('pages:providers.usageByVirtualKey')}</div>
+      <Card>
         {byVirtualKey.length === 0 ? (
           <div className={styles.emptyState}>{t('pages:providers.noVirtualKeyUsage')}</div>
         ) : (
@@ -182,6 +187,7 @@ export function ProviderUsageTab({ detail }: ProviderUsageTabProps) {
           </div>
         )}
       </Card>
+      </section>
 
       {/* Model breakdown */}
       {analyticsData.byModel.length > 0 && (

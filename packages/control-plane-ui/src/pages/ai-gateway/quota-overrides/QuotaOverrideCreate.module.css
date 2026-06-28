@@ -2,19 +2,42 @@
   justify-content: flex-end;
 }
 
+.stickyActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  justify-content: flex-start;
+  min-height: 80px;
+  padding: var(--g-space-6) 0 var(--g-space-4);
+  margin-top: var(--g-space-6);
+  background: var(--color-surface-raised);
+  border-top: 1px solid var(--color-border);
+}
+
+.stickyActions :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
 .fieldLabel {
   display: block;
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text);
   margin-bottom: var(--g-space-1);
 }
 
+.formSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
 .sectionTitle {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 12px 0;
-  color: var(--color-text-secondary);
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  margin: 0;
+  color: var(--color-text);
 }
 
 .formGrid {
@@ -25,4 +48,16 @@
 
 .formGridFull {
   grid-column: span 2;
+}
+
+.targetCombobox :global(button) {
+  color: var(--color-text-muted);
+}
+
+.targetCombobox :global(input) {
+  background: var(--color-bg);
+}
+
+.reasonField :global(textarea) {
+  background: var(--color-bg);
 }

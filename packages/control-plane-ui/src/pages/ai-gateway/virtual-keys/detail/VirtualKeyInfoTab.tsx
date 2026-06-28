@@ -6,6 +6,7 @@ import {
 } from '@/components/ui';
 import type { VirtualKey, VirtualKeyAllowedModelRef, AdminModelsByProvider, Project } from '@/api/types';
 import { formatDate } from '@/lib/format';
+import { expiryBounds } from '../expiryBounds';
 import styles from '../VirtualKeyDetail.module.css';
 
 /* ── Grouped Model Selector ───────────────────────────────────────────── */
@@ -317,14 +318,13 @@ export function VirtualKeyInfoTab(props: VirtualKeyInfoTabProps) {
           <div className={styles.kvValueBold}>{vk.name}</div>
         </div>
 
-        <div>
-          <label className={styles.inlineLabel}>{t('pages:virtualKeys.project')}</label>
+        <FormField label={t('pages:virtualKeys.project')} required>
           <select value={editProjectId} onChange={e => setEditProjectId(e.target.value)}
             className={styles.nativeSelect}>
-            <option value="">{t('pages:virtualKeys.none')}</option>
+            <option value="">{t('pages:virtualKeys.selectProject')}</option>
             {(projectsData?.data ?? []).map(p => <option key={p.id} value={p.id}>{p.name}{p.organization ? ` (${p.organization.name})` : ''}</option>)}
           </select>
-        </div>
+        </FormField>
 
         <FormField label={t('pages:virtualKeys.sourceApp')}>
           <Input name="editSourceApp" value={editSourceApp} onChange={(e) => setEditSourceApp(e.target.value)} placeholder={t('pages:virtualKeys.placeholderSourceApp')} />
@@ -345,17 +345,16 @@ export function VirtualKeyInfoTab(props: VirtualKeyInfoTabProps) {
           />
         </FormField>
 
-        <div>
-          <label className={styles.inlineLabel}>{t('pages:virtualKeys.expiration')}</label>
-          <Stack direction="horizontal" gap="xs" align="center">
-            <Input type="date" value={editExpiresAt} onChange={e => setEditExpiresAt(e.target.value)} disabled={editNeverExpires}
-              className={`${styles.inlineInput} ${styles.expirationInputFlex}`} />
-            <label className={styles.neverExpiresLabel}>
-              <input type="checkbox" checked={editNeverExpires} onChange={e => { setEditNeverExpires(e.target.checked); if (e.target.checked) setEditExpiresAt(''); }} />
-              {t('pages:virtualKeys.neverExpires')}
-            </label>
-          </Stack>
-        </div>
+        <FormField label={t('pages:virtualKeys.expiration')} required>
+          <Input
+            type="date"
+            value={editExpiresAt}
+            onChange={e => setEditExpiresAt(e.target.value)}
+            min={expiryBounds().min}
+            max={expiryBounds().max}
+            className={`${styles.inlineInput} ${styles.expirationInputFlex}`}
+          />
+        </FormField>
 
         <Stack direction="horizontal" gap="sm" align="center">
           <Switch checked={editEnabled} onCheckedChange={setEditEnabled} />

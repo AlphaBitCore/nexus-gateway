@@ -1,0 +1,28 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-4);
+}
+
+.statusFilter {
+  width: 180px;
+  margin-top: calc(20px - var(--g-space-4));
+}
+
+.exemptionsTable :global([class*="tableScroll"])::before,
+.exemptionsTable :global([class*="tableScroll"])::after {
+  display: none;
+}
+
+.exemptionsTable :global(table th:last-child),
+.exemptionsTable :global(table td:last-child) {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--color-surface);
+  box-shadow: -8px 0 16px color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+.exemptionsTable :global(table th:last-child) {
+  z-index: 3;
+}

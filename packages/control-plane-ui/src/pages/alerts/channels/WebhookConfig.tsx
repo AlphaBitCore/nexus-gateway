@@ -30,16 +30,9 @@ export function WebhookConfig({
 
       <div>
         <label>{t('pages:alerts.channelEditors.webhook.headersLabel')}</label>
-        <p className={styles.hint}>
+        <p className={styles.headerHint}>
           {t('pages:alerts.channelEditors.webhook.headersHelp')}
         </p>
-        {headers.length > 0 && (
-          <div className={styles.headerRowHeader}>
-            <span>{t('pages:alerts.channelEditors.webhook.headerKey')}</span>
-            <span>{t('pages:alerts.channelEditors.webhook.headerValue')}</span>
-            <span />
-          </div>
-        )}
         <Stack gap="sm">
           {headers.map((row, idx) => (
             <div key={idx} className={styles.headerRow}>
@@ -56,6 +49,7 @@ export function WebhookConfig({
                 <Input
                   value={row.value}
                   readOnly={row.masked}
+                  placeholder={t('common:enterValue')}
                   onChange={(e) => {
                     const next = [...headers];
                     next[idx] = { ...next[idx], value: e.target.value };
@@ -82,6 +76,7 @@ export function WebhookConfig({
                   type="button"
                   variant="ghost"
                   size="sm"
+                  className={styles.deleteHeaderButton}
                   onClick={() => {
                     setHeaders(headers.filter((_, i) => i !== idx));
                   }}

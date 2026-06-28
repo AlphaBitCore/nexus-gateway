@@ -28,6 +28,16 @@ interface DetailDrawerProps {
   };
 }
 
+function SilenceIcon() {
+  return (
+    <svg className={styles.buttonIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h15" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      <path d="M21 3 3 21" />
+    </svg>
+  );
+}
+
 export function DetailDrawer({
   detailGroup,
   timeRange,
@@ -62,45 +72,61 @@ export function DetailDrawer({
       title={t('infrastructure.recentErrors.detailTitle')}
       variant="drawer"
       size="xl"
-    >
-      <Stack gap="sm">
-        <dl className={styles.detailMeta}>
-          <dt>{t('infrastructure.recentErrors.colLevel')}</dt>
-          <dd>{String(detailGroup.maxLevel).toUpperCase()}</dd>
-          <dt>{t('infrastructure.recentErrors.colSource')}</dt>
-          <dd>{detailGroup.source}</dd>
-          <dt>{t('infrastructure.recentErrors.colAffected')}</dt>
-          <dd>{detailGroup.affectedNodes}</dd>
-          <dt>{t('infrastructure.recentErrors.colTotal')}</dt>
-          <dd>{detailGroup.totalOccurrences}</dd>
-          <dt>{t('infrastructure.recentErrors.colFirstSeen')}</dt>
-          <dd>{fmtTime(detailGroup.firstSeen)} ({fmtRelative(detailGroup.firstSeen, t)})</dd>
-          <dt>{t('infrastructure.recentErrors.colLastSeen')}</dt>
-          <dd>{fmtTime(detailGroup.lastSeen)} ({fmtRelative(detailGroup.lastSeen, t)})</dd>
-          <dt>{t('infrastructure.recentErrors.messageHash')}</dt>
-          <dd className={styles.codeCell}>{detailGroup.messageHash}</dd>
-        </dl>
-
-        <div>
-          <h4 className={styles.expandedHeading}>{t('infrastructure.recentErrors.colMessage')}</h4>
-          <pre className={styles.detailJson}>{detailGroup.sampleMessage}</pre>
+      footerClassName={styles.drawerFooter}
+      footer={(
+        <div className={styles.drawerFooterActions}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setDetailGroup(null);
+              setDetailEvent(null);
+            }}
+          >
+            {t('common:close', 'Close')}
+          </Button>
         </div>
+      )}
+    >
+      <div className={styles.drawerBody}>
+        <Stack gap="sm">
+          <dl className={styles.detailMeta}>
+            <dt>{t('infrastructure.recentErrors.colLevel')}</dt>
+            <dd>{String(detailGroup.maxLevel).toUpperCase()}</dd>
+            <dt>{t('infrastructure.recentErrors.colSource')}</dt>
+            <dd>{detailGroup.source}</dd>
+            <dt>{t('infrastructure.recentErrors.colAffected')}</dt>
+            <dd>{detailGroup.affectedNodes}</dd>
+            <dt>{t('infrastructure.recentErrors.colTotal')}</dt>
+            <dd>{detailGroup.totalOccurrences}</dd>
+            <dt>{t('infrastructure.recentErrors.colFirstSeen')}</dt>
+            <dd>{fmtTime(detailGroup.firstSeen)} ({fmtRelative(detailGroup.firstSeen, t)})</dd>
+            <dt>{t('infrastructure.recentErrors.colLastSeen')}</dt>
+            <dd>{fmtTime(detailGroup.lastSeen)} ({fmtRelative(detailGroup.lastSeen, t)})</dd>
+            <dt>{t('infrastructure.recentErrors.messageHash')}</dt>
+            <dd className={styles.codeCell}>{detailGroup.messageHash}</dd>
+          </dl>
 
-        {detailGroup.buckets.length >= 2 && (
           <div>
-            <h4 className={styles.expandedHeading}>
-              {t('infrastructure.recentErrors.fleetSparkSub', { range: t(`infrastructure.recentErrors.range${timeRange}`) })}
-            </h4>
-            <Sparkline
-              data={bucketCounts(detailGroup.buckets)}
-              width={880}
-              height={48}
-              color="var(--color-danger)"
-            />
+            <h4 className={styles.expandedHeading}>{t('infrastructure.recentErrors.colMessage')}</h4>
+            <pre className={styles.detailJson}>{detailGroup.sampleMessage}</pre>
           </div>
-        )}
 
-        <Stack direction="horizontal" gap="sm">
+          {detailGroup.buckets.length >= 2 && (
+            <div>
+              <h4 className={styles.expandedHeading}>
+                {t('infrastructure.recentErrors.fleetSparkSub', { range: t(`infrastructure.recentErrors.range${timeRange}`) })}
+              </h4>
+              <Sparkline
+                data={bucketCounts(detailGroup.buckets)}
+                width={880}
+                height={48}
+                color="var(--color-danger)"
+              />
+            </div>
+          )}
+
+          <Stack direction="horizontal" gap="sm">
           {detailGroup.silenced ? (
             <Button
               type="button"
@@ -133,7 +159,8 @@ export function DetailDrawer({
                     .catch(() => undefined)
                 }
               >
-                🔕 {t('infrastructure.recentErrors.actionSilence1h')}
+                <SilenceIcon />
+                {t('infrastructure.recentErrors.actionSilence1h')}
               </Button>
               <Button
                 type="button"
@@ -151,13 +178,14 @@ export function DetailDrawer({
                     .catch(() => undefined)
                 }
               >
-                🔕 {t('infrastructure.recentErrors.actionSilence24h')}
+                <SilenceIcon />
+                {t('infrastructure.recentErrors.actionSilence24h')}
               </Button>
             </>
           )}
-        </Stack>
+          </Stack>
 
-        <div>
+          <div>
           <h4 className={styles.expandedHeading}>
             {t('infrastructure.recentErrors.affectedThingsHeading')}
             {' '}
@@ -229,8 +257,9 @@ export function DetailDrawer({
               )}
             </>
           )}
-        </div>
-      </Stack>
+          </div>
+        </Stack>
+      </div>
     </Dialog>
   );
 }

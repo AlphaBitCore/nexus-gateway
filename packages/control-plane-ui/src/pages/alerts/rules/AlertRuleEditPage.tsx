@@ -25,15 +25,13 @@
  * send lowercase values.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '@/hooks/useApi';
 import { useMutation } from '@/hooks/useMutation';
 import { alertsApi, deviceGroupsApi } from '@/api/services';
 import type { AlertRule, AlertSeverity } from '@/api/services';
 import {
-  PageHeader,
-  Breadcrumb,
   Button,
   Stack,
   Card,
@@ -129,7 +127,6 @@ export function AlertRuleEditPage() {
   const onSave = useCallback(() => {
     void saveRule();
   }, [saveRule]);
-  const onCancel = useCallback(() => navigate('/alerts/rules'), [navigate]);
   const onResetConfirm = useCallback(() => {
     void doReset();
   }, [doReset]);
@@ -148,117 +145,117 @@ export function AlertRuleEditPage() {
 
   return (
     <Stack gap="md">
-      <Breadcrumb
-        items={[
-          { label: t('pages:alerts.rules.title'), to: '/alerts/rules' },
-          { label: rule.displayName },
-        ]}
-      />
-
-      <PageHeader
-        title={t('pages:alerts.rules.edit.title', { name: rule.displayName })}
-        subtitle={t('pages:alerts.rules.edit.subtitle')}
-      />
+      <section className={styles.detailHeader}>
+        <div className={styles.headerTitleRow}>
+          <Link to="/alerts/rules" className={styles.backLink} aria-label={t('common:back', 'Back')}>
+            <svg className={styles.backIcon} width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8.33333 5L3.33333 10L8.33333 15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4.16667 10H13.3333C15.1743 10 16.6667 11.4924 16.6667 13.3333V15" stroke="currentColor" strokeWidth="1.66667" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <div className={styles.headerTextBlock}>
+            <h1 className={styles.detailTitle}>{t('pages:alerts.rules.edit.title', { name: rule.displayName })}</h1>
+            <p className={styles.detailSubtitle}>{t('pages:alerts.rules.edit.subtitle')}</p>
+          </div>
+        </div>
+      </section>
 
       {/* Metadata (read-only) */}
-      <Card>
+      <section className={styles.contentSection}>
         <h3 className={styles.sectionTitle}>
           {t('pages:alerts.rules.edit.metadataSection')}
         </h3>
-        <dl className={styles.metaGrid}>
-          <dt>{t('pages:alerts.rules.columns.ruleId')}</dt>
-          <dd>
-            <code className={styles.inlineCode}>{rule.id}</code>
-          </dd>
-          <dt>{t('pages:alerts.rules.columns.sourceType')}</dt>
-          <dd>{rule.sourceType}</dd>
-          <dt>{t('pages:alerts.rules.edit.updatedAt')}</dt>
-          <dd>{new Date(rule.updatedAt).toLocaleString()}</dd>
-        </dl>
-      </Card>
+        <Card>
+          <dl className={styles.metaGrid}>
+            <dt>{t('pages:alerts.rules.columns.ruleId')}</dt>
+            <dd>
+              <code className={styles.inlineCode}>{rule.id}</code>
+            </dd>
+            <dt>{t('pages:alerts.rules.columns.sourceType')}</dt>
+            <dd>{rule.sourceType}</dd>
+            <dt>{t('pages:alerts.rules.edit.updatedAt')}</dt>
+            <dd>{new Date(rule.updatedAt).toLocaleString()}</dd>
+          </dl>
+        </Card>
+      </section>
 
       {/* Top-level knobs */}
-      <Card>
+      <section className={styles.contentSection}>
         <h3 className={styles.sectionTitle}>
           {t('pages:alerts.rules.edit.generalSection')}
         </h3>
-        <Stack gap="md">
-          <div className={styles.switchRow}>
-            <label>{t('pages:alerts.rules.edit.enabledLabel')}</label>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
-          </div>
-          <FormField label={t('pages:alerts.rules.edit.severityLabel')}>
-            <Select
-              value={defaultSeverity}
-              onValueChange={(v) => setDefaultSeverity(v as AlertSeverity)}
-              options={severityOptions}
-            />
-          </FormField>
-          <FormField
-            label={t('pages:alerts.rules.edit.cooldownLabel')}
-            helpText={t('pages:alerts.rules.edit.cooldownHelp')}
-          >
-            <Input
-              type="number"
-              min={0}
-              step={60}
-              value={String(cooldownSec)}
-              onChange={(e) => setCooldownSec(Number(e.target.value) || 0)}
-            />
-          </FormField>
-          <div className={styles.switchRow}>
-            <label>{t('pages:alerts.rules.edit.requiresAckLabel')}</label>
-            <Switch checked={requiresAck} onCheckedChange={setRequiresAck} />
-          </div>
-          {/* Per-group filter. NULL/empty = fleet-wide; non-empty
-              binds the rule to that DeviceGroup so the Raiser drops
-              firings whose target isn't a member. */}
-          <FormField
-            label={t('pages:alerts.rules.edit.groupFilterLabel', 'Restrict to device group')}
-            helpText={t(
-              'pages:alerts.rules.edit.groupFilterHelp',
-              'When set, this rule only fires for events whose target device is a member of the selected group. Leave as "Fleet-wide" for the default behaviour.',
-            )}
-          >
-            <select
-              value={groupIdFilter}
-              onChange={(e) => setGroupIdFilter(e.target.value)}
-              style={{
-                padding: 'var(--g-space-2)',
-                borderRadius: 'var(--g-radius-sm)',
-                border: '1px solid var(--color-border)',
-                width: '100%',
-                maxWidth: 360,
-              }}
+        <Card>
+          <Stack gap="md" className={styles.generalGrid}>
+            <div className={styles.switchRow}>
+              <label>{t('pages:alerts.rules.edit.enabledLabel')}</label>
+              <Switch checked={enabled} onCheckedChange={setEnabled} />
+            </div>
+            <FormField label={t('pages:alerts.rules.edit.severityLabel')}>
+              <Select
+                value={defaultSeverity}
+                onValueChange={(v) => setDefaultSeverity(v as AlertSeverity)}
+                options={severityOptions}
+              />
+            </FormField>
+            <FormField
+              label={t('pages:alerts.rules.edit.cooldownLabel')}
+              helpText={t('pages:alerts.rules.edit.cooldownHelp')}
             >
-              <option value="">{t('pages:alerts.rules.edit.groupFilterFleetWide', 'Fleet-wide (no filter)')}</option>
-              {(groupList?.data ?? []).map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          </FormField>
-        </Stack>
-      </Card>
+              <Input
+                type="number"
+                min={0}
+                step={60}
+                value={String(cooldownSec)}
+                onChange={(e) => setCooldownSec(Number(e.target.value) || 0)}
+              />
+            </FormField>
+            <div className={styles.switchRow}>
+              <label>{t('pages:alerts.rules.edit.requiresAckLabel')}</label>
+              <Switch checked={requiresAck} onCheckedChange={setRequiresAck} />
+            </div>
+            {/* Per-group filter. NULL/empty = fleet-wide; non-empty
+                binds the rule to that DeviceGroup so the Raiser drops
+                firings whose target isn't a member. */}
+            <FormField
+              label={t('pages:alerts.rules.edit.groupFilterLabel', 'Restrict to device group')}
+              helpText={t(
+                'pages:alerts.rules.edit.groupFilterHelp',
+                'When set, this rule only fires for events whose target device is a member of the selected group. Leave as "Fleet-wide" for the default behaviour.',
+              )}
+            >
+              <select
+                className={styles.groupSelect}
+                value={groupIdFilter}
+                onChange={(e) => setGroupIdFilter(e.target.value)}
+              >
+                <option value="">{t('pages:alerts.rules.edit.groupFilterFleetWide', 'Fleet-wide (no filter)')}</option>
+                {(groupList?.data ?? []).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          </Stack>
+        </Card>
+      </section>
 
       {/* Rule-specific params form */}
-      <Card>
+      <section className={styles.contentSection}>
         <h3 className={styles.sectionTitle}>
           {t('pages:alerts.rules.edit.paramsSection')}
         </h3>
-        <Editor value={params} schema={rule.paramsSchema ?? {}} onChange={setParams} />
-      </Card>
+        <Card>
+          <Editor value={params} schema={rule.paramsSchema ?? {}} onChange={setParams} />
+        </Card>
+      </section>
 
       {/* Footer */}
       <Stack direction="horizontal" gap="sm" className={styles.footerActions}>
-        <Button variant="secondary" onClick={onCancel}>
-          {t('common:cancel')}
-        </Button>
-        <Button variant="secondary" onClick={() => setResetOpen(true)} disabled={resetting}>
+        <Button className={styles.footerButton} variant="secondary" onClick={() => setResetOpen(true)} disabled={resetting}>
           {t('pages:alerts.rules.edit.reset')}
         </Button>
-        <Button onClick={onSave} disabled={saving} loading={saving}>
+        <Button className={styles.footerButton} onClick={onSave} disabled={saving} loading={saving}>
           {t('common:save')}
         </Button>
       </Stack>

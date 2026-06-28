@@ -130,6 +130,26 @@ export function ImportPackModal({ open, onClose }: ImportPackModalProps) {
                 </ul>
               </div>
             )}
+
+            {preview.lint && preview.lint.length > 0 && (
+              <div>
+                <div className={styles.listTitle}>
+                  {t(
+                    'pages:hooks.rulePacks.importLintTitle',
+                    'Engine compatibility & performance',
+                  )}
+                </div>
+                <ul className={styles.list}>
+                  {preview.lint.flatMap((rule) =>
+                    rule.findings.map((finding) => (
+                      <li key={`${rule.ruleId}:${finding.code}`}>
+                        <code>{rule.ruleId}</code> — {finding.message}
+                      </li>
+                    )),
+                  )}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </Stack>

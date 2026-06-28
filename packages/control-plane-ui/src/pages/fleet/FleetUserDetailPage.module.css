@@ -8,7 +8,7 @@
 .kvLabel {
   font-size: var(--g-font-size-sm);
   color: var(--color-text-muted);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
 }
 
 .kvValue {
@@ -26,7 +26,7 @@
 .tab {
   padding: 10px 20px;
   font-size: var(--g-font-size-sm);
-  font-weight: 500;
+  font-weight: var(--g-font-weight-medium);
   cursor: pointer;
   border: none;
   background: transparent;
@@ -40,5 +40,5 @@
   composes: tab;
   color: var(--color-primary);
   border-bottom-color: var(--color-primary);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
 }

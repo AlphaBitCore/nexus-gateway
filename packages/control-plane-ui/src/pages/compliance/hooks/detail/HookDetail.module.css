@@ -1,13 +1,110 @@
 .kvGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--g-space-4);
-  margin-top: var(--g-space-4);
+}
+
+.detailHeader {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--g-radius-lg);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-xs), var(--g-effect-card-edge-light);
+}
+
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--g-space-4);
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--g-radius-md);
+  color: var(--color-accent-foreground);
+  text-decoration: none;
+  transition:
+    background var(--g-transition-fast),
+    color var(--g-transition-fast);
+}
+
+.backLink:hover {
+  background: color-mix(in srgb, var(--color-accent-foreground) 8%, transparent);
+  color: var(--color-tab-active, var(--color-info));
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.backIcon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.headerTextBlock {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.detailTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--g-font-size-xl);
+  font-weight: var(--g-font-weight-semibold);
+  line-height: 28px;
+}
+
+.detailSubtitle {
+  margin: 4px 0 0;
+  max-width: 760px;
+  color: var(--color-text-tertiary);
+  font-size: var(--g-font-size-sm);
+  line-height: 20px;
+}
+
+.headerActions {
+  flex: 0 0 auto;
+}
+
+.headerActions :global(button),
+.headerActions :global(button *) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.headerBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.headerBlock :global(button),
+.detailSection :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.headerBlock :global(p) {
+  margin-top: 8px !important;
+}
+
+.kvGrid > div {
+  min-width: 0;
 }
 
 .kvLabel {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--g-font-size-xs);
+  font-weight: var(--g-font-weight-medium);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -22,7 +119,7 @@
 
 .kvValue {
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
+  font-weight: var(--g-font-weight-semibold);
   color: var(--color-text);
 }
 
@@ -30,19 +127,46 @@
   display: inline-block;
   font-size: var(--g-font-size-xs);
   padding: 2px 10px;
-  border-radius: 999px;
-  font-weight: 600;
+  border-radius: var(--g-radius-full);
+  font-weight: var(--g-font-weight-semibold);
 }
 
 .badgesRow {
   display: flex;
   gap: var(--g-space-2);
-  margin-bottom: var(--g-space-6);
+  margin-bottom: 0;
   flex-wrap: wrap;
 }
 
+.detailSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--g-space-4);
+}
+
+.detailSectionHeader .widgetTitle {
+  margin-right: auto;
+}
+
+.overviewToolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.overviewToolbar :global(button) {
+  font-size: var(--g-font-size-sm) !important;
+  font-weight: var(--g-font-weight-normal) !important;
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-space-3);
+}
+
 .configPre {
-  margin-top: var(--g-space-4);
+  margin-top: 0;
   padding: var(--g-space-4);
   background: var(--color-muted);
   border-radius: var(--g-radius-md);
@@ -71,28 +195,38 @@
 }
 
 .configInfoCallout {
-  padding: var(--g-space-4);
-  border-radius: var(--g-radius-md);
-  border: 1px solid var(--color-info);
-  background: var(--color-info-light);
+  padding: 12px 16px;
+  border-radius: var(--g-radius-lg);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+  font-size: var(--g-font-size-sm);
+  color: var(--color-primary);
+  line-height: 22px;
+  letter-spacing: -0.1504px;
 }
 
 .configInfoCalloutTitle {
-  margin: 0 0 var(--g-space-2);
+  display: inline;
+  margin: 0;
   font-size: var(--g-font-size-sm);
-  font-weight: 600;
-  color: var(--color-text);
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-primary);
 }
 
 .configInfoCalloutBody {
-  margin: 0 0 var(--g-space-2);
+  display: inline;
+  margin: 0;
   font-size: var(--g-font-size-sm);
-  line-height: 1.5;
-  color: var(--color-text-muted);
+  line-height: 22px;
+  color: var(--color-primary);
 }
 
-.configInfoCalloutBody:last-child {
-  margin-bottom: 0;
+.configInfoCalloutTitle + .configInfoCalloutBody::before {
+  content: ' ';
+}
+
+.configInfoCalloutBody + .configInfoCalloutBody::before {
+  content: ' ';
 }
 
 .emptyConfig {
@@ -103,7 +237,7 @@
 }
 
 .pipelineText {
-  margin-top: var(--g-space-4);
+  margin: 0;
   font-size: var(--g-font-size-sm);
 }
 
@@ -124,31 +258,46 @@
   font-family: var(--g-font-mono);
   font-size: var(--g-font-size-xs);
   resize: vertical;
-  background: var(--color-muted);
+  background: var(--color-bg);
   margin-bottom: var(--g-space-3);
 }
 
 .failBadge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: var(--g-font-size-xs);
-  font-weight: 600;
+  padding: 0;
+  border-radius: 0;
+  font-size: var(--g-font-size-sm);
+  font-weight: var(--g-font-weight-semibold);
+  background: transparent !important;
+  color: var(--color-text) !important;
+  text-align: left;
 }
 
 .failClosed {
-  background: var(--color-warning-light);
-  color: var(--color-warning);
+  background: transparent;
+  color: var(--color-text);
 }
 
 .failOpen {
-  background: var(--color-muted);
-  color: var(--color-text-muted);
+  background: transparent;
+  color: var(--color-text);
 }
 
 .widgetTitle {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--g-font-size-base);
+  font-weight: var(--g-font-weight-semibold);
   margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .kvGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .kvGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── HookDetail inline-style extractions ─────────────────────────────── */
@@ -157,7 +306,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--g-font-size-xs);
   padding: 0;
 }
 

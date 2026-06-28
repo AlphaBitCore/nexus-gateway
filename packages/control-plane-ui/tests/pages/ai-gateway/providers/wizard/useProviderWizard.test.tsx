@@ -4,7 +4,14 @@ import { useProviderWizard } from '@/pages/ai-gateway/providers/wizard/useProvid
 
 const navigate = vi.fn();
 const addToast = vi.fn();
-const apiMock = vi.hoisted(() => ({ providerApi: { list: vi.fn(), create: vi.fn(), getTemplateDetail: vi.fn() } }));
+const apiMock = vi.hoisted(() => ({
+  providerApi: {
+    list: vi.fn(),
+    create: vi.fn(),
+    getTemplateDetail: vi.fn(),
+    discoverModels: vi.fn(),
+  },
+}));
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigate }));
 // `t` MUST be a stable reference — the name-check effect depends on it, so a new
@@ -140,5 +147,78 @@ describe('useProviderWizard', () => {
     expect(result.current.name).toBe('broken');
     expect(result.current.models).toHaveLength(0);
     expect(addToast).toHaveBeenCalledWith(expect.any(String), 'error');
+  });
+
+  it('fetchModels appends discovered rows (chat + embedding) and deduplicates existing ids', async () => {
+    apiMock.providerApi.discoverModels.mockResolvedValue({
+      success: true,
+      models: [
+        { id: 'gpt-4o', suggestedType: 'chat' },
+        { id: 'text-embedding-3-small', suggestedType: 'embedding' },
+        { id: 'existing-model', suggestedType: 'chat' }, // already in the list
+      ],
+    });
+    const { result } = renderHook(() => useProviderWizard());
+
+    // Add an existing model manually first
+    act(() => {
+      result.current.setBaseUrl('https://api.openai.com');
+      result.current.setApiKey('sk-test');
+      result.current.selectCustom();
+      result.current.setNewModelId('existing-model');
+    });
+    act(() => result.current.addManualModel());
+    expect(result.current.models).toHaveLength(1);
+
+    // Fetch — should add 2 new rows, skip the duplicate
+    await act(async () => { await result.current.fetchModels(); });
+
+    expect(result.current.models).toHaveLength(3); // 1 existing + 2 new
+    const ids = result.current.models.map((m) => m.modelId);
+    expect(ids).toContain('gpt-4o');
+    expect(ids).toContain('text-embedding-3-small');
+    expect(ids).toContain('existing-model');
+    // Fetched rows carry the correct type but are opt-in (unselected by default)
+    // so a provider returning dozens of models doesn't pre-check them all.
+    const embedding = result.current.models.find((m) => m.modelId === 'text-embedding-3-small');
+    expect(embedding?.type).toBe('embedding');
+    expect(embedding?.selected).toBe(false);
+    expect(result.current.fetchModelsUnsupported).toBe(false);
+    expect(result.current.fetchModelsError).toBeNull();
+  });
+
+  it('fetchModels sets fetchModelsUnsupported when code is discovery_unsupported', async () => {
+    apiMock.providerApi.discoverModels.mockResolvedValue({
+      success: false,
+      error: 'not supported',
+      code: 'discovery_unsupported',
+    });
+    const { result } = renderHook(() => useProviderWizard());
+    act(() => { result.current.setBaseUrl('https://x'); result.current.setApiKey('k'); });
+    await act(async () => { await result.current.fetchModels(); });
+    expect(result.current.fetchModelsUnsupported).toBe(true);
+    expect(result.current.fetchModelsError).toBeNull();
+    expect(result.current.models).toHaveLength(0);
+  });
+
+  it('fetchModels sets fetchModelsError on a generic failure response', async () => {
+    apiMock.providerApi.discoverModels.mockResolvedValue({
+      success: false,
+      error: 'connection refused',
+    });
+    const { result } = renderHook(() => useProviderWizard());
+    act(() => { result.current.setBaseUrl('https://x'); result.current.setApiKey('k'); });
+    await act(async () => { await result.current.fetchModels(); });
+    expect(result.current.fetchModelsError).toBe('connection refused');
+    expect(result.current.fetchModelsUnsupported).toBe(false);
+  });
+
+  it('fetchModels sets fetchModelsError when discoverModels throws', async () => {
+    apiMock.providerApi.discoverModels.mockRejectedValue(new Error('network timeout'));
+    const { result } = renderHook(() => useProviderWizard());
+    act(() => { result.current.setBaseUrl('https://x'); result.current.setApiKey('k'); });
+    await act(async () => { await result.current.fetchModels(); });
+    expect(result.current.fetchModelsError).toBe('network timeout');
+    expect(result.current.fetchModelsUnsupported).toBe(false);
   });
 });
