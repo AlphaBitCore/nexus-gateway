@@ -1,11 +1,27 @@
 [
   {
+    "id": "2bdf8268-6194-5112-b16b-8bf180eda143",
+    "name": "nexus/compliance",
+    "version": "v1.0.0",
+    "maintainer": "nexus",
+    "description": "Regulatory-compliance marker detection across five subcategories: gdpr (data-subject-rights, right-to-erasure, lawful-basis, cross-border transfer), hipaa (PHI handling phrases, BAA references, minimum-necessary / covered-entity language), pci (cardholder-data-environment markers, prohibited sensitive-auth storage, PAN-in-the-clear context, DSS scope references), regulated_advice (medical / legal / financial / tax / insurance advice-seeking that needs a licensed professional), and consent (consent / opt-in / opt-out / withdrawal / do-not-call / do-not-sell language). This pack flags COMPLIANCE-RELEVANT natural-language markers and framework references — NOT the raw regulated values themselves: card / SSN / MRN structure lives in nexus/pii, API keys and credentials in nexus/secret-leak, bulk-exfil and classification banners in nexus/data-loss, and harmful content in nexus/content-safety. Severity is deliberately advisory (mostly soft/warn) so these drive flag/route, not hard-block; short ambiguous acronyms (DSAR/PHI/BAA) are kept only where the token is specific enough or paired with a spelled form to bound prose false-positives. Patterns are Vectorscan-compatible: Go RE2 syntax, no backreferences, no lookaround, bounded quantifiers, word-boundary anchored (no bare ^/$), explicit ASCII classes over `.`.",
+    "createdAt": "2026-06-22T00:00:00.000+00:00"
+  },
+  {
     "id": "34f93bac-06fa-4a46-860e-2bb18c5d5c8e",
     "name": "nexus/tool-call-safety",
     "version": "v1.0.0",
     "maintainer": "nexus",
     "description": "Tool-call safety patterns for agent / function-calling traffic. Day-1 rules cover shell destructive ops, filesystem sensitive paths, SSRF (cloud metadata + RFC1918 + k8s service names), SQL injection heuristics, code-evaluation primitives, dangerous deserialization, destructive DB DDL, Kubernetes destructive verbs, and credential env-var exfiltration. All rules emit `detector:tool-call-safety` plus a finer `risk:` label so downstream policies can filter by risk class.",
     "createdAt": "2026-05-08T14:46:20.432+00:00"
+  },
+  {
+    "id": "3b5fa6cb-5913-593c-8fac-13c2ac8a1079",
+    "name": "nexus/data-loss",
+    "version": "v1.0.0",
+    "maintainer": "nexus",
+    "description": "Data-loss-prevention patterns for confidential-document leakage and bulk-data exfiltration through the gateway. Five subcategories: classification markers (CONFIDENTIAL / TRADE SECRET / ATTORNEY-CLIENT / TLP / ITAR-NOFORN), encoded payloads (large base64, data: URIs, long hex, archive magic), bulk dumps (SQL dump headers, multi-tuple INSERT, PII CSV headers, internal DB connection strings), source-code leakage (unified diffs, credentialed repo URLs, internal registries), and internal references (corp hostnames, SharePoint/Confluence URLs, ticket keys in a confidential context). Scope excludes API keys (nexus/secret-leak), personal data (nexus/pii), and harmful content. Every rule emits `detector:data-loss` plus a finer marker:/vector: label and a `severity:<tier>` label so downstream policies can filter by exfil class.",
+    "createdAt": "2026-06-22T00:00:00.000+00:00"
   },
   {
     "id": "4c1db5f1-cb03-4150-ac50-e4be221f6005",
@@ -16,12 +32,52 @@
     "createdAt": "2026-05-08T14:46:13.841+00:00"
   },
   {
+    "id": "5cc06a87-54b2-5bc0-81cc-2d22f125384a",
+    "name": "nexus/supply-chain",
+    "version": "v1.0.0",
+    "maintainer": "nexus",
+    "description": "Software-supply-chain risk detection for code and shell snippets flowing through the gateway. Five subcategories: install-script abuse (postinstall / preinstall hooks that pipe a remote download to a shell, base64-decode-and-run, or eval inline at install time), dependency confusion (package-manager registry / index-url repointed at an attacker host or raw IP), malicious packages (documented npm / PyPI typosquats, installs from unvetted git / URL / archive sources, root-privileged install scripts), cryptominers (miner binaries, the stratum pool protocol, Monero wallet addresses, known mining-pool hosts), and build-time exfiltration (environment dumps or credential files shipped to a remote host inside an install / CI step). Distinct from nexus/tool-call-safety (runtime tool-call abuse) and nexus/insecure-code (code-quality weaknesses): this pack targets the dependency / build supply chain. Grounded in real incidents (crossenv / jeIlyfish / python3-dateutil typosquats, npm postinstall malware, dependency-confusion research, OWASP CI/CD Top 10). Every rule emits `detector:supply-chain` plus a finer `risk:` label and a `severity:<tier>` label so downstream policies can filter by supply-chain class. Severities are hard for install-time pipe-to-shell and build exfiltration; soft for name / source heuristics.",
+    "createdAt": "2026-06-22T00:00:00.000+00:00"
+  },
+  {
     "id": "75cf6ec8-0035-4a44-9109-6d89b1dab920",
     "name": "nexus/content-safety",
     "version": "v1.0.0",
     "maintainer": "nexus",
     "description": "Content-safety patterns across 5 restricted categories: violence, hate_speech, self_harm, sexual, illegal. Each rule emits `detector:content-safety`, `category:<name>`, and `severity:restricted` labels. Patterns are intentionally contextual (verb + target / how-to framing) to keep idiomatic business text — \"kill the process\", \"attack the problem\", \"human trafficking survivor\", \"the book covers the Holocaust\" — out of the match set. Severity defaults to `soft`; the P-E content-safety hook escalates via AI Guard when configured.",
     "createdAt": "2026-05-08T14:46:10.705+00:00"
+  },
+  {
+    "id": "81616eeb-bdb8-588d-b7b9-dc717622d58e",
+    "name": "nexus/cloud-misconfig",
+    "version": "v1.0.0",
+    "maintainer": "nexus",
+    "description": "Insecure cloud / infrastructure-as-code configuration detection for text and code flowing through the gateway — model-generated or user-pasted Terraform, CloudFormation, Kubernetes manifests, Docker run/compose, and cloud CLI/JSON. Six subcategories: public_access (world-readable/writable buckets, AllUsers/AllAuthenticatedUsers grants, CloudFormation public canned ACLs, 0.0.0.0/0 ingress including sensitive admin/database ports, GCP allUsers bindings, disabled S3 public access blocks, publicly-accessible databases), iam (wildcard Action/Resource, Principal \"*\" trust policies, administrator-tier policy attach, service-wide wildcards, Allow+NotAction, \"*:*\" full wildcard), encryption (encryption-at-rest disabled, anonymous blob access, public Azure containers, weak TLS, disabled TLS verification), iac_secret (hardcoded cloud access keys, passwords, private keys, Terraform provider creds, GCP service-account key JSON, and Azure client secrets embedded in IaC), k8s (privileged containers, host namespaces, hostPath, run-as-root, privilege escalation, dangerous Linux capabilities, automounted service-account tokens), and container (Docker --privileged, --cap-add of dangerous capabilities, host networking). Grounded in CIS Benchmarks and the tfsec/checkov/kube-score misconfig catalogs. Distinct from nexus/insecure-code (application-code weaknesses) and nexus/secret-leak (raw credential strings): this pack flags misconfigured cloud INFRASTRUCTURE. Every rule emits `detector:cloud-misconfig` plus a `cloud:<platform>` label and a `severity:<tier>` data-classification label so downstream policies can filter by platform and exposure class.",
+    "createdAt": "2026-06-22T00:00:00.000+00:00"
+  },
+  {
+    "id": "8d8af62b-fa90-5b35-9a9b-cdb5e977ed03",
+    "name": "nexus/pii",
+    "version": "v1.1.0",
+    "maintainer": "nexus",
+    "description": "Regulated personal-data (PII / PHI) detection across 4 subcategories: financial, government_id, contact, health. This pack is scoped to PERSONAL / regulated data only — API keys and credentials live in nexus/secret-leak, harmful content in nexus/content-safety. Patterns are intentionally contextual: loosely-structured values (account / MRN / passport / DL / national-id) require a nearby label word AND at least one digit so idiomatic prose (\"the medical record system\", \"driver license bureau\", \"tax id requirement\") stays out of the match set. Card / SSN rules prefer either a label-word context OR strict separated structure; Luhn / check-digit validation is the detector hook's job, not the regex. Severity defaults to soft/warn — PII detection drives redact/flag, not hard-block. Patterns are Vectorscan-compatible: Go RE2 syntax, no backreferences, no lookaround, bounded quantifiers, word-boundary anchored (no bare ^/$).",
+    "createdAt": "2026-06-22T00:00:00.000+00:00"
+  },
+  {
+    "id": "a90e1bd3-6a0b-5a16-956c-b956172ebb1d",
+    "name": "nexus/insecure-code",
+    "version": "v1.0.0",
+    "maintainer": "nexus",
+    "description": "Insecure-code-construct detection for LLM-generated and user-supplied code flowing through the gateway. Day-1 rules are CWE-aligned weak-output checks: weak crypto (MD5/SHA1/DES/RC4/AES-ECB/hardcoded IV), hardcoded secrets in code, disabled TLS verification, injection-prone string construction (SQL/OS-command), insecure randomness in a security context, and unsafe deserialization. Distinct from nexus/tool-call-safety: that pack flags runtime tool-call ABUSE (an action the agent is about to take); this pack flags code-quality / security WEAKNESSES that the code itself ships. All rules emit `detector:insecure-code` plus a `cwe:` label so downstream policies can filter by weakness class. Severities are advisory (soft/warn) except for unambiguous TLS-verification disablement (hard).",
+    "createdAt": "2026-06-22T00:00:00.000+00:00"
+  },
+  {
+    "id": "b4376f52-f4ab-5988-bb17-f8e73bd928ce",
+    "name": "nexus/malware-threat",
+    "version": "v1.0.0",
+    "maintainer": "nexus",
+    "description": "Defensive detection signatures for malware / offensive-tooling indicators in text flowing through the gateway — a model being asked to emit malware, or malicious code / IOCs pasted into a prompt. These are DETECTORS (in the spirit of Suricata / Sigma / YARA signatures), not payloads: each rule flags a well-known malicious construct so the pipeline can block, redact, or route to review. Six subcategories: reverse_shell, obfuscation, c2, dropper, ransomware, exploit. Distinct from nexus/tool-call-safety (runtime tool-call abuse) and nexus/insecure-code (shipped code weaknesses) — this pack is offensive-artifact detection. Patterns are Vectorscan-compatible (Go RE2, no backref/lookaround, bounded quantifiers, no bare ^/$). Severity is hard for unambiguous offensive constructs, soft/warn for heuristics with benign collisions.",
+    "createdAt": "2026-06-22T00:00:00.000+00:00"
   },
   {
     "id": "d4143067-6079-486e-aca2-c61fd0d34335",

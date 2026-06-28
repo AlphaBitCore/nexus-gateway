@@ -801,6 +801,114 @@ paths:
                             schema:
                                 type: object
                                 additionalProperties: {}
+    /api/admin/providers/discover-models:
+        post:
+            operationId: providerDiscoverModels
+            summary: Discover models from a new provider
+            description: |-
+                Fetches the upstream model list for a not-yet-saved custom provider by
+                calling GET /v1/models on the supplied base URL, delegating the request
+                to the AI Gateway internal endpoint POST /internal/provider-discover-models.
+                OpenAI and OpenAI-compatible adapters return a full model list; other wire
+                formats return discovery_unsupported. The response from the AI Gateway is
+                relayed verbatim. On transport failure the handler returns HTTP 200 with
+                success:false and an error description.
+
+                IAM: requires provider:create — the same SSRF-vector reasoning as
+                POST /api/admin/providers/test-connection applies here. The endpoint dials
+                a caller-supplied, not-yet-saved base URL and relays upstream response
+                detail; gating it on the provider-config-write tier means only a caller
+                who could already configure a provider (and thus set the base URL anyway)
+                can run the probe.
+            x-nexus-iam-action: iam.ResourceProvider.Action(iam.VerbCreate)
+            x-nexus-tier: auto
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                adapterType:
+                                    type: string
+                                    description: Wire-format adapter slug (case-sensitive, lowercase).
+                                    enum:
+                                        - openai
+                                        - anthropic
+                                        - gemini
+                                        - glm
+                                        - deepseek
+                                        - azure-openai
+                                        - minimax
+                                        - bedrock
+                                        - vertex
+                                        - cohere
+                                        - huggingface
+                                        - replicate
+                                        - mistral
+                                        - xai
+                                        - groq
+                                        - perplexity
+                                        - together
+                                        - fireworks
+                                        - moonshot
+                                baseUrl:
+                                    type: string
+                                    description: Upstream provider base URL.
+                                apiKey:
+                                    type: string
+                                    description: API key to authenticate the discovery request.
+                            required:
+                                - adapterType
+                                - baseUrl
+                        example:
+                            adapterType: openai
+                            baseUrl: https://api.openai.com
+                            apiKey: sk-...
+            responses:
+                "400":
+                    description: Bad Request — missing required field or unsupported adapterType.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    error:
+                                        type: string
+                                        description: Human-readable error description.
+                                    code:
+                                        type: string
+                                        description: Machine-readable error code.
+                                    details:
+                                        type: string
+                                        description: Optional additional detail.
+                "200":
+                    description: |-
+                        Model discovery result relayed from the AI Gateway.
+                        On transport failure success is false and error contains the reason.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    success:
+                                        type: boolean
+                                        description: true when the AI Gateway could reach the upstream and list models.
+                                    models:
+                                        type: array
+                                        description: Discovered models. Present when success is true.
+                                        items:
+                                            type: object
+                                            properties:
+                                                id:
+                                                    type: string
+                                                    description: Upstream model id.
+                                                suggestedType:
+                                                    type: string
+                                                    description: Suggested model type (e.g. chat, embedding).
+                                    error:
+                                        type: string
+                                        description: Error description. Present when success is false or the upstream returned an error.
 components:
     schemas:
         handler_createProviderCredentialInput:

@@ -102,7 +102,7 @@
     "config_key": "cache",
     "state": {
       "global": {
-        "normaliser_enabled": true,
+        "normaliser_enabled": false,
         "cache_master_kill_switch": false
       },
       "adapters": {
@@ -115,7 +115,7 @@
         },
         "gemini": {
           "ttl_seconds": 3600,
-          "cache_enabled": true,
+          "cache_enabled": false,
           "min_system_chars": 4096,
           "circuit_breaker_open_secs": 300,
           "circuit_breaker_threshold": 5
@@ -140,8 +140,8 @@
               "enabled": false
             }
           },
-          "marker_inject_enabled": true,
-          "marker_boundary3_enabled": true
+          "marker_inject_enabled": false,
+          "marker_boundary3_enabled": false
         },
         "deepseek": {
           "rules": {
@@ -163,8 +163,8 @@
               "enabled": false
             }
           },
-          "marker_inject_enabled": true,
-          "marker_boundary3_enabled": true
+          "marker_inject_enabled": false,
+          "marker_boundary3_enabled": false
         },
         "azure-openai": {
           "rules": {

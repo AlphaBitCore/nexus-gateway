@@ -24,6 +24,15 @@ model traffic_event {
   /// Empty string for non-AI traffic (compliance-proxy / agent forwards)
   /// that does not classify a modality.
   endpoint_type              String                    @default("") @map("endpoint_type")
+  /// Client-facing wire format (provcore.Format key: "openai" /
+  /// "openai-responses" / "anthropic" / "gemini" / …) the captured request
+  /// AND response bodies are stored in. The bodies are kept in the INGRESS
+  /// frame (what the client sent / received), so the control-plane view-time
+  /// normalize MUST decode them with this format — not the upstream provider's
+  /// adapter_type, which describes the bytes sent upstream (a body never
+  /// stored). Empty for compliance-proxy / agent transparent forwards
+  /// (ingress == upstream). See traffic-capture-storage-normalize-design.md.
+  ingress_format             String                    @default("") @map("ingress_format")
   /// E58-S1/E41: HTTP method actually sent to the upstream provider.
   /// For AI gateway: may differ from `method` (e.g. E57 routes a chat-
   /// completions request to OpenAI Responses API via POST /v1/responses).
@@ -276,19 +285,24 @@ model traffic_event {
   /// re-scanning it. Backfill-internal; not read by the CP store or UI.
   normalizeSkip              traffic_event_normalize_skip?
 
+  // Secondary indexes on this high-write-rate ingest table are deliberately
+  // limited to the access paths that need one. Each extra index is maintained on
+  // every insert (index-leaf write + WAL + dirty-page flush), so at millions of
+  // rows/sec a rarely-read index costs far more in write amplification than it
+  // saves in read latency. Kept:
+  //   source+timestamp — the base filter every analytics/job query carries.
+  //   timestamp        — retention purge (WHERE timestamp < x) + recent-event list.
+  //   entity_id        — DSAR subject export + the common "this entity's traffic".
+  //   thing_id         — per-node fleet traffic view (high-cardinality nodes).
+  // Low-cardinality / rarely-filtered columns (org_id, provider_id, provider_name,
+  // request_hook_decision, response_hook_decision, target_host, cache_status) are
+  // intentionally NOT indexed: their aggregate views come from the analytics
+  // rollups, which GROUP BY over a time window and gain nothing from a per-column
+  // index; a rare raw-list filter on them falls back to a timestamp-ordered scan.
   @@index([source, timestamp])
   @@index([timestamp])
   @@index([entity_id, timestamp])
-  @@index([org_id, timestamp])
-  @@index([provider_name, timestamp])
-  @@index([provider_id, timestamp])
-  @@index([request_hook_decision, timestamp])
-  @@index([response_hook_decision, timestamp])
-  @@index([target_host, timestamp])
   @@index([thing_id, timestamp])
-  // E59-S1: cache filter index. UI binds to cache_status (HIT|MISS); drawer
-  // reads the four detail columns without indexing (single-row lookup).
-  @@index([cache_status, timestamp])
   // E41 v2: partial index optimised for the credential-health-rollup query
   // (WHERE source='ai-gateway' AND credential_id IS NOT NULL AND timestamp >= …).
   // Declared via raw SQL in the migration since Prisma doesn't yet model
@@ -302,27 +316,47 @@ model traffic_event {
 /// override columns (interception_domain.capture_*, Provider.capture_*).
 ///
 /// Body storage is two-tier (E33):
-///   inline_request_body  — JSONB inline copy when extracted size < 256 KiB
+///   inline_request_body  — BYTEA inline copy when extracted size < 256 KiB.
+///                          Holds the captured body's RAW bytes — text verbatim,
+///                          arbitrary binary, or a raw zstd/s2 compressed frame;
+///                          inline_request_encoding discriminates
+///                          ("text" | "binary" | "zstd" | "s2", legacy "base64").
+///                          BYTEA (not TEXT/JSONB) so PostgreSQL stores the bytes
+///                          as-is with no parse/validate/tree-store on insert AND
+///                          no base64 inflation — audit-body disk WRITE bandwidth
+///                          is the single-box no-loss bottleneck, so the former
+///                          base64-in-TEXT +33% is removed. Bodies are read whole,
+///                          never JSON-path-queried.
 ///   request_spill_ref    — JSONB { backend, key, size, sha256, content_type }
 ///                          when stored via shared/spillstore (large bodies)
 /// Exactly one of (inline_*, *_spill_ref) is set per direction; both NULL means
 /// capture was disabled for that scope.
 ///
+/// MIGRATION (1.0 GA persisted contract): inline_*_body changed TEXT→BYTEA.
+/// A prod migration must re-encode pre-existing rows — "zstd"/"s2"/"base64" rows
+/// held base64 text whose bytes survive the type swap as base64 ASCII; the
+/// "base64" read path decodes them, but "zstd"/"s2" rows need their base64 text
+/// decoded to the raw frame (UPDATE … set body = decode(convert_from(body,'UTF8'),
+/// 'base64')) or they read as absent. The rig validates -33% on a wiped DB; the
+/// prod re-encode migration + CHANGELOG note are tracked separately.
+///
 /// `*_size_bytes` is the true extracted size before any inline truncation.
 /// `*_truncated` is true when the inline copy was capped at the threshold.
 model traffic_event_payload {
-  traffic_event_id      String   @id
-  inline_request_body   Json?    @map("inline_request_body")
-  inline_response_body  Json?    @map("inline_response_body")
-  request_spill_ref     Json?    @map("request_spill_ref")
-  response_spill_ref    Json?    @map("response_spill_ref")
-  request_size_bytes    BigInt?  @map("request_size_bytes")
-  response_size_bytes   BigInt?  @map("response_size_bytes")
-  request_truncated     Boolean  @default(false) @map("request_truncated")
-  response_truncated    Boolean  @default(false) @map("response_truncated")
-  request_content_type  String?  @map("request_content_type")
-  response_content_type String?  @map("response_content_type")
-  created_at            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  traffic_event_id         String   @id
+  inline_request_body      Bytes?   @map("inline_request_body") @db.ByteA
+  inline_response_body     Bytes?   @map("inline_response_body") @db.ByteA
+  inline_request_encoding  String?  @map("inline_request_encoding")
+  inline_response_encoding String?  @map("inline_response_encoding")
+  request_spill_ref        Json?    @map("request_spill_ref")
+  response_spill_ref       Json?    @map("response_spill_ref")
+  request_size_bytes       BigInt?  @map("request_size_bytes")
+  response_size_bytes      BigInt?  @map("response_size_bytes")
+  request_truncated        Boolean  @default(false) @map("request_truncated")
+  response_truncated       Boolean  @default(false) @map("response_truncated")
+  request_content_type     String?  @map("request_content_type")
+  response_content_type    String?  @map("response_content_type")
+  created_at               DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   traffic_event traffic_event @relation(fields: [traffic_event_id], references: [id], onDelete: Cascade)
 

@@ -1,0 +1,260 @@
+name: nexus/compliance
+version: v1.0.0
+maintainer: nexus
+description: >-
+  Regulatory-compliance marker detection across five subcategories: gdpr
+  (data-subject-rights, right-to-erasure, lawful-basis, cross-border transfer),
+  hipaa (PHI handling phrases, BAA references, minimum-necessary / covered-entity
+  language), pci (cardholder-data-environment markers, prohibited sensitive-auth
+  storage, PAN-in-the-clear context, DSS scope references), regulated_advice
+  (medical / legal / financial / tax / insurance advice-seeking that needs a
+  licensed professional), and consent (consent / opt-in / opt-out / withdrawal /
+  do-not-call / do-not-sell language). This pack flags COMPLIANCE-RELEVANT
+  natural-language markers and framework references — NOT the raw regulated
+  values themselves: card / SSN / MRN structure lives in nexus/pii, API keys and
+  credentials in nexus/secret-leak, bulk-exfil and classification banners in
+  nexus/data-loss, and harmful content in nexus/content-safety. Severity is
+  deliberately advisory (mostly soft/warn) so these drive flag/route, not
+  hard-block; short ambiguous acronyms (DSAR/PHI/BAA) are kept only where the
+  token is specific enough or paired with a spelled form to bound prose
+  false-positives. Patterns are Vectorscan-compatible: Go RE2 syntax, no
+  backreferences, no lookaround, bounded quantifiers, word-boundary anchored
+  (no bare ^/$), explicit ASCII classes over `.`.
+rules:
+  # =====================================================================
+  # GDPR (cmp-gdpr-001 .. cmp-gdpr-005)
+  # =====================================================================
+  - id: cmp-gdpr-001
+    category: compliance.gdpr
+    severity: warn
+    pattern: '(?i)\b(?:right to be forgotten|right to erasure|erasure request|erase (?:my|all) (?:personal )?data|delete (?:my|all my) (?:personal )?data)\b'
+    description: GDPR Article 17 right-to-erasure / right-to-be-forgotten request language.
+    labels: [detector:compliance, framework:gdpr, severity:internal]
+  - id: cmp-gdpr-002
+    category: compliance.gdpr
+    severity: warn
+    pattern: '(?i)\b(?:data[ -]subject[ -]access[ -]request|subject access request|DSAR)\b'
+    description: GDPR data-subject access request (DSAR) language.
+    labels: [detector:compliance, framework:gdpr, severity:internal]
+  - id: cmp-gdpr-003
+    category: compliance.gdpr
+    severity: warn
+    pattern: '(?i)\b(?:lawful basis (?:for|of) processing|legal basis (?:for|of) processing|legitimate interest(?:s)? (?:assessment|basis|balancing))\b'
+    description: GDPR lawful-basis / legitimate-interest processing-justification language.
+    labels: [detector:compliance, framework:gdpr, severity:internal]
+  - id: cmp-gdpr-004
+    category: compliance.gdpr
+    severity: warn
+    pattern: '(?i)\b(?:standard contractual clauses|\bSCCs\b|adequacy decision|cross[- ]border (?:personal )?data transfer|international (?:personal )?data transfer|EU[- ]US data privacy framework|binding corporate rules)\b'
+    description: GDPR Chapter V cross-border transfer mechanism markers (SCCs / adequacy / DPF / BCRs).
+    labels: [detector:compliance, framework:gdpr, severity:confidential]
+  - id: cmp-gdpr-005
+    category: compliance.gdpr
+    severity: warn
+    pattern: '(?i)\b(?:GDPR|general data protection regulation|data protection officer|data processing agreement|data protection impact assessment)\b'
+    description: General GDPR regulatory references (regulation name / DPO / DPA / DPIA).
+    labels: [detector:compliance, framework:gdpr, severity:internal]
+  # =====================================================================
+  # HIPAA (cmp-hipaa-001 .. cmp-hipaa-004)
+  # =====================================================================
+  - id: cmp-hipaa-001
+    category: compliance.hipaa
+    severity: soft
+    pattern: '(?i)\b(?:protected health information|electronic protected health information|\be?PHI\b)\b'
+    description: HIPAA protected-health-information (PHI / ePHI) handling reference.
+    labels: [detector:compliance, framework:hipaa, severity:confidential]
+  - id: cmp-hipaa-002
+    category: compliance.hipaa
+    severity: warn
+    pattern: '(?i)\b(?:business associate agreement|business associate contract|business associate addendum|\bBAA\b)\b'
+    description: HIPAA business-associate agreement (BAA) reference.
+    labels: [detector:compliance, framework:hipaa, severity:confidential]
+  - id: cmp-hipaa-003
+    category: compliance.hipaa
+    severity: warn
+    pattern: '(?i)\b(?:HIPAA|health insurance portability and accountability act|covered entit(?:y|ies)|HIPAA[- ]covered)\b'
+    description: HIPAA regulation / covered-entity reference.
+    labels: [detector:compliance, framework:hipaa, severity:internal]
+  - id: cmp-hipaa-004
+    category: compliance.hipaa
+    severity: soft
+    pattern: '(?i)\b(?:minimum necessary (?:standard|rule|requirement)|safe harbor de[- ]identification|de[- ]identif(?:y|ied|ication) of (?:PHI|protected health information)|limited data set)\b'
+    description: HIPAA minimum-necessary / Safe-Harbor de-identification handling language.
+    labels: [detector:compliance, framework:hipaa, severity:confidential]
+  # =====================================================================
+  # PCI-DSS (cmp-pci-001 .. cmp-pci-004)
+  # =====================================================================
+  - id: cmp-pci-001
+    category: compliance.pci
+    severity: warn
+    pattern: '(?i)\b(?:cardholder data environment|cardholder data|account data environment)\b'
+    description: PCI cardholder-data-environment (CDE) marker.
+    labels: [detector:compliance, framework:pci, severity:confidential]
+  - id: cmp-pci-002
+    category: compliance.pci
+    severity: soft
+    pattern: '(?i)\b(?:stor(?:e|ing|ed)|sav(?:e|ing|ed)|retain(?:ed|ing)?|keep(?:ing)?|persist(?:ed|ing)?)\b[^.\n]{0,30}\b(?:CVV2?|CVC2?|CAV2|card verification (?:value|code)|sensitive authentication data|full track data|track[ -]?[12] data|PIN block)\b'
+    description: 'Storing prohibited sensitive authentication data (CVV / track / PIN block) — PCI-DSS Requirement 3.2 violation.'
+    labels: [detector:compliance, framework:pci, severity:restricted]
+  - id: cmp-pci-003
+    category: compliance.pci
+    severity: soft
+    pattern: '(?i)\b(?:primary account number|full (?:card number|PAN)|unmasked (?:card number|PAN)|store the PAN|clear[- ]text (?:card number|PAN))\b'
+    description: PCI primary-account-number (PAN) in clear-text / unmasked context.
+    labels: [detector:compliance, framework:pci, severity:restricted]
+  - id: cmp-pci-004
+    category: compliance.pci
+    severity: warn
+    pattern: '(?i)\b(?:PCI[- ]?DSS|payment card industry data security|self[- ]assessment questionnaire|\bSAQ[- ]?[A-D]\b|attestation of compliance|qualified security assessor)\b'
+    description: PCI-DSS compliance-scope reference (SAQ / AOC / QSA).
+    labels: [detector:compliance, framework:pci, severity:internal]
+  # =====================================================================
+  # Regulated advice (cmp-adv-001 .. cmp-adv-005) — needs a licensed pro
+  # =====================================================================
+  - id: cmp-adv-001
+    category: compliance.regulated_advice
+    severity: warn
+    pattern: '(?i)\b(?:should I (?:take|stop taking|keep taking|increase|decrease) (?:my )?(?:medication|meds|dose|dosage|pills?)|what (?:dose|dosage) (?:of|should I)|is it safe for me to (?:take|stop|mix)|am I having a (?:heart attack|stroke)|do I have (?:cancer|diabetes|covid|an? infection))\b'
+    description: Medical advice-seeking that requires a licensed clinician.
+    labels: [detector:compliance, framework:hipaa, severity:internal]
+  - id: cmp-adv-002
+    category: compliance.regulated_advice
+    severity: warn
+    pattern: '(?i)\b(?:should I (?:sue|countersue|plead|settle|sign this|appeal)|do I have a (?:legal )?(?:case|claim|cause of action)|can I (?:sue|be sued|press charges)|is (?:this|that) (?:legally )?(?:enforceable|binding)|will I (?:win|lose) (?:my|the|this) (?:case|lawsuit|in court))\b'
+    description: Legal advice-seeking that requires a licensed attorney.
+    labels: [detector:compliance, framework:gdpr, severity:internal]
+  - id: cmp-adv-003
+    category: compliance.regulated_advice
+    severity: warn
+    pattern: '(?i)\b(?:what (?:stock|stocks|crypto|coin|shares?|fund) should I (?:buy|sell|invest in)|should I (?:buy|sell|short|invest in) (?:this )?(?:stock|crypto|bitcoin|shares?)|is (?:now|it) a good time to (?:buy|sell|invest)|will (?:the )?(?:stock|market|price|bitcoin) (?:go up|go down|crash|rise|moon))\b'
+    description: Investment / securities advice-seeking that requires a licensed advisor.
+    labels: [detector:compliance, framework:pci, severity:internal]
+  - id: cmp-adv-004
+    category: compliance.regulated_advice
+    severity: warn
+    pattern: '(?i)\b(?:how (?:do|can|should) I (?:avoid|reduce|minimize|lower|defer) (?:my |paying )?tax(?:es)?|can I (?:deduct|write off|claim) (?:this|my|the)|is (?:this|that) tax[- ]deductible|should I (?:file|claim) (?:as )?(?:exempt|head of household|married))\b'
+    description: Tax advice-seeking that requires a licensed tax professional.
+    labels: [detector:compliance, framework:pci, severity:internal]
+  - id: cmp-adv-005
+    category: compliance.regulated_advice
+    severity: warn
+    pattern: '(?i)\b(?:is (?:this|that|it) covered (?:by|under) (?:my )?(?:insurance|policy|medicare|medicaid|plan)|does (?:my|the) (?:insurance|policy|plan|coverage) cover|will (?:my )?insurance (?:cover|pay for|reimburse))\b'
+    description: Insurance-coverage determination that requires the carrier or a licensed agent.
+    labels: [detector:compliance, framework:hipaa, severity:internal]
+  # =====================================================================
+  # Consent (cmp-con-001 .. cmp-con-004)
+  # =====================================================================
+  - id: cmp-con-001
+    category: compliance.consent
+    severity: warn
+    pattern: '(?i)\b(?:I (?:consent|do not consent) to|opt[- ]?in to (?:receive|the|marketing|processing)|explicit consent|informed consent|consent to (?:the )?(?:processing|collection|use|sharing) of (?:my )?(?:personal )?data)\b'
+    description: Affirmative consent / opt-in language for personal-data processing.
+    labels: [detector:compliance, framework:gdpr, severity:internal]
+  - id: cmp-con-002
+    category: compliance.consent
+    severity: warn
+    pattern: '(?i)\b(?:opt[- ]?out|unsubscribe|withdraw (?:my )?consent|revoke (?:my )?consent|remove me from (?:your|the) (?:mailing |email )?list|stop (?:sending me|emailing me))\b'
+    description: Opt-out / consent-withdrawal / unsubscribe request language.
+    labels: [detector:compliance, framework:gdpr, severity:internal]
+  - id: cmp-con-003
+    category: compliance.consent
+    severity: warn
+    pattern: '(?i)\b(?:do[- ]not[- ]call(?: (?:list|registry|request))?|national do not call|TCPA|telephone consumer protection act|prior express (?:written )?consent)\b'
+    description: Do-not-call / TCPA telemarketing-consent language.
+    labels: [detector:compliance, framework:ccpa, severity:internal]
+  - id: cmp-con-004
+    category: compliance.consent
+    severity: warn
+    pattern: '(?i)\b(?:do not sell (?:or share )?my (?:personal )?(?:information|data|info)|right to opt[- ]out of (?:the )?sale|CCPA|CPRA|California Consumer Privacy Act|California Privacy Rights Act)\b'
+    description: CCPA / CPRA do-not-sell / opt-out-of-sale rights language.
+    labels: [detector:compliance, framework:ccpa, severity:internal]
+  # =====================================================================
+  # PCI cardholder-data context (cmp-pci-005 .. cmp-pci-006)
+  # =====================================================================
+  - id: cmp-pci-005
+    category: compliance.pci
+    severity: warn
+    pattern: '(?i)\b(?:card verification (?:value|code|number)|cardholder name|cardholder data|\bCVV2?\b|\bCVC2?\b|\bCAV2\b)\b'
+    description: PCI cardholder-data context markers (CVV / CVC / cardholder name).
+    labels: [detector:compliance, framework:pci, severity:confidential]
+  - id: cmp-pci-006
+    category: compliance.pci
+    severity: soft
+    pattern: '(?i)\b(?:full track data|track[ -]?[12] data|magnetic[- ]stripe data|magstripe (?:data|dump)|service code on (?:the )?track|equivalent data on (?:the )?(?:chip|track))\b'
+    description: PCI prohibited track / magnetic-stripe data marker — sensitive authentication data.
+    labels: [detector:compliance, framework:pci, severity:restricted]
+  # =====================================================================
+  # HIPAA PHI markers (cmp-hipaa-005 .. cmp-hipaa-006)
+  # =====================================================================
+  - id: cmp-hipaa-005
+    category: compliance.hipaa
+    severity: soft
+    pattern: '(?i)\b(?:\bICD-10\b|\bICD-9\b|\bICD-11\b|ICD-10[- ]?CM|\bCPT code|diagnosis code|principal diagnosis|primary diagnosis|admitting diagnosis)\b'
+    description: HIPAA clinical-coding / diagnosis markers (ICD / CPT / diagnosis code).
+    labels: [detector:compliance, framework:hipaa, severity:confidential]
+  - id: cmp-hipaa-006
+    category: compliance.hipaa
+    severity: soft
+    pattern: '(?i)\b(?:patient name|patient record|patient chart|medical record number|date of birth and diagnosis|treatment history of (?:the )?patient|attending physician)\b'
+    description: HIPAA patient-identifier / medical-record context markers.
+    labels: [detector:compliance, framework:hipaa, severity:confidential]
+  # =====================================================================
+  # GDPR special-category markers (cmp-gdpr-006)
+  # =====================================================================
+  - id: cmp-gdpr-006
+    category: compliance.gdpr
+    severity: warn
+    pattern: '(?i)\b(?:special categor(?:y|ies) of (?:personal )?data|data subject(?:''s)? rights?|right to rectification|right to data portability|racial or ethnic origin data|political opinions data|biometric data for (?:the purpose of )?(?:unique )?identification)\b'
+    description: GDPR Article 9 special-category data / extended data-subject-rights markers.
+    labels: [detector:compliance, framework:gdpr, severity:confidential]
+  # =====================================================================
+  # Export control (cmp-exp-001 .. cmp-exp-002)
+  # =====================================================================
+  - id: cmp-exp-001
+    category: compliance.export_control
+    severity: warn
+    pattern: '(?i)\b(?:\bITAR\b|international traffic in arms regulations|\bEAR99\b|export administration regulations|export[- ]control(?:led|s)? (?:data|information|technology|jurisdiction)|deemed export|dual[- ]use (?:goods|technology|item))\b'
+    description: Export-control regime markers (ITAR / EAR99 / EAR / export-controlled / deemed-export / dual-use).
+    labels: [detector:compliance, framework:export-control, severity:restricted]
+  - id: cmp-exp-002
+    category: compliance.export_control
+    severity: warn
+    pattern: '(?i)\b(?:export control classification number|\bECCN\b[ -]?[0-9][A-E][0-9]{3}|commerce control list|munitions list|denied (?:persons|parties) list|entity list (?:designation|screening)|restricted party screening)\b'
+    description: Export-control classification / screening markers (ECCN / CCL / USML / denied-party / entity-list).
+    labels: [detector:compliance, framework:export-control, severity:restricted]
+  # =====================================================================
+  # SOC2 / audit markers (cmp-soc2-001)
+  # =====================================================================
+  - id: cmp-soc2-001
+    category: compliance.soc2
+    severity: soft
+    pattern: '(?i)\b(?:SOC[ ]?2 (?:type [12]|report|audit|controls?)|service organization control|trust services criteria|SOC[ ]?2 readiness|control objective(?:s)? (?:for|over)|audit evidence (?:request|package)|management assertion letter)\b'
+    description: SOC 2 / service-organization-control audit and trust-services-criteria markers.
+    labels: [detector:compliance, framework:soc2, severity:internal]
+  # =====================================================================
+  # Financial MNPI (cmp-mnpi-001)
+  # =====================================================================
+  - id: cmp-mnpi-001
+    category: compliance.mnpi
+    severity: warn
+    pattern: '(?i)\b(?:material non-?public information|\bMNPI\b|inside information (?:about|regarding|on)|insider (?:trading|information) (?:about|policy|window)|blackout (?:period|window) (?:for|on) trading|tipper or tippee|selective disclosure of)\b'
+    description: Financial material-non-public-information (MNPI) / insider-trading markers.
+    labels: [detector:compliance, framework:sec, severity:restricted]
+  # =====================================================================
+  # Legal privilege (cmp-legal-001)
+  # =====================================================================
+  - id: cmp-legal-001
+    category: compliance.legal_privilege
+    severity: warn
+    pattern: '(?i)\b(?:attorney[- ]client privilege(?:d)?|attorney work product|legal advice privilege|privileged and confidential communication|protected by (?:the )?attorney[- ]client|solicitor[- ]client privilege)\b'
+    description: Legal attorney-client / work-product privilege markers.
+    labels: [detector:compliance, framework:legal, severity:restricted]
+  # =====================================================================
+  # Classified / restricted-distribution markers (cmp-class-001)
+  # =====================================================================
+  - id: cmp-class-001
+    category: compliance.classified
+    severity: warn
+    pattern: '(?i)\b(?:classification:?\s*(?:top secret|secret|confidential)|\bCONFIDENTIAL\b[ -]{0,3}(?:noforn|//|do not distribute|attorney|internal only)|controlled unclassified information|\bCUI\b//|distribution statement [a-f]|not for (?:public )?(?:release|distribution))\b'
+    description: 'Classified / restricted-distribution banner markers (classification line, CUI, NOFORN, distribution statement) — CONFIDENTIAL requires a second anchor to bound false-positives.'
+    labels: [detector:compliance, framework:classification, severity:restricted]

@@ -139,3 +139,68 @@ rules:
     severity: hard
     pattern: '(?i)\[SYSTEM\]\s*(override|new\s+instructions?|update)'
     labels: [detector:prompt-injection, attack:indirect]
+  # --- Instruction override (expansion) ---
+  - id: pi-io-201
+    category: prompt_injection.instruction_override
+    severity: hard
+    pattern: '(?i)(disregard|forget|override)\s+(the\s+)?(system\s+(prompt|message|instructions?)|everything\s+(above|before))'
+    description: Disregard/override the system prompt.
+    labels: [detector:prompt-injection, attack:instruction-override]
+  - id: pi-io-202
+    category: prompt_injection.instruction_override
+    severity: hard
+    pattern: '(?i)(new\s+(instructions?|rules?)\s+(follow|below|start\s+now)|from\s+now\s+on\s+(you\s+(will|must)|ignore))'
+    description: New-instructions takeover phrasing.
+    labels: [detector:prompt-injection, attack:instruction-override]
+  # --- System-prompt extraction (expansion) ---
+  - id: pi-sl-003
+    category: prompt_injection.system_leak
+    severity: hard
+    pattern: '(?i)(reveal|expose|leak|show\s+me|tell\s+me)\s+(your|the)\s+(system\s+(prompt|message)|initial\s+(prompt|instructions?)|original\s+instructions?)'
+    description: Direct system-prompt extraction request (strong leak verbs only; excludes benign "print the system prompt to logs").
+    labels: [detector:prompt-injection, attack:system-leak]
+  - id: pi-sl-004
+    category: prompt_injection.system_leak
+    severity: hard
+    pattern: '(?i)repeat\s+(the\s+)?(words?|text|everything)\s+(above|before\s+this)\s+(verbatim|exactly|word\s+for\s+word)'
+    description: 'Repeat-the-words-above verbatim prompt-leak trick.'
+    labels: [detector:prompt-injection, attack:system-leak]
+  - id: pi-sl-005
+    category: prompt_injection.system_leak
+    severity: soft
+    pattern: '(?i)what\s+(are|were)\s+your\s+(exact\s+)?(instructions?|system\s+prompt|initial\s+(prompt|directives?))'
+    description: System-prompt interrogation.
+    labels: [detector:prompt-injection, attack:system-leak]
+  # --- Delimiter / context confusion (expansion) ---
+  - id: pi-dc-201
+    category: prompt_injection.delimiter
+    severity: soft
+    pattern: '(?i)(```|---|###)\s*(system|end\s+of\s+(prompt|context)|assistant)\s*(```|---|###|:)'
+    description: Fenced delimiter spoofing a system/role boundary.
+    labels: [detector:prompt-injection, attack:delimiter]
+  - id: pi-dc-003
+    category: prompt_injection.delimiter
+    severity: soft
+    pattern: '(?i)<\s*(/?\s*(system|im_start|im_end|s)\s*)>'
+    description: Chat-template control-token spoofing.
+    labels: [detector:prompt-injection, attack:delimiter]
+  # --- Indirect / document injection (expansion) ---
+  - id: pi-ii-003
+    category: prompt_injection.indirect
+    severity: hard
+    pattern: '(?i)(ignore\s+the\s+(document|text|content)\s+(above|below)\s+and\s+instead|when\s+(summarizing|reading)\s+this,?\s+also\s+(execute|run|send|email))'
+    description: Indirect injection embedded in retrieved/document content.
+    labels: [detector:prompt-injection, attack:indirect]
+  - id: pi-ii-004
+    category: prompt_injection.indirect
+    severity: hard
+    pattern: '(?i)(assistant\s*:\s*(sure|certainly|of\s+course)|AI\s*:\s*I\s+will\s+(now\s+)?(ignore|comply))'
+    description: Injected fake-assistant turn priming compliance.
+    labels: [detector:prompt-injection, attack:indirect]
+  # --- Tool / function hijack (expansion) ---
+  - id: pi-tm-002
+    category: prompt_injection.tool_misuse
+    severity: hard
+    pattern: '(?i)(send|exfiltrate|post)\s+(the\s+)?(conversation|chat\s+history|system\s+prompt|secrets?)\s+to\s+(https?://|this\s+(url|endpoint|webhook))'
+    description: Tool-driven exfiltration of context to an external endpoint.
+    labels: [detector:prompt-injection, attack:tool-misuse]

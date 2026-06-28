@@ -7,8 +7,8 @@
           "enabled": false
         }
       },
-      "marker_inject_enabled": true,
-      "marker_boundary3_enabled": true
+      "marker_inject_enabled": false,
+      "marker_boundary3_enabled": false
     },
     "updated_at": "2026-05-13T15:03:54.722+00:00",
     "updated_by": "nexus-user-super-admin"
@@ -33,8 +33,8 @@
           "enabled": false
         }
       },
-      "marker_inject_enabled": true,
-      "marker_boundary3_enabled": true
+      "marker_inject_enabled": false,
+      "marker_boundary3_enabled": false
     },
     "updated_at": "2026-05-13T15:04:10.176+00:00",
     "updated_by": "nexus-user-super-admin"
@@ -55,7 +55,7 @@
     "adapter_type": "gemini",
     "config": {
       "ttl_seconds": 3600,
-      "cache_enabled": true,
+      "cache_enabled": false,
       "min_system_chars": 4096,
       "circuit_breaker_open_secs": 300,
       "circuit_breaker_threshold": 5

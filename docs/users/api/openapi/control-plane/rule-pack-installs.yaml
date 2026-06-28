@@ -13,10 +13,11 @@ paths:
             summary: Toggle a rule-pack install's enabled flag
             description: |-
                 Enables or disables an existing rule-pack install in place. Only the
-                `enabled` flag is mutable here — changing the pinned pack version
-                requires uninstall followed by reinstall, so operators are never
-                surprised by a silent binding swap. On success the bound hook's
-                cached config is invalidated and an admin-audit entry is written.
+                `enabled` flag is mutable here — to advance the pinned pack version
+                use the `/upgrade` sub-resource (moves the pin to the latest version
+                of the same pack family); arbitrary version swaps still require
+                uninstall + reinstall. On success the bound hook's cached config is
+                invalidated and an admin-audit entry is written.
             x-nexus-iam-action: iam.ResourceHook.Action(iam.VerbUpdate)
             x-nexus-tier: confirm
             parameters:
@@ -120,6 +121,81 @@ paths:
                                 additionalProperties: {}
                             example:
                                 uninstalled: rpi_01HRX
+    /api/admin/rule-pack-installs/{installId}/upgrade:
+        post:
+            operationId: upgradeInstall
+            summary: Upgrade a rule-pack install to the latest version
+            description: |-
+                Advances the install's pinned pack version to the newest available
+                version of the same pack family (ordered by semver). Installs pin to
+                an exact version row via `packId`, so this is a `packId` + `pinVersion`
+                swap; the bound hook, enabled flag, and per-rule overrides (keyed by
+                install id) are preserved. A no-op when the install is already on the
+                latest version — returns 200 with `upgraded: false` and does NOT
+                invalidate config or write an audit entry. When it does advance, the
+                bound hook's cached config is invalidated and an admin-audit entry is
+                written.
+            x-nexus-iam-action: iam.ResourceHook.Action(iam.VerbUpdate)
+            x-nexus-tier: confirm
+            parameters:
+                - name: installId
+                  in: path
+                  required: true
+                  description: Identifier of the rule-pack install to upgrade.
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK — upgrade evaluated. `upgraded` indicates whether the pin advanced.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    installId:
+                                        type: string
+                                    packName:
+                                        type: string
+                                    fromVersion:
+                                        type: string
+                                    toVersion:
+                                        type: string
+                                    upgraded:
+                                        type: boolean
+                                        description: false when the install was already on the latest version (no-op).
+                                required:
+                                    - installId
+                                    - packName
+                                    - fromVersion
+                                    - toVersion
+                                    - upgraded
+                            example:
+                                installId: rpi_01HRX
+                                packName: nexus/pii
+                                fromVersion: v1.0.0
+                                toVersion: v2.0.0
+                                upgraded: true
+                "400":
+                    description: Bad Request — `installId` missing.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "404":
+                    description: Not Found — no install matches `installId`, or its pack family has no versions.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
+                "500":
+                    description: Internal Server Error — the upgrade could not be persisted.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                additionalProperties: {}
     /api/admin/rule-pack-installs/{installId}/effective-rules:
         get:
             operationId: effectiveRules

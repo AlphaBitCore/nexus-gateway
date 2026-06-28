@@ -210,8 +210,7 @@ the repo, then `cd tools/db-migrate && npm run db:push`, followed by
 `npm run seed`). This is the right path for a clean test environment.
 
 **(b) Restore from an existing host's `pg_dump`.** Use this when you're
-mirroring an existing environment (the migration use-case this guide
-was extracted from). Generate the dump on the source host:
+mirroring an existing environment. Generate the dump on the source host:
 
 ```bash
 [OLD] $ PGPASSWORD='<DB_PASSWORD>' pg_dump \

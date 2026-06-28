@@ -213,6 +213,30 @@ bash packages/agent/platform/darwin/Scripts/build-prod.sh
 
 Output: `dist/macos/NexusAgent-<VERSION>.pkg`
 
+### Optional: Vectorscan rule-pack engine (cgo, statically linked)
+
+Off by default — the agent ships the pure-Go RE2 content-scan engine. To build
+the agent with the Vectorscan accelerator instead, set `NEXUS_AGENT_VECTORSCAN=1`
+and point `LIBHS_DIR` at a tree containing the Vectorscan headers and a static
+archive per target arch:
+
+```
+$LIBHS_DIR/include/hs/hs.h
+$LIBHS_DIR/lib/arm64/libhs.a
+$LIBHS_DIR/lib/amd64/libhs.a   # required for the universal cross-compile
+```
+
+`build.sh` then adds `-tags "vectorscan vsstatic"` and links `libhs.a` (plus
+`-lc++`, since Vectorscan is C++) statically, so the universal Mach-O has no
+`libhs.dylib` runtime dependency and stays notarizable — the same model already
+used for go-sqlcipher. Verified on arm64 (self-contained binary, no dylib dep);
+the amd64 archive is the remaining vendoring step for a universal build.
+
+Do NOT enable this for a SHIPPED enforcement build until the save-time rule
+linter (rule-pack program task #12) lands: a user rule using `.` could silently
+under-match multibyte abuse content under Vectorscan's byte-mode. Tag-on builds
+for link verification are fine.
+
 ### What the script does (in order)
 
 1. **Go binary** — universal `nexus-agent` (arm64+amd64, CGO for keychain).

@@ -50,18 +50,21 @@ Each rule runs through a panic-recovering wrapper, and work is layered:
 A rule is scoped to one adapter type and carries a transform type, default and
 override enable flags, a dry-run flag, a `KeyNormalizeSafe` flag (whether it may
 run during cache-key normalisation), and — for strip rules — a `gjson` body path
-plus a compiled regex. Three transform types exist: `strip`,
-`field_order_normalize`, and `cache_control_inject` (the last is driven by
-per-provider config rather than a bundled rule).
+plus a compiled regex. Two transform types exist: `strip` and
+`cache_control_inject` (the last is driven by per-provider config rather than a
+bundled rule).
+
+Rules apply surgically: a strip rule removes one known volatile token from a
+precise body path. Whole-body re-serialisation (e.g. JSON field-order
+canonicalisation for cache-key stability) is intentionally NOT offered — re-encoding
+the client's body would rewrite bytes the client chose (number formatting, escaping,
+key order) and change what is forwarded upstream, an unacceptable risk for a
+passthrough gateway, and it was the dominant per-request allocation when enabled.
+Cache keys are therefore field-order-sensitive; canonicalisation, if ever needed,
+must hash a derived form and never touch the forwarded body.
 
 The bundled rules ship factory defaults that operator config can override:
 
-- **Field-order normalisation (on by default)** — for OpenAI and the
-  OpenAI-compatible providers (Azure OpenAI, DeepSeek, GLM, Moonshot, Mistral, xAI,
-  Groq, Perplexity, Together, Fireworks, MiniMax). It re-serialises the JSON so Go's
-  alphabetical map-key ordering neutralises SDK-specific field orderings before
-  hashing, so the same logical request from different SDKs produces the same cache
-  key. It removes no bytes — it only reorders.
 - **Claude Code nonce strip (off by default)** — for the Anthropic and Bedrock
   wire. It removes Claude Code's `cch=<hex>` billing nonce from the system-prompt
   text, so consecutive Claude Code sessions sharing an identical system prompt hash

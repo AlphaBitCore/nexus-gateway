@@ -20,34 +20,29 @@ lockstep with this doc.
 
 ## Why this exists
 
-Pre-#90 the streaming pipelines (BufferPipeline + LivePipeline) built
-the compliance hook's `HookInput.Normalized` field via
-`core.PayloadFromTextSegments(extractDeltaText(events))` — a
-flat-text concat of every SSE delta. Hooks scoped to AI traffic
-(rules that read `Normalized.Model`, `Normalized.ToolCalls`,
-`Normalized.Reasoning`, etc.) silently received only `Kind="text"`
-and dropped through every match rule. This made it impossible to:
+The streaming pipelines (BufferPipeline + LivePipeline) run a
+Registry-normalize step BEFORE the hook executor so every hook gets
+the same canonical claim it gets on the non-stream path. Without it,
+the compliance hook's `HookInput.Normalized` field would carry only a
+flat-text concat of every SSE delta (`Kind="text"`), and hooks scoped
+to AI traffic (rules that read `Normalized.Model`,
+`Normalized.ToolCalls`, `Normalized.Reasoning`, etc.) would drop
+through every match rule — making it impossible to:
 
 - Block tool-call traffic by tool name.
-- PII-redact assistant deltas that referenced specific schema fields.
+- PII-redact assistant deltas that reference specific schema fields.
 - Cost-classify cached-reasoning streams.
-- Stamp `traffic_event.normalized_response` for SSE rows (column
-  landed NULL on every streamed call across all three services).
-
-Adding a Registry-normalize step BEFORE the hook executor runs gives
-every hook the same canonical claim it gets on the non-stream path.
+- Stamp `traffic_event.normalized_response` for SSE rows.
 
 ## Streaming modes
 
-**#115 update**: the admin policy is now resolved exclusively through
+The admin policy is resolved exclusively through
 `*streampolicy.Store` injected at boot via the shared
-`streampolicy.BootStore` helper. The legacy YAML `streamingMode` field
-has been removed from compliance-proxy's `compliance-proxy.config.yaml`;
-the only source of truth is
+`streampolicy.BootStore` helper. The only source of truth is
 `system_metadata['streaming_compliance.config'].default_mode` loaded
-into the Store at startup. tlsbump's `WithStreamingPolicyGlobal(Policy)`
-option was renamed to `WithStreamingPolicyStore(*Store)` so the SSE
-handler reads `Store.Get()` per-flow (always sees the latest snapshot).
+into the Store at startup. tlsbump's `WithStreamingPolicyStore(*Store)`
+option lets the SSE handler read `Store.Get()` per-flow (always sees
+the latest snapshot).
 
 **Hub-push alignment (two-service, not three).** Agent and
 compliance-proxy register a `streaming_compliance` shadow handler in
@@ -69,9 +64,9 @@ three modes via `shared/transport/streaming/policy.Resolve`:
 
 | Mode | Behavior | Implemented by |
 |---|---|---|
-| `passthrough` | Bytes copied through without parsing; no hook executor, no audit normalize stamp (audit row carries empty `normalized_response`). Used for non-AI SSE / cert-pinned clients where compliance can't introspect. | `shared/transport/tlsbump/sse.go::handleSSEResponse case "passthrough"` (agent + compliance-proxy); `ai-gateway/internal/ingress/proxy/proxy_cache_passthrough.go::runPassthroughStream` (ai-gateway) — three-service consistent (#115/R1, prior to which ai-gateway silently collapsed passthrough into live mode). |
+| `passthrough` | Bytes copied through without parsing; no hook executor, no audit normalize stamp (audit row carries empty `normalized_response`). Used for non-AI SSE / cert-pinned clients where compliance can't introspect. | `shared/transport/tlsbump/sse.go::handleSSEResponse case "passthrough"` (agent + compliance-proxy); `ai-gateway/internal/ingress/proxy/proxy_cache_passthrough.go::runPassthroughStream` (ai-gateway) — three-service consistent. |
 | `chunked_async` (live) | Bytes copied through immediately; LivePipeline runs hook executor at every checkpoint (cumulative bytes hit `FirstInspectChars`, then every `ReinspectStepChars`). PreHook callback stamps `ci.Normalized` BEFORE each hook run. Low-latency + full compliance. | **Two implementations on purpose** — see "Two LivePipeline implementations" below. `shared/transport/streaming/live.go` (tlsbump-driven: agent + compliance-proxy transparent-forwarder shape); `ai-gateway/internal/platform/streaming/live.go` (cache-replay path with format transform + hold-back + Modify-rewrite + OpenAI-DONE toggle). |
-| `buffer_full_block` (buffer) | Read full body into memory; run hook executor ONCE on complete content; replay to client only on Approve / Abstain; on RejectHard / BlockSoft write a single error event. PreHook callback stamps `ci.Normalized` between Phase 1 (read) and Phase 2 (run hooks). Strongest enforcement; highest latency. | `shared/transport/streaming/buffer.go` — tlsbump callers (agent + compliance-proxy) + ai-gateway (`proxy_cache_buffer.go::runBufferStream`, #115). Three-service consistent. **Limitation**: Modify decisions are not supported by this pipeline (no rewrite arm in Phase 3); ai-gateway logs WARN + treats as Approve. |
+| `buffer_full_block` (buffer) | Read full body into memory; run hook executor ONCE on complete content; replay to client only on Approve / Abstain; on a `block` (RejectHard) decision write a single error event. PreHook callback stamps `ci.Normalized` between Phase 1 (read) and Phase 2 (run hooks). Strongest enforcement; highest latency. | `shared/transport/streaming/buffer.go` — tlsbump callers (agent + compliance-proxy) + ai-gateway (`proxy_cache_buffer.go::runBufferStream`). Three-service consistent. **Limitation**: Modify (`redact`) decisions are not supported by this pipeline (no rewrite arm in Phase 3); ai-gateway logs WARN + treats as Approve. |
 
 The two adjacent fast-paths:
 
@@ -131,7 +126,7 @@ Every production consumer (agent bridge, compliance-proxy forwarder)
 wires the Registry, so the flat-text fallback is reachable only for
 bodies no tier claims.
 
-### Panic-safety (#97)
+### Panic-safety
 
 Both the inner `Registry.Normalize` call and the `OnPayload` callback
 are wrapped in `recover()`. A panicking Tier 1/2/3 normalizer or
@@ -184,15 +179,14 @@ asserts that both call shapes produce a bit-identical
 
 ## Two LivePipeline implementations (intentional, not drift)
 
-The PR #24 architect review flagged that "three data planes share one
-shared.LivePipeline" is only half true: `ai-gateway`'s live mode uses
-its own `internal/platform/streaming.LivePipeline`, while tlsbump
-(`agent` + `compliance-proxy`) uses `shared/transport/streaming.LivePipeline`.
-The follow-up reviewed whether to force-unify and decided **no** —
-the two impls serve different architectural roles, and forcing them
-into one would violate the "less is more" rule by pushing
-ai-gateway-only features into `shared/` where `agent`/`compliance-proxy`
-would carry them as dormant complexity.
+"Three data planes share one shared.LivePipeline" is only half true:
+`ai-gateway`'s live mode uses its own
+`internal/platform/streaming.LivePipeline`, while tlsbump (`agent` +
+`compliance-proxy`) uses `shared/transport/streaming.LivePipeline`.
+The two impls serve different architectural roles; unifying them would
+violate the "less is more" rule by pushing ai-gateway-only features
+into `shared/` where `agent`/`compliance-proxy` would carry them as
+dormant complexity.
 
 **What's actually shared (the contract that matters):**
 
@@ -212,11 +206,11 @@ would carry them as dormant complexity.
   sentinel) so admins can sum without double-counting. All three data
   planes route their pre-hook through `responseprehook.Build`.
 - `streampolicy.Store` + `BootStore` — single Store shape, single boot
-  helper, three-service aligned (#115/R1).
+  helper, three-service aligned.
 - Default fall-back arm: unknown enum → passthrough (matches tlsbump's
   `resolveStreamingMode`; pinned by `TestDispatchStreamMode_UnknownEnumFallsBackToPassthrough`).
 - `passthrough` mode relay — single `shared/transport/streaming.Passthrough`,
-  ai-gateway's `runPassthroughStream` is a thin caller (#115/O8).
+  ai-gateway's `runPassthroughStream` is a thin caller.
 
 **What's intentionally different (and why):**
 
@@ -240,19 +234,22 @@ and `proxy_cache_dispatch_test.go`.
 
 ### Buffer mode: Modify decisions degrade to Approve
 
-ai-gateway now honors `buffer_full_block` (#115 fix) by routing the
+ai-gateway honors `buffer_full_block` by routing the
 SSE handler through `shared.BufferPipeline` when
 `StreamingPolicy.Get().Mode == ModeBufferFullBlock`. One residual
 asymmetry remains by architecture:
 
-`shared.BufferPipeline.Process` Phase 3 handles `RejectHard` /
-`BlockSoft` / default (Approve / Abstain replay) but has no `Modify`
-arm — buffer mode replays the buffered events verbatim, so a hook
-that returns `Modify` with `ModifiedContent` cannot rewrite the body
-the way `LivePipeline`'s held-back deltas can be edited mid-stream
-before the first flush.
+`shared.BufferPipeline.Process` Phase 3 handles `RejectHard` (the
+`block` action — a single error event) and the default (Approve /
+Abstain replay) but has no `Modify` arm — buffer mode replays the
+buffered events verbatim, so a hook that returns `Modify` (`redact`)
+with `ModifiedContent` cannot rewrite the body the way `LivePipeline`'s
+held-back deltas can be edited mid-stream before the first flush. (A
+`BlockSoft` decision, if one is produced internally, folds to the
+`block` action and takes the same RejectHard arm — there is no soft
+path.)
 
-**Three-service unified degradation signal** (#115/R3): the
+**Three-service unified degradation signal**: the
 degradation is detected inside `shared.BufferPipeline.Process`
 itself — when `result.Decision == Modify` arrives from the executor,
 the pipeline:
@@ -270,7 +267,7 @@ ai-gateway `bufferModeExecutor` adapter (struct in
 `StreamHookRunner` (func) to `PipelineExecutor` (interface); it owns
 no log or metric.
 
-**Admin-visible warning surface** (#115/R3): the Control Plane
+**Admin-visible warning surface**: the Control Plane
 streaming-compliance settings endpoint
 (`GET /api/admin/settings/streaming-compliance`, response shape in
 `packages/control-plane/internal/settings/handler/settings/streaming_compliance.go`)
@@ -283,9 +280,9 @@ on both GET and PUT responses, plus a pre-save advisory when they
 change the dropdown locally. No tooltip or hover — these are
 constraints admins MUST see, rendered inline.
 
-Admins who need Modify rewrites must keep `streamingMode =
+Admins who need Modify (`redact`) rewrites must keep `streamingMode =
 chunked_async` (the default). buffer mode is intended for the
-strongest-enforcement RejectHard / BlockSoft use cases where
+strongest-enforcement `block` (RejectHard) use cases where
 rewriting is not part of the policy.
 
 ### HoldBack=false ≠ passthrough
@@ -316,7 +313,7 @@ Both sets are registered in `shared/transport/normalize/codecs/register.go`:
   traffic IDs sharing the OpenAI wire shape).
 - `"openai-compat"` is registered alongside `"openai"` so agent
   traffic with `traffic.Adapter.ID()="openai-compat"` resolves to
-  the same normalizer (#72).
+  the same normalizer.
 - `bedrock` aliases the Anthropic normalizer (it fronts Anthropic
   Messages today).
 - Path-only fallbacks (`::/v1/chat/completions`, `::/v1/messages`,
@@ -335,10 +332,9 @@ Two compile-time consistency tests pin this surface:
 - `packages/shared/traffic/adapters/adapter_id_resolves_test.go::TestEveryBuiltinAdapterIDResolvesThroughRegistry`
   iterates `BuiltinTrafficAdapterIDs()` and asserts every adapter
   produces a non-empty payload for both JSON request AND SSE
-  response. Catches the day a Tier 1 normalizer hard-errors on the
-  wrong wire shape (the voyage incident — fixed by adding
-  `meta.Stream` early-return that returns `ErrUnsupported` so the
-  Registry walk continues to Tier 2/3).
+  response. Catches a Tier 1 normalizer that hard-errors on the
+  wrong wire shape instead of returning `ErrUnsupported` early on
+  `meta.Stream` to let the Registry walk continue to Tier 2/3.
 
 ## Failure modes the contract protects against
 
@@ -346,31 +342,30 @@ Two compile-time consistency tests pin this surface:
   references" reads `Normalized.PromptCacheID` — flat-text fallback
   has none, so the rule never fired on streamed responses. PreHook
   fix: the rich Registry payload exposes the field.
-- **NULL `normalized_response` on SSE rows.** Pre-#89 every SSE
-  audit row across the three services landed with
-  `normalized_response=NULL` — the runtime stamp ran only on
-  non-stream responses. tlsbump's `OnPayload` closure now stamps it
-  incrementally as PreHook fires; ai-gateway stamps elsewhere in its
-  audit hot path. Verified by the cross-service consistency test.
-- **Silent fallback to Tier 3.** Earlier all three services would
-  silently fall to GenericHTTP for adapters whose Tier 1 normalizer
-  hard-errored (e.g. voyage on SSE bytes). Tests now assert no
-  Tier 1 codec returns a HARD error for the wire shapes it gets in
-  prod.
-- **Per-service drift.** Before #93 each service maintained its own
-  buildXxxPreHookCallback implementation. A bug fix in one would
-  leave the others stale. Now both delegate to
-  `responseprehook.Build`; the cross-service consistency test asserts
-  payload-equality across the two call shapes.
-- **Panicking normalizer takes down a stream.** A spec parser bug
-  that panics on a malformed body would previously crash the SSE
-  goroutine and drop the connection. PreHook wraps both
+- **NULL `normalized_response` on SSE rows.** Without the PreHook
+  stamp, an SSE audit row lands with `normalized_response=NULL`
+  because the runtime stamp runs only on non-stream responses.
+  tlsbump's `OnPayload` closure stamps it incrementally as PreHook
+  fires; ai-gateway stamps elsewhere in its audit hot path. Verified
+  by the cross-service consistency test.
+- **Silent fallback to Tier 3.** A Tier 1 normalizer that
+  hard-errors on a wire shape (e.g. voyage on SSE bytes) makes the
+  service silently fall to GenericHTTP. Tests assert no Tier 1 codec
+  returns a HARD error for the wire shapes it gets in prod.
+- **Per-service drift.** If each service maintained its own
+  buildXxxPreHookCallback implementation, a bug fix in one would
+  leave the others stale. Both delegate to `responseprehook.Build`;
+  the cross-service consistency test asserts payload-equality across
+  the two call shapes.
+- **Panicking normalizer takes down a stream.** Without the recover
+  wrappers, a spec parser bug that panics on a malformed body would
+  crash the SSE goroutine and drop the connection. PreHook wraps both
   `Registry.Normalize` and `OnPayload` in `recover()`; a panic logs
   WARN and drops the pre-hook only, the stream continues.
 
 ## Implementation notes
 
-**Text accumulation in LivePipeline and BufferPipeline:** The streaming accumulation loops in `live.go` (`pendingText`, `accumulatedAll`) and `buffer.go` (`fullText`) previously used `str += chunk` (O(n²) time). These were replaced with `strings.Builder` to keep hot-path allocations O(n). The change is behavior-neutral: output is identical; only the allocation profile differs. The `connectrpc.go` `all` accumulation was similarly updated.
+**Text accumulation in LivePipeline and BufferPipeline:** The streaming accumulation loops in `live.go` (`pendingText`, `accumulatedAll`), `buffer.go` (`fullText`), and `connectrpc.go` (`all`) use `strings.Builder` to keep hot-path allocations O(n) rather than the O(n²) of `str += chunk`.
 
 ## Code anchors
 
@@ -386,7 +381,7 @@ Two compile-time consistency tests pin this surface:
 - ai-gateway pipeline:
   `packages/ai-gateway/internal/ingress/proxy/{proxy_cache.go,sse_prehook.go}`
   `packages/ai-gateway/internal/platform/streaming/{live.go,prehook_test.go}` (compliance: LivePipeline + LiveConfig + Hook types + PreHook integration)
-  `packages/ai-gateway/internal/platform/streaming/format/{parser.go,writers.go,extract.go}` (#100 split: pure SSE wire primitives — Parser/Event/WriteEvent/WriteTypedEvent/WriteDone/WriteError/ExtractDeltaText/OpenAIStreamDeltaPayload; zero dependency on hookcore or streaming package, so the format surface can evolve independently of the hook executor)
+  `packages/ai-gateway/internal/platform/streaming/format/{parser.go,writers.go,extract.go}` (pure SSE wire primitives — Parser/Event/WriteEvent/WriteTypedEvent/WriteDone/WriteError/ExtractDeltaText/OpenAIStreamDeltaPayload; zero dependency on hookcore or streaming package, so the format surface can evolve independently of the hook executor)
   `packages/ai-gateway/internal/platform/streaming/format/parser_error_paths_test.go` (write-failure + io.EOF error paths: asserts that a downstream write error surfaces cleanly rather than silently swallowing the fault, and that io.EOF from the parser terminates cleanly without a panic)
 - Codec registry: `packages/shared/transport/normalize/codecs/register.go`
 - Streaming policy: `packages/shared/transport/streaming/policy/`

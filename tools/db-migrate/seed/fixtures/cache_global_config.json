@@ -2,7 +2,7 @@
   {
     "id": "singleton",
     "config": {
-      "normaliser_enabled": true,
+      "normaliser_enabled": false,
       "cache_master_kill_switch": false
     },
     "updated_at": "2026-05-13T08:53:31.763+00:00",

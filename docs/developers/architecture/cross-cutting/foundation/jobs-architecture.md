@@ -27,7 +27,7 @@ The scheduler is **scheduled work only**: jobs whose Run method is triggered by 
 - `cron.SkipIfStillRunning(logAdapter)` — if a previous tick of the same job is still running when the next tick fires, the new tick is dropped (logged at INFO). This is what keeps a long `data-retention` sweep from stacking onto itself when it overruns the 24-hour interval.
 - `cron.Recover(logAdapter)` — a panic inside a job is logged at ERROR and does not bring the cron engine down.
 
-The scheduler **holds zero pgxpool connections of its own**. An earlier design used per-job advisory locks (one DB conn per job for the lifetime of each Run); that caused a self-deadlock at boot because concurrent jobs each held a conn for their lock plus needed additional conns for their actual work, and the pool was sized for the work, not the locks. The current scheduler delegates concurrency control to the job itself (either idempotent SQL, watermarks in `system_metadata`, or per-row Postgres row locks taken during the job's own transactions).
+The scheduler **holds zero pgxpool connections of its own**. It delegates concurrency control to the job itself (either idempotent SQL, watermarks in `system_metadata`, or per-row Postgres row locks taken during the job's own transactions).
 
 ### `cfg.Scheduler.Enabled` is the leader switch
 
@@ -207,7 +207,7 @@ Integrity + observability of the admin audit pipeline.
 |---|---|---|---|
 | `audit-chain-verify` | `defs/audit/audit_chain_verify.go` | (cfg, RunOnStart) | Walks the `AdminAuditLog` hash chain (`previousHash` / `integrityHash`) and reports tamper detection at ERROR level. |
 | `audit-freshness-check` | `defs/audit/audit_freshness_check.go` | 60 sec | Alarms when the most recent admin audit row is older than 5 min — catches the silent-stall failure class where the MQ consumer pulled the message but the INSERT failed. |
-| `normalize-backfill` | `defs/audit/normalize_backfill.go` | 5 min | Re-runs normalize against the raw request/response bytes for `traffic_event_normalized` rows whose sidecar is missing, all-NULL, **or stamped with a `normalize_version` other than the current schema version** — bumping `normcore.SchemaVersion` heals every historical row through this one mechanism (≈200 rows / 5-min tick, newest-first). Inline bodies are read directly; ref-only spilled bodies are fetched from the hub `SpillStore` (64 MiB read cap). Rows that cannot be filled are recorded in the `traffic_event_normalize_skip` ledger (`reason` ∈ `spill_ref_only` (no spill store wired) / `spill_fetch_failed` / `no_payload_produced`) with the schema version of the attempt; the scan excludes a skip-marked row only while its stamped version matches the current one, so every previously unfillable row re-admits exactly once per version bump — the newest-first `LIMIT` batch always advances, and the P4 "bump heals everything" invariant covers skip-marked rows too. The marker is backfill-internal (no CP store / Traffic drawer reads it). `nexus_normalize_backfill_skipped_total{reason}` is a one-time-per-row-per-version tally, not a recurring rate. |
+| `normalize-backfill` | `defs/audit/normalize_backfill.go` | 5 min | Re-runs normalize against the raw request/response bytes for `traffic_event_normalized` rows whose sidecar is missing, all-NULL, **or stamped with a `normalize_version` other than the current schema version** — bumping `normcore.SchemaVersion` heals every historical row through this one mechanism (≈200 rows / 5-min tick, newest-first). Inline bodies are read directly; ref-only spilled bodies are fetched from the hub `SpillStore` (64 MiB read cap). Rows that cannot be filled are recorded in the `traffic_event_normalize_skip` ledger (`reason` ∈ `spill_ref_only` (no spill store wired) / `spill_fetch_failed` / `no_payload_produced`) with the schema version of the attempt; the scan excludes a skip-marked row only while its stamped version matches the current one, so every previously unfillable row re-admits exactly once per version bump — the newest-first `LIMIT` batch always advances, and the "bump heals everything" invariant covers skip-marked rows too. The marker is backfill-internal (no CP store / Traffic drawer reads it). `nexus_normalize_backfill_skipped_total{reason}` is a one-time-per-row-per-version tally, not a recurring rate. |
 | `siem-bridge` | `defs/audit/siem_bridge.go` | `bridge.PollInterval()` | Polls `traffic_event` and `AdminAuditLog` for new rows, classifies them, and forwards them to the configured SIEM sink. Checkpoints persisted in `system_metadata`. Registered unconditionally whenever the scheduler is enabled; the bridge self-activates when `siem.config.enabled` is set in `system_metadata`. |
 
 ### 5.8 Quota (1 job)
@@ -309,9 +309,9 @@ Four steps:
 `scripts/check-jobs-catalogue.sh` machine-enforces two things:
 
 1. The 8 multi-cadence variant IDs (`merge-1h`, `merge-1d`, `merge-1mo`, `thing-merge-1h`, `thing-merge-1d`, `thing-merge-1mo`, `ops-rollup-1d`, `ops-rollup-1mo`) must each appear in this doc.
-2. Every `<name>JobID = "..."` const under `packages/nexus-hub/internal/jobs/` must have a matching row in this doc. The scan uses a recursive `find "$JOBS_DIR" -name '*.go'` so it reaches the jobs under `defs/<sub-domain>/` (an earlier `"$JOBS_DIR"/*.go` glob matched only top-level files and silently iterated over nothing).
+2. Every `<name>JobID = "..."` const under `packages/nexus-hub/internal/jobs/` must have a matching row in this doc. The scan uses a recursive `find "$JOBS_DIR" -name '*.go'` so it reaches the jobs under `defs/<sub-domain>/`.
 
-The lockstep is skipped entirely when this doc is absent (escape hatch added during the 2026-05-22 archive sweep). The escape hatch is documented at the top of the script; removing it re-enables strict mode.
+The lockstep is skipped entirely when this doc is absent — an escape hatch documented at the top of the script; removing it re-enables strict mode.
 
 ### Reading runs during incidents
 

@@ -73,6 +73,9 @@ jobs:
       - name: No placeholder markers in production Go (strict)
         run: node scripts/check-no-prod-todos.mjs --strict
 
+      - name: No program refs in comments (strict)
+        run: node scripts/check-comment-program-refs.mjs --strict
+
       - name: No inline secrets in yaml (strict)
         run: node scripts/check-no-yaml-secrets.mjs --strict
 

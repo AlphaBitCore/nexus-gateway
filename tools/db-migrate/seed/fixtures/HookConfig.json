@@ -34,8 +34,7 @@
     "script": null,
     "config": {
       "onMatch": {
-        "storageAction": "redact",
-        "inflightAction": "block-hard"
+        "action": "redact"
       },
       "patternDefinitions": [
         {
@@ -63,7 +62,7 @@
     "priority": 10,
     "timeoutMs": 3000,
     "failBehavior": "fail-closed",
-    "enabled": true,
+    "enabled": false,
     "applicableIngress": [
       "ALL"
     ],
@@ -117,9 +116,70 @@
     "script": null,
     "config": {
       "onMatch": {
-        "storageAction": "redact",
-        "inflightAction": "block-soft"
+        "action": "redact"
       },
+      "patterns": [
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|best\\s+way\\s+to)\\s+(?:murder|assassinate|kill)\\s+(?:a\\s+person|someone|him|her|them)\\b",
+          "category": "violence",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:bomb|explosive|ied|pipe\\s+bomb)\\s+(?:making|construction|build(?:ing)?|recipe|instructions?)\\b",
+          "category": "violence",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:white\\s+power|white\\s+supremac(?:y|ist)|14\\s*words|sieg\\s+heil|blood\\s+and\\s+soil)\\b",
+          "category": "hate_speech",
+          "severity": "warn"
+        },
+        {
+          "pattern": "(?i)\\b(?:deport|expel|remove|exterminate)\\s+(?:all\\s+)?(?:the\\s+)?(?:jews|muslims|blacks|gays|immigrants|migrants)\\b",
+          "category": "hate_speech",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|best\\s+way\\s+to|easiest\\s+way\\s+to)\\s+(?:commit\\s+suicide|kill\\s+myself|end\\s+my\\s+(?:life|existence))\\b",
+          "category": "self_harm",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:child|minor|underage|preteen|teen(?:age)?\\s+girl|teen(?:age)?\\s+boy)\\s+(?:sex|sexual|porn|nude|naked|erotic)\\b",
+          "category": "sexual",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:rape|non[-\\s]?consensual\\s+(?:sex|intercourse|act)|forced\\s+(?:sex|intercourse))\\s+(?:fantas(?:y|ies)|story|stories|scenario|roleplay)\\b",
+          "category": "sexual",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|step[-\\s]?by[-\\s]?step)\\s+(?:synthesi[sz]e|cook|make|manufacture)\\s+(?:meth(?:amphetamine)?|fentanyl|heroin|cocaine|crack|mdma|lsd)\\b",
+          "category": "illegal",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\bhuman\\s+trafficking\\s+(?:routes?|networks?|operation|ring|methods?|how\\s+to)\\b",
+          "category": "illegal",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|step[-\\s]?by[-\\s]?step|instructions?\\s+(?:to|for))\\s+(?:synthesi[sz]e|culture|weaponi[sz]e|aerosoli[sz]e)\\s+(?:anthrax|ricin|sarin|vx\\s+(?:nerve\\s+)?agent|botulinum|nerve\\s+agent|a\\s+bioweapon)\\b",
+          "category": "weapons",
+          "severity": "hard"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|help\\s+me)\\s+(?:dox|doxx)\\s+(?:someone|this\\s+person|him|her|them)\\b",
+          "category": "harassment",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:most\\s+(?:effective|lethal|painless)\\s+(?:way|method)\\s+to\\s+(?:kill\\s+myself|end\\s+my\\s+life|commit\\s+suicide)|how\\s+(?:much|many)\\s+\\w+\\s+(?:to\\s+overdose|is\\s+a\\s+lethal\\s+dose))\\b",
+          "category": "self_harm",
+          "severity": "hard"
+        }
+      ],
       "categories": {
         "sexual": true,
         "illegal": true,
@@ -150,8 +210,7 @@
     "script": null,
     "config": {
       "onMatch": {
-        "storageAction": "keep",
-        "inflightAction": "approve"
+        "action": "approve"
       },
       "detectRefusals": true,
       "minResponseLength": 10,
@@ -163,7 +222,7 @@
     "priority": 5,
     "timeoutMs": 2000,
     "failBehavior": "fail-open",
-    "enabled": true,
+    "enabled": false,
     "applicableIngress": [
       "ALL"
     ],
@@ -208,7 +267,7 @@
     "priority": 1,
     "timeoutMs": 500,
     "failBehavior": "fail-open",
-    "enabled": true,
+    "enabled": false,
     "applicableIngress": [
       "ALL"
     ],
@@ -248,8 +307,7 @@
     "script": null,
     "config": {
       "onMatch": {
-        "storageAction": "redact",
-        "inflightAction": "block-hard"
+        "action": "redact"
       },
       "patternDefinitions": [
         {
@@ -321,9 +379,70 @@
     "script": null,
     "config": {
       "onMatch": {
-        "storageAction": "redact",
-        "inflightAction": "block-soft"
+        "action": "redact"
       },
+      "patterns": [
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|best\\s+way\\s+to)\\s+(?:murder|assassinate|kill)\\s+(?:a\\s+person|someone|him|her|them)\\b",
+          "category": "violence",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:bomb|explosive|ied|pipe\\s+bomb)\\s+(?:making|construction|build(?:ing)?|recipe|instructions?)\\b",
+          "category": "violence",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:white\\s+power|white\\s+supremac(?:y|ist)|14\\s*words|sieg\\s+heil|blood\\s+and\\s+soil)\\b",
+          "category": "hate_speech",
+          "severity": "warn"
+        },
+        {
+          "pattern": "(?i)\\b(?:deport|expel|remove|exterminate)\\s+(?:all\\s+)?(?:the\\s+)?(?:jews|muslims|blacks|gays|immigrants|migrants)\\b",
+          "category": "hate_speech",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|best\\s+way\\s+to|easiest\\s+way\\s+to)\\s+(?:commit\\s+suicide|kill\\s+myself|end\\s+my\\s+(?:life|existence))\\b",
+          "category": "self_harm",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:child|minor|underage|preteen|teen(?:age)?\\s+girl|teen(?:age)?\\s+boy)\\s+(?:sex|sexual|porn|nude|naked|erotic)\\b",
+          "category": "sexual",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:rape|non[-\\s]?consensual\\s+(?:sex|intercourse|act)|forced\\s+(?:sex|intercourse))\\s+(?:fantas(?:y|ies)|story|stories|scenario|roleplay)\\b",
+          "category": "sexual",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|step[-\\s]?by[-\\s]?step)\\s+(?:synthesi[sz]e|cook|make|manufacture)\\s+(?:meth(?:amphetamine)?|fentanyl|heroin|cocaine|crack|mdma|lsd)\\b",
+          "category": "illegal",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\bhuman\\s+trafficking\\s+(?:routes?|networks?|operation|ring|methods?|how\\s+to)\\b",
+          "category": "illegal",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|step[-\\s]?by[-\\s]?step|instructions?\\s+(?:to|for))\\s+(?:synthesi[sz]e|culture|weaponi[sz]e|aerosoli[sz]e)\\s+(?:anthrax|ricin|sarin|vx\\s+(?:nerve\\s+)?agent|botulinum|nerve\\s+agent|a\\s+bioweapon)\\b",
+          "category": "weapons",
+          "severity": "hard"
+        },
+        {
+          "pattern": "(?i)\\b(?:how\\s+(?:to|do\\s+i)|help\\s+me)\\s+(?:dox|doxx)\\s+(?:someone|this\\s+person|him|her|them)\\b",
+          "category": "harassment",
+          "severity": "soft"
+        },
+        {
+          "pattern": "(?i)\\b(?:most\\s+(?:effective|lethal|painless)\\s+(?:way|method)\\s+to\\s+(?:kill\\s+myself|end\\s+my\\s+life|commit\\s+suicide)|how\\s+(?:much|many)\\s+\\w+\\s+(?:to\\s+overdose|is\\s+a\\s+lethal\\s+dose))\\b",
+          "category": "self_harm",
+          "severity": "hard"
+        }
+      ],
       "categories": {
         "sexual": true,
         "illegal": true,
@@ -353,8 +472,7 @@
     "script": null,
     "config": {
       "onMatch": {
-        "storageAction": "redact",
-        "inflightAction": "block-hard"
+        "action": "redact"
       },
       "patterns": [
         {
@@ -378,7 +496,7 @@
     "priority": 20,
     "timeoutMs": 1000,
     "failBehavior": "fail-open",
-    "enabled": true,
+    "enabled": false,
     "applicableIngress": [
       "ALL"
     ],

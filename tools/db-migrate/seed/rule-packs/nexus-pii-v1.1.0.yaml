@@ -1,0 +1,192 @@
+name: nexus/pii
+version: v1.1.0
+maintainer: nexus
+description: >-
+  Regulated personal-data (PII / PHI) detection across 4 subcategories:
+  financial, government_id, contact, health. This pack is scoped to
+  PERSONAL / regulated data only — API keys and credentials live in
+  nexus/secret-leak, harmful content in nexus/content-safety. Patterns are
+  intentionally contextual: loosely-structured values (account / MRN / passport
+  / DL / national-id) require a nearby label word AND at least one digit so
+  idiomatic prose ("the medical record system", "driver license bureau", "tax
+  id requirement") stays out of the match set. Card / SSN rules prefer either a
+  label-word context OR strict separated structure; Luhn / check-digit
+  validation is the detector hook's job, not the regex. Severity defaults to
+  soft/warn — PII detection drives redact/flag, not hard-block. Patterns are
+  Vectorscan-compatible: Go RE2 syntax, no backreferences, no lookaround,
+  bounded quantifiers, word-boundary anchored (no bare ^/$).
+rules:
+  # =====================================================================
+  # Financial (pii-fin-001 .. pii-fin-006)
+  # =====================================================================
+  - id: pii-fin-001
+    category: pii.financial
+    severity: soft
+    pattern: '(?i)\b(?:4[0-9]{3}(?:[ -]?[0-9]{4}){3}|5[1-5][0-9]{2}(?:[ -]?[0-9]{4}){3}|6(?:011|5[0-9]{2})(?:[ -]?[0-9]{4}){3}|3[47][0-9]{2}[ -]?[0-9]{6}[ -]?[0-9]{5})\b'
+    description: Payment-card number by major-brand prefix (Visa/MC/Discover 16-digit, Amex 15-digit), spaces or dashes allowed. Shape only — Luhn check is the hook's job.
+    labels: [detector:pii, finance:card-number, severity:restricted]
+  - id: pii-fin-002
+    category: pii.financial
+    severity: soft
+    pattern: '\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\b'
+    description: IBAN (2-letter country + 2 check digits + up to 30 alnum, optional single spaces between groups).
+    labels: [detector:pii, finance:iban, severity:restricted]
+  - id: pii-fin-003
+    category: pii.financial
+    severity: soft
+    pattern: '(?i)\b(?:routing|aba|rtn)(?:\s+(?:number|transit|no\.?|#))?\s*[:#]?\s*[0-9]{9}\b'
+    description: US bank routing / ABA / RTN number (9 digits) under a label word.
+    labels: [detector:pii, finance:routing-number, severity:restricted]
+  - id: pii-fin-004
+    category: pii.financial
+    severity: warn
+    pattern: '(?i)\b(?:account|acct|a/c)\s*(?:number|no\.?|#)?\s*[:#]?\s*[0-9]{6,17}\b'
+    description: Bank account number (6-17 digits) under an account-label word.
+    labels: [detector:pii, finance:account-number, severity:restricted]
+  - id: pii-fin-005
+    category: pii.financial
+    severity: soft
+    pattern: '\b(?i:swift|bic)(?:\s+code)?\s*[:#]?\s*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b'
+    description: SWIFT / BIC code (8 or 11 chars) under a label word; code stays uppercase to cut prose FP.
+    labels: [detector:pii, finance:swift-bic, severity:restricted]
+  - id: pii-fin-006
+    category: pii.financial
+    severity: soft
+    pattern: '(?i)\b(?:cvv|cvc|cvv2|cvc2|cid|security\s+code|card\s+verification(?:\s+(?:value|code))?)\b\s*[:#]?\s*[0-9]{3,4}\b'
+    description: Card verification value (3-4 digits) under a CVV/CVC label.
+    labels: [detector:pii, finance:cvv, severity:restricted]
+  # =====================================================================
+  # Government ID (pii-gov-001 .. pii-gov-005)
+  # =====================================================================
+  - id: pii-gov-001
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:ssn|social\s+security(?:\s+(?:number|no\.?|#))?)\b\s*[:#]?\s*[0-9]{3}[ -]?[0-9]{2}[ -]?[0-9]{4}\b'
+    description: US SSN (3-2-4) under an SSN / social-security label word.
+    labels: [detector:pii, gov:us-ssn, severity:restricted]
+  - id: pii-gov-002
+    category: pii.government_id
+    severity: warn
+    pattern: '\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b'
+    description: US SSN by strict dash-separated 3-2-4 structure (no context). Warn-only — dash-delimited shape is specific but context-free.
+    labels: [detector:pii, gov:us-ssn, severity:restricted]
+  - id: pii-gov-003
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:passport(?:\s+(?:number|no\.?|#))?)\b\s*[:#]?\s*(?:[0-9][A-Z0-9]{5,8}|[A-Z0-9]{5,8}[0-9])\b'
+    description: Passport number (6-9 alnum, must contain a digit) under a passport label word.
+    labels: [detector:pii, gov:passport, severity:restricted]
+  - id: pii-gov-004
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:driver''?s?\s+licen[sc]e|dln)(?:\s+(?:number|no\.?|#))?\s*[:#]?\s*(?:[0-9][A-Z0-9]{4,14}|[A-Z0-9]{4,14}[0-9])\b'
+    description: Driver-license number (5-15 alnum, must contain a digit) under a DL label word.
+    labels: [detector:pii, gov:driver-license, severity:restricted]
+  - id: pii-gov-005
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:national\s+id|tax\s+id|tin|ein)\b\s*[:#]?\s*(?:[0-9][A-Z0-9-]{5,14}|[A-Z0-9-]{5,14}[0-9])\b'
+    description: Generic national / tax identifier (6-15 alnum incl. dash, must contain a digit) under a label word.
+    labels: [detector:pii, gov:national-id, severity:restricted]
+  # =====================================================================
+  # Contact (pii-con-001 .. pii-con-003)
+  # =====================================================================
+  - id: pii-con-001
+    category: pii.contact
+    severity: soft
+    pattern: '[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})\.){1,8}[A-Za-z]{2,24}'
+    description: Email address (RFC-64 local + DNS-label domain + letter TLD). Structured per DNS label so Vectorscan keys on the @ literal prefilter (the prior wide {1,255} domain repeat fell to a 140x slower per-position scan).
+    labels: [detector:pii, contact:email, severity:confidential]
+  - id: pii-con-002
+    category: pii.contact
+    severity: warn
+    pattern: '(?:\+[1-9][0-9]{7,14}|\(?[0-9]{3}\)?[-. ][0-9]{3}[-. ][0-9]{4})'
+    description: Phone number — E.164 (+ and 8-15 digits) OR US format requiring separators to cut numeric FP.
+    labels: [detector:pii, contact:phone, severity:confidential]
+  - id: pii-con-003
+    category: pii.contact
+    severity: warn
+    pattern: '(?i)\b[0-9]{1,6}\s+(?:[A-Za-z0-9.]+\s+){1,4}(?:street|st|ave|avenue|boulevard|blvd|road|rd|lane|ln|drive|dr|court|ct|way|place|pl|circle|cir)\b\.?'
+    description: US-style postal street address (house number + name + street-type suffix).
+    labels: [detector:pii, contact:address, severity:confidential]
+  # =====================================================================
+  # Health / PHI (pii-hlt-001 .. pii-hlt-003)
+  # =====================================================================
+  - id: pii-hlt-001
+    category: pii.health
+    severity: soft
+    pattern: '(?i)\b(?:mrn|medical\s+record(?:\s+(?:number|no\.?|#))?)\b\s*[:#]?\s*(?:[0-9][A-Z0-9]{4,11}|[A-Z0-9]{4,11}[0-9])\b'
+    description: Medical record number (5-12 alnum, must contain a digit) under an MRN label word.
+    labels: [detector:pii, health:mrn, severity:restricted]
+  - id: pii-hlt-002
+    category: pii.health
+    severity: soft
+    pattern: '(?i)\b(?:npi(?:\s+(?:number|no\.?|#))?)\b\s*[:#]?\s*[0-9]{10}\b'
+    description: US National Provider Identifier (10 digits) under an NPI label word.
+    labels: [detector:pii, health:npi, severity:restricted]
+  - id: pii-hlt-003
+    category: pii.health
+    severity: warn
+    pattern: '(?i)\b(?:icd[- ]?10|diagnos(?:is|ed)(?:\s+code)?|dx)\b[^A-Za-z0-9]{0,10}[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?\b'
+    description: ICD-10 diagnosis code (letter + 2 + optional .subcode) under a diagnosis label word.
+    labels: [detector:pii, health:icd10, severity:restricted]
+  # =====================================================================
+  # Financial — expanded coverage (pii-fin-007 .. pii-fin-008)
+  # =====================================================================
+  - id: pii-fin-007
+    category: pii.financial
+    severity: soft
+    pattern: '(?i)\bIBAN\b\s*[:#]?\s*[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]){11,30}\b'
+    description: IBAN under an explicit ''IBAN'' label word (country + 2 check digits + up to 30 alnum). Labeled companion to the structural IBAN rule for lower false-positive contexts.
+    labels: [detector:pii, finance:iban, severity:restricted]
+  - id: pii-fin-008
+    category: pii.financial
+    severity: soft
+    pattern: '\b(?:3(?:0[0-5]|[68][0-9])[0-9]{11}|35[0-9]{14}|62[0-9]{14,17})\b'
+    description: 'Payment-card number for Diners Club (14-digit 30-05/36/38 prefix), JCB (16-digit 35 prefix), and UnionPay (16-19 digit 62 prefix). Shape only — Luhn check is the hook''s job.'
+    labels: [detector:pii, finance:card-number, severity:restricted]
+  # =====================================================================
+  # Government ID — expanded coverage (pii-gov-006 .. pii-gov-012)
+  # =====================================================================
+  - id: pii-gov-006
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:itin)\b\s*[:#]?\s*9[0-9]{2}[ -]?(?:7[0-9]|8[0-8]|9[0-2])[ -]?[0-9]{4}\b'
+    description: US Individual Taxpayer Identification Number (ITIN) — 9-prefixed 9-digit, group 70-92, under an ITIN label word.
+    labels: [detector:pii, gov:us-itin, severity:restricted]
+  - id: pii-gov-007
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:nino|national\s+insurance(?:\s+(?:number|no\.?|#))?)\b\s*[:#]?\s*[ABCEGHJ-PRSTW-Z][ABCEGHJ-NPRSTW-Z][ ]?[0-9]{2}[ ]?[0-9]{2}[ ]?[0-9]{2}[ ]?[A-D]\b'
+    description: UK National Insurance Number (NINO) under a NINO / national-insurance label word; 2 prefix letters + 6 digits + suffix A-D.
+    labels: [detector:pii, gov:uk-nino, severity:restricted]
+  - id: pii-gov-008
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:sin|social\s+insurance(?:\s+(?:number|no\.?|#))?)\b\s*[:#]?\s*[0-9]{3}[ -]?[0-9]{3}[ -]?[0-9]{3}\b'
+    description: Canada Social Insurance Number (SIN), 3-3-3 digits, under a SIN / social-insurance label word.
+    labels: [detector:pii, gov:ca-sin, severity:restricted]
+  - id: pii-gov-009
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:tfn|tax\s+file(?:\s+(?:number|no\.?|#))?)\b\s*[:#]?\s*[0-9]{3}[ -]?[0-9]{3}[ -]?[0-9]{2,3}\b'
+    description: Australia Tax File Number (TFN), 8-9 digits in 3-3-2/3 groups, under a TFN / tax-file label word.
+    labels: [detector:pii, gov:au-tfn, severity:restricted]
+  - id: pii-gov-010
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:aadhaar|aadhar|uidai)\b\s*[:#]?\s*[2-9][0-9]{3}[ -]?[0-9]{4}[ -]?[0-9]{4}\b'
+    description: India Aadhaar number (12 digits, first digit 2-9) in 4-4-4 groups, under an Aadhaar / UIDAI label word.
+    labels: [detector:pii, gov:in-aadhaar, severity:restricted]
+  - id: pii-gov-011
+    category: pii.government_id
+    severity: soft
+    pattern: '(?i)\b(?:vin)\b\s*[:#]?\s*[A-HJ-NPR-Z0-9]{17}\b'
+    description: Vehicle Identification Number (VIN), 17 chars excluding I/O/Q, under a VIN label word.
+    labels: [detector:pii, gov:vin, severity:internal]
+  - id: pii-gov-012
+    category: pii.government_id
+    severity: warn
+    pattern: '(?i)\b(?:dob|date\s+of\s+birth|d\.o\.b\.?|birth\s*date)\b\s*[:#]?\s*(?:[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{2,4}|[0-9]{4}[-/.][0-9]{1,2}[-/.][0-9]{1,2})\b'
+    description: Date of birth under a DOB / date-of-birth label word (numeric DMY/MDY/ISO forms).
+    labels: [detector:pii, gov:date-of-birth, severity:confidential]
