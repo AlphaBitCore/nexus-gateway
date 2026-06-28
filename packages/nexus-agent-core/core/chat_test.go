@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -81,7 +81,7 @@ func TestChatStream_RejectsEmptyVK(t *testing.T) {
 }
 
 // TestGatewayModels parses the VK-scoped /v1/models list, sends the VK as a bearer,
-// hits GET /v1/models, and skips blank ids — the FR-17 model-derivation source.
+// hits GET /v1/models, and skips blank ids — the model-derivation source.
 func TestGatewayModels(t *testing.T) {
 	var gotAuth, gotPath, gotMethod string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

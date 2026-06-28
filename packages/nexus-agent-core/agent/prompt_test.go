@@ -87,7 +87,7 @@ func TestBuildSystemPromptNonProdAndNoDomain(t *testing.T) {
 	}
 }
 
-// TestBuildSystemPromptWebSurface is the FR-20 / AC-3 assertion: the web assistant's
+// TestBuildSystemPromptWebSurface is the assertion: the web assistant's
 // system prompt carries NONE of the CLI/TUI-flavored or internal-only terms
 // ("cockpit", "file-backed", "drift"), nor the IoT internals — yet keeps the same
 // capabilities, safety, and operator vocabulary. The CLI default keeps the terser

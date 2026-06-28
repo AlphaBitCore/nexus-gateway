@@ -1,6 +1,6 @@
 package core
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 // Chat wire structs: the OpenAI-shape chat-completions request/response the Chat
 // Playground + agent use, plus the CP simulator-forward request.

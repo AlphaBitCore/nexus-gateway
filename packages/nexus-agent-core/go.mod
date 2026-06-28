@@ -2,7 +2,10 @@ module github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core
 
 go 1.25.0
 
-require gopkg.in/yaml.v3 v3.0.1
+require (
+	github.com/goccy/go-json v0.10.6
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/kr/pretty v0.3.1 // indirect

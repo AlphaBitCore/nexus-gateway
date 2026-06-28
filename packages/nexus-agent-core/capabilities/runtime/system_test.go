@@ -2,8 +2,8 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"os"
 	"path/filepath"
 	"strings"

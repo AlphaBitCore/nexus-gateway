@@ -413,7 +413,7 @@ func TestWizard_NavClampsAndFilters(t *testing.T) {
 	}
 }
 
-// --- env step (E88 v1.1) ---
+// --- env step ---
 
 func TestWizard_EnvStep_StartsAndLists(t *testing.T) {
 	r := newRecordingDeps(sampleGateway()).withEnvStep([]string{"local", "dev"})

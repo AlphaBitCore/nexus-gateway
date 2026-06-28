@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 // ToolSchema is a tool advertised to the model: name, human description, and a

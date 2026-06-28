@@ -2,8 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,8 +14,7 @@ import (
 type toolUseBlock struct{ id, name, args string }
 
 // asstToolUses builds an assistant ModelResponse that calls several tools in ONE
-// response — the shape that drives per-round fan-out (F-0291) and the panic
-// barrier (F-0292).
+// response — the shape that drives per-round fan-out and the panic barrier.
 func asstToolUses(blocks ...toolUseBlock) *ModelResponse {
 	bs := make([]Block, 0, len(blocks))
 	for _, b := range blocks {

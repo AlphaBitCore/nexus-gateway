@@ -3,7 +3,7 @@ package kit
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/url"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"

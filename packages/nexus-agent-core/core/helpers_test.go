@@ -3,8 +3,8 @@ package core
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 )

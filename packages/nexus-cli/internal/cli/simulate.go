@@ -2,8 +2,8 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 
 	"github.com/spf13/cobra"
 

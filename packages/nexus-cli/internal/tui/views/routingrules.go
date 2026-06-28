@@ -2,8 +2,8 @@ package views
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"

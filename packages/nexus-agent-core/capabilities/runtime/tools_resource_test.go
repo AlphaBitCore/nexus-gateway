@@ -2,7 +2,7 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 
@@ -287,7 +287,7 @@ func TestResourceTiers(t *testing.T) {
 	}
 }
 
-// TestResourceInvokeRequiresConfirmation is the F-0290 assertion at this layer:
+// TestResourceInvokeRequiresConfirmation is the assertion at this layer:
 // the real agent permission Gate (non-yolo) routes a concrete resource_invoke
 // mutation to Ask (mandatory human authorization), and the resolved confirm
 // detail names the exact METHOD + path + operationId so the operator confirms

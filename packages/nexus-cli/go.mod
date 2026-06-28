@@ -16,7 +16,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/BurntSushi/toml v1.6.0
+require (
+	github.com/BurntSushi/toml v1.6.0
+	github.com/goccy/go-json v0.10.6
+)
 
 require (
 	github.com/google/go-cmp v0.7.0 // indirect

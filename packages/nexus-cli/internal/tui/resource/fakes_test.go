@@ -2,7 +2,7 @@ package resource
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/url"
 
 	tea "charm.land/bubbletea/v2"
