@@ -1,7 +1,7 @@
 package store
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 // SAMLConfig is the runtime view of a SAML IdentityProvider row's config

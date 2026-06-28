@@ -10,7 +10,7 @@ package catb
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"os"
 	"testing"

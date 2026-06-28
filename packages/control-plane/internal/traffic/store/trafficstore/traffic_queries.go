@@ -2,9 +2,9 @@ package trafficstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 
@@ -157,10 +157,16 @@ type TrafficEvent struct {
 	CreatedAt             time.Time       `json:"createdAt"`
 	// Request / response body — populated only by the detail endpoint
 	// (GetTrafficEvent) via JOIN to traffic_event_payload. Omitted from
-	// list payloads to keep them light. Bodies are stored as jsonb but
-	// the UI renders them generically (string, array, or object).
+	// list payloads to keep them light. Bodies are stored as raw bytes in a
+	// BYTEA column tagged by the inline_*_encoding discriminator; the handler
+	// decodes via the matching *BodyEncoding before rendering, then the UI renders them
+	// generically (string, array, or object).
 	RequestBody  json.RawMessage `json:"requestBody,omitempty"`
 	ResponseBody json.RawMessage `json:"responseBody,omitempty"`
+	// Storage encoding ("text" | "base64") of the inline body columns, used by
+	// the handler to decode before rendering. Internal — never sent to the UI.
+	RequestBodyEncoding  string `json:"-"`
+	ResponseBodyEncoding string `json:"-"`
 	// Spill refs. Non-NULL when the producer wrote the body out-of-band to a
 	// SpillStore backend (large payloads ≥ inline threshold). The handler
 	// resolves these to actual bytes via spillstore.Get and folds them into
@@ -316,7 +322,8 @@ func (store *Store) ListTrafficEvents(ctx context.Context, p TrafficEventListPar
 // deliberately skip the JOIN to keep payloads light; only detail does.
 func (store *Store) GetTrafficEvent(ctx context.Context, id string) (*TrafficEvent, error) {
 	q := fmt.Sprintf(
-		`SELECT %s, p.inline_request_body, p.inline_response_body, p.request_spill_ref, p.response_spill_ref
+		`SELECT %s, p.inline_request_body, p.inline_response_body, p.request_spill_ref, p.response_spill_ref,
+		        COALESCE(p.inline_request_encoding, ''), COALESCE(p.inline_response_encoding, '')
 		 %s
 		 LEFT JOIN traffic_event_payload p ON p.traffic_event_id = a.id
 		 WHERE a.id = $1`,
@@ -368,6 +375,7 @@ func (store *Store) GetTrafficEvent(ctx context.Context, id string) (*TrafficEve
 		&a.ModelCachedInputReadPricePerMillion, &a.ModelCachedInputWritePricePerMillion,
 		&a.RequestBody, &a.ResponseBody,
 		&a.RequestSpillRef, &a.ResponseSpillRef,
+		&a.RequestBodyEncoding, &a.ResponseBodyEncoding,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -490,7 +498,7 @@ func buildTrafficEventWhere(p TrafficEventListParams) (string, []any, int) {
 		// is something else entirely — the upstream provider's API key
 		// Nexus used to make the upstream call (real OpenAI / Anthropic
 		// token, totally different identifier). Producers renamed the
-		// VK key from "credential" to "vk" in an earlier sprint (see
+		// VK key from "credential" to "vk" (see
 		// ai-gateway audit_test.go assertion 'Identity.credential should
 		// not exist — renamed to identity.vk'); this query was missed in
 		// that rename, so filtering by virtualKeyId silently returned

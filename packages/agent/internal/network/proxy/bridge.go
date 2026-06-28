@@ -38,7 +38,7 @@ type BridgeDeps struct {
 	PolicyResolver  *pipeline.PolicyResolver
 	DomainEngine    *domain.Engine
 	AdapterRegistry *traffic.AdapterRegistry
-	// NormalizeRegistry — V2 #67 — Tier 1+2+3 shared chain. Wired via
+	// NormalizeRegistry — Tier 1+2+3 shared chain. Wired via
 	// tlsbump.WithNormalizeRegistry so runtimeNormalize / hook pipeline
 	// see canonical NormalizedPayload even when Tier 1 per-adapter spec
 	// match fails (chatgpt-web SSE delta_encoding, cursor protobuf
@@ -50,9 +50,9 @@ type BridgeDeps struct {
 	// so admin shadow updates take effect without restarting the
 	// daemon. Nil store falls back to passthrough (the conservative
 	// default tlsbump's resolveStreamingMode applies when the Store
-	// is unwired). #115 deleted the legacy StreamingMode YAML field —
-	// admin policy is the single source of truth across all three
-	// services (agent / compliance-proxy / ai-gateway).
+	// is unwired). There is no StreamingMode YAML field — admin policy
+	// is the single source of truth across all three services
+	// (agent / compliance-proxy / ai-gateway).
 	StreamingPolicy *streampolicy.Store
 	AuditQueue      *auditqueue.Queue
 
@@ -278,6 +278,11 @@ func BumpFlow(
 	bumpOpts := []tlsbump.BumpOption{
 		// WithIdentity stamps "agent" on x-nexus-via for response markers.
 		tlsbump.WithIdentity("agent"),
+		// The agent is an on-host transparent interceptor in the host's
+		// outbound path: a block writes a minimal "Forbidden" 403 and must
+		// NOT synthesize a rich attributed error page. Explicit (matches the
+		// false default) for readability and regression protection.
+		tlsbump.WithRichReject(false),
 		// WithProcessInfo stamps the originating process name/bundle/user
 		// onto every emitted audit_event so the admin UI's App column
 		// populates for inspect rows.
@@ -364,17 +369,16 @@ func BumpFlow(
 			)
 			return err
 		}
-		// #86: cert-pin clients (Cursor / Slack / Notion / Linear /
+		// Cert-pin clients (Cursor / Slack / Notion / Linear /
 		// WhatsApp Mac / iOS-style mobile apps using NSURLSession with
 		// SecTrust evaluation) reject our MITM cert at TLS handshake.
 		// Without fall-back, the user's app silently fails:
 		// - Cursor chat / autocomplete returns "request failed"
 		// - Slack sits on connecting indicator forever
 		// - Notion shows blank workspace
-		// Observed live 2026-05-24: 89+ flows to api2.cursor.sh failed
-		// with `TLS handshake with client: EOF` (client closed
-		// connection on cert validation). User's Cursor IDE chat was
-		// silently broken until quic-bundles got cleared.
+		// Such flows fail with `TLS handshake with client: EOF` (the
+		// client closes the connection on cert validation), and the
+		// user's app is silently broken until quic-bundles are cleared.
 		//
 		// On client_pin_check failure, fall back to raw TCP relay via
 		// opaqueRelay so the user's app keeps working. We lose

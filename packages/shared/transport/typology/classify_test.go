@@ -6,7 +6,7 @@ import "testing"
 // for ClassifyPath. Every path AI Gateway registers a handler on (see
 // packages/ai-gateway/cmd/ai-gateway/wiring/routes.go) must classify to
 // the correct (EndpointKind, WireShape). A miss here means AIGW
-// dispatch would fall back to the unclassified path during Phase 2 — a
+// dispatch would fall back to the unclassified path — a
 // hard production regression.
 //
 // Paths intentionally NOT covered by AIGW handlers (audio/*, images/*,
@@ -191,9 +191,9 @@ func TestClassifyPath_AzureDeploymentPathTolerance(t *testing.T) {
 	// the next pattern literal is itself a "/" — see TestGlobMatch_EdgeCases
 	// "/a/*/b/*/c" case. Azure deployment names never contain "/" in
 	// production so this is a theoretical false-positive only; matched
-	// here to lock the existing matcher semantics during Phase 1 (no
+	// here to lock the existing matcher semantics (no
 	// semantic change). A stricter single-segment matcher is a candidate
-	// Phase-3 follow-up if the false-positive ever surfaces in practice.
+	// follow-up if the false-positive ever surfaces in practice.
 	if _, _, ok := ClassifyPath("POST", "/openai/deployments/dep/extra/chat/completions"); !ok {
 		t.Errorf("ClassifyPath(POST, ...two-segment-deployment...) ok=false; expected true (matcher allows star-cross-slash when next literal is '/')")
 	}

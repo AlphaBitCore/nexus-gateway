@@ -33,6 +33,9 @@ static VOID FreePolicy(_In_ PNEXUS_POLICY Policy)
     if (Policy->destBypass) {
         ExFreePoolWithTag(Policy->destBypass, NEXUS_WFP_POOL_TAG);
     }
+    if (Policy->quicFallback) {
+        ExFreePoolWithTag(Policy->quicFallback, NEXUS_WFP_POOL_TAG);
+    }
     ExFreePoolWithTag(Policy, NEXUS_WFP_POOL_TAG);
 }
 
@@ -78,11 +81,15 @@ NTSTATUS NexusPolicyApply(
     if (hdr->destBypassCount > NEXUS_MAX_DEST_BYPASS) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (hdr->quicFallbackCount > NEXUS_MAX_QUIC_FALLBACK) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     // Validate the body length matches the header counts.
     ULONG expected = sizeof(NexusPolicyHeader)
                    + hdr->processBypassCount * sizeof(UINT32)
-                   + hdr->destBypassCount    * sizeof(NexusCidr);
+                   + hdr->destBypassCount    * sizeof(NexusCidr)
+                   + hdr->quicFallbackCount  * sizeof(NexusQuicImage);
     if (BufferLength < expected) {
         return STATUS_BUFFER_TOO_SMALL;
     }
@@ -104,6 +111,7 @@ NTSTATUS NexusPolicyApply(
     newPolicy->killSwitch = hdr->killSwitch != 0;
     newPolicy->processBypassCount = hdr->processBypassCount;
     newPolicy->destBypassCount    = hdr->destBypassCount;
+    newPolicy->quicFallbackCount  = hdr->quicFallbackCount;
 
     if (hdr->processBypassCount > 0) {
         ULONG byteCount = hdr->processBypassCount * sizeof(UINT32);
@@ -129,6 +137,21 @@ NTSTATUS NexusPolicyApply(
             (const UCHAR*)Buffer + sizeof(NexusPolicyHeader)
             + hdr->processBypassCount * sizeof(UINT32));
         RtlCopyMemory(newPolicy->destBypass, cBase, byteCount);
+    }
+
+    if (hdr->quicFallbackCount > 0) {
+        ULONG byteCount = hdr->quicFallbackCount * sizeof(NexusQuicImage);
+        newPolicy->quicFallback = (NexusQuicImage*)ExAllocatePool2(
+            POOL_FLAG_NON_PAGED, byteCount, NEXUS_WFP_POOL_TAG);
+        if (newPolicy->quicFallback == NULL) {
+            FreePolicy(newPolicy);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        const NexusQuicImage* qBase = (const NexusQuicImage*)(
+            (const UCHAR*)Buffer + sizeof(NexusPolicyHeader)
+            + hdr->processBypassCount * sizeof(UINT32)
+            + hdr->destBypassCount    * sizeof(NexusCidr));
+        RtlCopyMemory(newPolicy->quicFallback, qBase, byteCount);
     }
 
     // Atomic swap. The returned pointer is the previous policy. Its
@@ -352,6 +375,52 @@ BOOLEAN NexusPolicyIsBypassedDest(
     return hit;
 }
 
+BOOLEAN NexusPolicyIsQuicForceFallbackImage(
+    _In_reads_(AppIdChars) PCWSTR AppIdPath,
+    _In_ ULONG AppIdChars)
+{
+    if (AppIdPath == NULL || AppIdChars == 0) return FALSE;
+
+    // WFP's ALE_APP_ID byte-blob includes a trailing NUL in its size; drop
+    // any trailing NUL(s) so they don't pollute the basename compare.
+    while (AppIdChars > 0 && AppIdPath[AppIdChars - 1] == L'\0') {
+        AppIdChars--;
+    }
+    if (AppIdChars == 0) return FALSE;
+
+    // Basename = everything past the last backslash (app-id is a device
+    // path like \device\harddiskvolume3\...\chrome.exe).
+    ULONG start = 0;
+    for (ULONG i = 0; i < AppIdChars; i++) {
+        if (AppIdPath[i] == L'\\') start = i + 1;
+    }
+    ULONG baseChars = AppIdChars - start;
+    if (baseChars == 0 || baseChars > NEXUS_QUIC_IMAGE_MAX_CHARS) return FALSE;
+
+    UNICODE_STRING appBase;
+    appBase.Buffer        = (PWCH)(AppIdPath + start);
+    appBase.Length        = (USHORT)(baseChars * sizeof(WCHAR));
+    appBase.MaximumLength = appBase.Length;
+
+    PNEXUS_POLICY p = AcquireSnapshot();
+    if (p == NULL) return FALSE;
+    BOOLEAN hit = FALSE;
+    for (ULONG i = 0; i < p->quicFallbackCount; i++) {
+        const NexusQuicImage* img = &p->quicFallback[i];
+        if (img->len == 0 || img->len > NEXUS_QUIC_IMAGE_MAX_CHARS) continue;
+        UNICODE_STRING cand;
+        cand.Buffer        = (PWCH)img->name;
+        cand.Length        = (USHORT)(img->len * sizeof(WCHAR));
+        cand.MaximumLength = cand.Length;
+        if (RtlCompareUnicodeString(&appBase, &cand, TRUE) == 0) {
+            hit = TRUE;
+            break;
+        }
+    }
+    ReleaseSnapshot(p);
+    return hit;
+}
+
 VOID NexusPolicySetSelfPid(_In_ UINT32 ProcessId)
 {
     InterlockedExchange(&g_SelfPid, (LONG)ProcessId);
@@ -360,4 +429,13 @@ VOID NexusPolicySetSelfPid(_In_ UINT32 ProcessId)
 BOOLEAN NexusPolicyIsSelfPid(_In_ UINT32 ProcessId)
 {
     return (UINT32)InterlockedCompareExchange(&g_SelfPid, 0, 0) == ProcessId;
+}
+
+// NexusPolicyGetSelfPid returns the raw agent PID recorded at HELLO (0 if not
+// set yet). The connect-redirect callouts stamp it into the writable
+// FWPS_CONNECT_REQUEST0.localRedirectTargetPID — mandatory for a localhost
+// redirect, where IsSelfPid's boolean answer is insufficient.
+UINT32 NexusPolicyGetSelfPid(VOID)
+{
+    return (UINT32)InterlockedCompareExchange(&g_SelfPid, 0, 0);
 }

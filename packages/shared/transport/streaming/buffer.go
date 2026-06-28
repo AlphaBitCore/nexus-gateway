@@ -29,12 +29,12 @@ func (c *BufferConfig) withDefaults() BufferConfig {
 }
 
 // PreHookCallback is the type alias for the canonical SSE pre-hook
-// contract defined in shared/policy/hooks/core.PreHookCallback (#93).
+// contract defined in shared/policy/hooks/core.PreHookCallback.
 // Re-exported here so SSE-pipeline callers can spell it without
 // pulling the hooks/core import. Identical type — fully
 // interchangeable with core.PreHookCallback.
 //
-// #90 wiring: sse.go's buffer-mode branch installs a callback (built
+// Wiring: sse.go's buffer-mode branch installs a callback (built
 // by shared/transport/normalize/responseprehook.Builder) that runs
 // the body through Registry.Normalize and stamps both
 //
@@ -120,7 +120,7 @@ func (b *BufferPipeline) Process(
 	client io.Writer,
 	baseInput *core.HookInput,
 ) (*core.CompliancePipelineResult, error) {
-	// Tee Phase 1 reads into rawBuf so the #90 preHook callback can run
+	// Tee Phase 1 reads into rawBuf so the preHook callback can run
 	// Registry normalize on the raw SSE wire bytes (not just the
 	// extracted delta-text concat). preHook fires between Phase 1 and
 	// Phase 2 so the compliance pipeline sees the rich Normalized
@@ -174,7 +174,7 @@ func (b *BufferPipeline) Process(
 	// Phase 2: Run compliance hooks on the full content.
 	checkpointInput := buildCheckpointInput(baseInput, fullText.String())
 
-	// #90 — invoke caller-provided pre-hook callback so the compliance
+	// Invoke caller-provided pre-hook callback so the compliance
 	// hook executor sees a Registry-normalized payload rather than the
 	// flat-text fallback. Callback closes over the Registry + adapter +
 	// content-type at the call site (sse.go's buffer branch) and stamps
@@ -191,7 +191,7 @@ func (b *BufferPipeline) Process(
 		}
 	}
 
-	// #115/R3 — Modify is not supported in buffer mode. The Phase 3
+	// Modify is not supported in buffer mode. The Phase 3
 	// switch below has no Modify case; the body replays unchanged. Log +
 	// bump the shared counter so admin sees the silent degradation
 	// (without this signal a misconfigured hook stays invisible until
@@ -209,7 +209,7 @@ func (b *BufferPipeline) Process(
 
 	// Phase 3: Replay or reject.
 	switch result.Decision {
-	case core.RejectHard, core.BlockSoft:
+	case core.RejectHard:
 		b.logger.Info("buffer pipeline: content rejected",
 			"decision", result.Decision,
 			"reason", result.Reason,

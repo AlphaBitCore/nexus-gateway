@@ -2,7 +2,7 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -274,7 +274,7 @@ func (w *QueueWriter) buildRow(e sharedaudit.AuditEvent) event.Event {
 		// shared/audit.AuditEvent propagated down to the agent.Event
 		// row so the SQLite normalized_request / normalized_response
 		// columns persist. The emitter already applied the stage's
-		// storageAction, so these are the governed copies; the relocated
+		// action, so these are the governed copies; the relocated
 		// redaction spans ride alongside. nil/empty when no AI adapter
 		// matched (or the row is unredacted, for the spans).
 		NormalizedRequest:      e.RequestNormalized,

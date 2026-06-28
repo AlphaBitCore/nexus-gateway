@@ -23,14 +23,12 @@
 // directory; the generated Swift reproduces the normalize()/related() matching
 // semantics EXACTLY (lowercase-normalized equal / ancestor / descendant), and
 // a golden test in this package asserts the committed file is up to date so CI
-// catches a stale checkout. This closes the two drift findings that were open
-// while the Swift set was hand-maintained: F-0392 (codegen the Swift set from
-// this SSOT) and F-0368 (the Swift set lagged — missing identityservicesd,
-// rapportd, networkserviceproxy, the com.apple.kerberos family). Both are now
-// correct-by-construction: the Swift floor IS this set, rendered.
+// catches a stale checkout. Codegen from this SSOT is what makes the two copies
+// correct-by-construction: the Swift floor IS this set, rendered, and cannot
+// silently lag the Go set.
 //
 // The floor stays a HARDCODED compile-time constant on BOTH sides — it is
-// intentionally NOT shadow-controllable. That immutability is the SEC-M8-01
+// intentionally NOT shadow-controllable. That immutability is the
 // A3-defense: an attacker who can push the agent_settings shadow cannot widen
 // a kill-list to close UDP for a system daemon, because the floor is compiled
 // in, not config.

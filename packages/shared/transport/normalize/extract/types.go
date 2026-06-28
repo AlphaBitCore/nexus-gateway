@@ -22,7 +22,7 @@
 // reverse).
 package extract
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 // JSONPatchOp is a single operation in a ChatGPT-flavoured JSON Patch
 // stream. The wire shape uses single-letter fields for terseness:

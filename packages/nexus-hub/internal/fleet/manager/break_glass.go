@@ -3,9 +3,9 @@ package manager
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"sort"
 	"strings"
 	"time"

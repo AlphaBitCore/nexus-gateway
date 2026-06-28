@@ -1,8 +1,8 @@
 package thingclient
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"testing"
 	"time"
@@ -516,7 +516,7 @@ func TestHeartbeatInterval_ReturnsConfig(t *testing.T) {
 	}
 }
 
-// --- F-0121: partial-apply shadow report on the error path ---
+// --- partial-apply shadow report on the error path ---
 
 // partialApplyCallback returns a callback that mimics configloader.Loader.Apply:
 // continue-on-error. It applies every key in `succeed` (recording a success
@@ -569,7 +569,7 @@ func readShadowReport(t *testing.T, c *Client) thingMessage {
 	}
 }
 
-// TestApplyConfig_PartialFailure_SendsPartialReport is the core F-0121
+// TestApplyConfig_PartialFailure_SendsPartialReport is the core
 // regression: when 1 of 3 keys fails to apply, the node must NOT go dark.
 // The shadow_report is still sent carrying the 2 succeeded keys in `reported`
 // plus a per-key `reportedOutcomes` ledger (2 success + 1 error with detail),

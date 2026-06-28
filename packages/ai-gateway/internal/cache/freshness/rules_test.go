@@ -1,8 +1,17 @@
 package freshness
 
 import (
+	"strings"
 	"testing"
 )
+
+// matchText drives compiledRule.matches the way IsTimeSensitive does in
+// production: the candidate text is lowercased once and passed alongside the
+// original. Tests assert the substring matcher yields the same verdicts the
+// previous (?i)-regex matcher did (differential gate).
+func matchText(cr *compiledRule, text string) bool {
+	return cr.matches(text, strings.ToLower(text))
+}
 
 // --- compile / compileAll ---
 
@@ -105,7 +114,7 @@ func TestCompiledRule_CaseInsensitiveKeyword(t *testing.T) {
 		{"No relevant content", false},
 	}
 	for _, tc := range cases {
-		if got := cr.matches(tc.text); got != tc.want {
+		if got := matchText(cr, tc.text); got != tc.want {
 			t.Errorf("matches(%q) = %v, want %v", tc.text, got, tc.want)
 		}
 	}
@@ -132,7 +141,7 @@ func TestCompiledRule_RequireQuestionMark(t *testing.T) {
 		{"What about the weather today?", true}, // has question mark
 	}
 	for _, tc := range cases {
-		if got := cr.matches(tc.text); got != tc.want {
+		if got := matchText(cr, tc.text); got != tc.want {
 			t.Errorf("matches(%q) = %v, want %v", tc.text, got, tc.want)
 		}
 	}
@@ -149,11 +158,11 @@ func TestCompiledRule_FullWidthQuestionMark(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Full-width question mark should satisfy the requirement.
-	if !cr.matches("今天的天气怎么样？") {
+	if !matchText(cr, "今天的天气怎么样？") {
 		t.Error("expected match for full-width question mark")
 	}
 	// No question mark should not match.
-	if cr.matches("今天的天气很好。") {
+	if matchText(cr, "今天的天气很好。") {
 		t.Error("expected no match without question mark")
 	}
 }
@@ -180,7 +189,7 @@ func TestCompiledRule_RequireEntity(t *testing.T) {
 		{"Current stock price: USD 50.00?", true, "currency code USD"},
 	}
 	for _, tc := range cases {
-		if got := cr.matches(tc.text); got != tc.want {
+		if got := matchText(cr, tc.text); got != tc.want {
 			t.Errorf("[%s] matches(%q) = %v, want %v", tc.desc, tc.text, got, tc.want)
 		}
 	}

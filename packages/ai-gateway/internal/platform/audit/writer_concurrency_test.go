@@ -1,12 +1,15 @@
 package audit
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
+
+	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // waitForMsgCount polls the producer until it has at least n messages or
@@ -22,22 +25,23 @@ func waitForMsgCount(prod *memProducer, n int, within time.Duration) int {
 	return len(prod.msgs())
 }
 
-// TestWriter_SizeTriggeredFlush proves a burst that reaches flushHighWater
-// is flushed promptly by the size trigger — NOT held until the 5s ticker.
-// Without the trigger this test would have to wait the full interval (or
-// the burst would drop above maxQueueSize); a fast completion proves the
-// signal path is wired.
-func TestWriter_SizeTriggeredFlush(t *testing.T) {
+// TestWriter_BurstDrainsPromptly proves a burst of records is published promptly
+// by the consumer workers — NOT held until any timer. The consumeLoop greedily
+// batches whatever is queued and publishes immediately once a batch fills (or after
+// consumerLinger for a partial), so a full burst drains well inside 2s. A regression
+// that stalled the drain (e.g. a worker that waited for a long timer before
+// publishing) would miss the deadline.
+func TestWriter_BurstDrainsPromptly(t *testing.T) {
 	prod := &memProducer{}
 	w := NewWriter(prod, "q", nil, slog.Default())
 	defer w.Close()
 
-	for i := range flushHighWater {
+	const burst = flushHighWater
+	for i := range burst {
 		w.Enqueue(&Record{RequestID: fmt.Sprintf("r%d", i)})
 	}
-	// The default ticker is 5s; the size trigger must flush far sooner.
-	if got := waitForMsgCount(prod, flushHighWater, 2*time.Second); got != flushHighWater {
-		t.Fatalf("size-triggered flush published %d within 2s, want %d (signal path not wired?)", got, flushHighWater)
+	if got := waitForMsgCount(prod, burst, 2*time.Second); got != burst {
+		t.Fatalf("consumer drain published %d within 2s, want %d (drain path not wired?)", got, burst)
 	}
 }
 
@@ -89,41 +93,112 @@ func TestWriter_ConcurrentEnqueue_NoLossNoDup(t *testing.T) {
 	}
 }
 
-// TestWriter_PublishRecord_DropsWhenBufferFull covers the data-loss
-// accounting branch: when a publish fails and the buffer is already at
-// maxQueueSize, the record is dropped (counted), not appended past the
-// cap. White-box: the flush loop is stopped and the buffer pre-filled so
-// the failed re-buffer deterministically hits the cap.
-func TestWriter_PublishRecord_DropsWhenBufferFull(t *testing.T) {
+// TestWriter_PublishRecord_DropsWhenQueueFullNoSpill covers the data-loss
+// accounting branch: when a publish fails, the re-queue onto recCh is full, and no
+// durable spill is wired, the record is a counted drop (handlePublishFailure →
+// spillData(false) → incDropped) — never grown past the cap, never silently lost.
+// White-box: a full bounded queue + no ndjsonSpill forces the drop branch
+// deterministically.
+func TestWriter_PublishRecord_DropsWhenQueueFullNoSpill(t *testing.T) {
+	prom := prometheus.NewRegistry()
 	prod := &memProducer{alwaysFail: true}
-	w := NewWriter(prod, "q", nil, slog.Default())
-	w.Close() // stop the flush loop; drainBuffer leaves buf empty
+	w := NewWriter(prod, "q", opsmetrics.NewRegistry(prom), slog.Default())
+	// A full bounded queue so handlePublishFailure's non-blocking re-queue fails,
+	// and no ndjsonSpill wired so spillData returns false → the drop branch.
+	w.recCh = make(chan *Record, 1)
+	w.recCh <- &Record{RequestID: "filler"} // saturate (cap 1)
 
-	w.mu.Lock()
-	w.buf = make([]*Record, maxQueueSize) // saturate
-	w.mu.Unlock()
+	w.publishRecord(&Record{RequestID: "overflow"}) // fails → re-queue full → no spill → drop
 
-	w.publishRecord(&Record{RequestID: "overflow"}) // fails → rebuffer → cap → drop
-
-	w.mu.Lock()
-	got := len(w.buf)
-	w.mu.Unlock()
-	if got != maxQueueSize {
-		t.Fatalf("buffer grew past cap on drop branch: %d, want %d", got, maxQueueSize)
+	if got := counterValue(t, prom, "nexus_audit_mq_dropped_total"); got != 1 {
+		t.Fatalf("dropped_total = %v, want 1 (publish-failure overflow with no spill must count a drop)", got)
+	}
+	// The queue did not grow past its cap.
+	if got := len(w.recCh); got != 1 {
+		t.Fatalf("recCh grew past cap on drop branch: %d, want 1", got)
 	}
 }
 
-// TestWriter_RebufferOnTransientFailure proves a record that fails to
-// publish is re-buffered and retried on the next flush rather than lost,
-// even when the failure happens inside the concurrent publish pool.
-func TestWriter_RebufferOnTransientFailure(t *testing.T) {
+// counterValue gathers the named counter's summed value from a Prometheus
+// registry (across all label sets). Returns 0 when the series is absent.
+func counterValue(t *testing.T, prom *prometheus.Registry, name string) float64 {
+	t.Helper()
+	mfs, err := prom.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		var sum float64
+		for _, m := range mf.GetMetric() {
+			sum += m.GetCounter().GetValue()
+		}
+		return sum
+	}
+	return 0
+}
+
+// TestWriter_RequeueOnTransientFailure proves a record that fails to publish is
+// re-queued onto recCh and retried by a consumer worker rather than lost, even when
+// the failure happens inside the concurrent publish pool.
+func TestWriter_RequeueOnTransientFailure(t *testing.T) {
 	prod := &memProducer{failCount: 3} // first 3 publishes fail, then recover
 	w := NewWriter(prod, "q", nil, slog.Default())
+	defer w.Close()
 	for i := range 5 {
 		w.Enqueue(&Record{RequestID: fmt.Sprintf("r%d", i)})
 	}
-	w.Close() // drainBuffer retries the re-buffered records until they land
-	if got := len(prod.msgs()); got != 5 {
-		t.Fatalf("after transient failures + retry, published %d, want 5 (records lost instead of re-buffered)", got)
+	// The consumers re-queue + retry the failed records until they all land.
+	if got := waitForMsgCount(prod, 5, 2*time.Second); got != 5 {
+		t.Fatalf("after transient failures + retry, published %d, want 5 (records lost instead of re-queued)", got)
+	}
+}
+
+// WithMaxQueuedRecords overrides the in-heap buffer cap: a Writer configured with
+// a small N back-pressures/spills at N, not the maxQueueSize default — the knob
+// that bounds the audit body pool's working set. n<=0 keeps the default.
+func TestWriter_WithMaxQueuedRecords_BoundsBuffer(t *testing.T) {
+	// Default: no override → effective cap is sized to available memory
+	// (adaptiveBufferCaps), so it lands within the adaptive clamp band, not a fixed
+	// constant.
+	wDef := NewWriter(&memProducer{}, "q", nil, slog.Default())
+	def := wDef.effectiveMaxQueue()
+	if def < minRecChCap || def > maxRecChCap {
+		t.Fatalf("default effectiveMaxQueue = %d, want within adaptive band [%d,%d]", def, minRecChCap, maxRecChCap)
+	}
+	wDef.Close()
+
+	// n<=0 is ignored (keeps the adaptive default).
+	if got := NewWriter(&memProducer{}, "q", nil, slog.Default()).WithMaxQueuedRecords(0).effectiveMaxQueue(); got != def {
+		t.Fatalf("WithMaxQueuedRecords(0) changed the cap to %d, want adaptive default %d", got, def)
+	}
+
+	// A small override sizes the bounded queue at N: Start() sizes recCh from the
+	// final maxQueued, and a saturated queue rejects the next non-blocking send
+	// (the would-be drop/spill admission boundary).
+	const n = 16
+	w := NewWriter(&memProducer{}, "q", nil, slog.Default()).WithMaxQueuedRecords(n)
+	if got := w.effectiveMaxQueue(); got != n {
+		t.Fatalf("effectiveMaxQueue = %d, want override %d", got, n)
+	}
+	// Size recCh from the override WITHOUT starting consumers, so it cannot drain
+	// under us, then saturate it to the cap.
+	w.recCh = make(chan *Record, w.effectiveMaxQueue())
+	for range n {
+		w.recCh <- &Record{RequestID: "fill"}
+	}
+	if cap(w.recCh) != n {
+		t.Fatalf("recCh cap = %d, want override %d", cap(w.recCh), n)
+	}
+	// A non-blocking send past the cap must be rejected (the overflow admission point).
+	select {
+	case w.recCh <- &Record{RequestID: "over"}:
+		t.Fatal("non-blocking send succeeded past the WithMaxQueuedRecords cap")
+	default:
+	}
+	if got := len(w.recCh); got != n {
+		t.Fatalf("queue grew past override cap: %d, want %d", got, n)
 	}
 }

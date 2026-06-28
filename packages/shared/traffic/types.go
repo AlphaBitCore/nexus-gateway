@@ -66,21 +66,6 @@ type NormalizedContent struct {
 	// do not parse tool calls leave this nil; consumers must treat nil
 	// and empty as identical.
 	ToolCallSegments []string
-	// Extra holds **unrecognised top-level fields** — anything in the
-	// provider body that the adapter did not consume into Segments,
-	// ReasoningSegments, ToolCallSegments, or Metadata. Each entry is
-	// the raw JSON value (as a string) keyed by the original field
-	// name. This is the safety net against silent data loss when a
-	// provider ships a new spec field (citations, grounding metadata,
-	// reasoning summary, web_search_options, audio output, …) before
-	// the adapter is updated to recognise it.
-	//
-	// Adapters that recognise every key on the request leave this nil.
-	// Adapters that miss keys MUST drop the unrecognised raw JSON here
-	// so compliance hooks doing defence-in-depth see new fields the
-	// next time the spec evolves. Consumers must treat nil and empty
-	// as identical.
-	Extra map[string]string
 	// Metadata holds adapter-specific key-value pairs (e.g. model name, token count hint).
 	Metadata map[string]string
 	// Partial is true when extraction succeeded but some content was unreadable.

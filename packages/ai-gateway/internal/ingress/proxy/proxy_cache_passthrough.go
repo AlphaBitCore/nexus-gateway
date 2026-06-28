@@ -14,11 +14,11 @@ import (
 // for response cache + audit). No hookRunner, no PreHook callback,
 // no checkpoint logic.
 //
-// #115/R1 three-service alignment: this delegates to
+// Three-service alignment: this delegates to
 // shared.Passthrough — the same relay used by tlsbump (agent +
 // compliance-proxy). Previously this file carried a near-duplicate
 // io.Copy + flushingWriter implementation; now there is one
-// passthrough relay across all three services (#115/O8). The shared
+// passthrough relay across all three services. The shared
 // helper handles per-read flush against http.Flusher writers and
 // respects context cancellation, matching what the original local
 // impl did.
@@ -39,7 +39,7 @@ func runPassthroughStream(ctx context.Context, d runStreamDeps) {
 	if err == nil {
 		return
 	}
-	// PR #24 follow-up S2-code: distinguish ctx-cancel (client gave
+	// Distinguish ctx-cancel (client gave
 	// up — silent is fine) from a genuine upstream error (operators
 	// need to see it). The prior `ctx.Err() == nil` guard collapsed
 	// both cases together when an upstream Read error coincided with
@@ -49,7 +49,7 @@ func runPassthroughStream(ctx context.Context, d runStreamDeps) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
-	// PR #24 follow-up R-6: when CloseUpstreamOnExit fires on a sibling
+	// When CloseUpstreamOnExit fires on a sibling
 	// pipeline (or the outer caller's defer Close races this passthrough
 	// relay), io.Copy returns net.ErrClosed. That's not a ctx sentinel
 	// but it IS the expected post-close path — silencing it prevents

@@ -2,8 +2,8 @@ package enrollstore
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/google/uuid"

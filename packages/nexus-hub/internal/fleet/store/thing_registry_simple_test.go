@@ -401,7 +401,7 @@ func TestValidateDeviceToken_HappyPath(t *testing.T) {
 	now := time.Now().UTC()
 	// The regex requires the fail-closed expiry predicate to be present in the
 	// SQL — if a future edit drops `device_token_expires_at > NOW()`, this
-	// query no longer matches and ExpectationsWereMet fails (F-0202).
+	// query no longer matches and ExpectationsWereMet fails.
 	mock.ExpectQuery(`metadata->>'deviceTokenHash' = \$2[\s\S]*device_token_expires_at > NOW\(\)`).
 		WithArgs("thing-1", "hash-1").
 		WillReturnRows(pgxmock.NewRows([]string{
@@ -434,7 +434,7 @@ func TestValidateDeviceToken_HappyPath(t *testing.T) {
 // TestValidateDeviceToken_ExpiredRejected proves the fail-closed expiry behaviour:
 // when a token has expired, the `device_token_expires_at > NOW()` predicate drops
 // the row server-side, so the lookup returns ErrNoRows and the agent is rejected
-// — there is no Go branch that could let an expired token through (F-0202).
+// — there is no Go branch that could let an expired token through.
 func TestValidateDeviceToken_ExpiredRejected(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -480,7 +480,7 @@ func TestValidateDeviceToken_NoMatch(t *testing.T) {
 
 // TestStoreDeviceTokenHash covers happy + not-found + err wrap. The happy case
 // also asserts the expiry column is written: the UPDATE must set
-// device_token_expires_at to the supplied time (F-0202), bound as $3.
+// device_token_expires_at to the supplied time, bound as $3.
 func TestStoreDeviceTokenHash(t *testing.T) {
 	expiry := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	t.Run("happy", func(t *testing.T) {
@@ -607,7 +607,7 @@ func TestUpdateThingStatus(t *testing.T) {
 	})
 }
 
-// TestGetAttestationPubKeyWithExpiry covers the SEC-M4-01 getter that surfaces
+// TestGetAttestationPubKeyWithExpiry covers the getter that surfaces
 // the cert NotAfter alongside the pubkey so CP can reject an expired key.
 func TestGetAttestationPubKeyWithExpiry(t *testing.T) {
 	t.Run("happy with expiry", func(t *testing.T) {
@@ -653,7 +653,7 @@ func TestGetAttestationPubKeyWithExpiry(t *testing.T) {
 			t.Errorf("want ErrNotFound; got %v", err)
 		}
 	})
-	// SEC-M4-01 revocation: the query joins thing and excludes status='revoked',
+	// revocation: the query joins thing and excludes status='revoked',
 	// so a revoked (unenrolled) device's attestation is no longer served — the
 	// JOIN+filter yields no row (ErrNoRows) → ErrNotFound → CP MITM fallback.
 	t.Run("revoked device not served", func(t *testing.T) {

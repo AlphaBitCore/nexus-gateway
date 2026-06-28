@@ -12,8 +12,8 @@ package cache_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -256,7 +256,7 @@ func TestSemanticPut_HappyPath_WithModel(t *testing.T) {
 // A dropped Hub push escalates to 502 (propagation_error) instead of silently
 // returning 200, so the admin sees the failure immediately while the DB write
 // still commits (Save was called). The configreconcile watch for this key
-// (F-0102/F-0345) additionally heals it within one cycle.
+// additionally heals it within one cycle.
 func TestSemanticPut_HubError_Returns502(t *testing.T) {
 	e := echo.New()
 	store := &stubSemanticStore{}

@@ -127,8 +127,8 @@ func TestDecompressCaseAndWhitespace(t *testing.T) {
 	}
 }
 
-// TestDecompressCorruptFallsBackToOriginal is the load-bearing failure mode
-// from the 2026 brotli incident: a decoder error must return the input bytes
+// TestDecompressCorruptFallsBackToOriginal pins the load-bearing failure
+// mode for a corrupt brotli stream: a decoder error must return the input bytes
 // unchanged (so the row is stored as opaque/debuggable) rather than dropping
 // content. Each codec is fed bytes that announce its encoding but are invalid.
 func TestDecompressCorruptFallsBackToOriginal(t *testing.T) {
@@ -205,7 +205,7 @@ func TestDecompressPassthrough(t *testing.T) {
 	})
 }
 
-// TestDecompressBombBounded is the load-bearing security failure mode (F-0278):
+// TestDecompressBombBounded is the load-bearing security failure mode:
 // a small compressed payload that expands far beyond the cap must be REJECTED —
 // Decompress returns the original (still-compressed) bytes and truncated=true,
 // having allocated no more than maxDecompressed+1 bytes for the expansion. The

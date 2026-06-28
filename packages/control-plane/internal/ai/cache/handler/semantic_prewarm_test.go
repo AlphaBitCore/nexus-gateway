@@ -7,7 +7,7 @@
 package cache_test
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -474,7 +474,7 @@ func testSemanticCacheConfigRow(enabled bool) configstore.SemanticCacheConfigRow
 
 // TestPrewarm_AttachesBearer verifies the prewarm forwarder carries
 // Authorization: Bearer <token> on the CP→ai-gateway /internal/semantic-prewarm
-// call (F-0001).
+// call.
 func TestPrewarm_AttachesBearer(t *testing.T) {
 	const tok = "cp-internal-token"
 	var gotAuth string
@@ -507,7 +507,7 @@ func TestPrewarm_AttachesBearer(t *testing.T) {
 	}
 }
 
-// TestPrewarm_ForcesCorpusScope_IgnoresCallerVKScope is the SEC-C4-01 regression:
+// TestPrewarm_ForcesCorpusScope_IgnoresCallerVKScope is the regression:
 // a caller that supplies a victim VK's vkScope must NOT have it forwarded — the
 // handler forces every entry to the reserved "corpus" scope so planted content
 // can never be served under a real VK's cache lane.

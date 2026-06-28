@@ -106,8 +106,8 @@ func TestEntryForLeavesActorEmptyWhenContextHasNoAdminAuth(t *testing.T) {
 	}
 }
 
-// TestEntryForStampsViaFromInProcessContext covers the E90 I5 stamp as of the P2b
-// in-process self-call (#16): the web assistant's transport dispatches its admin
+// TestEntryForStampsViaFromInProcessContext covers the via stamp for the
+// in-process self-call: the web assistant's transport dispatches its admin
 // calls with an UNFORGEABLE initiator context value (WithInitiator), and EntryFor
 // copies it onto the entry so the audit row — and the tamper-evident hash chain
 // downstream — records that the write was AI-initiated.
@@ -152,7 +152,7 @@ func TestEntryForLeavesViaEmptyForHumanRequest(t *testing.T) {
 }
 
 func TestEntryForActionMatchesCatalogActionBody(t *testing.T) {
-	// AC-3 alignment at the audit layer: the (EntityType, Action) pair
+	// Alignment at the audit layer: the (EntityType, Action) pair
 	// produced by EntryFor must compose into the same SIEM eventType the
 	// nexus-hub classifier derives — which is EntityType + "." + Action.
 	// The catalog's Action() helper returns "admin:" + that same body, so

@@ -53,7 +53,6 @@ type RuleType string
 
 const (
 	RuleTypeStrip              RuleType = "strip"
-	RuleTypeFieldOrder         RuleType = "field_order_normalize"
 	RuleTypeCacheControlInject RuleType = "cache_control_inject"
 )
 

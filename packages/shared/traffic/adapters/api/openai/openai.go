@@ -55,52 +55,6 @@ func (a *Adapter) ExtractStreamChunk(_ context.Context, chunk []byte, _ string) 
 	return extractStreamDelta(chunk)
 }
 
-// chatRequestKnownKeys lists every top-level field of /v1/chat/completions
-// the adapter intentionally either consumes or knows is non-content. The
-// CollectExtra walk keeps any *other* top-level field so compliance hooks
-// see new spec additions (citations, grounding, web_search_options
-// extensions, …) before this list is updated.
-var chatRequestKnownKeys = []string{
-	"messages", "model", "tools", "functions", "tool_choice", "function_call",
-	"parallel_tool_calls", "temperature", "top_p", "max_tokens",
-	"max_completion_tokens", "n", "seed", "stop", "presence_penalty",
-	"frequency_penalty", "logit_bias", "logprobs", "top_logprobs",
-	"response_format", "modalities", "audio", "prediction", "stream",
-	"stream_options", "reasoning_effort", "reasoning", "verbosity",
-	"prompt_cache_key", "safety_identifier", "prompt_safety_identifier",
-	"user", "metadata", "store", "service_tier", "web_search_options",
-}
-
-// chatResponseKnownKeys lists known top-level fields on /v1/chat/completions
-// non-streaming responses. Anything outside lands in Extra.
-var chatResponseKnownKeys = []string{
-	"id", "object", "created", "model", "choices", "usage",
-	"system_fingerprint", "service_tier", "prompt_filter_results",
-}
-
-// embeddingsRequestKnownKeys lists known top-level fields on /v1/embeddings.
-var embeddingsRequestKnownKeys = []string{
-	"input", "model", "encoding_format", "dimensions", "user",
-}
-
-// responsesRequestKnownKeys lists known top-level fields on /v1/responses.
-var responsesRequestKnownKeys = []string{
-	"input", "model", "instructions", "max_output_tokens",
-	"parallel_tool_calls", "previous_response_id", "store", "stream",
-	"temperature", "text", "tools", "tool_choice", "top_p", "truncation",
-	"user", "metadata", "reasoning", "modalities",
-}
-
-// responsesResponseKnownKeys lists known top-level fields on /v1/responses
-// (non-streaming response shape).
-var responsesResponseKnownKeys = []string{
-	"id", "object", "created_at", "status", "output", "output_text",
-	"error", "incomplete_details", "instructions", "max_output_tokens",
-	"model", "parallel_tool_calls", "previous_response_id", "reasoning",
-	"store", "temperature", "text", "tool_choice", "tools", "top_p",
-	"truncation", "usage", "user", "metadata", "system_fingerprint",
-}
-
 // extractChatRequest pulls user messages from a chat/completions request
 // and surfaces every audit-relevant field:
 //   - Text content (string and array-of-parts) → Segments
@@ -108,7 +62,6 @@ var responsesResponseKnownKeys = []string{
 //     ToolCallSegments
 //   - Top-level `tools` / `functions` definitions → Metadata
 //   - `model` → Metadata
-//   - Any other top-level key → Extra (defence-in-depth catch-all)
 func extractChatRequest(body []byte) (traffic.NormalizedContent, error) {
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
@@ -163,7 +116,6 @@ func extractChatRequest(body []byte) (traffic.NormalizedContent, error) {
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, chatRequestKnownKeys),
 	}, nil
 }
 
@@ -198,7 +150,6 @@ func extractEmbeddingsRequest(body []byte) (traffic.NormalizedContent, error) {
 	return traffic.NormalizedContent{
 		Segments: segments,
 		Metadata: meta,
-		Extra:    traffic.CollectExtra(body, embeddingsRequestKnownKeys),
 	}, nil
 }
 
@@ -258,7 +209,6 @@ func extractResponsesCreate(body []byte) (traffic.NormalizedContent, error) {
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, responsesRequestKnownKeys),
 	}, nil
 }
 
@@ -328,7 +278,6 @@ func extractChatResponse(body []byte) (traffic.NormalizedContent, error) {
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, chatResponseKnownKeys),
 	}, nil
 }
 
@@ -377,7 +326,6 @@ func extractResponsesResponse(body []byte) (traffic.NormalizedContent, error) {
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, responsesResponseKnownKeys),
 	}, nil
 }
 

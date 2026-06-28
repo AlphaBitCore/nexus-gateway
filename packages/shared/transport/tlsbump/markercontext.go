@@ -13,8 +13,8 @@ type cpMarkerCtxKey struct{}
 
 // CPMarker is the per-request marker state captured by forward_handler.go
 // at the point where all three pieces are known (request-id, domain rule UUID,
-// request-side hook outcome). Downstream write sites (upstream.go in Task 3.2
-// and sse.go in Task 3.3) read it via CPMarkerFromContext to populate the
+// request-side hook outcome). Downstream write sites (upstream.go
+// and sse.go) read it via CPMarkerFromContext to populate the
 // x-nexus-cp-* response headers without re-deriving these values.
 type CPMarker struct {
 	// RequestID is the compliance-proxy per-request UUID (txID), sourced

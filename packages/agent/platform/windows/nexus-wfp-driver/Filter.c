@@ -22,8 +22,12 @@ DEFINE_GUID(NEXUS_WFP_SUBLAYER_GUID,
 
 extern const GUID NEXUS_WFP_CALLOUT_REDIRECT_V4_GUID;
 extern const GUID NEXUS_WFP_CALLOUT_REDIRECT_V6_GUID;
+extern const GUID NEXUS_WFP_CALLOUT_QUIC_BLOCK_V4_GUID;
+extern const GUID NEXUS_WFP_CALLOUT_QUIC_BLOCK_V6_GUID;
 static UINT64 g_FilterIdRedirectV4   = 0;
 static UINT64 g_FilterIdRedirectV6   = 0;
+static UINT64 g_FilterIdQuicV4       = 0;
+static UINT64 g_FilterIdQuicV6       = 0;
 
 NTSTATUS NexusWfpFilterEngineOpen(VOID)
 {
@@ -74,10 +78,17 @@ HANDLE NexusWfpFilterEngineHandle(VOID)
     return g_EngineHandle;
 }
 
+// AddOneFilter binds a callout to a layer in the Nexus sublayer. Pass
+// Conditions=NULL / NumConditions=0 to match every flow at the layer (the
+// redirect filters); pass an FWPM_FILTER_CONDITION0 array to restrict the
+// callout to matching flows (the QUIC-block filters use UDP + remote port 443
+// so they never fire on the hot TCP connect path).
 static NTSTATUS AddOneFilter(
     _In_ const GUID*    LayerKey,
     _In_ const GUID*    CalloutKey,
     _In_ const wchar_t* DisplayName,
+    _In_reads_opt_(NumConditions) const FWPM_FILTER_CONDITION0* Conditions,
+    _In_ UINT32         NumConditions,
     _Out_ UINT64*       OutFilterId)
 {
     if (g_EngineHandle == NULL) return STATUS_INVALID_HANDLE;
@@ -91,7 +102,8 @@ static NTSTATUS AddOneFilter(
     filter.action.calloutKey       = *CalloutKey;
     filter.weight.type             = FWP_UINT8;
     filter.weight.uint8            = 0xF;
-    // No FwpmConditions — match every flow at this layer.
+    filter.numFilterConditions     = NumConditions;
+    filter.filterCondition         = (FWPM_FILTER_CONDITION0*)Conditions;
 
     return FwpmFilterAdd0(g_EngineHandle, &filter, NULL, OutFilterId);
 }
@@ -103,13 +115,37 @@ NTSTATUS NexusWfpFilterAddAll(VOID)
     status = AddOneFilter(&FWPM_LAYER_ALE_CONNECT_REDIRECT_V4,
                           &NEXUS_WFP_CALLOUT_REDIRECT_V4_GUID,
                           L"NexusWFP redirect filter v4",
-                          &g_FilterIdRedirectV4);
+                          NULL, 0, &g_FilterIdRedirectV4);
     if (!NT_SUCCESS(status)) return status;
 
     status = AddOneFilter(&FWPM_LAYER_ALE_CONNECT_REDIRECT_V6,
                           &NEXUS_WFP_CALLOUT_REDIRECT_V6_GUID,
                           L"NexusWFP redirect filter v6",
-                          &g_FilterIdRedirectV6);
+                          NULL, 0, &g_FilterIdRedirectV6);
+    if (!NT_SUCCESS(status)) return status;
+
+    // QUIC-block filters: UDP + remote port 443 only, so the callout fires
+    // exclusively for QUIC/HTTP-3 handshakes (never the hot TCP path). (G-2)
+    FWPM_FILTER_CONDITION0 quicConds[2] = {0};
+    quicConds[0].fieldKey              = FWPM_CONDITION_IP_PROTOCOL;
+    quicConds[0].matchType             = FWP_MATCH_EQUAL;
+    quicConds[0].conditionValue.type   = FWP_UINT8;
+    quicConds[0].conditionValue.uint8  = 17; // IPPROTO_UDP
+    quicConds[1].fieldKey              = FWPM_CONDITION_IP_REMOTE_PORT;
+    quicConds[1].matchType             = FWP_MATCH_EQUAL;
+    quicConds[1].conditionValue.type   = FWP_UINT16;
+    quicConds[1].conditionValue.uint16 = 443; // QUIC / HTTP-3
+
+    status = AddOneFilter(&FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+                          &NEXUS_WFP_CALLOUT_QUIC_BLOCK_V4_GUID,
+                          L"NexusWFP QUIC block filter v4",
+                          quicConds, 2, &g_FilterIdQuicV4);
+    if (!NT_SUCCESS(status)) return status;
+
+    status = AddOneFilter(&FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+                          &NEXUS_WFP_CALLOUT_QUIC_BLOCK_V6_GUID,
+                          L"NexusWFP QUIC block filter v6",
+                          quicConds, 2, &g_FilterIdQuicV6);
     return status;
 }
 
@@ -117,6 +153,14 @@ VOID NexusWfpFilterRemoveAll(VOID)
 {
     if (g_EngineHandle == NULL) return;
 
+    if (g_FilterIdQuicV6) {
+        FwpmFilterDeleteById0(g_EngineHandle, g_FilterIdQuicV6);
+        g_FilterIdQuicV6 = 0;
+    }
+    if (g_FilterIdQuicV4) {
+        FwpmFilterDeleteById0(g_EngineHandle, g_FilterIdQuicV4);
+        g_FilterIdQuicV4 = 0;
+    }
     if (g_FilterIdRedirectV6) {
         FwpmFilterDeleteById0(g_EngineHandle, g_FilterIdRedirectV6);
         g_FilterIdRedirectV6 = 0;

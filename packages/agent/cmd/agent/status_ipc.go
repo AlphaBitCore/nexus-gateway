@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"runtime"
 	"time"

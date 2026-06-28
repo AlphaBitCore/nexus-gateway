@@ -259,7 +259,7 @@ func TestExtractCachePutConfig_StoreError_Returns500(t *testing.T) {
 
 // A dropped Hub push escalates to 502 with the propagation_error envelope
 // (mirrors cache.go) instead of silently returning 200, so the admin sees the
-// failure immediately. The configreconcile watch for this key (F-0102/F-0345)
+// failure immediately. The configreconcile watch for this key
 // additionally heals it within one cycle, so the unified message's
 // auto-recovery promise holds.
 func TestExtractCachePutConfig_HubErrorReturns502(t *testing.T) {

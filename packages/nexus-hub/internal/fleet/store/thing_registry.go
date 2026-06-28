@@ -2,9 +2,9 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -96,7 +96,7 @@ type Thing struct {
 	MetricsURL string `json:"metricsUrl,omitempty"`
 	// Bound user — currently-active DeviceAssignment for agent things.
 	// LEFT JOINed at SELECT time so service Things naturally surface
-	// empty strings. Phase 1 wire-up; surfaced into admin list/detail.
+	// empty strings. Surfaced into admin list/detail.
 	BoundUserID          string `json:"boundUserId,omitempty"`
 	BoundUserDisplayName string `json:"boundUserDisplayName,omitempty"`
 	BoundUserEmail       string `json:"boundUserEmail,omitempty"`

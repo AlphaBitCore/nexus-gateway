@@ -2,8 +2,8 @@ package exemption
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -478,7 +478,7 @@ func TestPostGrant_Happy(t *testing.T) {
 	}
 }
 
-// F-0265: the grant-create audit row must carry the grant EntityID and the
+// The grant-create audit row must carry the grant EntityID and the
 // grant scope (host, sourceIP, window, reason) so "who exempted which host,
 // for how long" is answerable from the audit row alone.
 func TestPostGrant_AuditCarriesEntityIDAndScope(t *testing.T) {

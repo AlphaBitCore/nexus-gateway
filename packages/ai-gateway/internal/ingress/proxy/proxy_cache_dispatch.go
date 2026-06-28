@@ -12,7 +12,7 @@ import (
 // (stream_relay.go) so the dispatch contract can be unit-tested in
 // isolation with a small switch-table assertion.
 //
-// Three-service alignment (#115/R2 follow-up): the `default` arm
+// Three-service alignment: the `default` arm
 // MUST fall through to passthrough, matching the same default in
 // shared/transport/tlsbump/sse.go's resolveStreamingMode. An unknown
 // or future mode enum must NOT silently engage the live (hook-

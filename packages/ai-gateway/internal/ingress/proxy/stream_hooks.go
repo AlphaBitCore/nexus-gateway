@@ -77,6 +77,10 @@ func (st streamHooksStage) run() bool {
 	// the client sees real-time deltas. If a rule pack is configured
 	// later, the next request rebuilds and re-enters HoldBack.
 	holdBack := true
+	// Conservative default: assume a response hook may run, so the live
+	// pipeline installs the Registry-normalize PreHook. Lowered to false only
+	// when the probe proves there are no response-stage rules.
+	responseHooksActive := true
 	if h.deps != nil && h.deps.HookConfigCache != nil {
 		probe, probeErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
 			"response", "AI_GATEWAY",
@@ -84,17 +88,20 @@ func (st streamHooksStage) run() bool {
 			streamModalities,
 			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
 		)
-		// Best-effort probe: this only decides whether to drop HoldBack for a
-		// snappier UI when no response-stage rules exist. On a build error
-		// (probeErr != nil) we deliberately keep holdBack=true — the actual
-		// refusal is enforced by hookRunner above when the stream pipeline is
-		// built per-checkpoint; the probe must not Approve-or-refuse on its own.
+		// Best-effort probe: decides whether to drop HoldBack for a snappier UI
+		// AND whether to skip the PreHook normalize, when no response-stage rules
+		// exist. On a build error (probeErr != nil) we deliberately keep
+		// holdBack=true and responseHooksActive=true — the actual refusal is
+		// enforced by hookRunner above when the stream pipeline is built
+		// per-checkpoint; the probe must not Approve-or-refuse on its own.
 		if probeErr == nil && probe == nil {
 			holdBack = false
+			responseHooksActive = false
 		}
 	}
 
 	s.hookRunner = hookRunner
 	s.holdBack = holdBack
+	s.responseHooksActive = responseHooksActive
 	return true
 }

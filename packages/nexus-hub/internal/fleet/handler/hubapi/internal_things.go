@@ -2,8 +2,8 @@ package hubapi
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 	"time"
@@ -433,7 +433,7 @@ func (h *InternalThingsAPI) AuditUpload(c echo.Context) error {
 		return badRequest(c, "thingId and events are required")
 	}
 
-	// Object-level authority (SEC-W2-02 / F-0374): identical gate to the other
+	// Object-level authority: identical gate to the other
 	// six device-mutation handlers (register / heartbeat / shadow / break-glass /
 	// deregister / exemption), so stamping audit rows for a thing_id is held to
 	// the same bar as mutating that thing.

@@ -366,36 +366,6 @@ func TestExtractRequest_ToolDefinitionsInMetadata(t *testing.T) {
 	}
 }
 
-// TestExtractRequest_Extra covers the safety-net path: unrecognised
-// top-level fields land in Extra so a future spec addition (a brand-new
-// field the adapter has not been updated for) still reaches compliance
-// hooks doing defence-in-depth scans.
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{
-		"model": "gpt-4o",
-		"messages": [{"role": "user", "content": "hi"}],
-		"x_future_field": {"sensitive": "this must not be silently dropped"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/v1/chat/completions")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	xff, ok := nc.Extra["x_future_field"]
-	if !ok {
-		t.Fatalf("Extra missing x_future_field; Extra=%v", nc.Extra)
-	}
-	if !strings.Contains(xff, "sensitive") {
-		t.Errorf("Extra[x_future_field]=%q missing payload", xff)
-	}
-	// Known keys must not bleed into Extra.
-	for _, known := range []string{"model", "messages", "tools"} {
-		if _, ok := nc.Extra[known]; ok {
-			t.Errorf("Extra leaked known key %q: %q", known, nc.Extra[known])
-		}
-	}
-}
-
 // TestExtractResponse_ToolCalls covers the response-side audit gap: an
 // assistant turn that calls a tool returns content=null + tool_calls; the
 // invocation must reach ToolCallSegments.
@@ -488,24 +458,6 @@ func TestExtractResponse_MultiChoiceFinishReason(t *testing.T) {
 	}
 	if nc.Metadata["finish_reason"] != "stop,tool_calls" {
 		t.Errorf("finish_reason=%q want stop,tool_calls", nc.Metadata["finish_reason"])
-	}
-}
-
-// TestExtractResponse_Extra covers the response-side defence-in-depth:
-// unrecognised top-level fields (e.g. a future `citations` block) reach
-// Extra instead of being silently dropped.
-func TestExtractResponse_Extra(t *testing.T) {
-	body := []byte(`{
-		"choices": [{"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
-		"x_audit_payload": {"new": "spec field"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractResponse(context.Background(), body, "/v1/chat/completions")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if _, ok := nc.Extra["x_audit_payload"]; !ok {
-		t.Errorf("Extra missing x_audit_payload: %v", nc.Extra)
 	}
 }
 

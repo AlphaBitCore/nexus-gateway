@@ -41,14 +41,14 @@ var (
 	// against prometheus.DefaultRegisterer so /metrics scrapes pick it up.
 	AdminAuditLogFailedTotal *metricsreg.Counter
 
-	// --- E90 web-assistant ("Chat with Nexus") instruments (spec §7 / NFR-13) ---
-	// These are the base signals from which §7's North Star and counter-metrics
+	// --- Web-assistant ("Chat with Nexus") instruments ---
+	// These are the base signals from which the North Star and counter-metrics
 	// are derived in PromQL / analytics. The North Star (cross-page/mitigation
 	// tasks completed without a manual redo within ~60s) and the behavioral
 	// guardrails (reversal-within-N-min, hallucination/correction, first-question
 	// abandonment) need cross-event windowing and a frontend "redid/corrected"
 	// signal that does not exist yet — they are NOT single counters and are
-	// documented as derivations, not faked here. See e90-s8 §5.
+	// documented as derivations, not faked here.
 
 	// AssistantTurnsTotal — counter: assistant.turns_total{result}
 	// result ∈ {ok, error, aborted, unavailable, unsupported_auth, user_limit}.
@@ -59,10 +59,10 @@ var (
 	// raw-error-exposure guardrail signal (it pairs with the SSE `error` event the
 	// turn emits). First-question abandonment and the North Star success
 	// refinement are NOT derivable from this alone — they need a frontend
-	// session-continuation / redo signal that does not exist yet (see e90-s8 §5).
+	// session-continuation / redo signal that does not exist yet.
 	AssistantTurnsTotal *metricsreg.Counter
 	// AssistantToolInvocationsTotal — counter: assistant.tool_invocations_total{tool, result}
-	// result ∈ {ok, error}. The bounded internal-call count (NFR-13) and the
+	// result ∈ {ok, error}. The bounded internal-call count and the
 	// tool-misfire guardrail (result="error"). `tool` is clamped at the call site
 	// to the agent's actual tool set (Agent.ToolNames); a model-emitted name that
 	// is not a real tool collapses to tool="unknown" so a hallucinated name can
@@ -70,7 +70,7 @@ var (
 	AssistantToolInvocationsTotal *metricsreg.Counter
 	// AssistantConfirmsTotal — counter: assistant.confirms_total{decision}
 	// decision ∈ {allow, deny, timeout, cancelled}. The dangerous-write gate
-	// approve/deny rate (NFR-13). The reversal-within-N-min guardrail is derived
+	// approve/deny rate. The reversal-within-N-min guardrail is derived
 	// from {decision="allow"} correlated against later audit undo actions.
 	AssistantConfirmsTotal *metricsreg.Counter
 	// AssistantNavigationsTotal — counter: assistant.navigations_total

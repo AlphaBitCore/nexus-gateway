@@ -1,10 +1,8 @@
 // Package auth holds the agent's on-disk enrollment credentials —
 // the per-device token cookie that's exchanged during SSO enrollment
-// and consumed on subsequent Hub calls. This is the surviving
-// surface after a dead-code sweep retired the
-// OAuth-from-shadow Bootstrap/TokenManager/Authenticator machinery
-// (PR-0 deleted the receiver wiring; this follow-up deleted the
-// rest of the never-wired-publisher-side helpers).
+// and consumed on subsequent Hub calls. This is the only credential
+// surface: enrollment yields the device token, and there is no
+// OAuth-from-shadow Bootstrap/TokenManager/Authenticator machinery.
 package auth
 
 import (

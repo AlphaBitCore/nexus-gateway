@@ -45,7 +45,7 @@ func TestStaleThingJob_DefaultThresholds(t *testing.T) {
 	if j.cfg.AgentThreshold != 5*time.Minute {
 		t.Errorf("AgentThreshold default = %v, want 5m", j.cfg.AgentThreshold)
 	}
-	// F-0209: default must be >=2x the 30s ping interval to avoid false-offline
+	// Default must be >=2x the 30s ping interval to avoid false-offline
 	// flap from a single jittered/missed ping.
 	if j.cfg.ServiceThreshold != 90*time.Second {
 		t.Errorf("ServiceThreshold default = %v, want 90s", j.cfg.ServiceThreshold)

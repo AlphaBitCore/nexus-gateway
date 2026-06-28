@@ -1,4 +1,4 @@
-// DaemonPIDFilter.swift — self-intercept guard for the E55 MITM bridge.
+// DaemonPIDFilter.swift — self-intercept guard for the MITM bridge.
 //
 // Background: the macOS NETransparentProxyProvider intercepts ALL
 // outbound TCP — including the agent daemon's own connections to the

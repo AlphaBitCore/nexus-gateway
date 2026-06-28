@@ -3,9 +3,9 @@ package proxy
 // Shared test helpers used by multiple *_test.go files in this
 // package. Pull in helpers here when at least two tests want the same
 // behavior; don't add helpers that only one test needs (those stay
-// local). PR #24 / O7: replaced the bufErrReader (buffer_test) and
-// errReadCloser (passthrough_test) near-duplicate yield-then-err
-// readers with a single yieldThenErrReader.
+// local). A single yieldThenErrReader replaces the near-duplicate
+// yield-then-err readers that buffer_test and passthrough_test would
+// otherwise each define.
 //
 // Note: errReader in proxy_residuals_test.go is semantically distinct
 // (always errors on first Read, no yield) and stays local to that

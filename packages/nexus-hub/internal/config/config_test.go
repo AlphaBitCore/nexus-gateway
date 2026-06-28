@@ -24,9 +24,9 @@ import (
 func setRequiredEnvBaseline(t *testing.T) {
 	t.Helper()
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
-	// SEC-W2-02 FIX-5/C: HubConfigToken is now a required env input.
+	// HubConfigToken is a required env input.
 	t.Setenv("HUB_CONFIG_TOKEN", "hub-config-tok")
-	// SEC-W2-03 Layer C: CREDENTIAL_ENCRYPTION_KEY is now a required validate()
+	// CREDENTIAL_ENCRYPTION_KEY is a required validate()
 	// input (custody-resolved; encrypts alert-channel secrets at rest). Under the
 	// default noop provider this plaintext passes through.
 	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "test-credential-master-key")
@@ -37,7 +37,7 @@ func setRequiredEnvBaseline(t *testing.T) {
 	t.Setenv("NATS_URL", "nats://localhost:4222")
 }
 
-// TestLoad_SecretCustody_CommandUnwrapsCredKey pins the SEC-W2-03 Layer C wiring
+// TestLoad_SecretCustody_CommandUnwrapsCredKey pins the secret-custody wiring
 // for Hub: with secretCustody.provider="command", Load() resolves the shared
 // crown jewel CREDENTIAL_ENCRYPTION_KEY as a base64 wrapped blob and unwraps it
 // once at boot into Auth.CredentialMasterKey. `cat {file}` is an identity
@@ -175,6 +175,9 @@ database:
 	if cfg.Log.Level != "info" {
 		t.Errorf("default log.level = %q, want %q", cfg.Log.Level, "info")
 	}
+	if cfg.Consumers.BatchSize != 2000 {
+		t.Errorf("default consumers.batchSize = %d, want 2000 (shipped optimum, pairs with COPY)", cfg.Consumers.BatchSize)
+	}
 }
 
 func TestEnvVarOverride(t *testing.T) {
@@ -230,7 +233,7 @@ func TestEnvVarOverride_Host(t *testing.T) {
 	}
 }
 
-// TestDevModeDefaultsFalseAndEnvEnables covers F-0256 at the config layer: the
+// TestDevModeDefaultsFalseAndEnvEnables covers the dev-mode default at the config layer: the
 // Hub WebSocket dev-mode (which relaxes the origin allowlist to accept
 // localhost) must default to false so production never auto-allows localhost,
 // and must be enabled only via an explicit NEXUS_HUB_DEV_MODE=true.
@@ -297,7 +300,7 @@ database:
 	}
 }
 
-// TestMissingHubConfigToken pins the SEC-W2-02 FIX-5/C fail-closed boot guard:
+// TestMissingHubConfigToken pins the fail-closed boot guard:
 // without HUB_CONFIG_TOKEN, Hub must refuse to start rather than fall back to
 // ServiceAuth("") (which would accept an empty bearer and open the config-write
 // surface). The error must name the missing field.
@@ -320,7 +323,7 @@ database:
 	}
 }
 
-// TestMissingCredentialMasterKey is the SEC-W2-03 Layer C regression: Hub's
+// TestMissingCredentialMasterKey is the regression test: Hub's
 // validate() now fail-closes when CREDENTIAL_ENCRYPTION_KEY is unset (it always
 // wires the alert cipher), gating it at config load for symmetry with CP + ai-gw
 // rather than only at InitAlerts.

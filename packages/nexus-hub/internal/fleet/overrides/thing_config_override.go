@@ -326,8 +326,8 @@ func (s *Store) ListAllOverrides(ctx context.Context, filter ListOverridesFilter
 }
 
 // ListExpiredOverrides returns overrides whose expires_at fell before the
-// supplied cutoff. Used by the override-expiry job (Phase B Task 6 in the
-// plan): the caller supplies time.Now() and clears each row in a single
+// supplied cutoff. Used by the override-expiry job: the caller supplies
+// time.Now() and clears each row in a single
 // transaction. Rows with expires_at IS NULL are permanent and never returned.
 // Order is ascending so the oldest expirations are processed first.
 func (s *Store) ListExpiredOverrides(ctx context.Context, before time.Time) ([]ThingConfigOverride, error) {

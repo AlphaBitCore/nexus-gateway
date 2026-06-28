@@ -2,8 +2,8 @@ package middleware_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -111,7 +111,7 @@ func TestRequireIAMPermission_NoPrincipalReturns401(t *testing.T) {
 }
 
 // TestRequireIAMPermission_BootstrapAndDevNoBypass is the load-bearing
-// regression test for audit F-0068: the magic-string principal IDs
+// regression test against an IAM-bypass bug: the magic-string principal IDs
 // "bootstrap" and "dev" must NOT bypass IAM. With an empty (deny)
 // engine and no grants, a request from either principal must be denied
 // (403) — never short-circuited to the handler. A future seed/fixture
@@ -160,7 +160,7 @@ func TestRequireIAMPermission_BootstrapAndDevNoBypass(t *testing.T) {
 }
 
 // TestRequireIAMPermission_BootstrapDevAllowedOnlyViaPolicy proves the
-// positive side of F-0068: a "bootstrap"/"dev" principal reaches the
+// positive side of the no-bypass rule: a "bootstrap"/"dev" principal reaches the
 // handler ONLY when an actual IAM policy grants the action — i.e. it is
 // treated like any other principal, with no hardcoded short-circuit.
 func TestRequireIAMPermission_BootstrapDevAllowedOnlyViaPolicy(t *testing.T) {
@@ -481,7 +481,7 @@ func TestRequireIAMPermissionForDevice_NoPrincipalReturns401(t *testing.T) {
 }
 
 // TestRequireIAMPermissionForDevice_BootstrapAndDevNoBypass is the
-// device-variant counterpart of the F-0068 regression: "bootstrap" /
+// device-variant counterpart of the IAM-bypass regression: "bootstrap" /
 // "dev" must NOT short-circuit IAM. Empty engine → 403, never 200.
 func TestRequireIAMPermissionForDevice_BootstrapAndDevNoBypass(t *testing.T) {
 	t.Parallel()

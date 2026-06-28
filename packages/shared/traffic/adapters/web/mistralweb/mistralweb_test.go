@@ -64,24 +64,9 @@ func TestExtractRequest_ToolCalls(t *testing.T) {
 
 func TestExtractRequest_BinaryBody(t *testing.T) {
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), []byte{0x00, 0x42}, "/api/x")
+	_, err := a.ExtractRequest(context.Background(), []byte{0x00, 0x42}, "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("Extra missing binary_preview")
-	}
-}
-
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{"prompt":"hi","x_mistral_field":"sensitive"}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if _, ok := nc.Extra["x_mistral_field"]; !ok {
-		t.Errorf("Extra=%v missing x_mistral_field", nc.Extra)
 	}
 }
 
@@ -181,16 +166,12 @@ func TestExtractRequest_Malformed(t *testing.T) {
 }
 
 // TestExtractRequest_JSONNoKnownFields pins valid JSON with no extractable
-// content / tool calls — falls through to ErrUnknownSchema with the
-// unknown fields collected into Extra.
+// content / tool calls — falls through to ErrUnknownSchema.
 func TestExtractRequest_JSONNoKnownFields(t *testing.T) {
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), []byte(`{"foo":"bar"}`), "/api/x")
+	_, err := a.ExtractRequest(context.Background(), []byte(`{"foo":"bar"}`), "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["foo"]; !ok {
-		t.Errorf("Extra=%v missing foo", nc.Extra)
 	}
 }
 
@@ -442,7 +423,7 @@ func TestNormalize_UnrecognisedShape_FallsThrough(t *testing.T) {
 	}
 }
 
-// Internal helpers — looksLikeJSON + preview
+// Internal helpers — looksLikeJSON
 
 func TestLooksLikeJSON(t *testing.T) {
 	cases := []struct {
@@ -465,36 +446,4 @@ func TestLooksLikeJSON(t *testing.T) {
 			t.Errorf("%s: looksLikeJSON(%q)=%v want %v", c.name, c.in, got, c.want)
 		}
 	}
-}
-
-func TestPreview(t *testing.T) {
-	t.Run("short-printable-passthrough", func(t *testing.T) {
-		if got := preview([]byte("hello world")); got != "hello world" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("preserves-newline-and-tab", func(t *testing.T) {
-		if got := preview([]byte("a\nb\tc")); got != "a\nb\tc" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("scrubs-control-bytes", func(t *testing.T) {
-		if got := preview([]byte{'a', 0x07, 'b', 0x0d, 'c', 0x1b, 'd'}); got != "a.b.c.d" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("scrubs-high-bytes", func(t *testing.T) {
-		if got := preview([]byte{'a', 0x7f, 'b', 0x80, 'c', 0xff, 'd'}); got != "a.b.c.d" {
-			t.Errorf("got=%q", got)
-		}
-	})
-	t.Run("truncates-over-256-bytes", func(t *testing.T) {
-		body := make([]byte, 300)
-		for i := range body {
-			body[i] = 'A'
-		}
-		if got := preview(body); len(got) != 256 {
-			t.Errorf("len=%d want 256", len(got))
-		}
-	})
 }

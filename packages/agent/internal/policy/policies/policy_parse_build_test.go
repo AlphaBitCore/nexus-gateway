@@ -2,8 +2,8 @@ package policies
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"sync"
 	"sync/atomic"
 	"testing"

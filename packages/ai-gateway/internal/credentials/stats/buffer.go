@@ -25,14 +25,19 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/credstate"
 )
+
+// perfNoRedis is a THROWAWAY experiment switch (NEXUS_PERF_NO_REDIS=1) that
+// skips the per-attempt credential-stats Redis writes so an A/B run can measure
+// "what if Redis were free". NOT for production — see usage_cache.go.
+var perfNoRedis = os.Getenv("NEXUS_PERF_NO_REDIS") == "1"
 
 // maxFailReasonLen caps the stored upstream error text (fail_reason field).
 // Provider errors can be arbitrarily large; the field is operator-display
@@ -46,91 +51,6 @@ const maxFailReasonLen = 256
 // inside RecordAttempt — implementations must be cheap (cache hit, no DB).
 type ThresholdsResolver func(credentialID string) credstate.Thresholds
 
-// Metrics owns the Buffer's Prometheus collectors. Names follow the
-// nexus_ai_gateway namespace convention. All collectors are no-op
-// callable when Metrics is nil so the package stays usable in tests
-// without a registry.
-type Metrics struct {
-	attemptsTotal      *prometheus.CounterVec
-	circuitTransitions *prometheus.CounterVec
-	authFailIncrements prometheus.Counter
-	redisWriteFailures *prometheus.CounterVec
-	redisWriteLatencyS prometheus.Histogram
-}
-
-// NewMetrics registers the Buffer's collectors on reg. Pass nil to
-// disable metrics collection — callers without a registry (tests,
-// short-lived tools) can still construct a fully-functional Buffer.
-func NewMetrics(reg prometheus.Registerer) *Metrics {
-	if reg == nil {
-		return nil
-	}
-	f := promauto.With(reg)
-	return &Metrics{
-		attemptsTotal: f.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "nexus",
-			Subsystem: "credstats",
-			Name:      "attempts_total",
-			Help:      "Number of upstream attempts recorded by the credential stats buffer, labelled by HTTP class.",
-		}, []string{"class"}),
-		circuitTransitions: f.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "nexus",
-			Subsystem: "credstats",
-			Name:      "circuit_transitions_total",
-			Help:      "Circuit-breaker state transitions observed by the buffer.",
-		}, []string{"to", "reason"}),
-		authFailIncrements: f.NewCounter(prometheus.CounterOpts{
-			Namespace: "nexus",
-			Subsystem: "credstats",
-			Name:      "auth_fail_increments_total",
-			Help:      "Number of 401/403 responses that incremented the live auth_fails counter without crossing the open threshold.",
-		}),
-		redisWriteFailures: f.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "nexus",
-			Subsystem: "credstats",
-			Name:      "redis_write_failures_total",
-			Help:      "Buffer Redis writes that returned an error, labelled by stage.",
-		}, []string{"stage"}),
-		redisWriteLatencyS: f.NewHistogram(prometheus.HistogramOpts{
-			Namespace: "nexus",
-			Subsystem: "credstats",
-			Name:      "redis_write_seconds",
-			Help:      "End-to-end time spent in the Buffer's Redis pipelines.",
-			Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5},
-		}),
-	}
-}
-
-func (m *Metrics) incAttempt(class string) {
-	if m != nil {
-		m.attemptsTotal.WithLabelValues(class).Inc()
-	}
-}
-
-func (m *Metrics) incCircuit(to, reason string) {
-	if m != nil {
-		m.circuitTransitions.WithLabelValues(to, reason).Inc()
-	}
-}
-
-func (m *Metrics) incAuthFailIncrement() {
-	if m != nil {
-		m.authFailIncrements.Inc()
-	}
-}
-
-func (m *Metrics) incRedisFailure(stage string) {
-	if m != nil {
-		m.redisWriteFailures.WithLabelValues(stage).Inc()
-	}
-}
-
-func (m *Metrics) observeWrite(d time.Duration) {
-	if m != nil {
-		m.redisWriteLatencyS.Observe(d.Seconds())
-	}
-}
-
 // Buffer is a non-blocking Redis writer for per-credential attempt stats
 // and circuit-breaker transitions. A nil Buffer is safe to use — all
 // methods are no-ops. Per-credential thresholds are resolved synchronously
@@ -140,7 +60,27 @@ type Buffer struct {
 	logger   *slog.Logger
 	resolver ThresholdsResolver
 	metrics  *Metrics
+
+	// agg is the T1b write-behind stats accumulator. When non-nil, a successful
+	// RecordAttempt accumulates the count/timestamps in-process instead of the
+	// per-attempt Redis stats pipeline; a background flusher drains to Redis.
+	// nil = legacy synchronous path. Failures (rare) always write synchronously.
+	agg *statsAggregator
+
+	// clean is the T1b circuit clean-set: credentials confirmed to have NO
+	// circuit hash (never failed → definitely closed, auth_fails absent). A
+	// success for a clean credential skips the circuit HGet + auth_fails reset
+	// entirely. A failure removes the credential (it now has a hash). Enforcement
+	// still reads Redis at credpool selection, so a stale clean entry on one
+	// instance is harmless (that instance won't be routed an OPEN credential).
+	cleanMu sync.Mutex
+	clean   map[string]struct{}
 }
+
+// cleanSetCap bounds the circuit clean-set so a long-lived process with many
+// distinct credentials cannot grow it unbounded; on overflow it is cleared and
+// credentials re-confirm clean on their next success (one HGet each).
+const cleanSetCap = 100_000
 
 // New constructs a Buffer. Pass nil rdb to disable Redis (every method
 // becomes a no-op). Pass nil resolver to fall back to
@@ -232,7 +172,7 @@ return cnt or 0
 // the admin API but is intentionally never persisted to the Credential
 // table.
 func (b *Buffer) RecordAttempt(credentialID string, statusCode int, errMsg string) {
-	if b == nil || b.rdb == nil || credentialID == "" {
+	if b == nil || b.rdb == nil || credentialID == "" || perfNoRedis {
 		return
 	}
 	thresholds := b.resolver(credentialID)
@@ -257,7 +197,21 @@ func (b *Buffer) RecordAttempt(credentialID string, statusCode int, errMsg strin
 
 	b.metrics.incAttempt(classify(statusCode))
 
-	// --- Stats pipeline (always runs) ---
+	// --- Stats: T1b write-behind for the SUCCESS hot path ---
+	// A successful attempt's count/timestamps are operational stats (never
+	// billed); accumulate them in-process and let the background flusher persist
+	// them, keeping the per-request Redis stats pipeline off the hot path.
+	// Failures (rare) fall through to the synchronous pipeline so fail_at /
+	// fail_reason and the circuit transitions below stay immediate.
+	if b.agg != nil && success {
+		b.agg.recordSuccess(credentialID, nowStr)
+		// Circuit on success still runs below (closing a recovered circuit and
+		// resetting auth_fails are correctness-relevant, not bookkeeping).
+		b.recordSuccessCircuit(ctx, circuitKey, credentialID)
+		return
+	}
+
+	// --- Stats pipeline (synchronous path: write-behind off, or a failure) ---
 	pipe := b.rdb.Pipeline()
 	pipe.HIncrBy(ctx, statsKey, credstate.StatsFieldCount, 1)
 	pipe.HSet(ctx, statsKey, credstate.StatsFieldUsedAt, nowStr)
@@ -287,6 +241,7 @@ func (b *Buffer) RecordAttempt(credentialID string, statusCode int, errMsg strin
 	// --- Circuit breaker ---
 	switch {
 	case authFail:
+		b.unmarkClean(credentialID) // a failing credential now has a circuit hash
 		fails, err := luaOpenCircuitAuthFail.Run(ctx, b.rdb,
 			[]string{circuitKey, credstate.CircuitDirtySet, credentialID},
 			thresholds.AuthFailThreshold, nowStr,
@@ -303,6 +258,7 @@ func (b *Buffer) RecordAttempt(credentialID string, statusCode int, errMsg strin
 		}
 
 	case rateLimited:
+		b.unmarkClean(credentialID) // a rate-limited credential now has a circuit hash
 		probeAt := now.Add(time.Duration(thresholds.RateLimitCooldownSeconds) * time.Second).Format(time.RFC3339Nano)
 		pipe := b.rdb.Pipeline()
 		pipe.HSet(ctx, circuitKey,
@@ -320,31 +276,66 @@ func (b *Buffer) RecordAttempt(credentialID string, statusCode int, errMsg strin
 		b.metrics.incCircuit(credstate.CircuitOpen, credstate.ReasonRateLimit)
 
 	case success:
-		// On success: if currently OPEN/HALF_OPEN, DEL the hash (close)
-		// and mark dirty. Otherwise just reset auth_fails (no transition).
-		state, err := b.rdb.HGet(ctx, circuitKey, credstate.CircuitFieldState).Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			b.warn("circuit state read failed", credentialID, err)
-			b.metrics.incRedisFailure("circuit_read")
-			return
-		}
-		if state == credstate.CircuitHalfOpen || state == credstate.CircuitOpen {
-			pipe := b.rdb.Pipeline()
-			pipe.Del(ctx, circuitKey)
-			pipe.SAdd(ctx, credstate.CircuitDirtySet, credentialID)
-			if _, err := pipe.Exec(ctx); err != nil {
-				b.warn("circuit close failed", credentialID, err)
-				b.metrics.incRedisFailure("circuit_close")
-				return
-			}
-			b.metrics.incCircuit(credstate.CircuitClosed, "")
-			return
-		}
-		// No transition; reset the running auth_fails counter.
-		if err := b.rdb.HSet(ctx, circuitKey, credstate.CircuitFieldAuthFails, 0).Err(); err != nil && !errors.Is(err, redis.Nil) {
-			b.warn("circuit auth-fail reset failed", credentialID, err)
-			b.metrics.incRedisFailure("circuit_reset")
-		}
+		b.recordSuccessCircuit(ctx, circuitKey, credentialID)
+	}
+}
+
+// recordSuccessCircuit applies the success-path circuit transition: if the
+// circuit is currently OPEN/HALF_OPEN, close it (DEL the hash + mark dirty so the
+// Hub circuit-flush job persists the recovery); otherwise reset the running
+// auth_fails counter. Shared by the synchronous RecordAttempt path and the T1b
+// write-behind success path — circuit transitions are correctness-relevant and
+// stay on Redis even under write-behind (only the stats bookkeeping is deferred).
+// luaSuccessCircuit applies the whole success-path circuit transition in ONE
+// atomic round-trip and reports which case fired so the caller can update the
+// clean-set + metrics:
+//   - "absent": no circuit hash → the credential has never failed; nothing to
+//     do (auth_fails is absent = 0). Caller marks it clean to skip Redis next time.
+//   - "closed": the circuit was OPEN/HALF_OPEN → DEL'd + dirty-marked (recovery).
+//   - "reset":  a sub-threshold auth_fails counter existed → reset to 0.
+//
+// Replaces the legacy HGet + conditional-HSet (up to 2 round-trips) with one.
+var luaSuccessCircuit = redis.NewScript(`
+local key      = KEYS[1]
+local dirtySet = KEYS[2]
+local credID   = KEYS[3]
+local fState   = ARGV[1]
+local fFails   = ARGV[2]
+local sOpen    = ARGV[3]
+local sHalf    = ARGV[4]
+if redis.call('EXISTS', key) == 0 then return 'absent' end
+local state = redis.call('HGET', key, fState)
+if state == sOpen or state == sHalf then
+  redis.call('DEL', key)
+  redis.call('SADD', dirtySet, credID)
+  return 'closed'
+end
+redis.call('HSET', key, fFails, 0)
+return 'reset'
+`)
+
+func (b *Buffer) recordSuccessCircuit(ctx context.Context, circuitKey, credentialID string) {
+	// T1b clean-set fast path: a credential confirmed to have no circuit hash
+	// needs no Redis at all on success — skip entirely.
+	if b.isClean(credentialID) {
+		return
+	}
+	res, err := luaSuccessCircuit.Run(ctx, b.rdb,
+		[]string{circuitKey, credstate.CircuitDirtySet, credentialID},
+		credstate.CircuitFieldState, credstate.CircuitFieldAuthFails,
+		credstate.CircuitOpen, credstate.CircuitHalfOpen,
+	).Text()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		b.warn("circuit success update failed", credentialID, err)
+		b.metrics.incRedisFailure("circuit_success")
+		return
+	}
+	switch res {
+	case "absent":
+		// Never failed → confirm clean so future successes skip Redis.
+		b.markClean(credentialID)
+	case "closed":
+		b.metrics.incCircuit(credstate.CircuitClosed, "")
 	}
 }
 

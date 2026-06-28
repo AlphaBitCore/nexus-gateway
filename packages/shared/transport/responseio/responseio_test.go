@@ -123,7 +123,7 @@ func TestCopy_ChunkedBody(t *testing.T) {
 	if !strings.Contains(out, "hello") || !strings.Contains(out, "world") {
 		t.Errorf("expected body 'hello' + 'world' to reach client; got:\n%s", out)
 	}
-	// Per Task 0.1 fix C1: response must remain self-framing on a keep-alive
+	// Response must remain self-framing on a keep-alive
 	// connection. With ContentLength<0 from the dechunked source, resp.Write
 	// re-emits Transfer-Encoding: chunked. Confirm one form of framing exists.
 	hasChunkedTE := strings.Contains(out, "Transfer-Encoding: chunked")

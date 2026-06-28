@@ -186,7 +186,7 @@ func TestFetchModelPricing(t *testing.T) {
 		if len(got) != 2 || got[0].ModelID != "m1" || got[0].InputPricePM != 3.0 {
 			t.Errorf("unexpected: %+v", got)
 		}
-		// A model with set price columns is Priced=true (F-0348).
+		// A model with set price columns is Priced=true.
 		if !got[0].Priced || !got[1].Priced {
 			t.Errorf("priced rows must report Priced=true; got %+v", got)
 		}
@@ -207,7 +207,7 @@ func TestFetchModelPricing(t *testing.T) {
 		if len(got) != 2 || got[1].ModelID != "missing" || got[1].InputPricePM != 0 {
 			t.Errorf("unexpected: %+v", got)
 		}
-		// F-0348: a model with NO row in the result has no enforceable price —
+		// A model with NO row in the result has no enforceable price —
 		// it must be Priced=false so the downgrade selector skips it, while the
 		// present row is Priced=true.
 		if !got[0].Priced {
@@ -219,7 +219,7 @@ func TestFetchModelPricing(t *testing.T) {
 	})
 
 	t.Run("row with NULL prices is Priced=false", func(t *testing.T) {
-		// F-0348 critical case: the model HAS a row but both price columns are
+		// Critical case: the model HAS a row but both price columns are
 		// NULL. The float fields collapse to 0, indistinguishable from a free
 		// model — only Priced=false marks it unpriced so the downgrade selector
 		// fails closed instead of re-pricing it to 0 and bypassing the cap.

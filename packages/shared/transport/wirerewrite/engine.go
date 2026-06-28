@@ -56,8 +56,6 @@ func (e *ruleEntry) run(body []byte) (out []byte, count int, removed int) {
 	switch e.rule.Type {
 	case RuleTypeStrip:
 		return applyStripRule(body, e.rule.BodyPath, &e.rule)
-	case RuleTypeFieldOrder:
-		return applyFieldOrderRule(body)
 	default:
 		return body, 0, 0
 	}

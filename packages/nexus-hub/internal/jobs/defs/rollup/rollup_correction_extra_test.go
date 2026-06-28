@@ -1,12 +1,12 @@
 // rollup_correction_extra_test.go covers the audit-wave changes to the
 // correction + merge pipeline:
 //
-//   - F-0183: gauge-snapshot metrics are dropped from the merge source so the
+//   - gauge-snapshot metrics are dropped from the merge source so the
 //     SUM cascade never folds N hourly snapshots into a coarser bucket.
-//   - F-0184: the per-Thing correction job (ThingRollupCorrectionJob) mirrors
+//   - the per-Thing correction job (ThingRollupCorrectionJob) mirrors
 //     the fleet correction so late per-Thing events are re-aggregated.
-//   - F-0186: the correction window spans multiple trailing days, not just T-1.
-//   - F-0165: the correction backfill suppresses the watermark write (asserted
+//   - the correction window spans multiple trailing days, not just T-1.
+//   - the correction backfill suppresses the watermark write (asserted
 //     by the absence of a rollup_watermark INSERT).
 package rollup
 
@@ -21,7 +21,7 @@ import (
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 )
 
-// F-0183: excludeGaugeRows unit behaviour.
+// excludeGaugeRows unit behaviour.
 
 func TestExcludeGaugeRows_DropsGaugeMetrics(t *testing.T) {
 	in := []metrics.RollupRow{
@@ -52,7 +52,7 @@ func TestExcludeGaugeRows_NoGaugeReturnsInput(t *testing.T) {
 	}
 }
 
-// F-0183: a merge bucket whose source holds ONLY gauge rows produces no target
+// A merge bucket whose source holds ONLY gauge rows produces no target
 // write — the gauge rows are excluded, the slice empties, and mergeBucket
 // early-returns before opening a transaction. Asserts the gauges never reach a
 // coarser tier.
@@ -82,9 +82,9 @@ func TestRollupMerge_MergeBucket_GaugeOnlySource_NoWrite(t *testing.T) {
 	}
 }
 
-// F-0186: the correction window spans multiple trailing days. lookbackDays=2
+// The correction window spans multiple trailing days. lookbackDays=2
 // drives two full days of 5m/1h/1d re-aggregation (oldest day first), each with
-// the watermark write suppressed (F-0165 — no rollup_watermark INSERT).
+// the watermark write suppressed (no rollup_watermark INSERT).
 func TestRollupCorrection_Run_MultiDayLookback(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -135,7 +135,7 @@ func TestRollupCorrection_Run_MultiDayLookback(t *testing.T) {
 	}
 }
 
-// F-0184: ThingRollupCorrectionJob identity + interval default.
+// ThingRollupCorrectionJob identity + interval default.
 
 func TestThingRollupCorrection_Identity(t *testing.T) {
 	r5m := NewThingRollup5m(nil, 0, testLogger(), false, false)
@@ -169,7 +169,7 @@ func TestThingRollupCorrection_Identity(t *testing.T) {
 	}
 }
 
-// F-0184 + F-0165: ThingRollupCorrection.Run drives one trailing day of the
+// ThingRollupCorrection.Run drives one trailing day of the
 // per-Thing pipeline with NO thing watermark INSERT.
 func TestThingRollupCorrection_Run_HappyPath(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
@@ -216,7 +216,7 @@ func TestThingRollupCorrection_Run_HappyPath(t *testing.T) {
 	}
 }
 
-// F-0184: a 5m bucket failure in the per-Thing correction surfaces as an error.
+// A 5m bucket failure in the per-Thing correction surfaces as an error.
 func TestThingRollupCorrection_Run_5mBucketError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
@@ -245,7 +245,7 @@ func TestThingRollupCorrection_Run_5mBucketError(t *testing.T) {
 	}
 }
 
-// F-0186: a failure during the sealed-month 1mo re-merge surfaces as an error
+// A failure during the sealed-month 1mo re-merge surfaces as an error
 // (the monthly re-merge runs after all day layers succeed).
 func TestRollupCorrection_Run_MonthlyRemergeError(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
@@ -294,7 +294,7 @@ func TestRollupCorrection_Run_MonthlyRemergeError(t *testing.T) {
 	}
 }
 
-// F-0186 + F-0165: a correction that crosses into a sealed month re-merges that
+// A correction that crosses into a sealed month re-merges that
 // month's 1mo bucket (from metric_rollup_1d), still without a watermark write.
 func TestRollupCorrection_Run_CrossMonthRemergesSealedMonth(t *testing.T) {
 	mock, _ := pgxmock.NewPool()

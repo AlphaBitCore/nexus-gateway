@@ -6,10 +6,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
 

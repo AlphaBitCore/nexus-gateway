@@ -6,8 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"strings"
@@ -474,7 +474,7 @@ func (q *Queue) Record(e event.Event) error {
 		nullableInt(e.RequestHooksMs), nullableInt(e.ResponseHooksMs),
 		encodeBreakdown(e.LatencyBreakdown), nullableJSONString(e.HooksPipeline),
 		nullableString(e.DomainRuleID), nullableString(e.PathAction),
-		// #70: cross-service correlation id.
+		// Cross-service correlation id.
 		nullableString(e.TraceID),
 	)
 	return err
@@ -888,8 +888,8 @@ func (q *Queue) PruneSynced(olderThan time.Duration) (int64, error) {
 // offset, limit) at the call site. Zero values disable each respective
 // filter (Search="" / Action="" / AIOnly=false / Since=time.Time{}).
 //
-// Why this struct: the UI grew an AI-Only toggle + time-window selector
-// (#88) on top of the original search/action pagination. Without the
+// Why this struct: the UI has an AI-Only toggle + time-window selector
+// on top of the original search/action pagination. Without the
 // struct, every test caller and the IPC plumbing carry six positional
 // args, half of which are usually zero — easy to swap by accident.
 type QueryEventsFilter struct {
@@ -905,7 +905,7 @@ type QueryEventsFilter struct {
 // filters. Returns matching events (paginated, time-descending) and
 // total count. See QueryEventsFilter for filter semantics. The split
 // between this method and `queryEventsImpl` is purely to keep the
-// pre-#88 positional API for existing callers without losing the new
+// positional API for existing callers without losing the new
 // filter capability — drop the wrapper once every caller migrates.
 func (q *Queue) QueryEvents(search, action string, offset, limit int) ([]event.Event, int, error) {
 	return q.QueryEventsFiltered(QueryEventsFilter{
@@ -917,7 +917,7 @@ func (q *Queue) QueryEvents(search, action string, offset, limit int) ([]event.E
 }
 
 // QueryEventsFiltered is the full-fat variant exposing the AI-Only and
-// Since filters added in #88. Existing callers can keep using the
+// Since filters. Existing callers can keep using the
 // positional QueryEvents above; the UI's Traffic page calls this one.
 func (q *Queue) QueryEventsFiltered(f QueryEventsFilter) ([]event.Event, int, error) {
 	where := "1=1"
@@ -990,7 +990,7 @@ func (q *Queue) QueryEventsFiltered(f QueryEventsFilter) ([]event.Event, int, er
 		var upstreamTtfb, upstreamTotal, requestHooks, responseHooks sql.NullInt64
 		var latencyBreakdown, hooksPipeline sql.NullString
 		var domainRuleID, pathAction sql.NullString
-		// #70 cross-service correlation id.
+		// Cross-service correlation id.
 		var traceID sql.NullString
 		// Body + normalized columns are intentionally NOT scanned here — the
 		// list is metadata-only; the detail drawer fetches them via EventByID.

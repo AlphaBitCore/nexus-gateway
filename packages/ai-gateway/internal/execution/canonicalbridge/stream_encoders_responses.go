@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"sync/atomic"
 	"time"
 

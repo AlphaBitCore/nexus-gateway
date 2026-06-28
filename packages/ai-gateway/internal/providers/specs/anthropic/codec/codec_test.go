@@ -3,8 +3,8 @@ package codec
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -43,7 +43,7 @@ func TestCodec_EncodeRequest_toolsAndToolChoice(t *testing.T) {
 	}
 }
 
-// TestCodec_EncodeRequest_jsonObjectNoPrefill pins audit F-0224: a
+// TestCodec_EncodeRequest_jsonObjectNoPrefill pins the contract: a
 // json_object request must NOT inject the brace-prefill assistant turn
 // (which produced unparseable mid-object content), and must instead force
 // JSON via a system instruction so Anthropic emits the complete object.
@@ -91,8 +91,8 @@ func TestCodec_EncodeRequest_jsonObjectNoPrefill(t *testing.T) {
 // a json_object request is encoded (no prefill), then a COMPLETE Anthropic
 // response (with its leading "{") is decoded — the canonical assistant
 // content must be valid JSON that json.Unmarshal parses, with the opening
-// brace present exactly once. Before F-0224 the decode received mid-object
-// content and the round-trip failed 100% of the time.
+// brace present exactly once. The decode must receive the complete object
+// (not mid-object content) so the round-trip parses.
 func TestCodec_jsonObjectRoundTripParses(t *testing.T) {
 	canon := []byte(`{
 		"model": "claude-3-5-haiku-20240307",

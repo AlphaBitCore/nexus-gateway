@@ -13,12 +13,14 @@ type (
 )
 
 const (
-	Approve           = core.Approve
-	RejectHard        = core.RejectHard
-	BlockSoft         = core.BlockSoft
-	Modify            = core.Modify
-	InflightApprove   = core.InflightApprove
-	InflightBlockSoft = core.InflightBlockSoft
+	Approve    = core.Approve
+	RejectHard = core.RejectHard
+	BlockSoft  = core.BlockSoft
+	Modify     = core.Modify
+
+	ActionApprove = core.ActionApprove
+	ActionRedact  = core.ActionRedact
+	ActionBlock   = core.ActionBlock
 )
 
 var PayloadFromTextSegments = core.PayloadFromTextSegments

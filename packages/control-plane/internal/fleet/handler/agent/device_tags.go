@@ -72,7 +72,7 @@ func (h *Handler) PutDeviceTags(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, errJSON("Device not found", "not_found", "NOT_FOUND"))
 	}
 
-	// Tags array is owned by `thing.tags` (S9 migration). UPDATE
+	// Tags array is owned by `thing.tags`. UPDATE
 	// directly — no separate junction table. Routed through the
 	// updateDeviceTagsFn test seam so unit tests can drive the
 	// handler without a concrete *pgxpool.Pool.

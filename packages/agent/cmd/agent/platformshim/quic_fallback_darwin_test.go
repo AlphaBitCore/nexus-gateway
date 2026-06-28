@@ -3,7 +3,7 @@
 package platformshim
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,7 +32,7 @@ func readWrittenBundles(t *testing.T, in []string) []string {
 	return out
 }
 
-// TestWriteQUICFallbackBundlesFile_StripsProtected is the SEC-M8-01 daemon-side
+// TestWriteQUICFallbackBundlesFile_StripsProtected covers the daemon-side
 // defense-in-depth: even when a protected system bundle reaches the writer
 // (e.g. an A3 node pushed it into the shadow, bypassing the CP reject gate),
 // the file the NE reads must NOT contain it. Legitimate app targets survive.

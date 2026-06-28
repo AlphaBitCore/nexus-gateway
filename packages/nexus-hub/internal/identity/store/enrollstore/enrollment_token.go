@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/jackc/pgx/v5"

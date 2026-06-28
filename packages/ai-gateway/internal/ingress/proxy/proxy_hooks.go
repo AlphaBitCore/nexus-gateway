@@ -116,7 +116,7 @@ func usageInt(p *int) int {
 // aigwHookOutcomeFromResult converts a request-side CompliancePipelineResult
 // into a HookOutcomeInput suitable for traffic.FormatHookOutcome. The mapping
 // follows spec §4.5:
-//   - RejectHard / BlockSoft → Rejected = hookName, RejectReason = reasonCode (or reason)
+//   - RejectHard → Rejected = hookName, RejectReason = reasonCode (or reason)
 //   - Modify → appended to Passed + Transformed = true
 //   - Approve / Abstain → appended to Passed
 //   - Any reject halts iteration (later hooks are not reported).
@@ -130,7 +130,7 @@ func aigwHookOutcomeFromResult(r *hookcore.CompliancePipelineResult) traffic.Hoo
 	in := traffic.HookOutcomeInput{}
 	for _, hr := range r.HookResults {
 		switch hr.Decision {
-		case hookcore.RejectHard, hookcore.BlockSoft:
+		case hookcore.RejectHard:
 			// Reject halts the pipeline: discard any previously-accumulated
 			// Passed hooks and return only the reject attribution (spec §4.5).
 			reason := hr.ReasonCode

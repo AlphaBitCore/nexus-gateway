@@ -19,8 +19,8 @@ package models
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"

@@ -1,9 +1,8 @@
 package status
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -25,8 +24,7 @@ func TestCheckPeerUID_NetPipe(t *testing.T) {
 // the test process connects to a Unix socket created by the same test process,
 // so the peer UID equals os.Getuid().
 func TestCheckPeerUID_SameUID(t *testing.T) {
-	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "peer.sock")
+	socketPath := testEndpoint(t)
 
 	ln, err := platformListen(socketPath)
 	if err != nil {
@@ -43,7 +41,7 @@ func TestCheckPeerUID_SameUID(t *testing.T) {
 		accepted <- c
 	}()
 
-	client, err := net.Dial("unix", socketPath)
+	client, err := dialEndpoint(socketPath)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -65,7 +63,7 @@ func TestCheckPeerUID_SameUID(t *testing.T) {
 // same-UID connections (the only kind a self-test can produce), this test
 // confirms the normal path: connection from same UID receives a valid response.
 func TestHandleConn_PeerCheckGates(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "gate.sock")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newTestCollector(), nil, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer srv.Stop()

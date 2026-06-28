@@ -60,12 +60,9 @@ func TestExtractRequest_ToolCalls(t *testing.T) {
 
 func TestExtractRequest_BinaryBody(t *testing.T) {
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), []byte{0x00, 0x42}, "/api/x")
+	_, err := a.ExtractRequest(context.Background(), []byte{0x00, 0x42}, "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("Extra missing binary_preview")
 	}
 }
 

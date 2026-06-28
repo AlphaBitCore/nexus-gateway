@@ -8,13 +8,13 @@
 // networking / push / continuity / time / location / authentication daemons
 // whose UDP must NEVER be claimed by the proxy (CLAUDE.md NE rule 5). It is a
 // HARDCODED floor on both the Go and Swift sides — intentionally NOT
-// shadow-controllable. That immutability is the SEC-M8-01 A3-defense: an
+// shadow-controllable. That immutability is the A3-defense: an
 // attacker who can push the agent_settings shadow cannot widen the kill-list
 // to close UDP for a system daemon, because the floor is compiled in.
 //
 // SystemBundles.covers(_:) reproduces the Go related()/normalize() semantics
 // EXACTLY (lowercase-normalized equal / ancestor / descendant match), so the
-// two copies can never drift (F-0392 / F-0368 closed by codegen).
+// two copies can never drift (codegen keeps the Swift set in lockstep).
 
 import Foundation
 

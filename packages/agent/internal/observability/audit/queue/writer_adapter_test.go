@@ -3,7 +3,6 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -28,7 +27,12 @@ func newWriterAdapterTestQueue(t *testing.T) *Queue {
 	if err != nil {
 		t.Fatalf("NewQueue: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	// Close the DB before t.TempDir's auto-cleanup removes the dir. t.Cleanup
+	// runs LIFO, so this (registered after t.TempDir) closes q.db first — on
+	// Windows an open file cannot be deleted, so a still-open audit.db would
+	// make the temp-dir removal fail and the test error out. t.TempDir already
+	// removes the directory, so no explicit RemoveAll is needed.
+	t.Cleanup(func() { _ = q.Close() })
 	return q
 }
 

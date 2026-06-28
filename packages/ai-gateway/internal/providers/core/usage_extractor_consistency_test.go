@@ -176,6 +176,39 @@ func TestExtractUsage_CrossComponentConsistency(t *testing.T) {
 	}
 }
 
+// TestExtractUsage_DispatchBranches covers the ExtractUsage dispatch arms that the
+// usage-only fast path otherwise hides: the empty-input guard, the SSE body that
+// makes the fast path decline and fall back to full Normalize (which folds the
+// stream and extracts usage from the terminal chunk), and a non-stream body with
+// no usage block (fast path returns (nil, true) → zero Usage).
+func TestExtractUsage_DispatchBranches(t *testing.T) {
+	isZero := func(u core.Usage) bool {
+		return u.PromptTokens == nil && u.CompletionTokens == nil && u.TotalTokens == nil &&
+			u.CacheReadTokens == nil && u.CacheCreationTokens == nil && u.ReasoningTokens == nil
+	}
+
+	// 1. Empty input → zero Usage (early guard, no normalizer built).
+	if got := core.ExtractUsage(nil, core.FormatOpenAI); !isZero(got) {
+		t.Errorf("empty raw: got %+v, want zero Usage", got)
+	}
+
+	// 2. SSE body → fast path declines (looksLikeOpenAIEventStream) → full Normalize
+	// stream fold extracts usage from the terminal usage-bearing chunk.
+	sse := []byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n" +
+		"data: [DONE]\n\n")
+	u := core.ExtractUsage(sse, core.FormatOpenAI)
+	if u.PromptTokens == nil || *u.PromptTokens != 10 || u.CompletionTokens == nil || *u.CompletionTokens != 5 {
+		t.Errorf("SSE fallback: got %+v, want prompt=10 completion=5 via full Normalize stream path", u)
+	}
+
+	// 3. Non-stream body with no usage block → fast path returns (nil, true) → zero.
+	noUsage := []byte(`{"model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"hi"}}]}`)
+	if got := core.ExtractUsage(noUsage, core.FormatOpenAI); !isZero(got) {
+		t.Errorf("no-usage body: got %+v, want zero Usage", got)
+	}
+}
+
 // TestExtractUsage_AnthropicPromptTokensNormalization explicitly verifies
 // GAP-C1 fix: Anthropic's raw input_tokens (uncached only) is
 // normalized to OpenAI canonical PromptTokens (= uncached + cache_read +

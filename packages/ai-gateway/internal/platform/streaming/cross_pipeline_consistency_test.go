@@ -1,9 +1,9 @@
 package streaming_test
 
-// #116 — the architect's "真正的 cross-tier consistency test" that #94
-// missed. #94 tested that the SHARED helper (responseprehook.Build)
+// The true cross-tier consistency test. An earlier test verified that
+// the SHARED helper (responseprehook.Build)
 // produces equivalent payloads through two CALLER SHAPES — but the
-// architect's ask was that the three PIPELINE IMPLEMENTATIONS
+// real requirement is that the three PIPELINE IMPLEMENTATIONS
 // (shared.BufferPipeline, shared.LivePipeline, ai-gateway.LivePipeline)
 // produce equivalent payloads for the same SSE body.
 //
@@ -18,8 +18,8 @@ package streaming_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -93,8 +93,8 @@ func (r *responseWriterStub) Header() http.Header {
 func (r *responseWriterStub) Write(p []byte) (int, error) { return r.buf.Write(p) }
 func (r *responseWriterStub) WriteHeader(_ int)           {}
 
-// TestThreePipelineConsistency_SameBody_SameNormalized is the #116
-// binding assertion. For each fixture body, instantiate shared.
+// TestThreePipelineConsistency_SameBody_SameNormalized is the
+// cross-tier assertion. For each fixture body, instantiate shared.
 // BufferPipeline, shared.LivePipeline, and ai-gateway.LivePipeline
 // with the same PreHook + Registry, run each against a fresh copy of
 // the body, then compare the final ci.Normalized JSON.
@@ -234,8 +234,7 @@ func mustMarshalNormalized(t *testing.T, pipeline string, p *normcore.Normalized
 	return string(b)
 }
 
-// TestThreePipelineConsistency_TranscoderWired_AnthropicUpstream — #115/R4
-// architect review residual + S1 (PR #24 follow-up). The original
+// TestThreePipelineConsistency_TranscoderWired_AnthropicUpstream. The original
 // transcoder-wired variant fabricated provcore.Chunk values directly,
 // which only exercised the encoder→pipeline edge — the upstream
 // decoder→encoder hand-off (the surface that actually breaks in prod

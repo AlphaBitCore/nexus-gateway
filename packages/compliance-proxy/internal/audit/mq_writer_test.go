@@ -2,7 +2,7 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"sync"
 	"testing"
@@ -174,8 +174,12 @@ func TestToMessage_StampsIdentityPending(t *testing.T) {
 	if msg.Identity == nil {
 		t.Fatal("Identity is nil; producer must stamp {status:pending}")
 	}
-	if msg.Identity["status"] != "pending" {
-		t.Errorf("Identity.status = %v, want \"pending\"", msg.Identity["status"])
+	identity, ok := msg.Identity.(map[string]any)
+	if !ok {
+		t.Fatalf("Identity is %T, want map[string]any from the compliance producer", msg.Identity)
+	}
+	if identity["status"] != "pending" {
+		t.Errorf("Identity.status = %v, want \"pending\"", identity["status"])
 	}
 }
 

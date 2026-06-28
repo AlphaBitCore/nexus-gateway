@@ -110,7 +110,7 @@ func InitCompliance(cfg ComplianceConfig, logger *slog.Logger) ComplianceBundle 
 	// shadow_compliance push (handled via ApplyShadowState). Sharing
 	// the BootStore helper with compliance-proxy and ai-gateway means
 	// the same log shape + defaulting semantics hold for every service
-	// (#115 three-end alignment). Context.Background() is safe because
+	// (three-end alignment). Context.Background() is safe because
 	// BootStore's nil-loader path never invokes the loader.
 	streamingPolicyStore := streampolicy.BootStore(context.Background(), nil, logger)
 

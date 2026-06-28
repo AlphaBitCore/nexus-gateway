@@ -26,7 +26,7 @@ type LiveConfig struct {
 	FirstInspectChars  int  // chars before first checkpoint (default 400)
 	ReinspectStepChars int  // chars between subsequent checkpoints (default 128)
 	MaxBufferSize      int  // max total buffer in bytes (default 8MB)
-	ChannelSize        int  // internal event channel buffer (default 64); mirrors shared/transport/streaming.LiveConfig.ChannelSize (PR #24 / O5)
+	ChannelSize        int  // internal event channel buffer (default 64); mirrors shared/transport/streaming.LiveConfig.ChannelSize
 	HoldBack           bool // hold assistant deltas until first checkpoint
 
 	// EmitOpenAIDone controls whether the pipeline appends the OpenAI
@@ -92,8 +92,8 @@ type StreamHookRunner func(ctx context.Context, input *hookcore.HookInput) *hook
 // Returns nil to skip the chunk.
 type TransformChunk func(data []byte) ([]byte, error)
 
-// PreHookCallback is the type alias for shared/policy/hooks/core.PreHookCallback
-// (#93). Single source of truth across all three ingress services
+// PreHookCallback is the type alias for shared/policy/hooks/core.PreHookCallback.
+// Single source of truth across all three ingress services
 // (agent / compliance-proxy / ai-gateway) for "stamp Normalized before
 // hooks see the input" — when this package is upgraded with new fields
 // or contract refinements, hookcore.PreHookCallback evolves and both
@@ -153,10 +153,10 @@ func (lp *LivePipeline) Process(
 	eventCh := make(chan chunk, lp.config.ChannelSize)
 	var wg sync.WaitGroup
 
-	// #91 — when a PreHook callback is installed, tee upstream into a
+	// When a PreHook callback is installed, tee upstream into a
 	// goroutine-safe accumulator so checkpoint hook input can stamp
 	// Registry-normalized payload. Without this hooks see flat-text
-	// fallback (PayloadFromTextSegments). Mirrors the #90 pattern in
+	// fallback (PayloadFromTextSegments). Mirrors the pattern in
 	// shared/transport/streaming/live.go for cross-service consistency.
 	var rawAcc *sharedstreaming.LockedByteBuffer
 	upstreamForReader := upstream
@@ -172,6 +172,7 @@ func (lp *LivePipeline) Process(
 		defer close(eventCh)
 
 		parser := format.NewParser(upstreamForReader)
+		defer parser.Release()
 		for {
 			if ctx.Err() != nil {
 				return
@@ -217,8 +218,12 @@ func (lp *LivePipeline) Process(
 		data      string
 	}
 	var (
-		accumulated string // all text so far
-		pendingText string // text since last checkpoint
+		// accBuf/pendBuf replace the prior `accumulated += delta` string
+		// concatenation, which reallocated+copied the whole transcript on every
+		// chunk (O(n²), the streaming hot path's largest growSlice allocator).
+		// strings.Builder amortizes growth; .String() is a zero-copy snapshot.
+		accBuf      strings.Builder // all text so far
+		pendBuf     strings.Builder // text since last checkpoint
 		pending     []pendingEvent
 		totalBytes  int
 		released    bool
@@ -235,7 +240,7 @@ func (lp *LivePipeline) Process(
 			flusher.Flush()
 		}
 		pending = nil
-		pendingText = ""
+		pendBuf.Reset()
 		released = true
 	}
 
@@ -243,7 +248,7 @@ func (lp *LivePipeline) Process(
 		input := &hookcore.HookInput{
 			RequestID:      hookCtx.RequestID,
 			Stage:          "response",
-			Normalized:     hookcore.PayloadFromTextSegments([]string{accumulated}),
+			Normalized:     hookcore.PayloadFromTextSegments([]string{accBuf.String()}),
 			IngressType:    hookCtx.IngressType,
 			Path:           hookCtx.Path,
 			Method:         hookCtx.Method,
@@ -252,11 +257,11 @@ func (lp *LivePipeline) Process(
 			ProviderRegion: hookCtx.ProviderRegion,
 		}
 
-		// #91 — let caller swap in a Registry-normalized payload so
+		// Let caller swap in a Registry-normalized payload so
 		// hooks see structured chat content (model/tool_calls/reasoning)
 		// instead of the flat-text fallback above. Receives the
 		// cumulative raw SSE wire bytes seen so far. Mirrors the same
-		// hook in shared/transport/streaming.LivePipeline at #90.
+		// hook in shared/transport/streaming.LivePipeline.
 		if lp.preHook != nil && rawAcc != nil {
 			lp.preHook(rawAcc.Snapshot(), input)
 		}
@@ -279,16 +284,11 @@ func (lp *LivePipeline) Process(
 				flusher.Flush()
 			}
 			cancel()
-			// PR #24 follow-up S1-code: cancel doesn't unblock a slow
+			// cancel doesn't unblock a slow
 			// upstream.Read; close upstream so the reader goroutine
 			// exits and wg.Wait() can return promptly.
 			sharedstreaming.CloseUpstreamOnExit(upstream)
 			return true // blocked
-
-		case hookcore.BlockSoft:
-			// Flag but continue.
-			flushPending()
-			return false
 
 		case hookcore.Modify:
 			applied := false
@@ -302,8 +302,10 @@ func (lp *LivePipeline) Process(
 						// Modify path is OpenAI-shaped (delta envelope), so
 						// emit it as an event-less SSE frame.
 						pending = []pendingEvent{{eventType: "", data: line}}
-						accumulated = repl
-						pendingText = repl
+						accBuf.Reset()
+						accBuf.WriteString(repl)
+						pendBuf.Reset()
+						pendBuf.WriteString(repl)
 						applied = true
 						if hookCtx != nil && hookCtx.OnStreamRewrite != nil {
 							hookCtx.OnStreamRewrite(1)
@@ -344,7 +346,7 @@ func (lp *LivePipeline) Process(
 				flusher.Flush()
 			}
 			cancel()
-			// PR #24 follow-up S1-code: same wedge as the shared
+			// Same wedge as the shared
 			// LivePipeline — cancel doesn't unblock a slow upstream
 			// blocked inside format.Parser.Next. Best-effort close to
 			// unblock the reader so wg.Wait() can return.
@@ -353,16 +355,16 @@ func (lp *LivePipeline) Process(
 			break
 		}
 
-		accumulated += delta
-		pendingText += delta
+		accBuf.WriteString(delta)
+		pendBuf.WriteString(delta)
 		pending = append(pending, pendingEvent{eventType: ch.eventType, data: ch.data})
 
-		if len(accumulated) >= nextInspect {
+		if accBuf.Len() >= nextInspect {
 			if runCheckpoint() {
 				blocked = true
 				break
 			}
-			nextInspect = len(accumulated) + lp.config.ReinspectStepChars
+			nextInspect = accBuf.Len() + lp.config.ReinspectStepChars
 		} else if released || !lp.config.HoldBack {
 			// Already released or no hold-back — write immediately.
 			for _, ev := range pending {
@@ -373,12 +375,12 @@ func (lp *LivePipeline) Process(
 				flusher.Flush()
 			}
 			pending = nil
-			pendingText = ""
+			pendBuf.Reset()
 		}
 	}
 
 	// Final checkpoint for any remaining content.
-	if !blocked && len(pendingText) > 0 {
+	if !blocked && pendBuf.Len() > 0 {
 		if runCheckpoint() {
 			blocked = true
 		}

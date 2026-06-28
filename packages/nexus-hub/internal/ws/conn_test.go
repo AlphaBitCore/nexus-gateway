@@ -83,7 +83,7 @@ func TestConn_OnLivenessFiresAfterPing(t *testing.T) {
 	}
 }
 
-// TestConn_WritePump_RecoversOnLivenessPanic covers F-0252: a panic inside the
+// TestConn_WritePump_RecoversOnLivenessPanic covers the case where a panic inside the
 // onLiveness callback (which in production makes a TouchLiveness DB call) must
 // be recovered inside writePump and tear down only this connection — it must
 // NOT crash the process. The test asserts Run returns (recover fired + Close
@@ -138,7 +138,7 @@ func TestConn_WritePump_RecoversOnLivenessPanic(t *testing.T) {
 	}
 }
 
-// TestConn_ReadLimit_AcceptsLargeShadowReport covers F-0255: a message larger
+// TestConn_ReadLimit_AcceptsLargeShadowReport covers the case where a message larger
 // than the old 64 KiB limit (here ~256 KiB, a realistic large shadow_report
 // with a full outcomes ledger) must be delivered to the message handler rather
 // than hard-closing the connection. The previous limit would have severed the

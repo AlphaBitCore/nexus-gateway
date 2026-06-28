@@ -2,8 +2,8 @@ package streamcache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -121,7 +121,7 @@ func TestBroker_WriteCache_StreamEntry_PersistsTimeline(t *testing.T) {
 	}
 }
 
-// TestBroker_WriteCache_StreamEntry_InvokesL2Callback asserts F-0228: on a
+// TestBroker_WriteCache_StreamEntry_InvokesL2Callback asserts that on a
 // clean streaming termination the broker invokes OnStreamCachePersisted with
 // the bare []ChunkRecord JSON timeline (what ToCacheStreamEntry decodes) and
 // the final usage, so the proxy can mirror the stream into the L2 semantic

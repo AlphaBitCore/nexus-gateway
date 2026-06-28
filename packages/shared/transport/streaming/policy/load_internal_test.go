@@ -2,8 +2,8 @@ package policy
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 )

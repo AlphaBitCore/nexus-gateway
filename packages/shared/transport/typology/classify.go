@@ -61,8 +61,7 @@ func matchPath(pattern, path string) bool {
 // is "/". "**" is not supported.
 //
 // Single source of truth for the path-rule glob matcher used by
-// ClassifyPath. The pre-E87 shared/traffic/classify package's matcher
-// was deleted in E87-S3a-1; this is now the only implementation.
+// ClassifyPath — the only implementation in the codebase.
 func globMatch(pattern, s string) bool {
 	if len(pattern) == 0 {
 		return s == ""

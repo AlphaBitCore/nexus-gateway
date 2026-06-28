@@ -14,8 +14,8 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strconv"
 	"strings"

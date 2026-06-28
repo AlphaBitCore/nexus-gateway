@@ -2,9 +2,9 @@ package iamstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 
@@ -166,20 +166,38 @@ func TestDeleteIamPolicy(t *testing.T) {
 
 func TestListIamGroups(t *testing.T) {
 	s, m := newMock(t)
-	m.ExpectQuery(`FROM "IamGroup" ORDER BY`).WillReturnRows(groupRow())
+	m.ExpectQuery(`SELECT COUNT\(\*\) FROM "IamGroup"`).WithArgs().WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	m.ExpectQuery(`FROM "IamGroup" .* ORDER BY`).WithArgs(1000, 0).WillReturnRows(groupRow())
 	gs, err := s.ListIamGroups(context.Background())
 	if err != nil || len(gs) != 1 || gs[0].ID != "g1" {
 		t.Fatalf("ListIamGroups: %+v %v", gs, err)
 	}
-	m.ExpectQuery(`FROM "IamGroup"`).WillReturnError(errors.New("boom"))
+
+	m.ExpectQuery(`SELECT COUNT`).WithArgs("%admin%").WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	m.ExpectQuery(`FROM "IamGroup" .* ORDER BY`).WithArgs("%admin%", 25, 50).WillReturnRows(groupRow())
+	gs, total, err := s.ListIamGroupsPage(context.Background(), "admin", 25, 50)
+	if err != nil || total != 1 || len(gs) != 1 || gs[0].ID != "g1" {
+		t.Fatalf("ListIamGroupsPage: %+v total=%d err=%v", gs, total, err)
+	}
+
+	m.ExpectQuery(`SELECT COUNT`).WillReturnError(errors.New("boom"))
 	if _, err := s.ListIamGroups(context.Background()); err == nil {
+		t.Fatal("count error must surface")
+	}
+
+	sQueryErr, mQueryErr := newMock(t)
+	mQueryErr.ExpectQuery(`SELECT COUNT`).WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
+	mQueryErr.ExpectQuery(`FROM "IamGroup"`).WillReturnError(errors.New("boom"))
+	if _, _, err := sQueryErr.ListIamGroupsPage(context.Background(), "", 10, 0); err == nil {
 		t.Fatal("query error must surface")
 	}
+
 	s2, m2 := newMock(t)
+	m2.ExpectQuery(`SELECT COUNT`).WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
 	m2.ExpectQuery(`FROM "IamGroup"`).WillReturnRows(
 		pgxmock.NewRows([]string{"id", "name", "description", "createdBy", "createdAt", "updatedAt"}).
 			AddRow("g1", "grp", sp("d"), sp("a"), "not-a-time", tNow))
-	if _, err := s2.ListIamGroups(context.Background()); err == nil {
+	if _, _, err := s2.ListIamGroupsPage(context.Background(), "", 10, 0); err == nil {
 		t.Fatal("scan error must surface")
 	}
 }

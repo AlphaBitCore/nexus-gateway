@@ -205,7 +205,7 @@ func TestResolveL2VKScope_None(t *testing.T) {
 	}
 }
 
-// resolveL1CacheScope (F-0051 / F-0229) reads the fleet vary_by from the
+// resolveL1CacheScope reads the fleet vary_by from the
 // semantic ConfigCache and returns a type-prefixed isolation token for the L1
 // exact-match key. These tests pin each vary_by branch and the nil/empty
 // fail-safe to fleet-wide ("").
@@ -528,7 +528,7 @@ func TestTryL2Lookup_NoCanonicalMsgs(t *testing.T) {
 	if rdr.called.Load() != 0 {
 		t.Error("reader should not be called on empty embedding input")
 	}
-	// F-0231(c): no canonical messages → no text to embed, which must stamp
+	// no canonical messages → no text to embed, which must stamp
 	// the accurate no_embeddable_text reason, NOT the oversize reason (the
 	// input was never oversize — there was simply nothing to embed).
 	if p.rec.GatewayCacheSkipReason != audit.GatewayCacheSkipReasonNoEmbeddableText {
@@ -615,7 +615,7 @@ func TestScheduleL2Write_EmptyBody(t *testing.T) {
 	}
 }
 
-// F-0228: streaming write-back now fires (previously bailed on isStream),
+// streaming write-back fires even on isStream,
 // stamping a response_kind=stream entry so equivalent streaming requests can
 // L2-hit instead of paying an embedding charge on a guaranteed miss.
 func TestScheduleL2Write_IsStreamWritesStreamKind(t *testing.T) {
@@ -701,9 +701,9 @@ func TestScheduleL2Write_FiresGoroutine(t *testing.T) {
 	}
 }
 
-// F-0049: vary_by ∈ {vk, user, org, none} must each isolate the write on the
-// configured dimension. Previously both write sites hardcoded VK scope, making
-// user/org/none a permanent miss against reads that filter on those scopes.
+// vary_by ∈ {vk, user, org, none} must each isolate the write on the
+// configured dimension, so user/org/none reads that filter on those scopes
+// do not become a permanent miss.
 func TestScheduleL2Write_VaryByResolvesScope(t *testing.T) {
 	rec := &audit.Record{VirtualKeyID: "vk-1", UserID: "user-1", OrganizationID: "org-1"}
 	cases := []struct {

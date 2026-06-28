@@ -3,7 +3,7 @@
 package observability
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"time"
 )
 

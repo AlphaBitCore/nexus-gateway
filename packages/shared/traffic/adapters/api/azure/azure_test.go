@@ -163,7 +163,7 @@ func TestExtractStreamChunk_EmptyDelta(t *testing.T) {
 
 // TestExtractRequest_AzureToolCallsDelegation pins that the Azure
 // adapter, which delegates to openai-compat after path remapping,
-// inherits the tool_calls extraction added in commit 6e7a61de — Azure
+// inherits the tool_calls extraction — Azure
 // OpenAI carries the same wire format, so assistant tool_calls in
 // conversation history must surface on ToolCallSegments through the
 // delegation chain.

@@ -3,7 +3,7 @@ package providers
 // no streaming — embeddings are request/response only.
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"

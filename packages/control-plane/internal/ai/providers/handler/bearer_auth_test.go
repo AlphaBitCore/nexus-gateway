@@ -1,5 +1,5 @@
 // Tests asserting the providers BFF forwarders attach the internal-service
-// bearer token on every CP→ai-gateway /internal/* call (F-0001).
+// bearer token on every CP→ai-gateway /internal/* call.
 package providers
 
 import (
@@ -97,6 +97,33 @@ func TestProbeCredential_AttachesBearer(t *testing.T) {
 
 	if err := h.ProbeCredential(c); err != nil {
 		t.Fatalf("ProbeCredential: %v", err)
+	}
+	if want := "Bearer " + cpInternalToken; gotAuth != want {
+		t.Errorf("Authorization = %q; want %q", gotAuth, want)
+	}
+}
+
+// TestForwardDiscoverModels_AttachesBearer verifies POST /providers/discover-models
+// carries Authorization: Bearer <token> on the CP→ai-gateway hop.
+func TestForwardDiscoverModels_AttachesBearer(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"models":[]}`))
+	}))
+	defer srv.Close()
+
+	h := newHandler(nil, nil, &auditSpy{}, nil, nil, nil, ProxyConfig{
+		AIGatewayURL:           srv.URL,
+		AIGatewayInternalToken: cpInternalToken,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	rec := httptest.NewRecorder()
+	c, _ := echoCtx(req, rec, "u-1")
+
+	if err := h.forwardDiscoverModels(c, "openai", "https://api.openai.com", "sk-x"); err != nil {
+		t.Fatalf("forwardDiscoverModels: %v", err)
 	}
 	if want := "Bearer " + cpInternalToken; gotAuth != want {
 		t.Errorf("Authorization = %q; want %q", gotAuth, want)

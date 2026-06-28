@@ -353,7 +353,7 @@ func TestListTokens_StoreErrorWraps(t *testing.T) {
 }
 
 // Revoke — thin pass-through; verify the error surface. (The old
-// ValidateToken / MarkUsed two-step was removed in F-0204; its replacement
+// ValidateToken / MarkUsed two-step is gone; its replacement
 // ConsumeToken / LinkThing is covered in enrollment_consume_test.go.)
 
 func TestRevoke_Success(t *testing.T) {

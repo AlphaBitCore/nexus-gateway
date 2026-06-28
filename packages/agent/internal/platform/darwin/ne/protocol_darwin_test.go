@@ -3,8 +3,8 @@
 package ne
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 )
 

@@ -28,9 +28,9 @@ import (
 //	policy.ModeChunkedAsync    → "live"   (real-time relay + per-chunk hook)
 //	policy.ModeBufferFullBlock → "buffer" (full-buffer hook with reject)
 //
-// Nil Store = passthrough (#115: deleted the legacy YAML
-// `streamingMode` fallback path — admin policy is now the single
-// source of truth, three-service aligned).
+// Nil Store = passthrough (there is no legacy YAML `streamingMode`
+// fallback path — admin policy is the single source of truth,
+// three-service aligned).
 func resolveStreamingMode(bo *bumpOptions, matched *domain.InterceptionDomain) string {
 	if bo.streamingPolicyStore == nil {
 		// No Store wired by the caller — fail-safe to passthrough so
@@ -73,7 +73,7 @@ func resolveStreamingMode(bo *bumpOptions, matched *domain.InterceptionDomain) s
 // once Connection is gone Values("Connection") returns nothing.
 //
 // This matches the same logic used by responseio.Copy and copyResponse on the
-// non-SSE path (Task 0.3), closing the asymmetry noted in that review.
+// non-SSE path, closing the SSE/non-SSE asymmetry.
 func stripDynamicHopByHop(h http.Header) {
 	for _, line := range h.Values("Connection") {
 		for _, name := range strings.Split(line, ",") {
@@ -118,7 +118,7 @@ func handleSSEResponse(
 		_ = resp.Body.Close()
 	}()
 
-	// SEC-W3-01 / F-0371: strict (appliance) fail-closed guard, evaluated
+	// Strict (appliance) fail-closed guard, evaluated
 	// BEFORE any response header is written to the client. If a mandatory
 	// fail-closed response hook cannot be built under strict policy, the
 	// streamed body CANNOT be inspected — refuse with 451 rather than relaying
@@ -158,7 +158,7 @@ func handleSSEResponse(
 	// strip the static set. Both must happen before copying to the client.
 	stripDynamicHopByHop(resp.Header)
 
-	// Capture content-type ONCE up front — #89 stampSSEResponseNormalized
+	// Capture content-type ONCE up front — stampSSEResponseNormalized
 	// needs it on every branch, and it must be read before the strip+copy
 	// loop modifies the header map.
 	respContentType := resp.Header.Get("Content-Type")
@@ -365,7 +365,7 @@ func handleSSEResponse(
 		if captureMax > 0 {
 			livePipeline.WithBodyCapture(captureMax)
 		}
-		// #90 — fire normalize before every checkpoint so hooks see
+		// Fire normalize before every checkpoint so hooks see
 		// the Registry-produced rich Normalized (model/tools/reasoning),
 		// not just flat-text. The callback ALSO stamps
 		// auditInfo.ResponseNormalized on each fire, so by end-of-stream
@@ -444,7 +444,7 @@ func handleSSEResponse(
 		if captureMax > 0 {
 			bufPipeline.WithBodyCapture(captureMax)
 		}
-		// #90 — fire normalize between Phase 1 (read full body) and
+		// Fire normalize between Phase 1 (read full body) and
 		// Phase 2 (run hooks) so hooks see the Registry-produced rich
 		// Normalized (model/tools/reasoning), not just buildCheckpointInput's
 		// flat-text fallback. The same callback ALSO stamps

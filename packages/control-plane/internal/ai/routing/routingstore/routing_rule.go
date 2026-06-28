@@ -2,9 +2,9 @@ package routingstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/jackc/pgx/v5"

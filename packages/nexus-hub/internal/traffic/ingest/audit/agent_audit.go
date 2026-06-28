@@ -1,7 +1,7 @@
 package audit
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 
@@ -53,7 +53,7 @@ type AgentAuditEvent struct {
 	LatencyMs     int    `json:"latencyMs,omitempty"`
 	SourceProcess string `json:"sourceProcess,omitempty"`
 	Action        string `json:"action,omitempty"`
-	// #71: wire keys are requestHookDecision/Reason/ReasonCode (agent
+	// wire keys are requestHookDecision/Reason/ReasonCode (agent
 	// AuditEventToMap stamps the request-stage hook decision under those
 	// keys; emit envelope below also uses the request* prefix for
 	// consumer alignment). Old hookDecision tag silently dropped the
@@ -131,7 +131,7 @@ type AgentAuditEvent struct {
 	LatencyBreakdown map[string]int `json:"latencyBreakdown,omitempty"`
 
 	// NormalizedRequest / NormalizedResponse — the agent's runtime-normalized
-	// payload copies, already governed by the hook stage's storageAction
+	// payload copies, already governed by the hook stage's action
 	// (span-redacted, or replaced by the drop-content placeholder). When
 	// present they take precedence over Hub-side re-normalization of the
 	// raw bytes: under a redact policy the raw copy may have been dropped

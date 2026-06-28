@@ -85,6 +85,21 @@ func ExtractUsage(raw []byte, wireFormat Format) Usage {
 		return Usage{}
 	}
 
+	// Fast path: when the normalizer exposes a usage-only extractor and confidently
+	// handles this body, use it — it parses only the usage block instead of the full
+	// content projection (~4-5x cheaper, far fewer allocs). It declines (ok=false)
+	// for SSE bodies and parse failures, falling through to the full Normalize below;
+	// when ok=true the result is contractually identical to full Normalize's Usage
+	// (see shared/normalize/codecs/usage_only.go + its differential equivalence tests).
+	if ue, hasFast := n.(normcodecs.UsageOnlyExtractor); hasFast {
+		if u, ok := ue.ExtractUsageOnly(raw); ok {
+			if u == nil {
+				return Usage{}
+			}
+			return *u
+		}
+	}
+
 	np, err := n.Normalize(context.Background(), raw, normcore.Meta{
 		Direction: normcore.DirectionResponse,
 	})

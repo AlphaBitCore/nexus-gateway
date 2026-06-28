@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -139,7 +139,7 @@ func jwksServerWith(t *testing.T, entries ...map[string]any) *httptest.Server {
 	}))
 }
 
-// TestCache_EmptyKidMultipleKeysRejected covers F-0254: when the cache holds
+// TestCache_EmptyKidMultipleKeysRejected covers the case where the cache holds
 // more than one key and the caller passes an empty kid, Get must return an
 // error rather than a nondeterministic map-iteration key. The single-key
 // convenience is covered by TestCacheEmptyKidReturnsSomeKey.
@@ -165,7 +165,7 @@ func TestCache_EmptyKidMultipleKeysRejected(t *testing.T) {
 	}
 }
 
-// TestCache_WeakModulusRejected covers F-0253: a sub-2048-bit RSA modulus must
+// TestCache_WeakModulusRejected covers the case where a sub-2048-bit RSA modulus must
 // be rejected at parse time so it never enters the cache, even on a 200 with
 // otherwise well-formed base64url fields.
 func TestCache_WeakModulusRejected(t *testing.T) {
@@ -189,7 +189,7 @@ func TestCache_WeakModulusRejected(t *testing.T) {
 	}
 }
 
-// TestCache_OversizedExponentRejected covers F-0253: an exponent larger than
+// TestCache_OversizedExponentRejected covers the case where an exponent larger than
 // 8 bytes would be silently truncated by e.Int64()→int, producing a wrong key
 // that mis-verifies signatures. Such a key must be rejected, not installed. The
 // modulus is a real 2048-bit value so the rejection is attributable to the

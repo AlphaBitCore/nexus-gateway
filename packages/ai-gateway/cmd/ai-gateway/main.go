@@ -23,6 +23,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/profiling"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/runtimemem"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/configstore"
 	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
@@ -35,6 +37,7 @@ func main() { os.Exit(run()) }
 
 func run() int {
 	_, _ = bootenv.LoadFromRepoRoot(slog.Default())
+	runtimemem.AutoSetMemoryLimit(slog.Default())
 	configPath := flag.String("config", "ai-gateway.config.yaml", "config file path")
 	flag.Parse()
 
@@ -128,10 +131,12 @@ func run() int {
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 	}
+	// Opt-in profiler: SIGUSR1 dumps to NEXUS_PPROF_DIR / HTTP on NEXUS_PPROF_ADDR. No-op unless set.
+	profiling.Start("nexus-ai-gateway")
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		slog.Info("ai-gateway starting", "addr", addr, "log_level", cfg.Log.Level)
-		// #115 — the prior "#95 chunked_async only" startup INFO log was
+		// The prior "chunked_async only" startup INFO log was
 		// removed here. ai-gateway now honors all three streaming modes
 		// (passthrough / chunked_async / buffer_full_block) via the
 		// shared streampolicy.Store; the SSE handler dispatches per

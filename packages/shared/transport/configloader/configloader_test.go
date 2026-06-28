@@ -2,9 +2,9 @@ package configloader_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sort"

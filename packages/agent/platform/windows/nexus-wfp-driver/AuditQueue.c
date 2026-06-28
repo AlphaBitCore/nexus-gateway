@@ -19,7 +19,7 @@
 typedef struct _NEXUS_AUDIT_NODE {
     LIST_ENTRY          list;
     NexusFlowAuditEntry entry;
-} NEXUS_AUDIT_NODE;
+} NEXUS_AUDIT_NODE, *PNEXUS_AUDIT_NODE;
 
 static LIST_ENTRY g_AuditRing;        // pending records, head = oldest
 static volatile LONG g_AuditRingDepth = 0;

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"reflect"
 	"sort"
@@ -42,6 +43,16 @@ type PolicyResolver struct {
 	// per resolve() call. Reset on every Swap().
 	warnedMu      sync.Mutex
 	warnedUnknown map[string]struct{}
+
+	// swapGen is incremented at the start of every Swap. Prewarm captures it and
+	// refuses to cache a hook if a swap raced during its (lock-free) build, so a
+	// background prewarm can never install a stale-config hook.
+	swapGen atomic.Uint64
+
+	// union memoises the folded raw-body prefilter (one matcher over every content
+	// hook's anchor-stripped patterns) per resolved hook set, tagged with the
+	// swapGen it was built under. See unionprescan.go.
+	union unionState
 }
 
 // NewPolicyResolver creates a resolver with an initial hook config snapshot
@@ -75,6 +86,7 @@ func NewPolicyResolver(configs []core.HookConfig, registry *core.HookRegistry, l
 // actually changed (plus new rows). This keeps reload cost O(changed)
 // rather than O(N) when most rows are stable.
 func (r *PolicyResolver) Swap(configs []core.HookConfig) {
+	prevGen := r.swapGen.Add(1) - 1
 	snapshot := append([]core.HookConfig(nil), configs...)
 	oldPtr := r.hookConfigs.Swap(&snapshot)
 
@@ -98,8 +110,42 @@ func (r *PolicyResolver) Swap(configs []core.HookConfig) {
 			preserved[cfg.ID] = h
 		}
 	}
+	// Hooks built for changed or removed rows are dropped here. Collect them so
+	// any that own native resources (the Vectorscan matcher's compiled database
+	// and scratch) are released — GC alone never frees cgo memory. Closing runs
+	// after the lock so the matcher's in-flight-scan drain cannot stall readers.
+	var evicted []core.Hook
+	for id, h := range r.hookCache {
+		if _, kept := preserved[id]; !kept {
+			evicted = append(evicted, h)
+		}
+	}
 	r.hookCache = preserved
 	r.hookMu.Unlock()
+
+	// Close immediately. The matcher's own in-flight-scan drain makes this safe
+	// for scans already running on the evicted hook. A request that resolved the
+	// old hook in the microseconds before this swap but has not yet called Scan
+	// will get a no-op (Approve) for that one request — acceptable for the agent,
+	// which is the mandated fail-open caller. If the proxies ever ship the
+	// Vectorscan tag, switch this to a grace-period deferred close so that
+	// resolve→Scan window drains too.
+	for _, h := range evicted {
+		if c, ok := h.(io.Closer); ok {
+			if err := c.Close(); err != nil && r.logger != nil {
+				r.logger.Warn("policy: error closing evicted hook", "error", err)
+			}
+		}
+	}
+
+	// Close the PREVIOUS generation's union prefilters (separate compiled
+	// databases that copied the old hooks' patterns, so closing the hooks above
+	// does not free them). Gen-scoped to prevGen so a concurrent new-generation
+	// BuildPipeline that already reset the cache is never disturbed (see
+	// closeUnionsIfGen). Drain-safe like the evicted hooks; if a new-gen request
+	// already advanced the cache, those stale matchers are freed by its lazy
+	// reset instead.
+	r.closeUnionsIfGen(prevGen)
 
 	// Reset warn-dedup state so a re-appearing unknown implementationId
 	// will log once on the first resolve() after this reload.
@@ -122,6 +168,72 @@ func (r *PolicyResolver) SwapIfChanged(configs []core.HookConfig) bool {
 	}
 	r.Swap(configs)
 	return true
+}
+
+// Prewarm eagerly builds and caches the hook for every enabled request/response
+// config so the factory's compile cost (notably the Vectorscan database, ~100s
+// of ms) runs OFF the request path — at startup and in the background after each
+// Swap. It is best-effort and idempotent:
+//
+//   - Hooks are built WITHOUT holding hookMu (the compile must not block
+//     resolve()), then inserted under the lock with a double-check.
+//   - It is guarded by swapGen: if a Swap races while Prewarm is building, the
+//     captured generation no longer matches and Prewarm aborts without caching,
+//     so it can never install a hook for a superseded config. The newer Swap
+//     spawns its own Prewarm for the current snapshot.
+//   - Connection-stage hooks are skipped (they are cheap metadata hooks and
+//     resolve() applies an extra connection-compat gate before caching them).
+//
+// A hook left unbuilt (factory error, or aborted prewarm) is simply built
+// lazily by the next resolve(), exactly as before — prewarm only removes the
+// first-request latency spike, never changes correctness.
+func (r *PolicyResolver) Prewarm() {
+	gen := r.swapGen.Load()
+	configs := r.snapshot()
+	for i := range configs {
+		cfg := &configs[i]
+		if !cfg.Enabled || strings.EqualFold(cfg.Stage, "connection") {
+			continue
+		}
+		factory := r.registry.Get(cfg.ImplementationID)
+		if factory == nil {
+			continue
+		}
+		r.hookMu.RLock()
+		_, hit := r.hookCache[cfg.ID]
+		r.hookMu.RUnlock()
+		if hit {
+			continue
+		}
+		// Build outside the lock — the compile is the expensive part and must
+		// not stall concurrent resolve() readers.
+		hook, err := factory(cfg)
+		if err != nil {
+			continue // resolve() will log+skip per its fail posture
+		}
+		r.hookMu.Lock()
+		switch {
+		case r.swapGen.Load() != gen:
+			// A swap raced; this snapshot may be stale. Drop our build.
+			r.hookMu.Unlock()
+			closeHook(hook)
+		case r.hookCache[cfg.ID] != nil:
+			// Someone (resolve or a concurrent prewarm) already built it.
+			r.hookMu.Unlock()
+			closeHook(hook)
+		default:
+			r.hookCache[cfg.ID] = hook
+			r.hookMu.Unlock()
+		}
+	}
+}
+
+// closeHook releases a built-but-unused hook's resources (e.g. a Vectorscan
+// matcher's cgo memory) when prewarm discards it.
+func closeHook(h core.Hook) {
+	if c, ok := h.(io.Closer); ok {
+		_ = c.Close()
+	}
 }
 
 // snapshot returns the current hook config slice. Callers MUST capture
@@ -241,6 +353,9 @@ func (r *PolicyResolver) resolve(stage, ingressType string, strictFailClosed boo
 		if strings.EqualFold(cfg.Stage, "connection") {
 			if _, ok := hook.(core.ConnectionStageCompatible); !ok {
 				r.hookMu.Unlock()
+				// The hook was built but is being dropped (not cached), so free
+				// any native resources it holds (a Vectorscan matcher's cgo DB).
+				closeHook(hook)
 				if strictFailClosed && strings.EqualFold(cfg.FailBehavior, "fail-closed") {
 					return nil, fmt.Errorf("hook %q (impl %q): not connection-stage compatible (connection stage forbids MODIFY-capable hooks) and FailBehavior=fail-closed: %w",
 						cfg.ID, cfg.ImplementationID, errFailClosedUnbuildable)
@@ -265,43 +380,6 @@ func (r *PolicyResolver) resolve(stage, ingressType string, strictFailClosed boo
 	})
 
 	return out, nil
-}
-
-// matchesIngress checks whether a hook config applies to the given ingress type.
-// Semantics: if any entry in ApplicableIngress matches the current ingressType,
-// return true.
-//
-// Named aliases:
-//   - "ALL"                   → matches every ingress type
-//   - "AI_GATEWAY"        → matches "AI_GATEWAY" only
-//   - "COMPLIANCE_PROXY"  → matches "COMPLIANCE_PROXY" only
-//   - "AGENT"             → matches "AGENT" only
-//
-// Any other value is matched case-insensitively against the ingressType.
-func (r *PolicyResolver) matchesIngress(cfg *core.HookConfig, ingressType string) bool {
-	if len(cfg.ApplicableIngress) == 0 {
-		return true
-	}
-
-	for _, ing := range cfg.ApplicableIngress {
-		upper := strings.ToUpper(ing)
-		if upper == "ALL" {
-			return true
-		}
-		if upper == "AI_GATEWAY" && strings.EqualFold(ingressType, "AI_GATEWAY") {
-			return true
-		}
-		if upper == "COMPLIANCE_PROXY" && strings.EqualFold(ingressType, "COMPLIANCE_PROXY") {
-			return true
-		}
-		if upper == "AGENT" && strings.EqualFold(ingressType, "AGENT") {
-			return true
-		}
-		if strings.EqualFold(upper, ingressType) {
-			return true
-		}
-	}
-	return false
 }
 
 // BuildPipeline resolves hooks for the given stage and ingress type and returns a
@@ -383,59 +461,11 @@ func (r *PolicyResolver) BuildPipeline(
 	if len(filtered) == 0 {
 		return nil, nil
 	}
-	return NewPipeline(filtered, perHookTimeout, totalTimeout, parallel, logger), nil
-}
-
-// warnUnknownImpl logs a warning for an implementationId that is advertised in
-// the database but has no factory registered. The warning fires at most once
-// per unique implementationId per reload epoch — Swap() resets the dedup set,
-// so a subsequent reload that still references an unknown id will log again.
-// The hookId / hookName of the first-seen row are included so operators can
-// locate the offending row without searching.
-func (r *PolicyResolver) warnUnknownImpl(implID, hookID, hookName string) {
-	r.warnedMu.Lock()
-	if _, seen := r.warnedUnknown[implID]; seen {
-		r.warnedMu.Unlock()
-		return
-	}
-	if r.warnedUnknown == nil {
-		r.warnedUnknown = make(map[string]struct{})
-	}
-	r.warnedUnknown[implID] = struct{}{}
-	r.warnedMu.Unlock()
-
-	r.logger.Warn("unknown hook implementation, skipping",
-		"implementationId", implID,
-		"hookId", hookID,
-		"hookName", hookName,
-	)
-}
-
-// warnSkippedHook logs that a hook was skipped during pipeline build because
-// its factory failed or it was stage-incompatible. Deduplicated per hookId
-// per reload epoch (Swap resets the dedup set) so a persistently-broken hook
-// logs once per reload instead of once per resolve() call. This is the
-// availability-first degradation path: the offending hook is dropped; the
-// rest of the pipeline still builds and runs.
-func (r *PolicyResolver) warnSkippedHook(implID, hookID, hookName string, cause error) {
-	r.warnedMu.Lock()
-	dedupKey := "skip:" + hookID
-	if _, seen := r.warnedUnknown[dedupKey]; seen {
-		r.warnedMu.Unlock()
-		return
-	}
-	if r.warnedUnknown == nil {
-		r.warnedUnknown = make(map[string]struct{})
-	}
-	r.warnedUnknown[dedupKey] = struct{}{}
-	r.warnedMu.Unlock()
-
-	r.logger.Warn("compliance hook skipped during pipeline build (degrading to this hook off)",
-		"implementationId", implID,
-		"hookId", hookID,
-		"hookName", hookName,
-		"error", cause,
-	)
+	p := NewPipeline(filtered, perHookTimeout, totalTimeout, parallel, logger)
+	// Fold every content hook's raw-body prefilter into one shared scan for this
+	// resolved set (cached per generation). nil => use the per-hook loop.
+	p.unionPrescan = r.unionPrescanFor(filtered)
+	return p, nil
 }
 
 // HasHooks returns true if any enabled hooks exist for the given stage.

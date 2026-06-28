@@ -1,6 +1,6 @@
 package quota
 
-// F-0099 regression: quota policy/override writes must fail loud (HTTP 502)
+// Quota policy/override writes must fail loud (HTTP 502)
 // when the Category B invalidation push to Hub fails, so the data plane does
 // not keep enforcing a stale spend cap while the UI reports success. Each test
 // asserts the CP DB write committed (truth preserved), the response is 502 with
@@ -52,7 +52,7 @@ func newHandlerWithAuditCount(db quotaDB, hub HubAPI) (*Handler, *countingProduc
 	return &Handler{
 		quota:   db,
 		metrics: &fakeMetricsDB{},
-		// Found-by-default doubles so the F-0170 referential checks pass on the
+		// Found-by-default doubles so the referential checks pass on the
 		// committed-write path these tests exercise.
 		users:  &fakeUsersDB{user: &userstore.NexusUserSafe{DisplayName: "u"}},
 		orgs:   &fakeOrgsDB{org: &orgstore.Organization{Name: "o"}, project: &orgstore.Project{Name: "p"}},

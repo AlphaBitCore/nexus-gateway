@@ -406,31 +406,6 @@ func TestExtractRequest_McpServersInMetadata(t *testing.T) {
 	}
 }
 
-// TestExtractRequest_Extra covers the safety-net path: novel top-level
-// fields land in Extra so a future Anthropic spec addition still
-// reaches compliance hooks.
-func TestExtractRequest_Extra(t *testing.T) {
-	body := []byte(`{
-		"model": "claude-sonnet-4-6",
-		"messages": [{"role":"user","content":"hi"}],
-		"x_future_audit_payload": {"sensitive": "must reach hooks"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/v1/messages")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	x, ok := nc.Extra["x_future_audit_payload"]
-	if !ok || !strings.Contains(x, "sensitive") {
-		t.Errorf("Extra=%v missing x_future_audit_payload", nc.Extra)
-	}
-	for _, known := range []string{"model", "messages", "tools", "mcp_servers"} {
-		if _, ok := nc.Extra[known]; ok {
-			t.Errorf("Extra leaked known key %q", known)
-		}
-	}
-}
-
 // TestExtractResponse_ToolUseBlock covers an assistant response that
 // contains a tool_use block alongside (or instead of) text. The
 // invocation lands on ToolCallSegments.
@@ -485,22 +460,6 @@ func TestExtractResponse_StopReasonAndSequence(t *testing.T) {
 	}
 	if nc.Metadata["stop_sequence"] != "END" {
 		t.Errorf("stop_sequence=%q", nc.Metadata["stop_sequence"])
-	}
-}
-
-// TestExtractResponse_Extra covers the response-side defence-in-depth.
-func TestExtractResponse_Extra(t *testing.T) {
-	body := []byte(`{
-		"content":[{"type":"text","text":"hi"}],
-		"x_future_response_field":{"new":"audit"}
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractResponse(context.Background(), body, "/v1/messages")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if _, ok := nc.Extra["x_future_response_field"]; !ok {
-		t.Errorf("Extra missing x_future_response_field: %v", nc.Extra)
 	}
 }
 

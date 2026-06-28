@@ -5,8 +5,8 @@ package senders
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
@@ -41,15 +41,15 @@ func decodeConfig[T any](m map[string]any) (T, error) {
 }
 
 // errGenericDeliveryFailure is the single, byte-identical error every
-// admin-configured-webhook delivery failure collapses to (F-0370). The sender
+// admin-configured-webhook delivery failure collapses to. The sender
 // result (status code + error string) is persisted onto the AlertDispatch row and
 // read back in the admin UI, so a distinct transport error (SSRF-guard reject vs.
 // connection-refused vs. TLS handshake failure) or a distinct upstream status
 // (401 vs. 403 vs. 500) would be a blind-SSRF / internal-endpoint fingerprinting
 // oracle for a caller who can configure a channel but should not learn the shape
-// of the deployment's internal network. Mirrors the SIEM-test collapse
-// (SEC-M6-01): any two distinct failure causes MUST produce identical output, so
-// the status code is dropped (returned 0) and the cause is hidden.
+// of the deployment's internal network. Mirrors the SIEM HTTP-sink collapse:
+// any two distinct failure causes MUST produce identical output, so the status
+// code is dropped (returned 0) and the cause is hidden.
 var errGenericDeliveryFailure = fmt.Errorf("alert delivery failed")
 
 // collapseSendResult maps a raw delivery outcome to the generic

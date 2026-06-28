@@ -9,8 +9,8 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"

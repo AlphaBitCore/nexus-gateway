@@ -7,7 +7,7 @@ package siem
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -239,7 +239,7 @@ func TestGetSIEMConfig_WithConfig_ReturnsMaskedHeaders(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// F-0197: secret headers are redacted to the FIXED sentinel — no byte of the
+	// Secret headers are redacted to the FIXED sentinel — no byte of the
 	// real token may appear in the read-back (not even a partial first/last-4
 	// reveal). The full token must not leak, and the sentinel must not contain
 	// any substring of the real value.
@@ -287,7 +287,7 @@ func TestGetSIEMConfig_EmptySecretHeaderNotSentinel(t *testing.T) {
 	}
 }
 
-// TestUpdateSIEMConfig_PreservesSecretOnSentinelRoundTrip is the core F-0197
+// TestUpdateSIEMConfig_PreservesSecretOnSentinelRoundTrip is the core
 // write-side assertion: when the client PUTs the redaction sentinel for a secret
 // header (the value GetSIEMConfig handed it), the previously stored REAL token
 // must be persisted — not the placeholder — so the SIEM forwarder keeps working
@@ -523,7 +523,7 @@ func TestTestSIEMConfig_NoURL_400(t *testing.T) {
 	}
 }
 
-// TestTestSIEMConfig_PrivateURL_SSRFBlocked is the SEC-M6-01 end-to-end SSRF
+// TestTestSIEMConfig_PrivateURL_SSRFBlocked is the end-to-end SSRF
 // regression: a SIEM URL pointing at a loopback / private address must be
 // refused at dial time by the scoped BlockPrivateDialControl guard, and the
 // response must be the GENERIC unreachable envelope — no statusCode field, and
@@ -561,7 +561,7 @@ func TestTestSIEMConfig_PrivateURL_SSRFBlocked(t *testing.T) {
 	}
 }
 
-// TestSiemProbeResult_NoOracle is the SEC-M6-01 unit contract for the response
+// TestSiemProbeResult_NoOracle is the unit contract for the response
 // mapper: a dial failure and an upstream error status each collapse to a fixed
 // boolean + message with NO statusCode, and a 2xx is a bare ok=true. The key
 // assertion is that two DISTINCT upstream error statuses (403 vs 500) yield
@@ -598,7 +598,7 @@ func TestSiemProbeResult_NoOracle(t *testing.T) {
 	}
 }
 
-// TestRegisterSIEMRoutes_MutatingVerbsRequireSettingsWrite is the SEC-M6-01 IAM
+// TestRegisterSIEMRoutes_MutatingVerbsRequireSettingsWrite is the IAM
 // tier regression: the egress-mutating verbs (PUT config, POST test) must be
 // gated on settings:write — NOT the old audit-log:write — so a narrow audit-log
 // grant can no longer redirect the org-wide audit stream. The read verbs stay on
@@ -666,7 +666,7 @@ func TestListSIEMEventTypes_ReturnsNonEmpty(t *testing.T) {
 	}
 }
 
-// TestListSIEMEventTypes_IncludesAuthLoginTypes is the picker half of F-0192:
+// TestListSIEMEventTypes_IncludesAuthLoginTypes is the picker half:
 // the auth.login_failure / auth.login_success identities ClassifyAdminEvent maps
 // login rows to must be selectable in the filter, otherwise enabling any
 // whitelist silently stops forwarding login events.

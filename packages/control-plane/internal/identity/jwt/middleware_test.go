@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"math/big"
 	"net/http"
 	"net/http/httptest"

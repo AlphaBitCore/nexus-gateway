@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"unicode/utf8"
+	"strings"
 
 	"github.com/tidwall/gjson"
 
@@ -108,26 +108,60 @@ func (h *Handler) checkCompareRateLimit(w http.ResponseWriter, vkMeta *vkauth.VK
 // or unrecognised body must not block the request — the routing layer
 // makes its own non-smart fallback.
 func (h *Handler) buildRequestContext(r *http.Request, vkMeta *vkauth.VKMeta, body []byte, ingressFormat provcore.Format, modelID, endpointType string) *requestcontext.RequestContext {
-	var canonical *normcore.NormalizedPayload
-	if h.deps.NormalizeRegistry != nil && len(body) > 0 {
-		payload, err := h.deps.NormalizeRegistry.Normalize(r.Context(), body, normcore.Meta{
-			AdapterType:  string(ingressFormat),
-			Model:        modelID,
-			ContentType:  r.Header.Get("Content-Type"),
-			Direction:    normcore.DirectionRequest,
-			EndpointPath: r.URL.Path,
-		})
-		if err == nil {
-			canonical = &payload
-		}
-	}
-	return requestcontext.NewBuilder().
+	b := requestcontext.NewBuilder().
 		WithIdentity(vkMeta).
-		WithNormalized(canonical).
 		WithEndpoint(endpointType).
 		WithHeaders(r.Header).
-		WithRawBody(body).
-		Build()
+		WithRawBody(body)
+
+	if h.deps.NormalizeRegistry != nil && len(body) > 0 {
+		ctx := r.Context()
+		// Meta aligned with the audit-path Meta (auditbridge.BuildAuditFn):
+		// lowercased AdapterType + stripped ContentType, so the registry selects
+		// the identical normalizer and the audit reuse path stays byte-identical.
+		meta := normcore.Meta{
+			AdapterType:  strings.ToLower(string(ingressFormat)),
+			Model:        modelID,
+			ContentType:  normcore.StripContentTypeParams(r.Header.Get("Content-Type")),
+			Direction:    normcore.DirectionRequest,
+			EndpointPath: r.URL.Path,
+		}
+		compute := func() *normcore.NormalizedPayload {
+			payload, err := h.deps.NormalizeRegistry.Normalize(ctx, body, meta)
+			if err != nil {
+				return nil
+			}
+			return &payload
+		}
+		// Kill-switch OFF: eager-compute (byte-identical to legacy). ON: install
+		// the lazy seam so the canonical materializes only when smart routing or
+		// the cache pulls it; the lean path computes it zero times.
+		if h.lazyCanonical {
+			b = b.WithLazyNormalize(compute)
+		} else {
+			b = b.WithNormalized(compute())
+		}
+	}
+	return b.Build()
+}
+
+// smartRouteNeedsCanonical reports whether routing must materialize the request
+// canonical so a smart rule can read the prompt — keyed on the requested MODEL
+// (the model-only match-aware probe). The cache pulls the canonical separately
+// in the cache stage, so it is NOT part of this gate. Fail-safe to true when the
+// kill-switch is off or the Router lacks the probe (a false negative would
+// silently route smart rules to their default model).
+func (h *Handler) smartRouteNeedsCanonical(ctx context.Context, modelID string) bool {
+	if !h.lazyCanonical {
+		return true
+	}
+	probe, ok := h.deps.Router.(interface {
+		RequestNeedsCanonical(context.Context, string) bool
+	})
+	if !ok {
+		return true
+	}
+	return probe.RequestNeedsCanonical(ctx, modelID)
 }
 
 // resolveRoute runs the routing engine via Router.ResolveTargets, returning a
@@ -152,12 +186,19 @@ func (h *Handler) resolveRoute(ctx context.Context, rctxFull *requestcontext.Req
 			AllowedModels:    vkMeta.AllowedModels,
 		}
 	}
+	// Materialize the request canonical for the router ONLY when a smart rule
+	// could apply to this model (Normalized() triggers the lazy compute). The
+	// lean path never computes it for routing; non-smart strategies use metadata.
+	var canonReq *normcore.NormalizedPayload
+	if h.smartRouteNeedsCanonical(ctx, modelID) {
+		canonReq = rctxFull.Normalized()
+	}
 	rctx := &routingcore.RoutingContext{
 		RequestedModel: routingcore.RequestedModel{ID: modelID},
 		EndpointType:   endpointKind,
 		VirtualKey:     vkCtx,
 		Headers:        routingcore.NewSafeHeaders(rctxFull.Headers()),
-		Request:        rctxFull.Normalized(),
+		Request:        canonReq,
 	}
 
 	// Embeddings capability pre-filter: parse the embedding request
@@ -218,64 +259,6 @@ func buildOrgPath(orgID string, parents map[string]string) []string {
 	return path
 }
 
-// estimateTokens estimates the number of tokens in a request body using
-// rune-based counting. CJK characters are single runes but often correspond
-// to more tokens than ASCII bytes/4 would suggest; rune/3 gives a better
-// cross-language approximation.
-func estimateTokens(body []byte) int64 {
-	runeCount := int64(utf8.RuneCount(body))
-	est := runeCount / 3
-	if est < 1 {
-		est = 1
-	}
-	return est
-}
-
-// quotaHasCostLimit reports whether any level in the decision carries an
-// enforced cost limit (Engine.Check stamps HasLimit on every level that
-// resolved a positive cost cap). Used by the unpriced-model guard
-// to fail closed only when a cost quota actually applies.
-func quotaHasCostLimit(decision *quota.Decision) bool {
-	if decision == nil {
-		return false
-	}
-	for _, lvl := range decision.Levels {
-		if lvl.HasLimit {
-			return true
-		}
-	}
-	return false
-}
-
-// quotaDowngradeBudget returns, in USD, the remaining headroom under the
-// tightest enforced cap in the decision — the maximum spend a downgraded
-// model may incur while still satisfying EVERY level's cost cap. Levels
-// without a limit are ignored; a level already at/over its cap contributes
-// 0 (forcing selection of the cheapest available model). Returns 0 when no
-// level carries a limit.
-func quotaDowngradeBudget(decision *quota.Decision) float64 {
-	if decision == nil {
-		return 0
-	}
-	budgetCents := int64(-1)
-	for _, lvl := range decision.Levels {
-		if !lvl.HasLimit {
-			continue
-		}
-		remaining := lvl.LimitCents - lvl.CurrentCents
-		if remaining < 0 {
-			remaining = 0
-		}
-		if budgetCents < 0 || remaining < budgetCents {
-			budgetCents = remaining
-		}
-	}
-	if budgetCents < 0 {
-		budgetCents = 0
-	}
-	return float64(budgetCents) / 100
-}
-
 // checkQuota performs quota enforcement and downgrade logic via the Engine.
 // Returns pricing info and optional Decision.
 // Sets rec.StatusCode and writes a response if quota is rejected (caller must
@@ -325,7 +308,9 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 		rec.Metadata = stampUnpricedCost(rec.Metadata)
 	}
 
-	parsed := gjson.ParseBytes(body)
+	// gjson.GetBytes is zero-copy; gjson.ParseBytes copies the whole ~50 KB body
+	// to a string per request. Read max_tokens directly with GetBytes — the
+	// value is identical and the per-request body copy disappears.
 	// Output-token reservation for the quota PRE-check. This is a soft,
 	// deliberately-conservative reservation, NOT the billed amount:
 	//   - When the caller pins max_tokens we reserve exactly that (the
@@ -340,7 +325,7 @@ func (h *Handler) checkQuota(r *http.Request, w http.ResponseWriter, rec *audit.
 	// pre-check is an approximation; the authoritative cost is always the
 	// reconciled actual usage. See §6 of
 	// docs/developers/architecture/cross-cutting/safety/quota-architecture.md.
-	maxTokens := parsed.Get("max_tokens").Int()
+	maxTokens := gjson.GetBytes(body, "max_tokens").Int()
 	if maxTokens <= 0 {
 		maxTokens = 4096
 	}

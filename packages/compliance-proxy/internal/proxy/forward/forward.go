@@ -26,8 +26,8 @@ import (
 )
 
 // StreamingTuning is the hot-swappable bundle of streaming-timeout
-// tunables. The mode field was removed — admin streaming
-// policy (resolved via Config.StreamingPolicyStore) is now the single
+// tunables. There is no mode field — admin streaming
+// policy (resolved via Config.StreamingPolicyStore) is the single
 // source of truth for SSE mode dispatch.
 type StreamingTuning struct {
 	PerHookTimeout time.Duration
@@ -188,6 +188,11 @@ func Run(ctx context.Context, conn net.Conn, cfg Config) {
 	// rather than forwarded uninspected. The agent NE host-packet path does NOT
 	// set this and stays fail-open by design.
 	bumpOpts = append(bumpOpts, tlsbump.WithStrictFailClosed())
+	// The compliance-proxy owns a client-facing HTTP response (its callers are
+	// API/browser clients expecting a structured 403), so a block writes the
+	// rich attributed reject body (blocked_by_policy envelope + rule-ID reason)
+	// rather than a bare "Forbidden".
+	bumpOpts = append(bumpOpts, tlsbump.WithRichReject(true))
 	// Install the attestation verifier so tlsbump's pre-pipeline peek can
 	// short-circuit attested requests to pure passthrough. Nil-safe — no-op
 	// when feature off.

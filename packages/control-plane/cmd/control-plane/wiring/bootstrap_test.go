@@ -25,7 +25,7 @@ func TestInitBootstrap_NonexistentConfigPath_UsesDefaults(t *testing.T) {
 	t.Setenv("REDIS_ADDRS", "localhost:6379")
 	t.Setenv("MQ_DRIVER", "nats")
 	t.Setenv("NATS_URL", "nats://localhost:4222")
-	// ADMIN_KEY_HMAC_SECRET is mandatory in every environment (SEC-M9-01/02: no
+	// ADMIN_KEY_HMAC_SECRET is mandatory in every environment (no
 	// dev fallback), so the bootstrap HMAC guard needs it set even for this
 	// defaults-loading test.
 	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
@@ -54,7 +54,7 @@ func TestInitBootstrap_MissingIssuer_ReturnsError(t *testing.T) {
 			os.Setenv("AUTH_SERVER_ISSUER", prevIssuer)
 		}
 	}()
-	// Satisfy the config baseline + the mandatory HMAC guard (SEC-M9-01/02) so
+	// Satisfy the config baseline + the mandatory HMAC guard so
 	// the failure isolates to the issuer check rather than tripping earlier.
 	t.Setenv("ADMIN_KEY_HMAC_SECRET", "test-hmac-secret")
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "tok")
@@ -88,7 +88,7 @@ func TestInitBootstrap_InvalidYAML_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestInitBootstrap_HMACSecretIsEnvOnly is the F-0075 regression: the
+// TestInitBootstrap_HMACSecretIsEnvOnly is the regression guard: the
 // HMAC secret is env-only (config.Auth.HMACSecret is `yaml:"-"`). A YAML
 // `auth.hmacSecret` value must be IGNORED — there is no YAML→env bridge.
 // The secret comes solely from ADMIN_KEY_HMAC_SECRET.
@@ -125,11 +125,11 @@ func TestInitBootstrap_HMACSecretIsEnvOnly(t *testing.T) {
 		t.Fatalf("write yaml: %v", err)
 	}
 
-	// SEC-M9-01/02 + SEC-W2-03 Layer C: ADMIN_KEY_HMAC_SECRET is env-only AND
+	// ADMIN_KEY_HMAC_SECRET is env-only AND
 	// mandatory (no dev fallback). With the secret present only in YAML (and
 	// absent from env), InitBootstrap must fail the HMAC guard — proving the YAML
 	// value neither satisfies the requirement nor is bridged into the env. The
-	// guard now lives in config.validate() (against the custody-resolved field),
+	// guard lives in config.validate() (against the custody-resolved field),
 	// so the error surfaces from config.Load.
 	_, err := InitBootstrap(cfgPath)
 	if err == nil {
@@ -145,8 +145,8 @@ func TestInitBootstrap_HMACSecretIsEnvOnly(t *testing.T) {
 }
 
 func TestInitBootstrap_MissingHMAC_ReturnsError(t *testing.T) {
-	// SEC-W2-03 Layer C: a missing HMAC secret must abort the boot UNCONDITIONALLY
-	// (dev and prod alike — the guard no longer depends on any production flag).
+	// A missing HMAC secret must abort the boot UNCONDITIONALLY
+	// (dev and prod alike — the guard does not depend on any production flag).
 	// With every other required input present, the failure isolates to the
 	// HMAC-secret guard, which now lives in config.validate() against the
 	// custody-resolved field.

@@ -12,6 +12,7 @@ import (
 // ProcessMeta contains metadata about the process that initiated a connection.
 type ProcessMeta struct {
 	PID         int
+	ParentPID   int    // Parent process ID (0 if unresolved / not populated on this platform)
 	Path        string // Full executable path
 	Name        string // Short process name
 	BundleID    string // macOS bundle ID or empty
@@ -62,6 +63,18 @@ type BridgeDepsReceiver interface {
 	SetBridgeDeps(deps *proxy.BridgeDeps)
 }
 
+// ForceQUICFallbackController is an optional interface a Platform satisfies
+// when it can force QUIC-capable apps onto TCP. Only Windows implements it
+// (the NexusWFP driver blocks UDP/443 for the listed process images so they
+// fall back to interceptable TCP/443). The wiring layer type-asserts the
+// platform to this interface and feeds it the Hub-pushed
+// forceQUICFallbackBundles allowlist on every config change; macOS drives the
+// same Hub key through its NE file-based path instead, and Linux has no QUIC
+// handling, so neither implements this interface.
+type ForceQUICFallbackController interface {
+	SetForceQUICFallbackImages(images []string)
+}
+
 // InterceptionMode identifies which kernel/userspace mechanism is
 // currently capturing traffic. Surfaced by statusapi GET_DIAGNOSTICS so
 // the Dashboard's Diagnostics page and the tray icon can react.
@@ -69,12 +82,11 @@ type InterceptionMode string
 
 const (
 	// macOS: NETransparentProxyProvider system extension. This is the
-	// sole macOS intercept path — the experimental pf alternative
-	// (E74) was retired before shipping.
+	// sole macOS intercept path.
 	ModeNETransparentProxy InterceptionMode = "NETransparentProxy"
 	// Linux: iptables REDIRECT + SO_ORIGINAL_DST.
 	ModeIPTables InterceptionMode = "iptables"
-	// Windows: NexusWFP in-house kernel driver capture (E59).
+	// Windows: NexusWFP in-house kernel driver capture.
 	// Implements connect-time redirect at WFP layer
 	// ALE_CONNECT_REDIRECT_V4/V6 for TCP + UDP, cross-arch on
 	// amd64 and arm64.
@@ -96,12 +108,12 @@ type InterceptionModeReporter interface {
 
 // InterceptionHealth captures whether the OS-level capture layer
 // (macOS NE Transparent Proxy, Linux iptables redirector, Windows
-// WinDivert) is actually attached to the daemon and forwarding flows.
+// WFP driver) is actually attached to the daemon and forwarding flows.
 //
 // Without this signal the daemon can look perfectly healthy on every
 // other axis — Hub WS connected, shadow applied, kill switch active —
 // while capturing zero traffic because the user never approved the
-// macOS proxy-configuration dialog (or the Windows WinDivert driver
+// macOS proxy-configuration dialog (or the Windows WFP driver
 // failed to load, or iptables rules got flushed). The status collector
 // converts a stale Health into state=degraded so the tray icon turns
 // yellow within seconds rather than the user shipping a quiet, broken

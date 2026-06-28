@@ -2,8 +2,8 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -206,7 +206,7 @@ func TestUploadAgentAudit_NormalizeStamping(t *testing.T) {
 	}
 	var env map[string]any
 	_ = json.Unmarshal(mp.enqueued[0], &env)
-	// F-0182: normalizeVersion must equal the shared schema constant, not a
+	// normalizeVersion must equal the shared schema constant, not a
 	// hardcoded literal, so a future schema bump propagates automatically.
 	if env["requestNormalized"] == nil || env["responseNormalized"] == nil || env["normalizeVersion"] != normcore.SchemaVersion {
 		t.Fatalf("normalize fields not stamped with normcore.SchemaVersion (%q): %v", normcore.SchemaVersion, env)
@@ -321,7 +321,7 @@ func TestBuildAgentBody(t *testing.T) {
 	}
 }
 
-// TestUploadAgentAudit_RejectsForgedAttribution is the SEC-C5-01 regression: an
+// TestUploadAgentAudit_RejectsForgedAttribution is the regression test: an
 // enrolled agent that self-asserts a victim's entityId/orgId/identity/
 // apiKeyFingerprint must NOT have those values propagated. The Hub stamps them
 // empty (server-controlled) and keeps only the authenticated thing_id, so a

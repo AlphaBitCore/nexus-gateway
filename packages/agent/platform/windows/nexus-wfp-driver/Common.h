@@ -20,7 +20,11 @@
 // Protocol version. Increment on any incompatible wire change to the
 // IOCTL request/response structs or the PUSH_POLICY body layout.
 //
-#define NEXUS_WFP_PROTOCOL_VERSION 1u
+// v2: PUSH_POLICY body gained the quicFallback image-name section
+// (NexusPolicyHeader.quicFallbackCount + trailing NexusQuicImage[]) that
+// drives the ALE_AUTH_CONNECT UDP/443 QUIC-force-TCP-fallback callouts.
+//
+#define NEXUS_WFP_PROTOCOL_VERSION 2u
 
 //
 // Driver-reported capability bits returned in NexusHelloResponse.
@@ -31,6 +35,7 @@
 #define NEXUS_CAP_IPV6_REDIRECT   0x00000001u
 #define NEXUS_CAP_UDP_REDIRECT    0x00000002u
 #define NEXUS_CAP_KILL_SWITCH     0x00000004u
+#define NEXUS_CAP_QUIC_FALLBACK   0x00000008u  // UDP/443 block → force TCP fallback
 
 //
 // Device + symlink names.
@@ -105,9 +110,11 @@ typedef struct _NexusPolicyHeader {
     UINT8   reserved[3];
     UINT32  processBypassCount;
     UINT32  destBypassCount;
+    UINT32  quicFallbackCount; // image names to QUIC-force-TCP (v2+)
     // followed by:
     //   UINT32 processBypass[processBypassCount];
     //   NexusCidr destBypass[destBypassCount];
+    //   NexusQuicImage quicFallback[quicFallbackCount];
 } NexusPolicyHeader;
 
 typedef struct _NexusCidr {
@@ -116,10 +123,23 @@ typedef struct _NexusCidr {
     UINT8   reserved[2];
     UINT8   addr[16];          // IPv4 in first 4 bytes, rest zero
 } NexusCidr;
+
+// QUIC-force-TCP-fallback allowlist entry. Each is a process image
+// BASENAME (e.g. "chrome.exe"), lowercase, compared case-insensitively
+// against the basename of the connecting process's ALE_APP_ID. macOS
+// parity: the admin-pushed forceQUICFallbackBundles list (bundle IDs on
+// macOS) carries Windows image names on this platform. A flow from a
+// listed image to UDP/443 is BLOCKED so the app falls back to TCP/443.
+#define NEXUS_QUIC_IMAGE_MAX_CHARS 64u
+typedef struct _NexusQuicImage {
+    UINT16  len;                                 // WCHARs used in name[] (≤ MAX_CHARS)
+    WCHAR   name[NEXUS_QUIC_IMAGE_MAX_CHARS];     // image basename, lowercase, not NUL-terminated
+} NexusQuicImage;
 #pragma pack(pop)
 
 #define NEXUS_MAX_PROCESS_BYPASS  256
 #define NEXUS_MAX_DEST_BYPASS     1024
+#define NEXUS_MAX_QUIC_FALLBACK   64
 
 //
 // IOCTL_NEXUS_WFP_GET_ORIG_DST
@@ -207,6 +227,8 @@ typedef struct _NEXUS_POLICY {
     PULONG    processBypass;     // pointer to count UINT32 process IDs
     ULONG     destBypassCount;
     NexusCidr* destBypass;       // pointer to count NexusCidr entries
+    ULONG     quicFallbackCount;
+    NexusQuicImage* quicFallback; // pointer to count NexusQuicImage entries
 } NEXUS_POLICY, *PNEXUS_POLICY;
 
 //
@@ -229,10 +251,19 @@ BOOLEAN  NexusPolicyKillSwitchActive(VOID);
 BOOLEAN  NexusPolicyIsBypassedProcess(_In_ UINT32 ProcessId);
 BOOLEAN  NexusPolicyIsBypassedDest(_In_ UINT8 Family, _In_reads_bytes_(16) const UINT8* Addr16);
 
+// QUIC-force-TCP-fallback lookup (G-2). Returns TRUE when the basename of
+// AppIdPath (the connecting process's ALE_APP_ID device path) matches a
+// configured quicFallback image name. Called from the AUTH_CONNECT
+// callouts for UDP/443 flows. AppIdChars is the WCHAR count of AppIdPath.
+BOOLEAN  NexusPolicyIsQuicForceFallbackImage(
+    _In_reads_(AppIdChars) PCWSTR AppIdPath,
+    _In_ ULONG AppIdChars);
+
 // Self-PID bypass (FR-9). Set once at HELLO via Ioctl.c; survives all
 // PUSH_POLICY generations.
 VOID     NexusPolicySetSelfPid(_In_ UINT32 ProcessId);
 BOOLEAN  NexusPolicyIsSelfPid(_In_ UINT32 ProcessId);
+UINT32   NexusPolicyGetSelfPid(VOID);
 
 //
 // FlowTable.c — kernel-mode hash map keyed by (srcPort, isUDP).

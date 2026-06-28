@@ -25,20 +25,45 @@ const IamGroupColumns = `id, name, description, "createdBy", "createdAt", "updat
 
 // ListIamGroups returns IAM groups, capped at 1000.
 func (store *Store) ListIamGroups(ctx context.Context) ([]GroupRow, error) {
-	rows, err := store.pool.Query(ctx, fmt.Sprintf(`SELECT %s FROM "IamGroup" ORDER BY "updatedAt" DESC, name ASC LIMIT 1000`, IamGroupColumns))
+	groups, _, err := store.ListIamGroupsPage(ctx, "", 1000, 0)
+	return groups, err
+}
+
+// ListIamGroupsPage returns IAM groups with optional text search and pagination.
+func (store *Store) ListIamGroupsPage(ctx context.Context, q string, limit, offset int) ([]GroupRow, int, error) {
+	where := "WHERE 1=1"
+	args := []any{}
+	argIdx := 1
+
+	if q != "" {
+		where += fmt.Sprintf(` AND (name ILIKE $%d OR description ILIKE $%d)`, argIdx, argIdx)
+		args = append(args, "%"+escapeILIKE(q)+"%")
+		argIdx++
+	}
+
+	var total int
+	if err := store.pool.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM "IamGroup" %s`, where), args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := fmt.Sprintf(`SELECT %s FROM "IamGroup" %s ORDER BY "updatedAt" DESC, name ASC LIMIT $%d OFFSET $%d`,
+		IamGroupColumns, where, argIdx, argIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := store.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	groups := []GroupRow{}
 	for rows.Next() {
 		var g GroupRow
 		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedBy, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		groups = append(groups, g)
 	}
-	return groups, rows.Err()
+	return groups, total, rows.Err()
 }
 
 // GetIamGroup returns a group by ID.

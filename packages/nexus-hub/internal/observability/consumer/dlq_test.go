@@ -3,9 +3,9 @@ package consumer
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"os"
@@ -373,7 +373,7 @@ func TestRedeliveryDelay(t *testing.T) {
 // TestIsJSONNulPoison pins the poison-pill classifier: nil and unrelated
 // errors are not poison; both the jsonb (22P05) and the cast (22021)
 // null-character SQLSTATEs are. Classification keys on the TYPED
-// *pgconn.PgError.Code (F-0180), so a plain string error that merely
+// *pgconn.PgError.Code, so a plain string error that merely
 // CONTAINS the SQLSTATE text must NOT be treated as poison (it would
 // false-trigger an ack-to-skip), and a real PgError wrapped via fmt.Errorf
 // MUST still be recognised through errors.As.

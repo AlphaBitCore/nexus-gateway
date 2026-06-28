@@ -1,6 +1,6 @@
 package core
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 // Kind discriminates the structural shape carried by a NormalizedPayload.
 type Kind string

@@ -89,7 +89,7 @@ func TestCohereCodec_EncodeRequest_embeddings_v3Model_missingInputType_defaultsS
 	// nexus.ext.cohere.input_type the codec defaults to "search_document"
 	// rather than rejecting — matching the Bedrock-Cohere codec and avoiding
 	// the filter/codec disagreement where the capability filter admits a
-	// request the codec then 400s (audit F-0216).
+	// request the codec then 400s.
 	c := newCohereCodec()
 	body := []byte(`{"model":"embed-english-v3.0","input":"hello"}`)
 	encRes, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{ProviderModelID: "embed-english-v3.0"})
@@ -116,7 +116,7 @@ func TestCohereCodec_EncodeRequest_embeddings_v3Model_withInputType_ok(t *testin
 
 func TestCohereCodec_EncodeRequest_embeddings_multilingualV3_defaultsInputType(t *testing.T) {
 	// embed-multilingual-v3.0 also requires input_type on the wire; the codec
-	// defaults it to "search_document" when omitted (audit F-0216).
+	// defaults it to "search_document" when omitted.
 	c := newCohereCodec()
 	body := []byte(`{"model":"embed-multilingual-v3.0","input":"hello"}`)
 	encRes, err := c.EncodeRequest(typology.WireShapeCohereEmbed, body, provcore.CallTarget{ProviderModelID: "embed-multilingual-v3.0"})
@@ -290,7 +290,7 @@ func TestCohereCodec_DecodeResponse_embeddings_flatArray(t *testing.T) {
 }
 
 // TestCohereCodec_DecodeResponse_embeddings_countMismatch_rejected pins
-// F-0220: a response with fewer vectors than the request `texts` must fail
+// the guard: a response with fewer vectors than the request `texts` must fail
 // the decode (→ 502) instead of returning misaligned vectors.
 func TestCohereCodec_DecodeResponse_embeddings_countMismatch_rejected(t *testing.T) {
 	c := newCohereCodec()
@@ -304,7 +304,7 @@ func TestCohereCodec_DecodeResponse_embeddings_countMismatch_rejected(t *testing
 }
 
 // TestCohereCodec_DecodeResponse_embeddings_countMatch_passes is the
-// F-0220 positive arm with the request context present.
+// positive arm with the request context present.
 func TestCohereCodec_DecodeResponse_embeddings_countMatch_passes(t *testing.T) {
 	c := newCohereCodec()
 	reqBody := []byte(`{"model":"embed-english-v3.0","texts":["a","b"]}`)

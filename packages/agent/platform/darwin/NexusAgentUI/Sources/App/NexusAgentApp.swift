@@ -3,7 +3,7 @@ import AppKit
 import Combine
 import os.log
 
-/// E40 Phase 1 (post-review): Docker-style menu-bar app.
+/// Docker-style menu-bar app.
 ///
 /// Menu construction is lazy. The status item carries a single
 /// NSMenu instance whose delegate is this AppDelegate; AppKit calls
@@ -483,8 +483,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func handleReinstallNE() { self.reinstallNetworkExtension() }
     @objc private func handleOpenLoginItems() { LaunchServiceManager.openLoginItemsSettings() }
     // For now Diagnostics is just an Open-Dashboard alias; once the
-    // Dashboard supports a route deep-link (planned in #68 — same
-    // task that fleshes out the Diagnostics page with NE reinstall,
+    // Dashboard supports a route deep-link (the same work that fleshes
+    // out the Diagnostics page with NE reinstall,
     // restart-daemon, copy-support-bundle, view-log actions) this
     // will pass /diagnostics. The Swift-side selector is wired now
     // so the menu IA cleanup ships first and the page polish ships

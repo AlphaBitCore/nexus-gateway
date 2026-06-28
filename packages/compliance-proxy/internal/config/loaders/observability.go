@@ -3,8 +3,8 @@ package loaders
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 )

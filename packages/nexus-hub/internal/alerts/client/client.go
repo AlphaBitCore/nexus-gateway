@@ -3,8 +3,8 @@ package alertclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"sync"
 	"sync/atomic"

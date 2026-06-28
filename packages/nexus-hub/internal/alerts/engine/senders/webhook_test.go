@@ -2,7 +2,7 @@ package senders_test
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,7 +55,7 @@ func TestWebhookSender_PostsJSON(t *testing.T) {
 	}
 }
 
-// TestWebhookSender_Non2xxCollapsesOracle proves F-0370's oracle collapse: a
+// TestWebhookSender_Non2xxCollapsesOracle proves the oracle collapse: a
 // non-2xx upstream status is NOT reflected back (the dispatch row would otherwise
 // leak whether an internal endpoint exists / which status it returned). The
 // status code is dropped to 0 and the error is a single generic string,

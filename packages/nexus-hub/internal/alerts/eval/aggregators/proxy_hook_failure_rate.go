@@ -1,8 +1,9 @@
 package aggregators
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 
@@ -32,11 +33,23 @@ func walkHooks(rawA, rawB any) (hasAnyHook, hasFailure, hasTimeout bool) {
 			if len(v) == 0 {
 				continue
 			}
+			// Fast path for the common empty/"[]" pipeline: with no '{' there is no
+			// hook-record object, so json.Unmarshal would yield an empty slice (or an
+			// error for a non-object array) — all-false either way. Skip the parse.
+			if bytes.IndexByte(v, '{') < 0 {
+				continue
+			}
 			if err := json.Unmarshal(v, &arr); err != nil {
 				continue
 			}
 		case json.RawMessage:
 			if len(v) == 0 {
+				continue
+			}
+			// Fast path for the common empty/"[]" pipeline: with no '{' there is no
+			// hook-record object, so json.Unmarshal would yield an empty slice (or an
+			// error for a non-object array) — all-false either way. Skip the parse.
+			if bytes.IndexByte(v, '{') < 0 {
 				continue
 			}
 			if err := json.Unmarshal(v, &arr); err != nil {

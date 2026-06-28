@@ -60,7 +60,7 @@ func TestBuildEvent_SpilledBodiesRetainInMemoryBytes(t *testing.T) {
 	e.EmitDual(
 		&core.HookInput{IngressType: "COMPLIANCE_PROXY", TargetHost: "api.openai.com", Path: "/v1/chat/completions", Method: "POST"},
 		AuditInfo{TransactionID: "txn-spill"},
-		&core.CompliancePipelineResult{Decision: core.Approve}, nil,
+		&core.CompliancePipelineResult{Decision: core.Approve, Action: core.ActionApprove}, nil,
 		"BUMP_SUCCESS", 200, 5, reqBody, respBody, traffic.UsageMeta{},
 	)
 
@@ -100,7 +100,7 @@ func TestBuildEvent_NoPreSpillNormalize_LeavesSpillRefOnly(t *testing.T) {
 	e.EmitDual(
 		&core.HookInput{IngressType: "AGENT", TargetHost: "api.openai.com", Path: "/v1/chat/completions", Method: "POST"},
 		AuditInfo{TransactionID: "txn-agent"},
-		&core.CompliancePipelineResult{Decision: core.Approve}, nil,
+		&core.CompliancePipelineResult{Decision: core.Approve, Action: core.ActionApprove}, nil,
 		"BUMP_SUCCESS", 200, 5, body, nil, traffic.UsageMeta{},
 	)
 	ev := w.events[0]
@@ -129,7 +129,7 @@ func TestBuildEvent_OversizeSpillBodyStaysRefOnly(t *testing.T) {
 	e.EmitDual(
 		&core.HookInput{IngressType: "COMPLIANCE_PROXY", TargetHost: "api.openai.com", Path: "/v1/chat/completions", Method: "POST"},
 		AuditInfo{TransactionID: "txn-big"},
-		&core.CompliancePipelineResult{Decision: core.Approve}, nil,
+		&core.CompliancePipelineResult{Decision: core.Approve, Action: core.ActionApprove}, nil,
 		"BUMP_SUCCESS", 200, 5, big, nil, traffic.UsageMeta{},
 	)
 	ev := w.events[0]

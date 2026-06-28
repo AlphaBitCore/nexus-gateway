@@ -3,8 +3,8 @@ package extract
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"math"
 	"strings"
 	"testing"

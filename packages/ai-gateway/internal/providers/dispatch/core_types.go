@@ -4,9 +4,8 @@
 // AdapterSpec, Format, …) exactly as they did before the core/dispatch split,
 // without importing core at every call site.
 //
-// Note: Go type aliases and constant aliases are used here; these are
-// zero-cost compile-time conveniences and do not introduce a runtime
-// indirection.
+// These are Go type aliases and constant aliases: zero-cost compile-time
+// conveniences that do not introduce a runtime indirection.
 package dispatch
 
 import (

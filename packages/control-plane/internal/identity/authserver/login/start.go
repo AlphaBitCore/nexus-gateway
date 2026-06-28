@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/crewjam/saml"
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
@@ -77,7 +76,7 @@ func StartHandler(d StartDeps) echo.HandlerFunc {
 		if authctx == "" || !d.Pending.Has(authctx) {
 			// No live authorize handle: send the browser to the login page with
 			// no handle so the SPA re-bootstraps the OAuth dance from scratch.
-			return c.Redirect(http.StatusFound, loginPagePath)
+			return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
 		}
 
 		idp, err := d.IdPs.GetByID(ctx, c.Param("idpId"))
@@ -104,8 +103,43 @@ func StartHandler(d StartDeps) echo.HandlerFunc {
 // bounceToLogin 302s the browser back to the SPA login picker, preserving the
 // still-live authctx so the picker reloads against the same authorize handle.
 func bounceToLogin(c echo.Context, authctx string) error {
-	u := url.URL{Path: loginPagePath, RawQuery: url.Values{"authctx": {authctx}}.Encode()}
+	u := url.URL{Path: spaPath(c, loginPagePath), RawQuery: url.Values{"authctx": {authctx}}.Encode()}
 	return c.Redirect(http.StatusFound, u.String())
+}
+
+// spaPath prepends X-Forwarded-Prefix to a SPA route so backend redirects
+// land on the correct path when Nexus is proxied at a sub-path (e.g. /nexus/).
+func spaPath(c echo.Context, path string) string {
+	prefix := strings.TrimRight(c.Request().Header.Get("X-Forwarded-Prefix"), "/")
+	return prefix + path
+}
+
+// oidcCallbackURI builds the absolute redirect_uri for the OIDC callback from
+// the incoming request context. It uses X-Forwarded-Proto for the scheme,
+// X-Forwarded-Host for the hostname (falls back to the Host header when the
+// outermost proxy does not set it), and X-Forwarded-Prefix (if present) to
+// prepend the sub-path when Nexus is proxied at e.g. /nexus/. The result is
+// stored in the pending entry so the callback leg uses the same URI for the
+// token exchange without re-deriving from a different (IdP-originated) request.
+//
+// X-Forwarded-Host is preferred over Host because a chained nginx proxy
+// rewrites Host to the upstream hostname (e.g. nexus.stg.alphabitcore.io)
+// by default; X-Forwarded-Host carries the original public hostname the
+// browser used (e.g. prime5.stg.alphabitcore.io) and must be set by the
+// outermost reverse proxy: proxy_set_header X-Forwarded-Host $http_host;
+func oidcCallbackURI(c echo.Context) string {
+	scheme := "https"
+	if proto := c.Request().Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	} else if c.Request().TLS == nil {
+		scheme = "http"
+	}
+	host := c.Request().Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = c.Request().Host
+	}
+	prefix := strings.TrimRight(c.Request().Header.Get("X-Forwarded-Prefix"), "/")
+	return scheme + "://" + host + prefix + "/authserver/oidc/callback"
 }
 
 // startOIDC builds the IdP authorize URL, stamps the chosen IdP id onto the
@@ -150,14 +184,21 @@ func startOIDC(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx
 		return bounceToLogin(c, authctx)
 	}
 	if !d.Pending.SetIdPID(authctx, idp.ID) {
-		return c.Redirect(http.StatusFound, loginPagePath)
+		return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
+	}
+	// Derive the redirect_uri from the current request context so it reflects
+	// the actual scheme, host, and sub-path prefix the browser used — works
+	// correctly whether accessed directly or through a sub-path proxy.
+	redirectURI := oidcCallbackURI(c)
+	if !d.Pending.SetOIDCRedirectURI(authctx, redirectURI) {
+		return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
 	}
 	// Single-use nonce bound to this login: sent to the IdP now and verified
 	// against the ID token's `nonce` claim on the callback (OIDC Core §3.1.2.1),
 	// defeating ID-token replay/injection.
 	nonce := store.RandomOpaqueToken(32)
 	if !d.Pending.SetIdPNonce(authctx, nonce) {
-		return c.Redirect(http.StatusFound, loginPagePath)
+		return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
 	}
 	u, err := url.Parse(cfg.AuthorizeURL)
 	if err != nil {
@@ -174,7 +215,7 @@ func startOIDC(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx
 	}
 	q.Set("response_type", "code")
 	q.Set("client_id", cfg.ClientID)
-	q.Set("redirect_uri", cfg.RedirectURI)
+	q.Set("redirect_uri", redirectURI)
 	q.Set("scope", "openid profile email")
 	q.Set("state", authctx)
 	q.Set("nonce", nonce)
@@ -188,7 +229,7 @@ func startOIDC(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx
 		c.SetCookie(&http.Cookie{
 			Name:     oidcStateCookieName,
 			Value:    d.StateSigner.sign(authctx),
-			Path:     oidcStateCookiePath,
+			Path:     spaPath(c, oidcStateCookiePath),
 			HttpOnly: true,
 			Secure:   true,
 			SameSite: http.SameSiteLaxMode,
@@ -209,67 +250,6 @@ var reservedAuthorizeParams = map[string]bool{
 	"nonce":         true,
 }
 
-// startSAML builds an SP-initiated AuthnRequest, records its ID against the
-// authctx for InResponseTo validation on the ACS, stamps the IdP id onto the
-// pending entry, and renders an auto-submitting POST form (HTTP-POST binding)
-// that delivers the AuthnRequest to the IdP with RelayState=<authctx>.
-func startSAML(c echo.Context, d StartDeps, idp *store.IdentityProvider, authctx string) error {
-	cfg := store.DecodeSAMLConfig(idp)
-	sp, err := buildSAMLServiceProvider(cfg, d.Issuer)
-	if err != nil {
-		return bounceToLogin(c, authctx)
-	}
-	// Append the IdP's configured extra SSO params to the destination URL (e.g.
-	// Auth0 Organizations' required `organization`). crewjam posts the form to
-	// the AuthnRequest Destination, so the params ride on the URL the browser
-	// POSTs to while SAMLRequest / RelayState stay in the form body.
-	dest, err := samlSSOURLWithParams(cfg.SSOURL, cfg.SSOParams)
-	if err != nil {
-		return bounceToLogin(c, authctx)
-	}
-	req, err := sp.MakeAuthenticationRequest(dest, saml.HTTPPostBinding, saml.HTTPPostBinding)
-	if err != nil {
-		return bounceToLogin(c, authctx)
-	}
-	if !d.Pending.SetIdPID(authctx, idp.ID) {
-		return c.Redirect(http.StatusFound, loginPagePath)
-	}
-	d.Requests.Put(authctx, req.ID)
-	return c.HTMLBlob(http.StatusOK, req.Post(authctx))
-}
-
-// reservedSAMLSSOParams are the SAML protocol query params the SP / crewjam
-// own; an IdP's extra-SSO-params config cannot override them.
-var reservedSAMLSSOParams = map[string]bool{
-	"SAMLRequest": true,
-	"RelayState":  true,
-	"SigAlg":      true,
-	"Signature":   true,
-}
-
-// samlSSOURLWithParams appends the IdP's configured extra query parameters to
-// the SSO endpoint URL on the SP-initiated AuthnRequest — the SAML analogue of
-// startOIDC's AuthorizeParams loop. Empty-key and reserved SAML protocol params
-// are skipped. Returns the URL unchanged when no params are configured.
-func samlSSOURLWithParams(ssoURL string, params []store.SAMLSSOParam) (string, error) {
-	if len(params) == 0 {
-		return ssoURL, nil
-	}
-	u, err := url.Parse(ssoURL)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	for _, p := range params {
-		if p.Key == "" || reservedSAMLSSOParams[p.Key] {
-			continue
-		}
-		q.Set(p.Key, p.Value)
-	}
-	u.RawQuery = q.Encode()
-	return u.String(), nil
-}
-
 // LogoutHandler returns GET /authserver/idp/:idpId/logout — RP-initiated logout.
 // For an OIDC IdP whose discovery advertises an end_session_endpoint, it 302s the
 // browser there with post_logout_redirect_uri back to the SPA login page, so the
@@ -282,11 +262,11 @@ func LogoutHandler(d StartDeps) echo.HandlerFunc {
 		ctx := c.Request().Context()
 		idp, err := d.IdPs.GetByID(ctx, c.Param("idpId"))
 		if err != nil || idp == nil || idp.Type != "oidc" || d.Resolver == nil {
-			return c.Redirect(http.StatusFound, loginPagePath)
+			return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
 		}
 		cfg := store.DecodeOIDCConfig(idp)
 		if cfg == nil {
-			return c.Redirect(http.StatusFound, loginPagePath)
+			return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
 		}
 		eps, err := d.Resolver.Resolve(ctx, cfg.Issuer, oidcdisco.Endpoints{
 			AuthorizeURL: cfg.AuthorizeURL,
@@ -294,11 +274,11 @@ func LogoutHandler(d StartDeps) echo.HandlerFunc {
 			JwksURI:      cfg.JwksURI,
 		})
 		if err != nil || eps.EndSessionURL == "" {
-			return c.Redirect(http.StatusFound, loginPagePath)
+			return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
 		}
 		u, err := url.Parse(eps.EndSessionURL)
 		if err != nil {
-			return c.Redirect(http.StatusFound, loginPagePath)
+			return c.Redirect(http.StatusFound, spaPath(c, loginPagePath))
 		}
 		q := u.Query()
 		q.Set("post_logout_redirect_uri", strings.TrimRight(d.Issuer, "/")+loginPagePath)

@@ -1,7 +1,7 @@
 package diag
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -95,13 +95,13 @@ func TestRuntime_MissingID_400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status %d; want 400 when id missing", rec.Code)
 	}
-	// F-0320: canonical {error, code} envelope.
+	// canonical {error, code} envelope.
 	assertCanonicalErrorEnvelope(t, rec, "INVALID_REQUEST")
 }
 
 // assertCanonicalErrorEnvelope checks the response body is the canonical
 // {error:{message,type,code}} nested envelope with the expected machine-readable
-// code (F-0320 / F-0319).
+// code.
 func assertCanonicalErrorEnvelope(t *testing.T, rec *httptest.ResponseRecorder, wantCode string) {
 	t.Helper()
 	var resp map[string]any

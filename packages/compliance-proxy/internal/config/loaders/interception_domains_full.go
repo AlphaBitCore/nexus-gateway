@@ -5,8 +5,8 @@ package loaders
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 

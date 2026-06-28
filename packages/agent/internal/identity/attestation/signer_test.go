@@ -31,7 +31,7 @@ func newTestLogger() *slog.Logger {
 // shape the signer expects) in an in-memory keystore under
 // keystore.AttestationKeyName, and returns (store, public-key). Tests use
 // the in-memory store so they never touch the real platform Keychain/DPAPI
-// (SEC-M4-02 moved the attestation key off disk into the keystore).
+// (the attestation key lives off disk in the keystore).
 func writeKey(t *testing.T) (keystore.Store, ed25519.PublicKey) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)

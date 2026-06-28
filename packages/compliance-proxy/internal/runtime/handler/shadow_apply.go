@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/runtime/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/identity"

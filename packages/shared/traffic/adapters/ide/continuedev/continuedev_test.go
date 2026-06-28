@@ -141,23 +141,6 @@ func TestExtractRequest_ToolCallsOnly(t *testing.T) {
 	}
 }
 
-func TestExtractRequest_ExtraSurfacesUnknownKeys(t *testing.T) {
-	// `session_id` is in the requestKnownKeys list, so it's filtered out
-	// of Extra. `telemetry_id` is unknown → must surface in Extra.
-	body := []byte(`{"prompt":"hi","telemetry_id":"abc-123","session_id":"sess-1"}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if v, ok := nc.Extra["telemetry_id"]; !ok || !strings.Contains(v, "abc-123") {
-		t.Errorf("Extra=%v missing telemetry_id", nc.Extra)
-	}
-	if _, ok := nc.Extra["session_id"]; ok {
-		t.Errorf("Extra=%v leaked known key session_id", nc.Extra)
-	}
-}
-
 func TestExtractRequest_EmptyBody(t *testing.T) {
 	a := &Adapter{}
 	_, err := a.ExtractRequest(context.Background(), nil, "/api/x")
@@ -170,12 +153,9 @@ func TestExtractRequest_BinaryBody(t *testing.T) {
 	// Protobuf-shaped payload — not JSON.
 	body := []byte{0x00, 0x00, 0x00, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f}
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/grpc.Service/Method")
+	_, err := a.ExtractRequest(context.Background(), body, "/grpc.Service/Method")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["binary_preview"]; !ok {
-		t.Errorf("Extra=%v missing binary_preview", nc.Extra)
 	}
 }
 
@@ -190,19 +170,13 @@ func TestExtractRequest_MalformedJSON(t *testing.T) {
 
 func TestExtractRequest_JSONWithoutKnownFields(t *testing.T) {
 	// Valid JSON object that doesn't include any known prompt-bearing key,
-	// no messages, no tool calls — ErrUnknownSchema with Extra surfacing
-	// the unknown keys (covers the second ErrUnknownSchema return path).
+	// no messages, no tool calls — ErrUnknownSchema (covers the second
+	// ErrUnknownSchema return path).
 	body := []byte(`{"foo":"bar","baz":42}`)
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
+	_, err := a.ExtractRequest(context.Background(), body, "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["foo"]; !ok {
-		t.Errorf("Extra=%v missing foo", nc.Extra)
-	}
-	if _, ok := nc.Extra["baz"]; !ok {
-		t.Errorf("Extra=%v missing baz", nc.Extra)
 	}
 }
 
@@ -472,7 +446,7 @@ func TestRewriteResponseBody_Unsupported(t *testing.T) {
 	}
 }
 
-// looksLikeJSON + preview helpers
+// looksLikeJSON helper
 
 func TestLooksLikeJSON(t *testing.T) {
 	cases := []struct {
@@ -496,35 +470,6 @@ func TestLooksLikeJSON(t *testing.T) {
 				t.Errorf("looksLikeJSON(%q)=%v want %v", tc.in, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestPreview_TruncatesAt256(t *testing.T) {
-	body := make([]byte, 1024)
-	for i := range body {
-		body[i] = 'a'
-	}
-	p := preview(body)
-	if len(p) != 256 {
-		t.Errorf("len(preview)=%d want 256", len(p))
-	}
-}
-
-func TestPreview_ShortBodyUntouchedExceptControlChars(t *testing.T) {
-	// Length < 256: no truncation. Control bytes < 0x20 (except \n/\t) and
-	// high bytes > 0x7e get mapped to '.'.
-	body := []byte{'a', 0x00, 'b', '\n', 'c', 0xff, 'd', '\t', 'e', 0x1f, 'f'}
-	p := preview(body)
-	want := "a.b\nc.d\te.f"
-	if p != want {
-		t.Errorf("preview=%q want %q", p, want)
-	}
-}
-
-func TestPreview_PreservesPrintableASCII(t *testing.T) {
-	body := []byte("Hello, world!")
-	if p := preview(body); p != "Hello, world!" {
-		t.Errorf("preview=%q want unchanged", p)
 	}
 }
 

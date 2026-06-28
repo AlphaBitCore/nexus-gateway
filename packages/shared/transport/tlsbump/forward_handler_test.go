@@ -74,7 +74,7 @@ func TestReadBody_UsesDynamicStoreValue(t *testing.T) {
 	}
 }
 
-// TestReadResponseBodyBounded asserts F-0277's named failure mode: a malicious
+// TestReadResponseBodyBounded asserts the named failure mode: a malicious
 // upstream returning an oversize buffered response is truncated to the cap
 // instead of being read unbounded into memory (proxy OOM). Mirrors the
 // request-side readBody cap behaviour.
@@ -134,7 +134,7 @@ func gzipBombFixture(t *testing.T, want int64) []byte {
 }
 
 // TestDecompressForCaptureBombBounded asserts the tlsbump wrapper enforces the
-// decompressed-size bound (F-0278): a gzip bomb expanding past the default cap
+// decompressed-size bound: a gzip bomb expanding past the default cap
 // is returned as the original compressed bytes (opaque capture, no OOM) and a
 // warning is emitted.
 func TestDecompressForCaptureBombBounded(t *testing.T) {

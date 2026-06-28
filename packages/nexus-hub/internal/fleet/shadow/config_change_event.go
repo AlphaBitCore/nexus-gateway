@@ -2,8 +2,8 @@ package shadow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/jackc/pgx/v5"

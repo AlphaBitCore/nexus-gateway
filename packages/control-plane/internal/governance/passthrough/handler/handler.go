@@ -6,10 +6,10 @@ package passthrough
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"time"

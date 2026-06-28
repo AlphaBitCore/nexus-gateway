@@ -14,23 +14,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 )
 
-// requestKnownKeys lists known top-level fields on a Gemini
-// generateContent request body. Anything else lands in Extra so a
-// future spec field (cached content extension, new tool variants,
-// citations grounding additions, …) reaches compliance hooks.
-var requestKnownKeys = []string{
-	"contents", "systemInstruction", "system_instruction",
-	"generationConfig", "safetySettings", "tools", "toolConfig",
-	"cachedContent", "model", "labels", "allowedFunctionNames",
-}
-
-// responseKnownKeys lists known top-level fields on a non-streaming
-// Gemini response.
-var responseKnownKeys = []string{
-	"candidates", "promptFeedback", "usageMetadata", "modelVersion",
-	"responseId", "automaticFunctionCallingHistory",
-}
-
 // Adapter implements the Gemini content extraction.
 type Adapter struct{}
 
@@ -53,7 +36,6 @@ func (a *Adapter) Configure(_ map[string]any) error { return nil }
 //     compliance scans tool returns for PII)
 //   - Top-level `tools` (function declarations) → Metadata
 //   - Top-level `model`, `cachedContent` → Metadata
-//   - Anything else → Extra
 func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traffic.NormalizedContent, error) {
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
@@ -138,7 +120,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		ReasoningSegments: reasoning,
 		ToolCallSegments:  toolCalls,
 		Metadata:          meta,
-		Extra:             traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -149,7 +130,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 //   - candidates[].content.parts[].functionCall          → ToolCallSegments
 //   - candidates[].finishReason (joined across candidates) → Metadata
 //   - top-level modelVersion / responseId                → Metadata
-//   - Anything else top-level → Extra
 func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (traffic.NormalizedContent, error) {
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
@@ -204,15 +184,13 @@ func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (tra
 		ReasoningSegments: reasoning,
 		ToolCallSegments:  toolCalls,
 		Metadata:          meta,
-		Extra:             traffic.CollectExtra(body, responseKnownKeys),
 	}, nil
 }
 
 // ExtractStreamChunk parses a Gemini streaming response chunk. Gemini
 // streams full candidate objects per chunk, so the format is identical
 // to a non-streaming response — we delegate to the same extraction
-// logic used by ExtractResponse but skip the Extra walk (chunks are
-// frequent and the per-chunk Extra noise is not useful).
+// logic used by ExtractResponse.
 func (a *Adapter) ExtractStreamChunk(_ context.Context, chunk []byte, _ string) (traffic.NormalizedContent, error) {
 	if !gjson.ValidBytes(chunk) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed

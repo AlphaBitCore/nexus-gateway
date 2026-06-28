@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"sync"
 	"time"

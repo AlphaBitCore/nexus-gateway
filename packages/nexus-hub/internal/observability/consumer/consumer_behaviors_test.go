@@ -2,8 +2,8 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -154,7 +154,7 @@ func TestStripNulJSON_PreservesCleanAndStripsTainted(t *testing.T) {
 	if got := string(stripNulJSON(tainted)); got != `{"k":"ab"}` {
 		t.Errorf("tainted: got %q, want %q", got, `{"k":"ab"}`)
 	}
-	// F-0178: the 6-char \u0000 JSON escape must ALSO be stripped — PostgreSQL
+	// the 6-char\u0000 JSON escape must ALSO be stripped — PostgreSQL
 	// jsonb rejects it with SQLSTATE 22P05 even though it is valid JSON, and a
 	// raw-byte-only filter would let it through. Use a backtick raw literal so
 	// the test input contains the literal escape, not a real NUL byte.
@@ -235,7 +235,7 @@ func TestTrafficWriter_HandleMessage_NoRegistryDoesNotPanic(t *testing.T) {
 //  1. increments errorsTotal{error_type="db_begin"} and flushTotal{result="error"}
 //  2. nak's every item in the per-item fallback (each message's Nak is invoked)
 //  3. returns nil — every item is fully resolved (nak'd), so flush has nothing
-//     left for the MQ driver to redundantly handle (F-0180)
+//     left for the MQ driver to redundantly handle
 func TestTrafficWriter_Flush_BeginFailureNaksAllAndCountsError(t *testing.T) {
 	pool := closedPool(t)
 	w := NewTrafficEventWriter(pool, nil, TrafficEventWriterConfig{BatchSize: 1}, discardLogger(), newTestRegistry())
@@ -653,7 +653,7 @@ func TestTrafficWriter_InsertTrafficEvents_FullRowSendBatch(t *testing.T) {
 
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
-	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(90)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(91)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	tx, _ := mock.Begin(ctx)
@@ -700,7 +700,7 @@ func TestTrafficWriter_InsertTrafficEvents_BatchExecErrorPropagates(t *testing.T
 	ctx := context.Background()
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
-	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(90)...).WillReturnError(errors.New("constraint-violation"))
+	eb.ExpectExec(`INSERT INTO traffic_event`).WithArgs(anyArgs(91)...).WillReturnError(errors.New("constraint-violation"))
 
 	tx, _ := mock.Begin(ctx)
 	defer tx.Rollback(ctx) //nolint:errcheck
@@ -753,8 +753,8 @@ func TestTrafficWriter_InsertPayloads_InlineAndSpillBranches(t *testing.T) {
 	ctx := context.Background()
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
-	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(11)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(11)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	tx, _ := mock.Begin(ctx)
@@ -810,9 +810,9 @@ func TestTrafficWriter_InsertPayloads_SymmetricBranches(t *testing.T) {
 	// non-absent (Kind="spill") so a row is written with all NULLs. (3) a
 	// row whose RequestBody.Kind is "absent" but ResponseBody.Kind="inline"
 	// w/o CT — verifies the asymmetric pair.
-	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(11)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(11)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(11)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mock.ExpectCommit()
 
 	tx, _ := mock.Begin(ctx)
@@ -869,7 +869,7 @@ func TestTrafficWriter_InsertPayloads_BatchExecErrorPropagates(t *testing.T) {
 	ctx := context.Background()
 	mock.ExpectBegin()
 	eb := mock.ExpectBatch()
-	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(11)...).WillReturnError(errors.New("disk-full"))
+	eb.ExpectExec(`INSERT INTO traffic_event_payload`).WithArgs(anyArgs(13)...).WillReturnError(errors.New("disk-full"))
 
 	tx, _ := mock.Begin(ctx)
 	defer tx.Rollback(ctx) //nolint:errcheck

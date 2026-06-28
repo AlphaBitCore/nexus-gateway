@@ -2,8 +2,8 @@ package ingress
 
 import (
 	"crypto/sha1"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 
 	"github.com/tidwall/gjson"
 )

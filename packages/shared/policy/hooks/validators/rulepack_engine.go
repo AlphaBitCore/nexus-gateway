@@ -10,13 +10,14 @@ package validators
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
+	"io"
 	"log/slog"
-	"regexp"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/matcher"
 )
 
 // rulePackInstall is the runtime projection of a single rule-pack install
@@ -37,32 +38,35 @@ type rulePackRule struct {
 	Category string `json:"category"`
 	// Severity is the rule-pack authoring severity. The canonical authoring
 	// enum validated by rulepack.ValidatePack (yaml.go) is "hard" | "soft" |
-	// "warn". The runtime severityToDecision map blocks on "hard" (RejectHard)
-	// and "soft" (BlockSoft); every other value — including "warn", "info",
-	// and "" — maps to Approve (tag-only, never blocks). A typo therefore
-	// degrades to non-blocking, surfaced to the operator via Tags rather than
-	// silently rejecting every request.
+	// "warn". At runtime severity gates ENFORCEMENT only (severityEnforces):
+	// "hard" and "soft" enforce — the bound hook's onMatch.Action is applied;
+	// "warn", "info", "" and any unknown value are observe-only (tags, never a
+	// decision change). The action (redact vs block) comes from the hook's
+	// onMatch.Action, not the severity tier. A typo therefore degrades to
+	// observe-only, surfaced via Tags rather than silently enforcing.
 	Severity string   `json:"severity"`
 	Pattern  string   `json:"pattern"`
 	Flags    string   `json:"flags,omitempty"`
 	Labels   []string `json:"labels,omitempty"`
 }
 
-// compiledRule pairs a source rule with its compiled regex and owning
-// install so BlockingRule attribution is zero-allocation on the hot path.
+// compiledRule carries a source rule plus its owning install so BlockingRule
+// attribution is zero-allocation on the hot path. The pattern itself is
+// compiled and owned by the engine's Matcher (matching is one scan over all
+// rules, not a per-rule regex call); this struct holds only the metadata the
+// decision layer needs after a match is reported.
 type compiledRule struct {
 	installID   string
 	packName    string
 	packVersion string
 	rule        rulePackRule
-	re          *regexp.Regexp
 }
 
 // RulePackEngine is the hook implementation backed by rule-pack installs.
 // It evaluates each compiled rule against every text segment in order.
 //
 // Decision resolution: the rule's severity is a hint; the operator's
-// onMatch.inflightAction is the ceiling. The effective decision is the
+// onMatch.action is the ceiling. The effective decision is the
 // strictest of the two — info-severity rules emit tags only and are never
 // blocked regardless of onMatch; hard-severity always blocks; soft-severity
 // respects the onMatch override.
@@ -71,9 +75,11 @@ type compiledRule struct {
 // embedded TextOnlyContentScanning helper.
 type RulePackEngine struct {
 	core.TextOnlyContentScanning
-	cfg     *core.HookConfig
-	rules   []compiledRule
-	onMatch core.OnMatchConfig
+	contentPrescan // raw-body prefilter (core.RawContentPrescanner)
+	cfg            *core.HookConfig
+	rules          []compiledRule
+	matcher        matcher.Matcher
+	onMatch        core.OnMatchConfig
 }
 
 // NewRulePackEngine is the factory registered under "rulepack-engine".
@@ -107,6 +113,17 @@ type RulePackEngine struct {
 // defence-in-depth backstop for a rule that slipped through (e.g. a pattern
 // that compiles under one regexp build but not another).
 func NewRulePackEngine(cfg *core.HookConfig) (core.Hook, error) {
+	return newRulePackEngineWith(cfg, defaultCompiler())
+}
+
+// matcherCompiler builds a Matcher from a pattern set. It is the injection
+// point that lets the same rule set run through either engine: the production
+// factory uses the RE2 compiler today (the Vectorscan build-tag variant swaps
+// it in), and the differential test runs the Vectorscan-built engine against
+// the RE2 oracle in one process.
+type matcherCompiler func([]matcher.Pattern) (matcher.Matcher, []matcher.BadPattern)
+
+func newRulePackEngineWith(cfg *core.HookConfig, compile matcherCompiler) (core.Hook, error) {
 	installs, err := parseRulePackInstalls(cfg.Config)
 	if err != nil {
 		return nil, fmt.Errorf("rulepack-engine: %w", err)
@@ -115,41 +132,52 @@ func NewRulePackEngine(cfg *core.HookConfig) (core.Hook, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rulepack-engine: %w", err)
 	}
-	// Absent onMatch means rule severity drives the decision (no operator
-	// ceiling). Other content hooks default to block-hard because they have
-	// no per-rule severity signal.
-	if _, explicit := cfg.Config["onMatch"]; !explicit {
-		onMatch.InflightAction = core.InflightApprove
-	}
+	// Absent onMatch keeps ParseOnMatch's block default: an enforcing (hard/soft)
+	// rule bound to a hook with no explicit action blocks by default — the
+	// security-safe posture. Operators opt into redact or pure-observe by setting
+	// onMatch.action explicitly; the action is always the hook's policy, never
+	// derived from the rule severity tier (severity only gates enforce-vs-observe).
 
+	// Flatten installs into rule metadata (install-order then rule-order) and a
+	// parallel pattern set keyed by the rule's index. The Matcher owns
+	// compilation; a pattern that fails to compile is reported in `bad` and
+	// simply never produces a hit — the rule is inert (today's skip-and-log
+	// fail-posture) without a separate per-rule compile here.
 	compiled := make([]compiledRule, 0, len(installs)*8)
+	pats := make([]matcher.Pattern, 0, len(installs)*8)
 	for _, inst := range installs {
 		if !inst.Enabled {
 			continue
 		}
 		for _, r := range inst.Rules {
-			re, err := core.CompilePattern(r.Pattern, r.Flags)
-			if err != nil {
-				// Skip+log this rule; keep building the rest of the pack.
-				slog.Warn("rulepack-engine: skipping rule with uncompilable pattern (degrading to this rule off)",
-					"installId", inst.InstallID,
-					"packName", inst.PackName,
-					"ruleId", r.RuleID,
-					"error", err,
-				)
-				continue
-			}
+			pats = append(pats, matcher.Pattern{ID: len(compiled), Expr: r.Pattern, Flags: r.Flags})
 			compiled = append(compiled, compiledRule{
 				installID:   inst.InstallID,
 				packName:    inst.PackName,
 				packVersion: inst.PackVersion,
 				rule:        r,
-				re:          re,
 			})
 		}
 	}
 
-	return &RulePackEngine{cfg: cfg, rules: compiled, onMatch: onMatch}, nil
+	m, bad := compile(pats)
+	for _, b := range bad {
+		cr := compiled[b.ID]
+		slog.Warn("rulepack-engine: skipping rule with uncompilable pattern (degrading to this rule off)",
+			"installId", cr.installID,
+			"packName", cr.packName,
+			"ruleId", cr.rule.RuleID,
+			"error", b.Err,
+		)
+	}
+
+	return &RulePackEngine{
+		contentPrescan: newContentPrescan(pats),
+		cfg:            cfg,
+		rules:          compiled,
+		matcher:        m,
+		onMatch:        onMatch,
+	}, nil
 }
 
 // parseRulePackInstalls reads the loader-injected `_rulePackInstalls` slot
@@ -193,24 +221,55 @@ func (e *RulePackEngine) Execute(_ context.Context, input *core.HookInput) (*cor
 		Decision:         core.Approve,
 	}
 
-	opts := e.cfg.ProjectionOptions()
-	for _, cr := range e.rules {
-		for _, text := range input.TextSegmentsWith(opts) {
-			if !cr.re.MatchString(text) {
+	segments := input.TextSegmentsWith(e.cfg.ProjectionOptions())
+
+	// One scan over all rules, both directions handled upstream. firstOnly:
+	// a detect/block decision only needs to know whether a rule fired in a
+	// segment, not how many times. The decision resolution below is engine-
+	// agnostic and byte-identical to the per-rule MatchString loop it replaces.
+	// complete is false only when the cgo matcher truncated mid-scan (alloc
+	// failure) — a partial hit set the redaction path must treat as fail-unsafe.
+	var hits []matcher.Hit
+	complete := true
+	if cs, ok := e.matcher.(matcher.CompleteScanner); ok {
+		hits, complete = cs.ScanComplete(segments, true)
+	} else {
+		hits = e.matcher.Scan(segments, true)
+	}
+	matched := make(map[[2]int]struct{})
+	for _, h := range hits {
+		matched[[2]int{h.ID, h.Seg}] = struct{}{}
+	}
+	core.ObserveContentScan(e.cfg.ImplementationID, len(matched))
+
+	// A redact hook turns matches into masking spans instead of a block
+	// decision. The fast cgo matcher above is compiled without start-of-match,
+	// so it reports WHICH rules fired but no offsets — redaction re-localises
+	// the matched rules with their cached RE2 pattern (or EVERY rule when the
+	// scan was incomplete, so a dropped hit never leaves PII unmasked).
+	if e.onMatch.Action == core.ActionRedact {
+		return e.executeRedact(input, result, matched, complete, start)
+	}
+
+	for ri := range e.rules {
+		cr := e.rules[ri]
+		for si := range segments {
+			if _, ok := matched[[2]int{ri, si}]; !ok {
 				continue
 			}
-			severity := severityToDecision(cr.rule.Severity)
-			if severity == core.Approve {
-				// info severity — stamp a tag, keep scanning. onMatch.inflightAction
-				// does NOT promote info matches to blocks; that would surprise
-				// operators who deliberately mark rules informational.
+			// Severity gates ENFORCEMENT; the bound hook's onMatch.Action decides
+			// the ACTION. hard/soft enforce (apply the hook's action); warn/info/
+			// unknown observe (tags only, keep scanning). A match on an
+			// approve-policy hook is observe-only too — so severity never escalates
+			// past the operator's chosen action (a hard rule on a redact hook
+			// redacts, it does not block).
+			if !severityEnforces(cr.rule.Severity) || e.onMatch.Action == core.ActionApprove {
 				result.Tags = core.AppendTag(result.Tags, "rulepack:"+cr.packName)
 				result.Tags = core.AppendTag(result.Tags, "rule:"+cr.rule.RuleID)
 				continue
 			}
-			// Strictest-wins between rule severity and operator onMatch ceiling.
-			decision := strictestDecision(severity, core.DecisionForInflight(e.onMatch.InflightAction))
-			result.Decision = decision
+			result.Decision = core.DecisionForAction(e.onMatch.Action)
+			result.Action = e.onMatch.Action
 			result.Reason = fmt.Sprintf("rule-pack match: %s/%s (%s)",
 				cr.packName, cr.rule.RuleID, cr.rule.Category)
 			result.ReasonCode = "RULEPACK_MATCH"
@@ -239,42 +298,15 @@ func (e *RulePackEngine) Execute(_ context.Context, input *core.HookInput) (*cor
 	return result, nil
 }
 
-// strictestDecision picks the more-blocking decision between two Decisions.
-// Ordering (strictest → most permissive): RejectHard > BlockSoft > Modify > Approve.
-// Used by rulepack-engine to reconcile rule-severity vs onMatch ceiling.
-func strictestDecision(a, b core.Decision) core.Decision {
-	rank := func(d core.Decision) int {
-		switch d {
-		case core.RejectHard:
-			return 4
-		case core.BlockSoft:
-			return 3
-		case core.Modify:
-			return 2
-		case core.Approve:
-			return 1
-		}
-		return 0
+// Close releases resources held by the engine's matcher — for the Vectorscan
+// matcher, the compiled database and scratch pool. It is invoked when a config
+// swap evicts this engine instance (the RE2 matcher holds no native resources,
+// so this is a no-op there). Idempotent and safe to call while requests are
+// still resolving the engine: the matcher drains in-flight scans before freeing.
+func (e *RulePackEngine) Close() error {
+	_ = e.closePrescan()
+	if c, ok := e.matcher.(io.Closer); ok {
+		return c.Close()
 	}
-	if rank(a) >= rank(b) {
-		return a
-	}
-	return b
-}
-
-// severityToDecision maps the rule-pack severity string onto the hook
-// Decision enum. Unknown severities default to Approve so a typo in a
-// rule cannot accidentally reject every request — the operator sees it
-// via Tags (`rule:…`) instead.
-func severityToDecision(s string) core.Decision {
-	switch s {
-	case "hard":
-		return core.RejectHard
-	case "soft":
-		return core.BlockSoft
-	case "info", "":
-		return core.Approve
-	default:
-		return core.Approve
-	}
+	return nil
 }

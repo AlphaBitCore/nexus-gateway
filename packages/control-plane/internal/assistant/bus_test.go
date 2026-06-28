@@ -36,7 +36,7 @@ func TestBus_StartTurnSerializes(t *testing.T) {
 	}
 }
 
-// TestBus_UserConcurrentTurnCap is the F-0267 per-user gate: a single user may have at
+// TestBus_UserConcurrentTurnCap is the per-user gate: a single user may have at
 // most maxConcurrentTurnsPerUser turns in flight across DISTINCT sessions; the next is
 // refused with startUserLimitHit (distinct from the per-session startTurnInFlight). All
 // turns share one system VK, so this bounds one user's instantaneous draw on the budget.

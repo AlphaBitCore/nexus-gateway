@@ -482,7 +482,7 @@ func TestRollupMerge_RunCalendarMonth_ProcessesMonth(t *testing.T) {
 
 // TestRollupCorrection_Run_HappyPath drives Run() with lookbackDays=1 so that
 // exactly 288 × 5m buckets, 24 × 1h buckets, and 1 × 1d bucket are processed.
-// Crucially it asserts NO `rollup_watermark` INSERT happens (F-0165): the
+// Crucially it asserts NO `rollup_watermark` INSERT happens: the
 // correction backfill must not advance the live watermark, so the per-bucket
 // transaction is Begin → DELETE → SELECT(empty) → Commit with no watermark write.
 func TestRollupCorrection_Run_HappyPath(t *testing.T) {
@@ -544,7 +544,7 @@ func TestRollupCorrection_Run_MonthEnd_RemergesMonthly(t *testing.T) {
 	mock, _ := pgxmock.NewPool()
 	defer mock.Close()
 
-	// 288 × 5m processBucket for yesterday (2026-05-31) — no watermark INSERT (F-0165).
+	// 288 × 5m processBucket for yesterday (2026-05-31) — no watermark INSERT.
 	for range 288 {
 		mock.ExpectBegin()
 		mock.ExpectExec(`DELETE FROM "metric_rollup_5m"`).

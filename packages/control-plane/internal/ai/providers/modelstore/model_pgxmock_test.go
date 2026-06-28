@@ -2,8 +2,8 @@ package modelstore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 	"time"
 

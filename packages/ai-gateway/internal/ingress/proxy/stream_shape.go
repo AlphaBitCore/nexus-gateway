@@ -30,16 +30,16 @@ func (st streamShapeStage) run() bool {
 	if ingress, ok := IngressFromContext(r.Context()); ok {
 		emitDone = ingress.BodyFormat.IsOpenAIFamily()
 	}
-	// #115 — resolve admin streaming mode + buffer cap from the Store.
-	// ai-gateway honors buffer_full_block (architect parity fix;
-	// replaces the prior "chunked_async only" hardcode). Three-service
+	// Resolve admin streaming mode + buffer cap from the Store.
+	// ai-gateway honors buffer_full_block (replaces the prior
+	// "chunked_async only" hardcode). Three-service
 	// alignment: agent / compliance-proxy / ai-gateway all dispatch on
 	// the same streampolicy.Store snapshot. Nil Store falls through to
 	// chunked_async — the default for traffic that has already opted
 	// into the gateway (unlike tlsbump's transparent-forwarder posture
 	// where nil Store means "no opt-in, transparent passthrough").
 	//
-	// #115/O6 follow-up: read MaxBufferBytes from the same snapshot so
+	// Read MaxBufferBytes from the same snapshot so
 	// admin-configured caps (64MB default, larger for high-volume
 	// deployments) propagate into both buffer and live pipelines. Zero
 	// means "use the pipeline's built-in default" (8MB) — same shape as

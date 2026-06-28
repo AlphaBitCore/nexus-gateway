@@ -46,8 +46,8 @@ func TestIsBackendService_ServiceTypesOnly(t *testing.T) {
 		}
 	}
 	// Agent authenticates with a per-device token — it must NOT be treated as a
-	// backend service (SEC-W2-02: a service-token caller must not impersonate an
-	// agent Thing).
+	// backend service: a service-token caller must not impersonate an
+	// agent Thing.
 	if IsBackendService(Agent) {
 		t.Errorf("IsBackendService(%q) = true; agent must not count as a backend service", Agent)
 	}

@@ -234,8 +234,8 @@ func NewProxyServer(
 
 // streamingTuningSnapshot is the atomic-pointer payload that captures
 // the hot-swappable streaming-timeout tunables in one coherent value.
-// (The mode field was removed — admin streaming policy is now
-// the single source of truth, read via streamingPolicyStore.)
+// (There is no mode field — admin streaming policy is the
+// single source of truth, read via streamingPolicyStore.)
 type streamingTuningSnapshot struct {
 	PerHookTimeout time.Duration // per-hook budget; zero falls back to the package default
 	TotalTimeout   time.Duration // whole-request budget across all hooks

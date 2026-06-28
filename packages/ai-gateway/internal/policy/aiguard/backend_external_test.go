@@ -3,7 +3,7 @@ package aiguard
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,7 +25,7 @@ func TestExternalBackend_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// SEC-M2-01: the external backend has no APIKey field; auth is supplied
+	// The external backend has no APIKey field; auth is supplied
 	// ONLY through CustomHeaders. Set Authorization there and assert it
 	// arrives — proving the operator's own auth channel works and that there
 	// is no separate provider-credential bearer path.
@@ -127,7 +127,7 @@ func TestExternalBackend_MalformedContent(t *testing.T) {
 	}
 }
 
-// TestExternalBackend_OversizeBodyCapped verifies F-0240: a success-path
+// TestExternalBackend_OversizeBodyCapped verifies: a success-path
 // response body larger than the 1 MiB LimitReader ceiling is truncated rather
 // than buffered whole. The truncated stream is no longer valid JSON, so Call
 // returns a parse error instead of consuming unbounded memory.

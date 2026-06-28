@@ -1,8 +1,8 @@
 package hub
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // RenameConfigCatalogResponse rewrites the Hub response for

@@ -1,6 +1,6 @@
 import Foundation
 
-// E40 Phase 1: slim model surface for the seven-item NSMenu.
+// Slim model surface for the seven-item NSMenu.
 //
 // The full StatusSnapshot the Go daemon emits is rich (today stats,
 // recent events, policy rules, runtime snapshots, config summary,

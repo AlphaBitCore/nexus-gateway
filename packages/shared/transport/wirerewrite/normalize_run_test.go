@@ -21,7 +21,7 @@ package wirerewrite
 //   - countInjectedMarkers's negative-diff clamp-to-zero path.
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"regexp"
 	"strings"
 	"testing"
@@ -99,26 +99,23 @@ func TestRun_DefaultRuleTypeIsNoOp(t *testing.T) {
 // TestSafeRun_HappyPathProxiesToRun verifies safeRun delegates to run when
 // no panic occurs. Pins the non-recover path through the defer.
 func TestSafeRun_HappyPathProxiesToRun(t *testing.T) {
+	// An unknown rule type falls to run()'s default branch (body unchanged, zero
+	// counts). This pins the non-recover delegation path through safeRun's defer.
 	entry := &ruleEntry{
 		rule: Rule{
-			ID:          "field-order-test",
+			ID:          "noop-test",
 			AdapterType: AdapterOpenAI,
-			Type:        RuleTypeFieldOrder,
+			Type:        RuleType("unhandled"),
 		},
 		breaker: newCircuitBreaker(),
 	}
 	body := []byte(`{"b":2,"a":1}`)
 	out, c, r := entry.safeRun(body)
 	if c != 0 || r != 0 {
-		t.Fatalf("field-order rule should report zero strip counts; got c=%d r=%d", c, r)
+		t.Fatalf("default branch should report zero strip counts; got c=%d r=%d", c, r)
 	}
-	// Output must be valid JSON with same content.
-	var v map[string]int
-	if err := json.Unmarshal(out, &v); err != nil {
-		t.Fatalf("safeRun output not valid JSON: %v (%s)", err, out)
-	}
-	if v["a"] != 1 || v["b"] != 2 {
-		t.Fatalf("content not preserved through safeRun: %s", out)
+	if string(out) != string(body) {
+		t.Fatalf("default branch must return body unchanged through safeRun; got %s", out)
 	}
 }
 
@@ -257,12 +254,17 @@ func TestNormalizeKey_NilCompiledSnapshotPassesThrough(t *testing.T) {
 // is NOT applied even when the rule is otherwise enabled and the input
 // would normally be modified.
 func TestNormalizeKey_BreakerOpenSkipsRule(t *testing.T) {
-	eng := New(nil) // bundled rules include openai field-order (enabled default).
+	// Enable the anthropic cch-strip key rule (off by default), then trip its
+	// breaker: an open breaker must skip the rule so the cch= token survives.
+	enabled := true
+	eng := New(nil)
+	eng.Reload(Config{Rules: map[string]map[string]RuleOverride{
+		"anthropic": {RuleAnthropicCchStrip: {Enabled: &enabled}},
+	}})
 	resolved := eng.compiled.Load()
-	// Locate the openai entry and trip its breaker.
-	entries := resolved.keyRules[AdapterOpenAI]
+	entries := resolved.keyRules[AdapterAnthropic]
 	if len(entries) == 0 {
-		t.Fatal("expected openai key rule in compiled snapshot")
+		t.Fatal("expected anthropic key rule in compiled snapshot")
 	}
 	for i := range entries {
 		for range defaultCBThreshold {
@@ -272,10 +274,9 @@ func TestNormalizeKey_BreakerOpenSkipsRule(t *testing.T) {
 			t.Fatalf("breaker did not open after %d errors", defaultCBThreshold)
 		}
 	}
-	// With every key rule's breaker open, the unsorted body is returned as-is —
-	// field-order normalization is skipped.
-	body := []byte(`{"z":1,"a":2}`)
-	out := eng.NormalizeKey(AdapterOpenAI, body)
+	// With the breaker open the strip is skipped — the cch= token is NOT removed.
+	body := []byte(`{"system":[{"text":"hi cch=deadbeef; there"}]}`)
+	out := eng.NormalizeKey(AdapterAnthropic, body)
 	if string(out) != string(body) {
 		t.Fatalf("expected body unchanged when breaker open, got %s", out)
 	}
@@ -289,16 +290,18 @@ func TestNormalizeKey_DryRunAlwaysRuleSkipped(t *testing.T) {
 	dry := true
 	cfg := Config{
 		Rules: map[string]map[string]RuleOverride{
-			"openai": {
-				RuleOpenAIFieldOrderNormalize: {Enabled: &enabled, DryRunAlways: &dry},
+			"anthropic": {
+				RuleAnthropicCchStrip: {Enabled: &enabled, DryRunAlways: &dry},
 			},
 		},
 	}
 	eng := New(nil)
 	eng.Reload(cfg)
 
-	body := []byte(`{"z":1,"a":2}`)
-	out := eng.NormalizeKey(AdapterOpenAI, body)
+	// Body carries the cch= token the strip rule targets; dry-run must leave the
+	// L0 key body untouched (it only emits audit counts in L3 NormalizeUpstream).
+	body := []byte(`{"system":[{"text":"hi cch=deadbeef; there"}]}`)
+	out := eng.NormalizeKey(AdapterAnthropic, body)
 	if string(out) != string(body) {
 		t.Fatalf("dry-run rule must NOT modify the key body; got %s", out)
 	}

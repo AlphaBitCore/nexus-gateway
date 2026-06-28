@@ -2,8 +2,8 @@ package core
 
 import (
 	"bytes"
-	"encoding/json"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+	"github.com/goccy/go-json"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,7 +12,7 @@ import (
 // TestLimitedReadAllN pins the contract that the runtime variant uses the
 // supplied cap, falls back to ReadAllLimit on a non-positive cap (so a
 // zeroed payload-capture row never collapses the read), clamps an oversize
-// body to the cap, and — the F-0349 contract — reports truncated=true
+// body to the cap, and — the contract — reports truncated=true
 // exactly when the body exceeded the cap so usage extraction can refuse to
 // claim "ok" over an incomplete buffer.
 func TestLimitedReadAllN(t *testing.T) {
@@ -468,4 +468,23 @@ func TestArtifactKindAndJobStatus_Constants(t *testing.T) {
 	// Sanity: ArtifactRef and JobRef can be zero-valued (no required init).
 	_ = ArtifactRef{}
 	_ = JobRef{}
+}
+
+// TestLimitedReadAllN_PooledScratchLowAlloc pins the P1 optimization: the
+// runtime response read reuses a pooled scratch buffer, so it no longer pays
+// io.ReadAll's geometric regrowth (512B→64KB ≈ 8 reallocs / ~2x churn per 50KB
+// response). Only the single right-sized escaping copy should allocate.
+func TestLimitedReadAllN_PooledScratchLowAlloc(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), 50*1024)
+	r := bytes.NewReader(nil)
+	avg := testing.AllocsPerRun(50, func() {
+		r.Reset(body)
+		data, trunc, err := LimitedReadAllN(r, int64(len(body))+10)
+		if err != nil || trunc || len(data) != len(body) {
+			t.Fatalf("read: err=%v trunc=%v len=%d", err, trunc, len(data))
+		}
+	})
+	if avg > 3 {
+		t.Fatalf("LimitedReadAllN allocates %.1f/op, want <=3 (pooled scratch must eliminate io.ReadAll geometric regrowth)", avg)
+	}
 }

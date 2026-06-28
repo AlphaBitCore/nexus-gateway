@@ -2,8 +2,8 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -18,7 +18,7 @@ import (
 
 // breakGlassExpiryMatcher is a pgxmock argument matcher asserting the
 // thing_config_override.expires_at value adoptBreakGlassPerThing stamps is a
-// non-nil *time.Time roughly breakGlassPerThingTTL into the future (F-0140) —
+// non-nil *time.Time roughly breakGlassPerThingTTL into the future —
 // not the old nil that left the emergency exemption permanent.
 type breakGlassExpiryMatcher struct{}
 
@@ -116,7 +116,7 @@ func TestHandleBreakGlassReport_RejectsMissingKeyVersions(t *testing.T) {
 	}
 }
 
-// --- F-0139: server-side allowlist + schema gate ---
+// --- server-side allowlist + schema gate ---
 
 // TestValidateBreakGlassReport covers the authority gate that mirrors the
 // data-plane {killswitch, exemptions} allowlist on the Hub side and validates
@@ -214,7 +214,7 @@ func TestHandleBreakGlassReport_RejectsBeforeStore(t *testing.T) {
 	}
 }
 
-// --- F-0138: scope routing (fleet template vs per-Thing override) ---
+// --- scope routing (fleet template vs per-Thing override) ---
 
 // TestHandleBreakGlassReport_Killswitch_WritesFleetTemplate verifies that a
 // fleet-scoped key (killswitch) still adopts into thing_config_template at the
@@ -222,8 +222,8 @@ func TestHandleBreakGlassReport_RejectsBeforeStore(t *testing.T) {
 // NO per-Thing override path (no advisory lock, no thing_config_override INSERT,
 // no desired-ver bump). The pgxmock expectation set is exact: any unexpected
 // query fails the test.
-// TestHandleBreakGlassReport_Killswitch_WritesPerThingOverride locks SEC-C3-02 /
-// SEC-M5-02: a node-initiated killswitch break-glass NO LONGER writes the
+// TestHandleBreakGlassReport_Killswitch_WritesPerThingOverride locks the
+// invariant that a node-initiated killswitch break-glass NO LONGER writes the
 // fleet-wide thing_config_template (which would flip the kill-switch for every
 // Thing of the type — a cross-node blast radius a compromised node could abuse).
 // It now adopts as a PER-THING override on the reporting Thing ONLY (self-
@@ -289,8 +289,8 @@ func TestHandleBreakGlassReport_Killswitch_WritesPerThingOverride(t *testing.T) 
 }
 
 // TestHandleBreakGlassReport_Exemptions_WritesPerThingOverride verifies the
-// F-0138 fix: a non-fleet key (exemptions) adopts as a PER-THING override on
-// the reporting Thing only — it takes AcquireConfigVersionLock (F-0109),
+// scope-routing fix: a non-fleet key (exemptions) adopts as a PER-THING override on
+// the reporting Thing only — it takes AcquireConfigVersionLock,
 // upserts thing_config_override, recomputes + bumps that Thing's desired_ver,
 // writes a chain-hashed admin audit row, and pushes the key back to the node.
 // It MUST NOT touch thing_config_template (no fleet-wide blast radius). The
@@ -319,10 +319,10 @@ func TestHandleBreakGlassReport_Exemptions_WritesPerThingOverride(t *testing.T) 
 		WillReturnRows(pgxmock.NewRows([]string{"type", "config_key", "state", "version", "updated_at", "updated_by"}).
 			AddRow("compliance-proxy", "exemptions", []byte(`{"entries":[]}`), int64(2), now, "admin"))
 	mock.ExpectBegin()
-	// F-0109 advisory lock on the per-Thing path.
+	// advisory lock on the per-Thing path.
 	expectConfigVersionLock(mock, "compliance-proxy")
 	// Per-Thing override upsert (8 args), emergency_override=true. Arg 7
-	// (expires_at) MUST be a non-nil ~8h auto-revert stamp (F-0140), not nil.
+	// (expires_at) MUST be a non-nil ~8h auto-revert stamp, not nil.
 	mock.ExpectExec(`INSERT INTO thing_config_override`).
 		WithArgs(
 			"proxy-1", "exemptions",

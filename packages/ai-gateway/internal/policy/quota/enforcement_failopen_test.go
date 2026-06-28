@@ -14,7 +14,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 )
 
-// TestEngine_Check_UsageCacheError_FailsOpenAndLogs verifies F-0004 on the
+// TestEngine_Check_UsageCacheError_FailsOpenAndLogs verifies on the
 // Check path: when the usage-cache (Redis) read fails during Check, the engine
 // skips that level (fail-open) so the request is allowed through, logs the
 // error so the outage is observable, and increments the fail-open metric.
@@ -66,7 +66,7 @@ func TestEngine_Check_UsageCacheError_FailsOpenAndLogs(t *testing.T) {
 	}
 }
 
-// TestEngine_VKLimit_UsageCacheError_FailsOpenAndLogs verifies F-0004: when the
+// TestEngine_VKLimit_UsageCacheError_FailsOpenAndLogs verifies: when the
 // usage-cache (Redis) read fails, VKLimit still returns the resolved limit with
 // hasLimit=true (so the usage query is not failed shut), reports current usage
 // as 0 (deliberate fail-open), and logs a warn line so the outage is observable

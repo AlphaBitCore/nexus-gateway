@@ -548,7 +548,7 @@ func TestEnrollWithJWT_ThingTypeDefaultsToAgent(t *testing.T) {
 	}
 }
 
-// TestEnrollWithJWT_ServiceTypeRejected_SEC_C2_03 pins the SEC-C2-03 invariant:
+// TestEnrollWithJWT_ServiceTypeRejected_SEC_C2_03 pins the invariant:
 // the SSO/browser enrollment JWT is a device-enrollment grant and must NOT mint a
 // privileged service-type Thing. A request asking for thingType=ai-gateway (or any
 // non-agent type) is refused 403 ENROLL_TYPE_FORBIDDEN, BEFORE any thing is minted

@@ -5,8 +5,8 @@
 // CREDENTIAL_KEY_MAP [MUST MATCH] pair) and the admin/virtual-key HMAC keyring
 // (shared/core/hmackeyring, ADMIN_KEY_HMAC_KEY_MAP).
 //
-// Why one parser (F-0390 root cause): the format was previously hand-rolled in
-// three independent copies that drifted. The ai-gateway copy did NOT strip the
+// Why one parser: the format must not be hand-rolled in
+// independent copies that drift. If the ai-gateway copy did NOT strip the
 // leading "*" current-marker, so an operator using the documented "*v2:" syntax
 // (recommended in .env.example) made the Control Plane stamp ciphertext id "v2"
 // while the gateway stored the same key under literal id "*v2" — every
@@ -78,8 +78,8 @@ func Parse(env string, validate func(id, value string) error) (entries map[strin
 		id, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 
 		// A leading "*" designates the current entry; strip it so the stored id
-		// is identical to what a non-marked entry would carry. This is the
-		// F-0390 fix: every consumer keys by the stripped id.
+		// is identical to what a non-marked entry would carry, so every
+		// consumer keys by the stripped id.
 		isCurrent := false
 		if strings.HasPrefix(id, "*") {
 			isCurrent = true

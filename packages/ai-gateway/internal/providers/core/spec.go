@@ -39,6 +39,16 @@ type AdapterSpec struct {
 	// generic spec_adapter dispatcher.
 	PassthroughRewrite func(payload map[string]any, modelID string) []string
 
+	// PassthroughRewriteApplies reports, WITHOUT decoding the body, whether
+	// PassthroughRewrite could mutate anything for modelID. The generic
+	// dispatcher uses it to skip the full map[string]any decode+re-marshal
+	// round-trip when the rewrite is a guaranteed no-op (e.g. a non-reasoning
+	// model on the OpenAI adapter) and instead surgically set the model with
+	// sjson — the dominant hot-path allocation otherwise. Nil ⇒ assume it may
+	// apply (conservative: keep the map path), preserving today's behavior for
+	// adapters that do not provide the probe.
+	PassthroughRewriteApplies func(modelID string) bool
+
 	// RequestShapes lists the typology.WireShape values this adapter
 	// natively serves at the codec boundary (i.e. the WireShape values
 	// the codec's EncodeRequest/DecodeResponse will accept without

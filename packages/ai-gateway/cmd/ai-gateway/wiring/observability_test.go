@@ -2,7 +2,7 @@ package wiring
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/pashagolub/pgxmock/v4"

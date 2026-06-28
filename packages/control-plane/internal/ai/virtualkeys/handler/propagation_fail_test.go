@@ -1,6 +1,6 @@
 package virtualkey
 
-// F-0099 regression: security-sensitive virtual-key writes must fail loud
+// Security-sensitive virtual-key writes must fail loud
 // (HTTP 502) when the Category B invalidation push to Hub fails, instead of
 // returning 2xx while the data plane keeps honoring a revoked/expired key.
 // Each test asserts: (a) the CP DB write committed (truth preserved), (b) the

@@ -3,8 +3,8 @@ package classify
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -59,7 +59,7 @@ type ComplianceWebhookResponse struct {
 	// emit one normalize.TransformSpan per redaction so the audit pipeline
 	// records the judge's intent even when the caller cannot apply the
 	// rewrite inflight. Absent when AI-Guard had no span-level suggestions
-	// (approve / soft-block paths).
+	// (approve / block paths).
 	Redactions []aiguard.Redaction `json:"redactions,omitempty"`
 }
 

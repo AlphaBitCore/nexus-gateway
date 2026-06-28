@@ -90,7 +90,7 @@ func (okVKAuth) Authenticate(_ context.Context, _ *http.Request) (*vkauth.VKMeta
 }
 
 func TestProxyHandler_MissingModel(t *testing.T) {
-	// F-0048: auth now runs BEFORE the body read, so authenticate with a
+	// auth runs BEFORE the body read, so authenticate with a
 	// passing VKAuth stub to reach the body-level model validation.
 	deps := testDeps("")
 	deps.VKAuth = okVKAuth{}
@@ -115,7 +115,7 @@ func TestProxyHandler_MissingModel(t *testing.T) {
 	}
 }
 
-// TestProxyHandler_AuthBeforeBody asserts the F-0048 ordering: an
+// TestProxyHandler_AuthBeforeBody asserts the ordering: an
 // unauthenticated request is rejected at auth (401) BEFORE the body is read
 // or model-validated, so an attacker cannot force a full-body read +
 // payload capture pre-auth. A missing-model body that would 400 once

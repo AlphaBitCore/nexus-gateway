@@ -34,7 +34,7 @@ func TestRollupCorrection_IntervalDefault(t *testing.T) {
 	if j.Interval() != 24*time.Hour {
 		t.Errorf("Interval = %v, want 24h default", j.Interval())
 	}
-	// lookbackDays <= 0 falls back to the package default (F-0186).
+	// lookbackDays <= 0 falls back to the package default.
 	if j.lookbackDays != correctionLookbackDays {
 		t.Errorf("lookbackDays = %d, want default %d", j.lookbackDays, correctionLookbackDays)
 	}

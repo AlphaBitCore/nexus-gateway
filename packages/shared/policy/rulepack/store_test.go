@@ -1,11 +1,11 @@
 // packages/shared/policy/rulepack/store_test.go — pgxmock-driven unit tests
 // for the rule-pack persistence layer.
 //
-// History: this file was originally a destructive integration test
-// that ran broad `DELETE FROM rule_pack WHERE name LIKE 'test/%'`
-// statements against the shared dev DB before each run. It was gated
-// behind NEXUS_DESTRUCTIVE_TESTS=1 in commit 494533313, then rewritten to use pgxmock so it (a) never touches rows the test did
-// not seed and (b) runs in CI without TEST_DATABASE_URL.
+// These tests use pgxmock so they (a) never touch rows the test did
+// not seed and (b) run in CI without TEST_DATABASE_URL. A destructive
+// integration variant that runs broad `DELETE FROM rule_pack WHERE name
+// LIKE 'test/%'` statements against the shared dev DB stays gated behind
+// NEXUS_DESTRUCTIVE_TESTS=1.
 //
 // Every test below seeds expectations through pgxmock and asserts on
 // the SQL pattern + arguments + Scan result mapping. No state escapes
@@ -953,7 +953,7 @@ func TestNewStore_AcceptsNilForCompilationCoverage(t *testing.T) {
 // strPtr is a small helper used across tests.
 func strPtr(s string) *string { return &s }
 
-// --- F-0275: ImportPack / UpdatePack pattern + severity validation ---------
+// --- ImportPack / UpdatePack pattern + severity validation -----------------
 
 // asInvalidRulesError unwraps err to *rulepack.InvalidRulesError or fails.
 func asInvalidRulesError(t *testing.T, err error) *rulepack.InvalidRulesError {
@@ -1106,5 +1106,187 @@ func TestImportPack_ValidWarnSeverity_Accepted(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("expectations: %v", err)
+	}
+}
+
+func TestLatestVersionForPack_PicksHighestSemver(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack" WHERE name = \$1`).
+		WithArgs("nexus/secret-leak").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"}).
+			AddRow("id-100", "v1.0.0").
+			AddRow("id-210", "v1.2.0").
+			AddRow("id-200", "v1.10.0")) // numeric: 1.10 > 1.2 > 1.0
+
+	id, ver, err := store.LatestVersionForPack(context.Background(), "nexus/secret-leak")
+	if err != nil {
+		t.Fatalf("LatestVersionForPack: %v", err)
+	}
+	if id != "id-200" || ver != "v1.10.0" {
+		t.Errorf("got (%s,%s), want (id-200,v1.10.0)", id, ver)
+	}
+}
+
+func TestLatestVersionForPack_NoVersions_NotFound(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/ghost").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"}))
+
+	_, _, err := store.LatestVersionForPack(context.Background(), "nexus/ghost")
+	if !errors.Is(err, rulepack.ErrPackNotFound) {
+		t.Errorf("expected ErrPackNotFound; got: %v", err)
+	}
+}
+
+func TestLatestVersionForPack_QueryError(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/x").
+		WillReturnError(errors.New("conn lost"))
+
+	_, _, err := store.LatestVersionForPack(context.Background(), "nexus/x")
+	if err == nil || !strings.Contains(err.Error(), "rulepack.LatestVersionForPack") {
+		t.Errorf("expected wrap; got: %v", err)
+	}
+}
+
+func TestUpgradeInstallToLatest_AdvancesPin(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT p.name, i."pinVersion"`).
+		WithArgs("inst-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name", "pinVersion"}).AddRow("nexus/pii", "v1.0.0"))
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack" WHERE name = \$1`).
+		WithArgs("nexus/pii").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"}).
+			AddRow("pid-1", "v1.0.0").
+			AddRow("pid-2", "v2.0.0"))
+	mock.ExpectExec(`UPDATE "rule_pack_install" SET "packId" = \$2, "pinVersion" = \$3`).
+		WithArgs("inst-1", "pid-2", "v2.0.0").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	res, err := store.UpgradeInstallToLatest(context.Background(), "inst-1")
+	if err != nil {
+		t.Fatalf("UpgradeInstallToLatest: %v", err)
+	}
+	if !res.Upgraded || res.FromVersion != "v1.0.0" || res.ToVersion != "v2.0.0" || res.PackName != "nexus/pii" {
+		t.Errorf("unexpected result: %+v", res)
+	}
+}
+
+func TestUpgradeInstallToLatest_AlreadyLatest_NoOp(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT p.name, i."pinVersion"`).
+		WithArgs("inst-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name", "pinVersion"}).AddRow("nexus/pii", "v2.0.0"))
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/pii").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"}).AddRow("pid-2", "v2.0.0"))
+	// No UPDATE expected — already latest.
+
+	res, err := store.UpgradeInstallToLatest(context.Background(), "inst-1")
+	if err != nil {
+		t.Fatalf("UpgradeInstallToLatest: %v", err)
+	}
+	if res.Upgraded {
+		t.Errorf("expected no-op (Upgraded=false); got %+v", res)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+func TestUpgradeInstallToLatest_InstallNotFound(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT p.name, i."pinVersion"`).
+		WithArgs("missing").
+		WillReturnError(pgx.ErrNoRows)
+
+	_, err := store.UpgradeInstallToLatest(context.Background(), "missing")
+	if !errors.Is(err, rulepack.ErrInstallNotFound) {
+		t.Errorf("expected ErrInstallNotFound; got: %v", err)
+	}
+}
+
+func TestUpgradeInstallToLatest_LoadInstallError(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT p.name, i."pinVersion"`).
+		WithArgs("inst-1").
+		WillReturnError(errors.New("conn lost"))
+
+	_, err := store.UpgradeInstallToLatest(context.Background(), "inst-1")
+	if err == nil || !strings.Contains(err.Error(), "load install") {
+		t.Errorf("expected load-install wrap; got: %v", err)
+	}
+}
+
+func TestLatestVersionForPack_ScanError(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/x").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("only-one-col")) // 1 col vs 2 scan dests -> scan error
+	_, _, err := store.LatestVersionForPack(context.Background(), "nexus/x")
+	if err == nil || !strings.Contains(err.Error(), "scan") {
+		t.Errorf("expected scan-error wrap; got: %v", err)
+	}
+}
+
+func TestLatestVersionForPack_RowsErr(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/x").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"}).
+			AddRow("id-1", "v1.0.0").RowError(0, errors.New("row stream broke")))
+	_, _, err := store.LatestVersionForPack(context.Background(), "nexus/x")
+	if err == nil || !strings.Contains(err.Error(), "rulepack.LatestVersionForPack") {
+		t.Errorf("expected rows.Err wrap; got: %v", err)
+	}
+}
+
+func TestUpgradeInstallToLatest_PackFamilyGone(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT p.name, i."pinVersion"`).
+		WithArgs("inst-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name", "pinVersion"}).AddRow("nexus/pii", "v1.0.0"))
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/pii").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"})) // no versions
+	_, err := store.UpgradeInstallToLatest(context.Background(), "inst-1")
+	if !errors.Is(err, rulepack.ErrPackNotFound) {
+		t.Errorf("expected ErrPackNotFound; got: %v", err)
+	}
+}
+
+func TestUpgradeInstallToLatest_UpdateError(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT p.name, i."pinVersion"`).
+		WithArgs("inst-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name", "pinVersion"}).AddRow("nexus/pii", "v1.0.0"))
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/pii").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"}).AddRow("pid-2", "v2.0.0"))
+	mock.ExpectExec(`UPDATE "rule_pack_install" SET "packId"`).
+		WithArgs("inst-1", "pid-2", "v2.0.0").
+		WillReturnError(errors.New("conn lost"))
+	_, err := store.UpgradeInstallToLatest(context.Background(), "inst-1")
+	if err == nil || !strings.Contains(err.Error(), "update") {
+		t.Errorf("expected update wrap; got: %v", err)
+	}
+}
+
+func TestUpgradeInstallToLatest_UpdateNoRows(t *testing.T) {
+	mock, store := newMockStore(t)
+	mock.ExpectQuery(`SELECT p.name, i."pinVersion"`).
+		WithArgs("inst-1").
+		WillReturnRows(pgxmock.NewRows([]string{"name", "pinVersion"}).AddRow("nexus/pii", "v1.0.0"))
+	mock.ExpectQuery(`SELECT id, version FROM "rule_pack"`).
+		WithArgs("nexus/pii").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "version"}).AddRow("pid-2", "v2.0.0"))
+	mock.ExpectExec(`UPDATE "rule_pack_install" SET "packId"`).
+		WithArgs("inst-1", "pid-2", "v2.0.0").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+	_, err := store.UpgradeInstallToLatest(context.Background(), "inst-1")
+	if !errors.Is(err, rulepack.ErrInstallNotFound) {
+		t.Errorf("expected ErrInstallNotFound on 0 rows; got: %v", err)
 	}
 }

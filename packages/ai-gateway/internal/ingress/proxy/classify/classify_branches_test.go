@@ -10,7 +10,7 @@ package classify
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,7 +96,7 @@ func TestServeClassify_internalError(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want 500", w.Code)
 	}
-	// F-0241: the raw internal error string must NOT reach the caller; the
+	// the raw internal error string must NOT reach the caller; the
 	// generic message is returned instead and the real error is logged.
 	if strings.Contains(w.Body.String(), "some internal failure") {
 		t.Errorf("internal error string leaked to caller: %s", w.Body.String())
@@ -142,7 +142,7 @@ func TestServeClassifyHTTP_backendUnavailable(t *testing.T) {
 	}
 }
 
-// TestServeClassifyHTTP_internalError is the F-0241 named failure mode on
+// TestServeClassifyHTTP_internalError is the named failure mode on
 // the stdlib handler: the internal 500 must return the generic detail, not
 // the raw error string.
 func TestServeClassifyHTTP_internalError(t *testing.T) {
@@ -216,14 +216,14 @@ func TestServeComplianceWebhookHTTP_success(t *testing.T) {
 }
 
 // oversizeBody returns a syntactically-valid-prefix JSON body larger than the
-// 1 MiB MaxBytesReader cap so the decoder errors mid-stream (F-0240).
+// 1 MiB MaxBytesReader cap so the decoder errors mid-stream.
 func oversizeBody() string {
 	// A content field padded past 1 MiB; MaxBytesReader truncates the read and
 	// the decoder fails before reaching the closing brace.
 	return `{"detector_type":"pii","content":"` + strings.Repeat("A", 2<<20) + `"}`
 }
 
-// TestServeClassifyHTTP_oversizeBodyRejected verifies F-0240: a request body
+// TestServeClassifyHTTP_oversizeBodyRejected verifies a request body
 // over the 1 MiB cap is rejected (400) rather than buffered whole.
 func TestServeClassifyHTTP_oversizeBodyRejected(t *testing.T) {
 	h := NewClassifyHandler(&okClassifier{})
@@ -240,7 +240,7 @@ func TestServeClassifyHTTP_oversizeBodyRejected(t *testing.T) {
 	}
 }
 
-// TestServeComplianceWebhookHTTP_oversizeBodyRejected verifies F-0240 for the
+// TestServeComplianceWebhookHTTP_oversizeBodyRejected verifies for the
 // webhook handler — the MaxBytesReader cap rejects an oversized payload.
 func TestServeComplianceWebhookHTTP_oversizeBodyRejected(t *testing.T) {
 	h := NewClassifyHandler(&okClassifier{})

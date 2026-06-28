@@ -16,7 +16,7 @@ import (
 )
 
 // wrapEnv wraps a bare HubSignal JSON payload in the unsigned transport envelope
-// the subscriber now expects (SEC-C3-01); used by the nil-secret tests where no
+// the subscriber now expects; used by the nil-secret tests where no
 // HMAC is required.
 func wrapEnv(payloadJSON string) []byte {
 	return []byte(`{"payload":` + payloadJSON + `}`)
@@ -140,7 +140,7 @@ func buildPoolWithRecord(t *testing.T, recs *recorder, things []struct{ ID, Type
 	return p
 }
 
-// TestSubscribeHubSignals_RejectsForgedSignal locks SEC-C3-01: when a signing
+// TestSubscribeHubSignals_RejectsForgedSignal locks the inter-Hub authenticity guarantee: when a signing
 // secret is configured, a nexus.hub.signal frame that is unsigned or signed with
 // the wrong key (a data-plane producer / on-path actor that can reach NATS but
 // lacks the Hub-to-Hub secret) is DROPPED — never broadcast to nodes. This is the
@@ -176,7 +176,7 @@ func TestSubscribeHubSignals_RejectsForgedSignal(t *testing.T) {
 }
 
 // TestSubscribeHubSignals_AcceptsValidlySignedSignal verifies a peer Hub's
-// correctly-signed frame is accepted and broadcast (SEC-C3-01 — no false drops).
+// correctly-signed frame is accepted and broadcast (no false drops).
 func TestSubscribeHubSignals_AcceptsValidlySignedSignal(t *testing.T) {
 	recs := &recorder{}
 	pool := buildPoolWithRecord(t, recs, []struct{ ID, Type string }{{"agent-1", "agent"}})

@@ -13,7 +13,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/thingtype"
 )
 
-// TestRequireMutationAuthority is the SEC-W2-02 (FIX-5/C C2) unit regression for
+// TestRequireMutationAuthority is the regression test for
 // the device-mutation gate. It pins both halves of the closed invariant:
 //
 //   - device-token callers are bound to their OWN id (unchanged from

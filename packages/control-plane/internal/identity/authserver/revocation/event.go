@@ -1,8 +1,8 @@
 package revocation
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 )
 

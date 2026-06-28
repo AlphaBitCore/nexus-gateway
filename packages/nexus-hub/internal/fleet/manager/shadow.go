@@ -2,8 +2,8 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"

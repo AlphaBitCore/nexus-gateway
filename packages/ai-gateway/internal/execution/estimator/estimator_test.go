@@ -324,6 +324,20 @@ func TestReadReasoningSignal_nonePresent_emptySignal(t *testing.T) {
 	}
 }
 
+// TestReadReasoningSignal_markerInContentFallsThrough locks the prefilter's
+// false-positive contract: a body that contains the "reasoning"/"thinking"
+// substring only inside user content (no actual reasoning key) must defeat the
+// fast-path skip yet still resolve to an empty signal via the authoritative key
+// lookups — i.e. the prefilter never produces a wrong signal, only ever skips work
+// that would have been empty anyway.
+func TestReadReasoningSignal_markerInContentFallsThrough(t *testing.T) {
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"explain your reasoning and thinking"}]}`)
+	sig := estimator.ReadReasoningSignal(body, provcore.FormatOpenAI)
+	if sig.Effort != "" || sig.BudgetTokens != 0 || sig.Source != "" {
+		t.Errorf("marker-in-content must yield empty signal, got %+v", sig)
+	}
+}
+
 // bucketBudget edge cases exercised via ReadReasoningSignal.
 
 func TestReadReasoningSignal_budgetZeroOrNeg_emptyEffort(t *testing.T) {

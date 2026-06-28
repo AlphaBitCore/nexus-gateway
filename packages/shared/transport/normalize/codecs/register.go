@@ -64,7 +64,7 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 	// the OpenAI Chat schema — only credentialing and host differ.
 	openAICompatible := []string{
 		"openai",
-		// #72 — the traffic.Adapter for api.openai.com (and OpenAI-wire
+		// The traffic.Adapter for api.openai.com (and OpenAI-wire
 		// siblings: Mistral, DeepSeek, etc.) is registered in builtins.go
 		// under id "openai-compat" and openai.Adapter.ID() returns the
 		// same value. Without this alias, agent + compliance-proxy
@@ -110,6 +110,16 @@ func RegisterDefaultAIBuiltins(reg *core.Registry) {
 		// to a non-OpenAI vendor whose adapter speaks the same schema).
 		reg.Register(key+"::/v1/responses", resp)
 	}
+	// Ingress-format key. The control-plane view-time normalize and the
+	// audit-time normalize key by IngressFormat (provcore.Format), which for the
+	// Responses API is "openai-responses" — NOT an openAICompatible adapter, so
+	// without this it would resolve ONLY via the "::/v1/responses" path-only
+	// fallback below. Registering the format key directly makes an adapter-keyed
+	// entry win, so a future tightening of the path fallback cannot silently
+	// regress Responses-ingress rows to Tier-3 generic-http. (The "gemini" and
+	// "anthropic" ingress formats already match their adapter-only keys below.)
+	reg.Register("openai-responses", resp)
+	reg.Register("openai-responses::/v1/responses", resp)
 	// Codex (the OpenAI CLI / IDE agent) speaks the Responses API but posts to
 	// chatgpt.com/backend-api/codex/responses, not /v1/responses, and its host
 	// resolves to the chatgpt-web adapter which does not claim this body — so

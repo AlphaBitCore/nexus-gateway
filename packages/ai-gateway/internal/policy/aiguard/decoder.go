@@ -2,8 +2,8 @@
 package aiguard
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"regexp"
 	"sort"
 	"strings"

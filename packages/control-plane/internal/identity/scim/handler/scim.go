@@ -2,8 +2,8 @@ package scim
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strconv"

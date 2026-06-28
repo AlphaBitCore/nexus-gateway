@@ -71,7 +71,7 @@ const (
 	// chat cache-hit dashboards. The L2 semantic tier already self-skips
 	// embeddings; this reason makes the L1/broker skip explicit and visible in
 	// gateway_cache_skip_reason. Pre-lookup short-circuit, peer to disabled /
-	// no_cache / passthrough — NOT an E61 semantic-cache failure mode.
+	// no_cache / passthrough — NOT a semantic-cache failure mode.
 	GatewayCacheSkipReasonEmbeddingsEndpoint GatewayCacheSkipReason = "embeddings_endpoint"
 
 	// GatewayCacheSkipReasonTimeSensitive is stamped when the freshness

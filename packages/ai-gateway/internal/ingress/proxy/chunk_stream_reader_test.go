@@ -281,6 +281,109 @@ func TestChunkSSEReader_DoneChunkWithRawBytes(t *testing.T) {
 	}
 }
 
+// TestChunkSSEReader_PassthroughMultiChunk_ByteLossless pins the byte-lossless
+// invariant of the passthrough RawBytes path across many chunks. It is the
+// regression guard for reusing a per-reader scratch backing array (instead of a
+// fresh per-chunk allocation): a LARGE chunk followed by a SHORTER one must not
+// leak stale tail bytes from the reused array, and reads with a tiny buffer must
+// reassemble every chunk exactly. Drives both the non-Done passthrough arm and
+// the Done-with-RawBytes arm.
+func TestChunkSSEReader_PassthroughMultiChunk_ByteLossless(t *testing.T) {
+	chunks := [][]byte{
+		[]byte("data: {\"x\":\"first-chunk-is-deliberately-long-aaaaaaaaaaaaaaaaaaaaaaaa\"}\n\n"),
+		[]byte("data: {\"y\":\"2\"}\n\n"), // shorter: reuses the larger backing array
+		[]byte("data: {\"z\":\"third-medium-cccccccccc\"}\n\n"),
+		[]byte("data: [DONE]\n\n"),
+	}
+	entries := make([]queuedChunkEntry, len(chunks))
+	for i, c := range chunks {
+		entries[i] = queuedChunkEntry{chunk: provcore.Chunk{RawBytes: c}}
+	}
+	// Last frame is the terminal Done chunk (exercises the Done+RawBytes arm).
+	entries[len(chunks)-1] = queuedChunkEntry{chunk: provcore.Chunk{Done: true, RawBytes: chunks[len(chunks)-1]}}
+
+	want := bytes.Join(chunks, nil)
+
+	// Read with a 1-byte buffer to force maximal partial reads across the sliding
+	// window + backing-array reuse — the harshest aliasing exposure.
+	sub := &queuedChunkSub{entries: append([]queuedChunkEntry(nil), entries...)}
+	rd := newChunkSSEReaderFromSubscription(context.Background(), sub, nil, provcore.FormatOpenAI)
+	rd.usageSink = &chunkUsageHolder{}
+	var got bytes.Buffer
+	one := make([]byte, 1)
+	for {
+		n, err := rd.Read(one)
+		if n > 0 {
+			got.Write(one[:n])
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read err=%v", err)
+		}
+	}
+	if !bytes.Equal(got.Bytes(), want) {
+		t.Fatalf("byte-lossless violated (1-byte reads):\n got=%q\nwant=%q", got.Bytes(), want)
+	}
+}
+
+// TestStreamCaptureTee_PooledNoBleedAcrossStreams pins the cross-stream no-bleed
+// invariant of the pooled capture buffer: after a long stream's tee buffer is
+// released to the pool, a fresh tee must start from a zero-length buffer (even if
+// the pool hands back the same backing array) so it captures ONLY its own bytes —
+// never stale tail bytes from the previous stream. Also verifies every write is
+// relayed to the underlying client writer unchanged.
+func TestStreamCaptureTee_PooledNoBleedAcrossStreams(t *testing.T) {
+	// Stream 1: capture a long body, then release the buffer back to the pool.
+	rw1 := httptest.NewRecorder()
+	tee1 := newStreamCaptureTee(rw1, 1<<20)
+	long := bytes.Repeat([]byte("A"), 40000)
+	if n, err := tee1.Write(long); err != nil || n != len(long) {
+		t.Fatalf("stream1 Write=(%d,%v) want (%d,nil)", n, err, len(long))
+	}
+	if !bytes.Equal(tee1.captured(), long) {
+		t.Fatalf("stream1 capture wrong: got %d bytes want %d", len(tee1.captured()), len(long))
+	}
+	tee1.release()
+
+	// Stream 2: a fresh tee must capture only its own (short) body.
+	rw2 := httptest.NewRecorder()
+	tee2 := newStreamCaptureTee(rw2, 1<<20)
+	short := []byte("data: short\n\n")
+	if _, err := tee2.Write(short); err != nil {
+		t.Fatalf("stream2 Write err=%v", err)
+	}
+	if !bytes.Equal(tee2.captured(), short) {
+		t.Fatalf("stream2 bled stale bytes from the pooled buffer: got %q want %q", tee2.captured(), short)
+	}
+	if rw2.Body.String() != string(short) {
+		t.Fatalf("write not relayed to client: client got %q want %q", rw2.Body.String(), short)
+	}
+	tee2.release()
+}
+
+// TestStreamCaptureTee_TruncatesPastHardCap guards the hardCap path with the
+// pooled buffer: bytes past hardCap are relayed to the client but not buffered,
+// and truncatedBeyondCap reports true.
+func TestStreamCaptureTee_TruncatesPastHardCap(t *testing.T) {
+	rw := httptest.NewRecorder()
+	tee := newStreamCaptureTee(rw, 10) // hardCap = 10 bytes
+	if _, err := tee.Write([]byte("0123456789ABCDEF")); err != nil {
+		t.Fatalf("Write err=%v", err)
+	}
+	if got := string(tee.captured()); got != "0123456789" {
+		t.Errorf("captured past cap=%q want first 10 bytes", got)
+	}
+	if !tee.truncatedBeyondCap() {
+		t.Error("truncatedBeyondCap must be true past hardCap")
+	}
+	if rw.Body.String() != "0123456789ABCDEF" {
+		t.Errorf("client must receive full body; got %q", rw.Body.String())
+	}
+	tee.release()
+}
+
 func TestChunkSSEReader_DeltaSynthesisedOpenAIEnvelope(t *testing.T) {
 	sub := &queuedChunkSub{entries: []queuedChunkEntry{
 		{chunk: provcore.Chunk{Delta: "hello "}},

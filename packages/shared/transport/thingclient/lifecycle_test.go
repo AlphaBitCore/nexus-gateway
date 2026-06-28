@@ -2,7 +2,7 @@ package thingclient
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -629,7 +629,7 @@ func TestLifecycle_CloseTimeout(t *testing.T) {
 	//
 	// Pragmatic assertion: Close must complete (not hang) and return
 	// either nil OR the documented timeout error. Pinning to error-
-	// only made this a CI flake (round 6 of the CI cleanup epic);
+	// only made this a CI flake;
 	// the goroutine-leak / panic / data-race regressions this test
 	// would actually catch fire on either return value. The exact
 	// timeout-path coverage is tracked in [[follow-up]] for a future

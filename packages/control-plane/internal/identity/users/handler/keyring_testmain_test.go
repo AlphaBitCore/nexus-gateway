@@ -10,8 +10,8 @@ import (
 
 // TestMain installs a fixed single-version HMAC keyring so this package's API-key
 // hashing (auth.HashAPIKey, used by create/regenerate/rotate handlers) has an
-// injected keyring — mirroring the boot-time auth.InitHMACKeyring (SEC-W2-01
-// Layer A). Production always injects at boot; tests must too, since the hashing
+// injected keyring — mirroring the boot-time auth.InitHMACKeyring.
+// Production always injects at boot; tests must too, since the hashing
 // layer no longer falls back to an empty secret (a nil keyring is a wiring bug,
 // not a silent default).
 func TestMain(m *testing.M) {

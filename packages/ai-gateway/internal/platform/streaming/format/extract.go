@@ -1,7 +1,7 @@
 package format
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	"github.com/tidwall/gjson"
 )

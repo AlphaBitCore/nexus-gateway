@@ -2,8 +2,8 @@ package iam
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // StringList is a JSON-shape-tolerant []string used by AWS-style IAM

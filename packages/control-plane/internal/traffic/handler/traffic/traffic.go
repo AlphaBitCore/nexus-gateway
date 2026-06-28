@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	stdjson "encoding/json"
 	"fmt"
+
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strconv"
@@ -14,12 +16,11 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/traffic/store/trafficstore"
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
+	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 )
 
 // RegisterTrafficRoutes registers traffic event and admin audit log routes.
@@ -37,21 +38,77 @@ func (h *Handler) RegisterTrafficRoutes(g *echo.Group, iamMW func(action string)
 	g.GET("/me/admin-audit-logs", h.ListMyAdminAuditLogs) // iam-exempt: self-service, the caller's own audit log
 }
 
-// GetTrafficEventNormalized returns the normalized sidecar payload for
-// the given traffic event id. Returns 404 when either the traffic event
-// does not exist or no normalize row was produced for it (typically
-// because payload capture was off or the protocol could not be mapped).
+// GetTrafficEventNormalized returns the canonical normalized payload for the
+// given traffic event id, COMPUTED ON THE FLY from the captured request /
+// response bodies (it does not read the stored traffic_event_normalized
+// sidecar). Recomputing at view time means the normalized form is never
+// persisted — the write path stays thin and the drawer always reflects the
+// current normalize version. The captured bodies are decoded from their column
+// form (text / base64 / zstd) and are already redaction-safe (the storage
+// governance pass redacts every persisted copy), so recompute never exposes
+// redacted content. Falls back to the stored sidecar when no inline body is
+// available (capture off, or a body spilled out-of-band). Returns 404 when the
+// traffic event does not exist or has no normalizable payload.
 func (h *Handler) GetTrafficEventNormalized(c echo.Context) error {
+	ctx := c.Request().Context()
 	id := c.Param("id")
-	row, err := h.traffic.GetTrafficEventNormalized(c.Request().Context(), id)
+
+	in, err := h.traffic.GetTrafficEventForNormalize(ctx, id)
 	if err != nil {
-		h.logger.Error("get traffic event normalized", "trafficEventId", id, "error", err)
+		h.logger.Error("get traffic event for normalize", "trafficEventId", id, "error", err)
+		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
+	}
+	if in == nil || !in.Found {
+		return c.JSON(http.StatusNotFound, errJSON("Traffic event not found", "not_found", ""))
+	}
+
+	// Compute when we have at least one captured body and a normalizer is wired.
+	if h.normalize != nil && (len(in.RequestBody) > 0 || len(in.ResponseBody) > 0) {
+		return c.JSON(http.StatusOK, h.computeNormalized(id, in))
+	}
+
+	// No inline body to recompute from (capture off / spilled): fall back to the
+	// stored sidecar so the drawer still shows whatever was persisted.
+	row, err := h.traffic.GetTrafficEventNormalized(ctx, id)
+	if err != nil {
+		h.logger.Error("get traffic event normalized (fallback)", "trafficEventId", id, "error", err)
 		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
 	}
 	if row == nil {
 		return c.JSON(http.StatusNotFound, errJSON("Normalized payload not found", "not_found", ""))
 	}
 	return c.JSON(http.StatusOK, row)
+}
+
+// computeNormalized runs the shared normalize chain over the captured bodies and
+// assembles the same TrafficEventNormalized shape the stored sidecar would have,
+// minus redaction spans (the recompute input is already redaction-safe). A
+// text/event-stream response content type marks the response direction as a
+// stream so the SSE codecs are selected.
+func (h *Handler) computeNormalized(id string, in *trafficstore.NormalizeInput) trafficstore.TrafficEventNormalized {
+	out := trafficstore.TrafficEventNormalized{
+		TrafficEventID:   id,
+		NormalizeVersion: normcore.SchemaVersion,
+		CreatedAt:        time.Now().UTC(),
+	}
+	if len(in.RequestBody) > 0 {
+		raw, status, reason := h.normalize("request", in.RequestContentType, in.AdapterType, in.Model, in.Path, false, in.RequestBody)
+		out.RequestNormalized = raw
+		out.RequestStatus = strPtr(status)
+		if reason != "" {
+			out.RequestErrorReason = strPtr(reason)
+		}
+	}
+	if len(in.ResponseBody) > 0 {
+		stream := strings.Contains(strings.ToLower(in.ResponseContentType), "text/event-stream")
+		raw, status, reason := h.normalize("response", in.ResponseContentType, in.AdapterType, in.Model, in.Path, stream, in.ResponseBody)
+		out.ResponseNormalized = raw
+		out.ResponseStatus = strPtr(status)
+		if reason != "" {
+			out.ResponseErrorReason = strPtr(reason)
+		}
+	}
+	return out
 }
 
 // TrafficStorage returns the traffic storage configuration (database-backed = queryable).
@@ -250,58 +307,45 @@ func (h *Handler) GetTrafficEvent(c echo.Context) error {
 		}
 	}
 
-	// Decode Body envelopes ({kind, encoding, inlineBytes, ...}) written by
-	// the hub consumer. Raw-encoded bodies are unwrapped to their JSON
-	// content; base64-encoded bodies (SSE, binary) are decoded to a plain
-	// text string. Both produce a value the UI can render directly without
-	// knowing the internal envelope format.
-	record.RequestBody = decodeBodyEnvelope(record.RequestBody)
-	record.ResponseBody = decodeBodyEnvelope(record.ResponseBody)
+	// Render the stored inline bodies for the UI. The hub stores the captured
+	// body as raw bytes in the inline BYTEA column, tagged by its
+	// inline_*_encoding discriminator ("text", "base64", "zstd", ...);
+	// renderBody decodes per the encoding and produces a value the UI can
+	// render directly — valid JSON passes through, anything else is wrapped as
+	// a JSON string. Spill-resolved bodies are already UI-ready and pass through.
+	record.RequestBody = renderBody(record.RequestBody, record.RequestBodyEncoding)
+	record.ResponseBody = renderBody(record.ResponseBody, record.ResponseBodyEncoding)
 
 	return c.JSON(http.StatusOK, record)
 }
 
-// decodeBodyEnvelope unwraps a Body envelope stored by the hub consumer.
-// The hub writes {kind, encoding, inlineBytes, ...} as JSONB. This helper
-// returns a value the UI can render directly:
-//   - absent / empty  → nil
-//   - inline + raw    → the inlineBytes content (valid JSON, returned as-is)
-//   - inline + base64 → decoded bytes wrapped as a JSON string (SSE text, etc.)
-//   - anything else   → raw passed through (old pre-envelope rows, spill refs)
-func decodeBodyEnvelope(raw json.RawMessage) json.RawMessage {
+// renderBody turns a stored inline body column plus its inline_*_encoding
+// discriminator into a value the UI can render directly. The hub stores the
+// captured body as raw bytes in the inline BYTEA column, tagged by the encoding
+// discriminator; this decodes per the encoding, then a body that is valid JSON
+// passes through as JSON and
+// anything else (SSE text, decoded binary) is wrapped as a JSON string so the
+// drawer always receives a printable value. Spill-resolved bodies arrive
+// already UI-ready with an empty encoding and pass through unchanged.
+func renderBody(col json.RawMessage, encoding string) json.RawMessage {
+	if len(col) == 0 {
+		return nil
+	}
+	raw := sharedaudit.DecodeBodyForColumn(col, encoding)
 	if len(raw) == 0 {
 		return nil
 	}
-	// Detect envelope by probing for a "kind" string field.
-	var probe struct {
-		Kind string `json:"kind"`
+	// stdlib json.Valid is zero-alloc (goccy's decodes into interface{}, ~4x).
+	if stdjson.Valid(raw) {
+		return json.RawMessage(raw)
 	}
-	if err := json.Unmarshal(raw, &probe); err != nil || probe.Kind == "" {
-		return raw // old format or non-object — pass through
-	}
-	var body sharedaudit.Body
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return raw
-	}
-	switch body.Kind {
-	case sharedaudit.BodyAbsent:
-		return nil
-	case sharedaudit.BodyInline:
-		if body.Encoding == sharedaudit.EncodingRaw {
-			return json.RawMessage(body.InlineBytes)
-		}
-		// base64: InlineBytes are the decoded original bytes (e.g. SSE stream).
-		// Wrap as a JSON string so the UI receives a printable value.
-		out, _ := json.Marshal(string(body.InlineBytes))
-		return json.RawMessage(out)
-	default:
-		return raw
-	}
+	out, _ := json.Marshal(string(raw))
+	return json.RawMessage(out)
 }
 
 // resolveSpillBody decodes a JSONB spill_ref into an audit.SpillRef and
 // fetches the bytes via the wired SpillStore. Returned bytes mirror the
-// shape produced by decodeBodyEnvelope's inline path: JSON-like content
+// shape produced by renderBody's inline path: JSON-like content
 // types whose bytes parse as JSON are returned as raw JSON; everything
 // else (SSE, multipart, binary) is wrapped as a JSON string. This keeps
 // the UI shape identical regardless of inline-vs-spill storage.
@@ -330,7 +374,7 @@ func (h *Handler) resolveSpillBody(ctx context.Context, refJSON []byte) (json.Ra
 			return nil, fmt.Errorf("spill body integrity check failed (sha256 %s != recorded %s): blob may have been tampered with", got, ref.SHA256)
 		}
 	}
-	if isJSONContentType(ref.ContentType) && json.Valid(body) {
+	if isJSONContentType(ref.ContentType) && stdjson.Valid(body) {
 		return json.RawMessage(body), nil
 	}
 	// Non-JSON / unparseable payload — wrap as a JSON string so the UI's
@@ -350,75 +394,4 @@ func (h *Handler) resolveSpillBody(ctx context.Context, refJSON []byte) (json.Ra
 func isJSONContentType(ct string) bool {
 	base := strings.ToLower(strings.TrimSpace(strings.SplitN(ct, ";", 2)[0]))
 	return base == "application/json" || strings.HasSuffix(base, "+json")
-}
-
-func parseAdminAuditParams(c echo.Context) trafficstore.AdminAuditLogListParams {
-	pg := parsePagination(c)
-	params := trafficstore.AdminAuditLogListParams{
-		ActorID:        c.QueryParam("actorId"),
-		ActorLabel:     c.QueryParam("actorLabel"),
-		ActorRole:      c.QueryParam("actorRole"),
-		Action:         c.QueryParam("action"),
-		EntityType:     c.QueryParam("entityType"),
-		NexusRequestID: c.QueryParam("nexusRequestId"),
-		Limit:          pg.Limit,
-		Offset:         pg.Offset,
-	}
-	if v := c.QueryParam("startTime"); v != "" {
-		if t, ok := parseRFC3339Flexible(v); ok {
-			params.StartTime = &t
-		}
-	}
-	if v := c.QueryParam("endTime"); v != "" {
-		if t, ok := parseRFC3339Flexible(v); ok {
-			params.EndTime = &t
-		}
-	}
-	return params
-}
-
-func (h *Handler) ListAdminAuditLogs(c echo.Context) error {
-	params := parseAdminAuditParams(c)
-	data, total, err := h.traffic.ListAdminAuditLogs(c.Request().Context(), params)
-	if err != nil {
-		h.logger.Error("list admin audit logs", "error", err)
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-	return c.JSON(http.StatusOK, map[string]any{"data": data, "total": total, "limit": params.Limit, "offset": params.Offset})
-}
-
-// ListMyAdminAuditLogs returns admin audit logs for the current user only.
-func (h *Handler) ListMyAdminAuditLogs(c echo.Context) error {
-	params := parseAdminAuditParams(c)
-	aa := middleware.AdminAuthFromContext(c)
-	if aa != nil {
-		params.ActorID = aa.KeyID
-	}
-	data, total, err := h.traffic.ListAdminAuditLogs(c.Request().Context(), params)
-	if err != nil {
-		h.logger.Error("list my admin audit logs", "error", err)
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-	return c.JSON(http.StatusOK, map[string]any{"data": data, "total": total, "limit": params.Limit, "offset": params.Offset})
-}
-
-func (h *Handler) ExportAdminAuditLogs(c echo.Context) error {
-	params := parseAdminAuditParams(c)
-	const maxExport = 10_000
-
-	entries, err := h.traffic.ExportAdminAuditLogs(c.Request().Context(), params, maxExport)
-	if err != nil {
-		h.logger.Error("export admin audit logs", "error", err)
-		return c.JSON(http.StatusInternalServerError, errJSON("Internal server error", "server_error", ""))
-	}
-
-	ae := audit.EntryFor(c, iam.ResourceAuditLog, iam.VerbExport)
-	ae.AfterState = map[string]any{"recordCount": len(entries)}
-	h.audit.LogObserved(c.Request().Context(), ae)
-
-	return c.JSON(http.StatusOK, map[string]any{
-		"exportedAt": time.Now().Format(time.RFC3339),
-		"truncated":  len(entries) >= maxExport,
-		"entries":    entries,
-	})
 }

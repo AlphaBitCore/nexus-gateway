@@ -2,7 +2,7 @@ package quota
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"os"
 	"sort"
 	"sync"

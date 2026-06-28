@@ -1,4 +1,4 @@
-// proxy_truncation_test.go — F-0349: a non-streaming upstream response whose
+// proxy_truncation_test.go — a non-streaming upstream response whose
 // body was clamped at the read cap (or decompressed-size bound) before usage
 // extraction must NOT be billed as a confirmed usage block. Every non-stream
 // usage-status path (direct handleNonStream, broker handleNonStreamWithSubscription)

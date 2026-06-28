@@ -1,8 +1,8 @@
 package alerting
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 )

@@ -21,7 +21,7 @@ func TestSkipReasonRoundTrip(t *testing.T) {
 		want string
 	}{
 		// Pre-lookup short-circuit constants (peer to disabled / no_cache /
-		// passthrough; NOT E61 semantic-cache failure modes).
+		// passthrough; NOT semantic-cache failure modes).
 		{"disabled", GatewayCacheSkipReasonDisabled, "disabled"},
 		{"no_cache", GatewayCacheSkipReasonNoCache, "no_cache"},
 		{"passthrough", GatewayCacheSkipReasonPassthrough, "passthrough"},

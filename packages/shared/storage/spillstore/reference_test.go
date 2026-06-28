@@ -69,7 +69,7 @@ func TestResolveReferenced_PassesCandidatesAndReturnsSet(t *testing.T) {
 }
 
 // TestResolveReferenced_FilterError propagates the error and returns nil so the
-// caller aborts the sweep (fail-safe per F-0187 — never delete on a failed
+// caller aborts the sweep (fail-safe — never delete on a failed
 // reference check).
 func TestResolveReferenced_FilterError(t *testing.T) {
 	sentinel := errors.New("db down")

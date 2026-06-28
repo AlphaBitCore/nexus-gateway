@@ -35,7 +35,7 @@ func TestNewVault_InvalidKeyLength(t *testing.T) {
 	}
 }
 
-// TestEncryptDecrypt_AADBinding_DefeatsCrossCredentialSwap is the SEC-C1-02
+// TestEncryptDecrypt_AADBinding_DefeatsCrossCredentialSwap is the
 // regression: a ciphertext sealed under credential A's row-identity AAD must NOT
 // decrypt under credential B's AAD. This is exactly the confused-deputy a DB-write
 // attacker tries — copying A's encrypted columns into B's row to make B's identity
@@ -234,7 +234,7 @@ func TestNewMultiVault_Basic(t *testing.T) {
 	}
 }
 
-// TestNewMultiVault_ExplicitCurrentMarker is the F-0090 regression: an
+// TestNewMultiVault_ExplicitCurrentMarker is the regression: an
 // entry prefixed with "*" is the current (encryption) key regardless of
 // its position. Here v1 is marked current even though v3 is last, so a
 // new encryption must use v1 — proving current selection is no longer
@@ -259,7 +259,7 @@ func TestNewMultiVault_ExplicitCurrentMarker(t *testing.T) {
 
 // TestNewMultiVault_MarkerWinsOverPosition pins that prepending a new key
 // without re-marking does NOT change the current key when an explicit
-// marker is present — the operator hazard F-0090 describes.
+// marker is present — the operator hazard this guards against.
 func TestNewMultiVault_MarkerWinsOverPosition(t *testing.T) {
 	k1, k2 := testHexKey(t), testHexKey(t)
 	// New key knew prepended; the old key v_old is still marked current.
@@ -449,7 +449,7 @@ func TestInitVault_ExplicitHexKey_Success(t *testing.T) {
 		t.Fatalf("round-trip: got %q, want %q", got, "payload")
 	}
 
-	// SEC-W2-03: the Vault holds the HKDF-derived provider-credential sub-key,
+	// The Vault holds the HKDF-derived provider-credential sub-key,
 	// NOT the raw master — derived identically to the ai-gw open side.
 	masterBytes, _ := hex.DecodeString(keyHex)
 	wantSub, _ := keyderive.DeriveKey32(masterBytes, keyderive.ClassProviderCredential)
@@ -458,7 +458,7 @@ func TestInitVault_ExplicitHexKey_Success(t *testing.T) {
 	}
 }
 
-// TestInitVault_RejectsWeakKey locks SEC-M2-02: a valid-hex, correct-length but
+// TestInitVault_RejectsWeakKey locks the rule that a valid-hex, correct-length but
 // degenerate master key (all-zeros / a committed example) must fail closed at
 // boot rather than encrypting every credential under a guessable value.
 func TestInitVault_RejectsWeakKey(t *testing.T) {

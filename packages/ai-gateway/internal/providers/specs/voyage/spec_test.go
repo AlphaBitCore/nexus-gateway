@@ -2,8 +2,8 @@ package voyage_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -650,7 +650,7 @@ func TestCodec_DecodeResponse_HappyPath(t *testing.T) {
 	}
 }
 
-// TestCodec_DecodeResponse_CountMismatch_Rejected pins F-0220: when the
+// TestCodec_DecodeResponse_CountMismatch_Rejected pins the guard: when the
 // request asked for N inputs but the provider returned a different number
 // of vectors, the decode must fail (→ 502) rather than serve misaligned
 // vectors. The request context carries the Voyage wire request body.
@@ -669,7 +669,7 @@ func TestCodec_DecodeResponse_CountMismatch_Rejected(t *testing.T) {
 	}
 }
 
-// TestCodec_DecodeResponse_CountMatch_Passes is the F-0220 positive arm:
+// TestCodec_DecodeResponse_CountMatch_Passes is the positive arm:
 // a matching count decodes cleanly with the request context present.
 func TestCodec_DecodeResponse_CountMatch_Passes(t *testing.T) {
 	spec := voyage.NewSpec(slog.Default())

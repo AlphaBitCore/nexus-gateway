@@ -135,7 +135,7 @@ type bumpOptions struct {
 	// policy Store, populated at startup (shared streampolicy.BootStore
 	// helper) and refreshed via the configdispatch shadow handler that
 	// calls ApplyShadowState on every push of the
-	// streaming_compliance shadow key. Three-service alignment (#115):
+	// streaming_compliance shadow key. Three-service alignment:
 	// agent, compliance-proxy, and ai-gateway all hold a *Store the
 	// same way; tlsbump reads the live snapshot via Store.Get() at
 	// SSE-handler entry so per-flow mode dispatch sees the latest
@@ -185,6 +185,17 @@ type bumpOptions struct {
 	procBundle string
 	procUser   string
 
+	// richReject selects how a block decision is returned to the client.
+	// When true (the compliance-proxy / ai-gateway, which own a
+	// client-facing HTTP response), a block writes the rich attributed
+	// reject body via WriteRejectResponse (blocked_by_policy envelope +
+	// rule-ID reason). When false (the zero value — the agent, an on-host
+	// transparent interceptor that must not synthesize a rich error page),
+	// a block writes a minimal "Forbidden" 403 with no attribution body.
+	// Set via WithRichReject; defaults false so the agent's safe minimal
+	// behavior is the unconfigured default.
+	richReject bool
+
 	// strictFailClosed selects the BUILD-time treatment of an unbuildable
 	// fail-closed compliance hook. When false (default — the agent
 	// NE proxy, which sits in the host outbound packet path), a fail-closed hook
@@ -228,8 +239,8 @@ type BumpOption func(*bumpOptions)
 // WithCompliance injects compliance pipeline dependencies. The streaming
 // mode is sourced exclusively from the *streampolicy.Store wired via
 // WithStreamingPolicyStore — there is no YAML / per-call mode parameter
-// anymore (deleted in #115 as part of three-service Store-based
-// alignment; admin policy is the single source of truth for SSE mode).
+// anymore (admin policy is the single source of truth for SSE mode,
+// resolved through the shared Store across all three services).
 func WithCompliance(
 	resolver *compliance.PolicyResolver,
 	emitter *compliance.AuditEmitter,
@@ -252,7 +263,7 @@ func WithCompliance(
 // entry to resolve the effective mode (per-host overrides merged via
 // streampolicy.Resolve), so a Hub shadow push of the
 // streaming_compliance key takes effect on the next request without
-// rebuilding bumpOptions. Three-service alignment (#115) — agent /
+// rebuilding bumpOptions. Three-service alignment — agent /
 // compliance-proxy / ai-gateway all wire the same *Store via this
 // option.
 //
@@ -286,6 +297,20 @@ func WithIdentity(name string) BumpOption {
 // host networking.
 func WithStrictFailClosed() BumpOption {
 	return func(o *bumpOptions) { o.strictFailClosed = true }
+}
+
+// WithRichReject selects how a block decision is returned to the client.
+// Pass true on callers that own a client-facing HTTP response and may
+// safely synthesize an attributed reject body — the compliance-proxy /
+// ai-gateway appliances, whose clients are API/browser callers expecting
+// a structured 403. Pass false (or leave unset) on the agent's on-host
+// transparent interceptor, which must not synthesize a rich error page in
+// the host's outbound path: a block then writes a minimal "Forbidden" 403
+// with no attribution body. The reason carried into the rich body is the
+// hook's rule-ID/label only — never the upstream's original sensitive
+// value.
+func WithRichReject(v bool) BumpOption {
+	return func(o *bumpOptions) { o.richReject = v }
 }
 
 // WithProcessInfo records the originating process attribution for the

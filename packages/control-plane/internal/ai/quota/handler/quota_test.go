@@ -2,8 +2,8 @@ package quota
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -232,7 +232,7 @@ type fakeMetricsDB struct {
 	rows []metrics.RollupRow
 	err  error
 	// queriedMetrics records the Metrics slice of the last QueryRollup call so a
-	// test can assert which cost metric the analytics handler reads (F-0160).
+	// test can assert which cost metric the analytics handler reads.
 	queriedMetrics []string
 }
 
@@ -329,7 +329,7 @@ func newTestHandler(db quotaDB, met metricsDB, hub HubAPI) *Handler {
 		quota:   db,
 		metrics: met,
 		// Default doubles resolve every referent as "found" so create/update
-		// happy-path tests pass the F-0170 referential checks; not-found tests
+		// happy-path tests pass the referential checks; not-found tests
 		// reassign these fields with empty doubles to drive the 400 branch.
 		users:  &fakeUsersDB{user: &userstore.NexusUserSafe{DisplayName: "u"}},
 		orgs:   &fakeOrgsDB{org: &orgstore.Organization{Name: "o"}, project: &orgstore.Project{Name: "p"}},
@@ -1264,7 +1264,7 @@ func TestCreateQuotaOverride_InvalidPeriodType(t *testing.T) {
 	}
 }
 
-// F-0161: a create with an already-past expiresAt is rejected (an exception
+// A create with an already-past expiresAt is rejected (an exception
 // born expired would be silently ignored by the enforcement engine).
 func TestCreateQuotaOverride_PastExpiresRejected(t *testing.T) {
 	h := newTestHandler(newFakeQuotaDB(), nil, nil)
@@ -1283,7 +1283,7 @@ func TestCreateQuotaOverride_PastExpiresRejected(t *testing.T) {
 	}
 }
 
-// F-0161: a future expiresAt threads through to the store create params.
+// A future expiresAt threads through to the store create params.
 func TestCreateQuotaOverride_FutureExpiresAccepted(t *testing.T) {
 	db := newFakeQuotaDB()
 	h := newTestHandler(db, nil, &fakeHubAPI{})
@@ -1367,7 +1367,7 @@ func TestUpdateQuotaOverride_Valid(t *testing.T) {
 	}
 }
 
-// F-0146 regression: switching a populated override's cost cap back to
+// Switching a populated override's cost cap back to
 // "Inherit from policy" on edit must CLEAR the column (so the engine inherits
 // the policy cap), not silently keep the old value via the store's COALESCE.
 func TestUpdateQuotaOverride_InheritClearsCost(t *testing.T) {
@@ -1430,7 +1430,7 @@ func TestUpdateQuotaOverride_InheritClearsModeAndPeriod(t *testing.T) {
 	}
 }
 
-// F-0161: expiresAtMode "_inherit" clears the expiry (restores a permanent
+// expiresAtMode "_inherit" clears the expiry (restores a permanent
 // override) — ClearExpiresAt is set and the value is nil-ed.
 func TestUpdateQuotaOverride_InheritClearsExpires(t *testing.T) {
 	db := newFakeQuotaDB()
@@ -1453,7 +1453,7 @@ func TestUpdateQuotaOverride_InheritClearsExpires(t *testing.T) {
 	}
 }
 
-// F-0161: an update setting an already-past expiresAt is rejected.
+// An update setting an already-past expiresAt is rejected.
 func TestUpdateQuotaOverride_PastExpiresRejected(t *testing.T) {
 	db := newFakeQuotaDB()
 	ovr := sampleOverride()
@@ -2124,7 +2124,7 @@ func TestCreateQuotaPolicy_AllNotNullDefaultsFilled(t *testing.T) {
 	h := newTestHandler(db, nil, nil)
 
 	// Most minimal body: the three required fields without @default (name, scope,
-	// periodType) plus the now-mandatory positive cost cap (F-0147 — a policy's
+	// periodType) plus the now-mandatory positive cost cap (a policy's
 	// only enforceable limit). Everything else MUST be defaulted by the handler.
 	body := mustJSON(t, map[string]any{
 		"name":         "minimal",
@@ -2222,10 +2222,10 @@ func TestUpdateQuotaPolicy_OmittedFieldsArePreservedViaCOALESCE(t *testing.T) {
 	}
 }
 
-// --- F-0147: quota limit positivity + all-nil rejection ---
+// --- quota limit positivity + all-nil rejection ---
 
 // assertValidationError fails unless rec carries the given status and an
-// error.type == "validation_error" envelope — the named failure mode for F-0147.
+// error.type == "validation_error" envelope — the named failure mode.
 func assertValidationError(t *testing.T, rec *httptest.ResponseRecorder, wantCode int) {
 	t.Helper()
 	if rec.Code != wantCode {
@@ -2270,7 +2270,7 @@ func TestCreateQuotaPolicy_NegativeCostRejected(t *testing.T) {
 
 func TestCreateQuotaPolicy_NilCostRejected(t *testing.T) {
 	h := newTestHandler(newFakeQuotaDB(), nil, nil)
-	// all-nil-limits: omit the cost cap entirely (post-F-0149 it is the only limit).
+	// all-nil-limits: omit the cost cap entirely (it is the only limit).
 	body := validCreatePolicyBody(func(m map[string]any) { delete(m, "costLimitUsd") })
 	c, rec := echoCtx(http.MethodPost, "/quota-policies", body)
 	if err := h.CreateQuotaPolicy(c); err != nil {
@@ -2295,7 +2295,7 @@ func TestUpdateQuotaPolicy_ZeroCostRejected(t *testing.T) {
 }
 
 func TestUpdateQuotaPolicy_MergedNilCostRejected(t *testing.T) {
-	// Existing policy with a nil cost cap (a pre-F-0147 row) + an update that does
+	// Existing policy with a nil cost cap (a legacy row with no cap) + an update that does
 	// not supply a cap must be rejected: the merged policy would enforce nothing.
 	db := newFakeQuotaDB()
 	pol := samplePolicy()
@@ -2350,7 +2350,7 @@ func TestCreateQuotaOverride_AllNilRejected(t *testing.T) {
 	assertValidationError(t, rec, http.StatusBadRequest)
 }
 
-// TestCreateQuotaOverride_InheritCostWithModeAccepted is the F-0146 contract: an
+// TestCreateQuotaOverride_InheritCostWithModeAccepted is the contract: an
 // override that customises only the enforcement mode is valid and is persisted
 // with a nil cost cap (NOT an explicit 0) so the engine inherits the policy cap.
 func TestCreateQuotaOverride_InheritCostWithModeAccepted(t *testing.T) {
@@ -2403,7 +2403,7 @@ func TestUpdateQuotaOverride_MergedAllNilRejected(t *testing.T) {
 	assertValidationError(t, rec, http.StatusBadRequest)
 }
 
-// --- F-0148: analytics resolves the effective limit via override→policy ---
+// --- analytics resolves the effective limit via override→policy ---
 
 // overviewRow runs the overview handler for one entity and returns its row.
 func overviewRow(t *testing.T, h *Handler, scope, periodKey, entityID string) map[string]any {
@@ -2605,7 +2605,7 @@ func TestPolicyScopesForAnalytics(t *testing.T) {
 	}
 }
 
-// --- F-0160: analytics reads the BILLED cost metric (matches enforcement) ---
+// --- analytics reads the BILLED cost metric (matches enforcement) ---
 
 func TestQuotaAnalyticsOverview_QueriesBilledCost(t *testing.T) {
 	met := &fakeMetricsDB{rows: []metrics.RollupRow{{DimensionKey: "user=user-1", Value: 10.0}}}
@@ -2644,7 +2644,7 @@ func TestQuotaAnalyticsTrend_QueriesBilledCost(t *testing.T) {
 	}
 }
 
-// --- F-0170: referential validation of override targetId / policy organizationId ---
+// --- referential validation of override targetId / policy organizationId ---
 
 func createOverrideStatus(t *testing.T, h *Handler, targetType, targetID string) (int, string) {
 	t.Helper()
@@ -2760,7 +2760,7 @@ func TestCreateQuotaPolicy_ExistingOrg_201(t *testing.T) {
 	}
 }
 
-// --- F-0170: targetEntityExists branch coverage + update-policy org check ---
+// --- targetEntityExists branch coverage + update-policy org check ---
 
 func TestTargetEntityExists_AllBranches(t *testing.T) {
 	h := newTestHandler(newFakeQuotaDB(), nil, nil)

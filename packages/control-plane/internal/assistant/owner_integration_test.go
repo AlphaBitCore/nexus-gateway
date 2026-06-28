@@ -9,7 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// owner_integration_test.go exercises the AC-3 cross-pod affinity mechanism against a
+// owner_integration_test.go exercises the cross-pod affinity mechanism against a
 // REAL Redis (beyond the miniredis unit tests in owner_test.go) — two ownerRegistry
 // instances sharing one Redis stand in for two CP replicas. It SKIPs unless
 // NEXUS_TEST_REDIS_ADDR points at a reachable Redis (so CI without Redis skips cleanly

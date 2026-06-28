@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestUserQuitFlagShouldExit is the F-0312 regression: the user-quit flag must
+// TestUserQuitFlagShouldExit verifies the user-quit flag must
 // be honored only when quitAllowed is true. On a quitAllowed=false (locked /
 // compliance) fleet the flag is ignored, so a local user who plants the flag
 // file cannot defeat the no-quit policy.

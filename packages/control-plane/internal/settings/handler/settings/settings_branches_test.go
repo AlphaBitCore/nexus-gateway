@@ -6,8 +6,8 @@ package settings
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,7 +97,7 @@ func TestCacheFlush_WithHub_CallsInvalidate(t *testing.T) {
 	}
 }
 
-// TestCacheFlush_HubFailure502 — F-0099: CacheFlush fans out to security keys
+// TestCacheFlush_HubFailure502 — CacheFlush fans out to security keys
 // (credentials / virtual_keys / routing_rules / quota_*); a Hub push failure
 // must surface as HTTP 502 with the propagation_error envelope and skip the
 // success audit, not report a false "flushed".

@@ -89,7 +89,7 @@ func TestRunBufferStream_Reject_WritesErrorEvent(t *testing.T) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 
-	// #115/O3 — assert STRUCTURAL invariants rather than the literal
+	// Assert STRUCTURAL invariants rather than the literal
 	// "blocked by policy" string (which belongs to shared.BufferPipeline's
 	// writeErrorAndDone; coupling at the substring level chains
 	// ai-gateway's contract to a shared-package implementation detail).
@@ -111,7 +111,7 @@ func TestRunBufferStream_Reject_WritesErrorEvent(t *testing.T) {
 
 // (Removed) TestBufferModeExecutor_PassesUnderlyingResult was a
 // table test against a 1-line type bridge — covered nothing observable
-// beyond what the Go compiler already enforces. PR #24 / S3 cleanup.
+// beyond what the Go compiler already enforces.
 // If bufferModeExecutor ever grows real logic (rate limiting, retry,
 // audit-stamp), reinstate a test asserting THAT behavior, not the
 // pass-through invariant.
@@ -174,8 +174,8 @@ func TestRunBufferStream_ProcessError_Surfaced(t *testing.T) {
 	}
 }
 
-// TestRunBufferStream_MaxBufferBytes_PropagatesToPipeline — #115/O6
-// follow-up. runBufferStream now reads MaxBufferBytes from
+// TestRunBufferStream_MaxBufferBytes_PropagatesToPipeline.
+// runBufferStream reads MaxBufferBytes from
 // runStreamDeps (populated from streampolicy.Store at the dispatch
 // site) and threads it into BufferConfig.MaxBufferSize. Before this
 // fix the buffer pipeline silently capped at the 8MB default
@@ -260,8 +260,8 @@ func TestRunBufferStream_PreHookInstalled_WhenRegistryWired(t *testing.T) {
 	}
 }
 
-// TestRunBufferStream_NilSSEReaderOrTee_NoOp — PR #24 follow-up
-// S4-code defensive nil-guard. Production always wires both; this
+// TestRunBufferStream_NilSSEReaderOrTee_NoOp — defensive nil-guard.
+// Production always wires both; this
 // test pins the no-op path so a future regression that omits the
 // guard would either panic (caught by recover) or stamp side effects
 // we then assert are absent.
@@ -302,10 +302,10 @@ func TestRunBufferStream_NilSSEReaderOrTee_NoOp(t *testing.T) {
 // defensive: production always supplies hookCtx, but the function
 // must not panic if a future wiring path passes nil, AND the buffer
 // pipeline must still run + replay bytes (the OnCheckpoint side-
-// effect is the only thing that should be skipped). Pre-PR #24
-// follow-up review: this test only asserted no-panic via recover —
+// effect is the only thing that should be skipped). An earlier
+// version of this test only asserted no-panic via recover —
 // a regression that silently dropped the stream would have passed.
-// S2-test review fix: assert tee actually received the replayed body.
+// This test also asserts tee actually received the replayed body.
 func TestRunBufferStream_NilHookCtx_DoesNotPanicAndStillReplays(t *testing.T) {
 	body := strings.NewReader("data: hi\n\ndata: [DONE]\n\n")
 	var teeBuf bytes.Buffer

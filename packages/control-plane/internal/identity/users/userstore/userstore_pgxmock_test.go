@@ -176,7 +176,7 @@ func TestNexusUserCRUD(t *testing.T) {
 	if _, err := s.UpdateNexusUser(context.Background(), "u1", UpdateNexusUserParams{Status: sp("active")}); err == nil {
 		t.Fatal("update error should surface")
 	}
-	// DeleteNexusUser now runs the FK-correct cascade (F-0350) in one tx: the
+	// DeleteNexusUser runs the FK-correct cascade in one tx: the
 	// owned keys, SSO/credential rows, the RESTRICT-blocking ScimToken, the IAM
 	// grants, then the NexusUser row last — finally COMMIT.
 	expectDeleteCascade(m, "u1", 1)
@@ -196,7 +196,7 @@ func TestNexusUserCRUD(t *testing.T) {
 // expectDeleteCascade queues the full FK-correct delete transaction the cascade
 // issues for userID, with the terminal NexusUser delete affecting accountRows.
 // The order asserts the ScimToken RESTRICT row is cleared BEFORE the NexusUser
-// delete (the F-0350 fix) and that no AdminAuditLog delete is ever issued.
+// delete and that no AdminAuditLog delete is ever issued.
 func expectDeleteCascade(m pgxmock.PgxPoolIface, userID string, accountRows int64) {
 	m.ExpectBegin()
 	m.ExpectExec(`DELETE FROM "VirtualKey" WHERE "ownerId" = \$1`).WithArgs(userID).WillReturnResult(pgxmock.NewResult("DELETE", 1))
@@ -251,8 +251,8 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 		t.Fatalf("missing → (nil,nil), got %+v %v", k, err)
 	}
 	// Create / Update / Regenerate / Delete
-	// SEC-W2-01 Layer A: CreateAdminAPIKey INSERT now carries the key_version
-	// column, so 7 positional args (was 6).
+	// CreateAdminAPIKey INSERT carries the key_version
+	// column, so 7 positional args.
 	m.ExpectQuery(`INSERT INTO "AdminApiKey"`).WithArgs(anyArgs(7)...).WillReturnRows(pgxmock.NewRows(keyCols).AddRow(keyRow("k1")...))
 	if _, err := s.CreateAdminAPIKey(context.Background(), CreateAdminAPIKeyParams{Name: "key", KeyHash: "h", KeyVersion: "v1", KeyPrefix: "nxs_abc", CreatedBy: "admin"}); err != nil {
 		t.Fatalf("CreateAdminAPIKey: %v", err)
@@ -265,7 +265,7 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	if _, err := s.UpdateAdminAPIKey(context.Background(), "k1", UpdateAdminAPIKeyParams{Name: sp("renamed")}); err != nil {
 		t.Fatalf("UpdateAdminAPIKey: %v", err)
 	}
-	// SEC-W2-01 Layer A: RegenerateAdminAPIKey UPDATE stamps key_version too, so 4
+	// RegenerateAdminAPIKey UPDATE stamps key_version too, so 4
 	// positional args (id, keyHash, keyVersion, keyPrefix).
 	m.ExpectExec(`UPDATE "AdminApiKey" SET "keyHash"`).WithArgs("k1", "h2", "v1", "nxs_xyz").WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	if err := s.RegenerateAdminAPIKey(context.Background(), "k1", "h2", "v1", "nxs_xyz"); err != nil {
@@ -470,7 +470,7 @@ func TestRetireAdminAPIKey(t *testing.T) {
 	}
 }
 
-// TestListNexusUsers_OwnedByIdP covers the SEC-M6-04 SCIM enumeration scope: when
+// TestListNexusUsers_OwnedByIdP covers the SCIM enumeration scope: when
 // OwnedByIdP is set, the query adds a UserFederatedIdentity EXISTS filter bound to
 // that IdP, so a per-IdP SCIM token cannot list users owned by another IdP.
 func TestListNexusUsers_OwnedByIdP(t *testing.T) {

@@ -595,7 +595,7 @@ func TestErrorNormalizer_TypeMatrix(t *testing.T) {
 		{"permission_error", 403, provcore.CodeAuthFailed},
 		{"invalid_request_error", 400, provcore.CodeInvalidRequest},
 		{"not_found_error", 404, provcore.CodeInvalidRequest},
-		{"overloaded_error", 503, provcore.CodeRateLimited}, // F-0227: overload is retryable, unified with stream path
+		{"overloaded_error", 503, provcore.CodeRateLimited}, // overload is retryable, unified with stream path
 		{"api_error", 500, provcore.CodeUpstreamError},
 	}
 	var n errorNormalizer
@@ -1259,7 +1259,7 @@ func TestMapAnthropicStreamError_AllBranches(t *testing.T) {
 		{"authentication_error", provcore.CodeAuthFailed, http.StatusUnauthorized, "x", false},
 		{"permission_error", provcore.CodeAuthFailed, http.StatusUnauthorized, "x", false},
 		{"invalid_request_error", provcore.CodeInvalidRequest, http.StatusBadRequest, "x", false},
-		{"not_found_error", provcore.CodeInvalidRequest, http.StatusNotFound, "x", false}, // F-0227: unified with unary path
+		{"not_found_error", provcore.CodeInvalidRequest, http.StatusNotFound, "x", false}, // unified with unary path
 		{"api_error", provcore.CodeUpstreamError, http.StatusBadGateway, "x", false},
 		{"", provcore.CodeUpstreamError, http.StatusBadGateway, "anthropic stream error", true}, // empty-msg default branch
 		{"some_unknown_etype", provcore.CodeUpstreamError, http.StatusBadGateway, "x", false},

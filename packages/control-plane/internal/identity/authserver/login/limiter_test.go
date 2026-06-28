@@ -133,7 +133,7 @@ func TestLimiter_DefaultConstructor(t *testing.T) {
 	}
 }
 
-// TestLimiter_PerIPCapBlocksEmailSpray asserts the F-0080 fix: a single IP
+// TestLimiter_PerIPCapBlocksEmailSpray asserts that a single IP
 // spraying one password across many distinct emails is bounded by the per-IP
 // global cap even though every individual (ip,email) pair is still under its
 // own budget.
@@ -176,7 +176,7 @@ func TestLimiter_PerIPCapWindowRolls(t *testing.T) {
 	}
 }
 
-// TestLimiter_RedisDistributedPerIP asserts the F-0080 Redis migration: two
+// TestLimiter_RedisDistributedPerIP asserts the Redis-backed per-IP cap: two
 // limiter instances sharing one Redis enforce a single per-IP budget across
 // BOTH instances. An in-memory limiter would give each replica its own budget;
 // the Redis-backed counter makes the cap global.
@@ -398,7 +398,7 @@ func TestLimiter_NewLimiterWithRedisNilIsLocalOnly(t *testing.T) {
 
 // TestLimiter_LocalSweepBoundsMaps asserts the opportunistic sweep prunes
 // fully-aged-out keys from the in-memory maps so a never-revisited key does not
-// linger forever (F-0080 unbounded-growth note).
+// linger forever (bounding unbounded map growth).
 func TestLimiter_LocalSweepBoundsMaps(t *testing.T) {
 	clock := time.Unix(1_000_000_000, 0)
 	now := func() time.Time { return clock }

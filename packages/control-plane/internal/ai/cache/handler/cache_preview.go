@@ -2,15 +2,16 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
+	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/cacheconfig"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )
@@ -46,30 +47,42 @@ type cachePreviewResponse struct {
 }
 
 // trafficEventPreviewRow holds the fields needed for a normaliser preview.
+// InlineRequestBody is the RAW captured request body (already decoded from the
+// stored inline BYTEA column per its inline_*_encoding discriminator) — the
+// bytes the normaliser would have seen on the wire, NOT a UI-rendered wrapper.
 type trafficEventPreviewRow struct {
 	AdapterType       string
 	ProviderID        string
-	InlineRequestBody json.RawMessage
+	InlineRequestBody []byte
 }
 
 // getTrafficEventForPreview fetches adapter_type, provider_id, and the inline
 // request body for a given traffic_event ID. Returns nil when the event does
-// not exist or has no captured payload.
+// not exist or has no captured payload. The inline body column holds the raw
+// captured body (TEXT) or its base64; we decode per the sibling encoding column
+// so the normaliser receives the actual request bytes, not the column form.
 func (h *Handler) getTrafficEventForPreview(ctx context.Context, id string) (*trafficEventPreviewRow, error) {
 	var row trafficEventPreviewRow
+	var rawCol []byte
+	var encoding string
 	err := h.pool.QueryRow(ctx, `
-		SELECT COALESCE(pr.adapter_type, ''), COALESCE(a.routed_provider_id, a.provider_id, ''), p.inline_request_body
+		SELECT COALESCE(pr.adapter_type, ''), COALESCE(a.routed_provider_id, a.provider_id, ''),
+		       p.inline_request_body, COALESCE(p.inline_request_encoding, '')
 		FROM   traffic_event a
 		LEFT JOIN "Provider" pr ON pr.id = COALESCE(a.routed_provider_id, a.provider_id)
 		LEFT JOIN traffic_event_payload p  ON p.traffic_event_id = a.id
 		WHERE  a.id = $1
-	`, id).Scan(&row.AdapterType, &row.ProviderID, &row.InlineRequestBody)
+	`, id).Scan(&row.AdapterType, &row.ProviderID, &rawCol, &encoding)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query traffic event for preview: %w", err)
 	}
+	if len(rawCol) == 0 {
+		return nil, nil
+	}
+	row.InlineRequestBody = sharedaudit.DecodeBodyForColumn(rawCol, encoding)
 	if len(row.InlineRequestBody) == 0 {
 		return nil, nil
 	}
@@ -136,7 +149,7 @@ func (h *Handler) CachePreview(c echo.Context) error {
 	eng := wirerewrite.New(h.logger)
 	eng.Reload(previewCfg)
 
-	body := []byte(evRow.InlineRequestBody)
+	body := evRow.InlineRequestBody
 	resultBody, result := eng.NormalizeUpstream(evRow.AdapterType, evRow.ProviderID, body)
 
 	// 4. Build diff lines (simple line-level comparison of JSON).
@@ -189,7 +202,6 @@ func buildPreviewConfig(cfg wirerewrite.Config) wirerewrite.Config {
 	}
 	// Enable all bundled rules (with dry-run) even if not in operator config.
 	ensureRuleEnabled(&preview, "anthropic", wirerewrite.RuleAnthropicCchStrip)
-	ensureRuleEnabled(&preview, "openai", wirerewrite.RuleOpenAIFieldOrderNormalize)
 	return preview
 }
 

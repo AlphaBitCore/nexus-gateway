@@ -8,7 +8,6 @@
 package deepseekweb
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 
@@ -18,12 +17,6 @@ import (
 )
 
 const adapterID = "deepseek-web"
-
-var requestKnownKeys = []string{
-	"messages", "prompt", "query", "text", "input", "model",
-	"stream", "session_id", "conversation_id", "chat_id",
-	"thinking_enabled", "search_enabled",
-}
 
 type Adapter struct{}
 
@@ -35,9 +28,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 	if !looksLikeJSON(body) {
-		return traffic.NormalizedContent{
-			Extra: map[string]string{"binary_preview": preview(body)},
-		}, traffic.ErrUnknownSchema
+		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
@@ -79,9 +70,7 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 	}
 
 	if len(segments) == 0 && len(toolCalls) == 0 && len(reasoning) == 0 {
-		return traffic.NormalizedContent{
-			Extra: traffic.CollectExtra(body, requestKnownKeys),
-		}, traffic.ErrUnknownSchema
+		return traffic.NormalizedContent{}, traffic.ErrUnknownSchema
 	}
 
 	meta := map[string]string{}
@@ -97,7 +86,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		ReasoningSegments: reasoning,
 		ToolCallSegments:  toolCalls,
 		Metadata:          meta,
-		Extra:             traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -192,20 +180,4 @@ func looksLikeJSON(b []byte) bool {
 		return c == '{' || c == '['
 	}
 	return false
-}
-
-func preview(body []byte) string {
-	if len(body) > 256 {
-		body = body[:256]
-	}
-	clean := bytes.Map(func(r rune) rune {
-		if r < 0x20 && r != '\n' && r != '\t' {
-			return '.'
-		}
-		if r > 0x7e {
-			return '.'
-		}
-		return r
-	}, body)
-	return string(clean)
 }

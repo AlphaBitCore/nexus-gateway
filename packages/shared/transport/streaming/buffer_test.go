@@ -130,46 +130,11 @@ func TestBufferPipeline_MaxBufferExceeded(t *testing.T) {
 	}
 }
 
-func TestBufferPipeline_SoftReject(t *testing.T) {
-	mp := &mockPipeline{
-		decideFn: func(ctx context.Context, input *core.HookInput) *core.CompliancePipelineResult {
-			return &core.CompliancePipelineResult{
-				Decision: core.BlockSoft,
-				Reason:   "low confidence PII",
-			}
-		},
-	}
-	logger := slog.Default()
-
-	bp := NewBufferPipeline(BufferConfig{}, mp, logger)
-
-	input := makeOpenAISSE("Sensitive-ish data")
-	baseTx := &core.HookInput{
-		Stage:       "response",
-		IngressType: "COMPLIANCE_PROXY",
-	}
-
-	var output bytes.Buffer
-	result, err := bp.Process(context.Background(), strings.NewReader(input), &output, baseTx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Decision != core.BlockSoft {
-		t.Errorf("expected BLOCK_SOFT, got %s", result.Decision)
-	}
-
-	// Soft reject in buffer mode also blocks replay (same as hard reject).
-	outputStr := output.String()
-	if !strings.Contains(outputStr, "blocked by policy") {
-		t.Error("expected error message in output for soft reject")
-	}
-}
-
 // TestBufferPipeline_ModifyDegradesToApprove — buffer mode has no
 // Modify branch in Phase 3; the body must replay unchanged AND the
 // pipeline must surface the degradation via WARN log +
 // nexus_streaming_modify_degraded_total{reason="buffer_mode"} so
-// admin sees the silent ignore (#115/R3 architect review). Three
+// admin sees the silent ignore. Three
 // data planes share this pipeline, so this single test covers all.
 func TestBufferPipeline_ModifyDegradesToApprove(t *testing.T) {
 	mp := &mockPipeline{
@@ -186,7 +151,7 @@ func TestBufferPipeline_ModifyDegradesToApprove(t *testing.T) {
 
 	bp := NewBufferPipeline(BufferConfig{}, mp, logger)
 
-	// #115/S2 — reset the global counter timeseries before snapshot
+	// Reset the global counter timeseries before snapshot
 	// so this test is stable under `go test -parallel`. modifyDegraded
 	// Total is a promauto-registered package var (shared across all
 	// tests in this package); without a Reset another test bumping the

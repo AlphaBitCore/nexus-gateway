@@ -12,26 +12,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 )
 
-// requestKnownKeys lists every top-level field of /v1/messages the
-// adapter intentionally consumes or recognises as non-content. The
-// CollectExtra walk keeps any *other* top-level field so compliance
-// hooks see new spec additions (server_tool_use, citations, …) before
-// this list is updated.
-var requestKnownKeys = []string{
-	"messages", "model", "system", "max_tokens", "stop_sequences",
-	"temperature", "top_k", "top_p", "stream", "metadata",
-	"tool_choice", "tools", "thinking", "service_tier",
-	"mcp_servers", "anthropic_version", "anthropic_beta",
-	"container",
-}
-
-// responseKnownKeys lists known top-level fields on /v1/messages
-// non-streaming responses. Anything else lands in Extra.
-var responseKnownKeys = []string{
-	"id", "type", "role", "content", "model", "stop_reason",
-	"stop_sequence", "usage", "container",
-}
-
 // Adapter implements the Anthropic content extraction.
 type Adapter struct{}
 
@@ -52,7 +32,6 @@ func (a *Adapter) Configure(_ map[string]any) error { return nil }
 //     reach hooks)
 //   - Top-level `tools` and `mcp_servers` definitions → Metadata
 //   - Top-level `model`, `service_tier`, `anthropic_beta` → Metadata
-//   - Anything else top-level → Extra
 func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traffic.NormalizedContent, error) {
 	if !gjson.ValidBytes(body) {
 		return traffic.NormalizedContent{}, traffic.ErrMalformed
@@ -146,7 +125,6 @@ func (a *Adapter) ExtractRequest(_ context.Context, body []byte, _ string) (traf
 		Segments:         segments,
 		ToolCallSegments: toolCalls,
 		Metadata:         meta,
-		Extra:            traffic.CollectExtra(body, requestKnownKeys),
 	}, nil
 }
 
@@ -204,7 +182,6 @@ func (a *Adapter) ExtractResponse(_ context.Context, body []byte, _ string) (tra
 		ReasoningSegments: reasoning,
 		ToolCallSegments:  toolCalls,
 		Metadata:          meta,
-		Extra:             traffic.CollectExtra(body, responseKnownKeys),
 	}, nil
 }
 

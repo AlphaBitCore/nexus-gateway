@@ -28,7 +28,6 @@ import (
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -135,7 +134,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 		rec.RoutedModelID = target.ModelID
 		rec.RoutedModelName = target.ModelCode
 		rec.TargetHost = upstreamHost(target)
-		// #41: stamp upstream URL on the error path too — same source as
+		// Stamp upstream URL on the error path too — same source as
 		// the success path below. ToMessage's firstNonEmptyStr fallback
 		// covers synthetic transport failures that never reached the
 		// network (empty TargetPath → falls back to rec.Path).
@@ -169,7 +168,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 			errBody = envelope.EncodeErrorEnvelopeForIngress(ingress.BodyFormat, upstreamFormat, execResult.ProviderError)
 		}
 
-		// Bug #40: stamp the upstream error body to the audit Record so
+		// Stamp the upstream error body to the audit Record so
 		// it lands in traffic_event.payloads.response_body. Previously
 		// only ErrorReason (extracted message string) was captured —
 		// the full body (with provider stack trace, request ID, etc.)
@@ -195,7 +194,7 @@ func (h *Handler) fetchUpstreamWithPreparedBody(r *http.Request, w http.Response
 	rec.RoutedModelID = target.ModelID
 	rec.RoutedModelName = target.ModelCode
 	rec.TargetHost = upstreamHost(target)
-	// #41: stamp the actual upstream URL the adapter dispatched to
+	// Stamp the actual upstream URL the adapter dispatched to
 	// (e.g. "/v1/messages" for the Anthropic side of an OpenAI →
 	// Anthropic cross-format call). On synthetic transport errors that
 	// never reached the network, ExecutionResult.TargetPath is empty
@@ -431,35 +430,50 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	if !bypassResponseHooks {
 		extractor := h.trafficAdapterFor(ingress.BodyFormat)
 		ingressFormat := string(ingress.BodyFormat)
-		respContent, respModel, respFinish := h.extractResponseForHooks(r.Context(), extractor, ingressFormat, respBody, r.URL.Path, logger)
 		epType := typology.KindFromWireShape(ingress.WireShape)
-		respInput := &hookcore.HookInput{
-			RequestID:      requestID,
-			Stage:          "response",
-			Normalized:     respContent,
-			IngressType:    "AI_GATEWAY",
-			Path:           r.URL.Path,
-			Model:          respModel,
-			FinishReason:   respFinish,
-			TokenCount:     int(usage.TotalTokens),
-			SourceIP:       middleware.ClientIP(r),
-			ProviderRegion: target.Region,
-			EndpointType:   epType,
-			OutputModality: []hookcore.Modality{hookcore.ModalityText},
-		}
+		outputModality := []hookcore.Modality{hookcore.ModalityText}
 
+		// [perf A6] Build the response pipeline BEFORE extracting response
+		// content — its gating inputs (endpoint kind + modality) come from the
+		// Ingress, not the body. When no response hook is configured (pipeline
+		// == nil), skip the expensive (gjson) extraction entirely. The extracted
+		// content only feeds pipeline.Execute and is never persisted, so skipping
+		// it on the hooks-OFF path is behaviour-preserving.
 		pipeline, pErr := h.deps.HookConfigCache.Resolver(r.Context()).BuildPipeline(
 			"response", "AI_GATEWAY",
 			epType,
-			respInput.OutputModality,
-			5*time.Second, 15*time.Second, false, true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
+			outputModality,
+			5*time.Second, 15*time.Second, perfParallelHooks(), true /* strictFailClosed: reverse proxy refuses fail-closed-unbuildable */, logger,
 		)
 		if pErr != nil {
 			logger.Error("failed to build response hook pipeline", "error", pErr)
 			h.writeError(w, rec, http.StatusInternalServerError, "hook pipeline error")
 			return
 		}
+		if pipeline == nil {
+			// No response hook → extraction skipped; keep the traffic-extract
+			// counter moving on the hooks-OFF path (it previously fired as a side
+			// effect of always extracting). [perf A6]
+			if h.deps.Metrics != nil {
+				h.deps.Metrics.RecordTrafficExtract(ingressFormat, "response", "skipped")
+			}
+		}
 		if pipeline != nil {
+			respContent, respModel, respFinish := h.extractResponseForHooks(r.Context(), extractor, ingressFormat, respBody, r.URL.Path, logger)
+			respInput := &hookcore.HookInput{
+				RequestID:      requestID,
+				Stage:          "response",
+				Normalized:     respContent,
+				IngressType:    "AI_GATEWAY",
+				Path:           r.URL.Path,
+				Model:          respModel,
+				FinishReason:   respFinish,
+				TokenCount:     int(usage.TotalTokens),
+				SourceIP:       middleware.ClientIP(r),
+				ProviderRegion: target.Region,
+				EndpointType:   epType,
+				OutputModality: outputModality,
+			}
 			pipeline.SetAllowModify(true)
 			pipeline.SetClearSoftOnApprove(true)
 
@@ -473,13 +487,10 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
 				rec.BlockingRule = br
 			}
-			// Propagate spans + storage policy so the audit writer can
-			// redact (or drop) the persisted response copies — without
-			// this the response-side storageAction is silently inert.
-			rec.ResponseTransformSpans = hookResult.TransformSpans
-			rec.ResponseStorageAction = string(hookResult.StorageAction)
-			rec.ResponseRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
-			rec.ResponseRedetect = hookResult.Redetect
+			// Carry the single hook action so the audit writer persists the
+			// redacted response copy under redact/block. Derived from the
+			// Decision so a no-match approve still stamps ActionApprove.
+			rec.ResponseAction = hookcore.ActionFromDecision(hookResult.Decision)
 
 			if h.deps.Metrics != nil {
 				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
@@ -487,10 +498,6 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 
 			if hookResult.Decision == hookcore.RejectHard {
 				h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
-				return
-			}
-			if hookResult.Decision == hookcore.BlockSoft {
-				h.writeError(w, rec, 246, hookResult.Reason)
 				return
 			}
 			if hookResult.Decision == hookcore.Modify && len(hookResult.ModifiedContent) > 0 {
@@ -511,7 +518,7 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 					return
 				default:
 					// The rewritten bytes double as the storage-safe raw
-					// copy under storageAction=redact (see storageRawBody).
+					// copy under action=redact (see storageRawBody).
 					rec.ResponseBodyRedacted = rewritten
 					respBody = rewritten
 					rec.ResponseHookRewriteCount = n
@@ -527,11 +534,10 @@ func (h *Handler) handleNonStream(r *http.Request, w http.ResponseWriter, rec *a
 	// (≤ MaxInlineBodyBytes) or to the spill backend (>) at flush time.
 	// Network-side bounding for the upstream read happens independently
 	// in provcore.LimitedReadAll using MaxResponseBytes.
-	// Exception: under storageAction=redact the record carries the
-	// pre-rewrite bytes — the writer applies the spans (original offsets)
-	// to the normalized copy and persists only ResponseBodyRedacted raw.
+	// Exception: under a redact/block action the record carries the
+	// pre-rewrite bytes — the writer persists only ResponseBodyRedacted raw.
 	respBodyForAudit := respBody
-	if rec.ResponseStorageAction == string(hookcore.StorageRedact) {
+	if rec.ResponseAction == hookcore.ActionRedact || rec.ResponseAction == hookcore.ActionBlock {
 		respBodyForAudit = origRespBody
 	}
 	pcCfgPost := h.payloadCaptureConfig()

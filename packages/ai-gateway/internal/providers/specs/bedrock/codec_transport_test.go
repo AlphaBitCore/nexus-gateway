@@ -15,9 +15,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -134,7 +134,7 @@ func TestCodec_EncodeRequest_EmbeddingsDispatch(t *testing.T) {
 	}
 }
 
-// TestCodec_DecodeResponse_Embeddings_CountMismatch_Rejected pins F-0220
+// TestCodec_DecodeResponse_Embeddings_CountMismatch_Rejected pins the guard
 // for Bedrock: a Cohere-on-Bedrock response with fewer vectors than the
 // request `texts` must fail the decode (→ 502) instead of returning
 // misaligned vectors. The request context carries the Bedrock wire body.
@@ -149,7 +149,7 @@ func TestCodec_DecodeResponse_Embeddings_CountMismatch_Rejected(t *testing.T) {
 	}
 }
 
-// TestCodec_DecodeResponse_Embeddings_CountMatch_Passes is the F-0220
+// TestCodec_DecodeResponse_Embeddings_CountMatch_Passes is the
 // positive arm for the Titan single-input shape (inputText → 1 vector).
 func TestCodec_DecodeResponse_Embeddings_CountMatch_Passes(t *testing.T) {
 	c := NewCodec(slog.Default())

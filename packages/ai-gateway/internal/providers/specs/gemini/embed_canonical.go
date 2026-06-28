@@ -14,8 +14,8 @@
 package gemini
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"net/http"
 	"strings"
 

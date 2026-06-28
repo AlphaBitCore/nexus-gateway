@@ -5,7 +5,7 @@
 package capability
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 )

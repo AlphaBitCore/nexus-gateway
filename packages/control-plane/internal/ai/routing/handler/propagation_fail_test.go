@@ -1,14 +1,14 @@
 package routing
 
-// F-0099 regression: routing-rule writes must fail loud (HTTP 502) when the
+// Routing-rule writes must fail loud (HTTP 502) when the
 // Category B invalidation push to Hub fails, so the data plane does not keep
 // routing on stale rules while the UI reports success. Asserts the CP DB write
 // committed (truth preserved), the response is 502 with the propagation_error
 // envelope, and NO success audit row was enqueued.
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"

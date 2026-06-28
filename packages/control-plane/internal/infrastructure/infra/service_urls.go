@@ -89,7 +89,7 @@ func (h *Handler) queryServicePublicURLs(ctx context.Context) ([]servicePublicUR
 	if pool == nil {
 		return nil, errPoolNil
 	}
-	// thing.type is the canonical column (legacy "thing_type" was renamed;
+	// thing.type is the canonical column (the old "thing_type" name is not used;
 	// the Prisma schema + Go store both use `type`).
 	pgrows, err := pool.Query(ctx, `
 		SELECT DISTINCT ON (type)

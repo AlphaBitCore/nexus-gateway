@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
@@ -49,13 +48,6 @@ func TestExtractRequest_TgtOnly(t *testing.T) {
 	}
 	if nc.Metadata["model"] != "chat-v2" {
 		t.Errorf("model meta=%q want chat-v2", nc.Metadata["model"])
-	}
-	// `src` and `character_id` belong to requestKnownKeys → not in Extra.
-	if _, ok := nc.Extra["character_id"]; ok {
-		t.Errorf("character_id should not leak into Extra: %v", nc.Extra)
-	}
-	if _, ok := nc.Extra["src"]; ok {
-		t.Errorf("src should not leak into Extra: %v", nc.Extra)
 	}
 }
 
@@ -205,33 +197,6 @@ func TestExtractRequest_CharacterIDMissing(t *testing.T) {
 	}
 }
 
-// TestExtractRequest_ExtraCapturesUnknownFields pins that fields
-// outside the requestKnownKeys list reach NormalizedContent.Extra —
-// safety net against silent data loss when character.ai ships a new
-// field.
-func TestExtractRequest_ExtraCapturesUnknownFields(t *testing.T) {
-	body := []byte(`{
-		"prompt": "hi",
-		"x_new_char_field": {"sensitive": "secret_value"},
-		"voice_style": "narrator"
-	}`)
-	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	x, ok := nc.Extra["x_new_char_field"]
-	if !ok || !strings.Contains(x, "secret_value") {
-		t.Errorf("Extra=%v missing x_new_char_field", nc.Extra)
-	}
-	if _, ok := nc.Extra["voice_style"]; !ok {
-		t.Errorf("Extra=%v missing voice_style", nc.Extra)
-	}
-	if _, ok := nc.Extra["prompt"]; ok {
-		t.Errorf("prompt must not leak into Extra (it is consumed)")
-	}
-}
-
 func TestExtractRequest_Empty(t *testing.T) {
 	a := &Adapter{}
 	_, err := a.ExtractRequest(context.Background(), nil, "/api/x")
@@ -241,24 +206,13 @@ func TestExtractRequest_Empty(t *testing.T) {
 }
 
 // TestExtractRequest_BinaryBody pins that a non-JSON binary payload
-// returns ErrUnknownSchema and stamps a sanitised binary preview into
-// Extra for triage.
+// returns ErrUnknownSchema.
 func TestExtractRequest_BinaryBody(t *testing.T) {
 	body := []byte{0x00, 0x01, 0x02, 0x7f, 0x80, 0xff, 'h', 'i', 0x05}
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
+	_, err := a.ExtractRequest(context.Background(), body, "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v want ErrUnknownSchema", err)
-	}
-	prev, ok := nc.Extra["binary_preview"]
-	if !ok {
-		t.Fatalf("Extra missing binary_preview: %v", nc.Extra)
-	}
-	if !strings.Contains(prev, "hi") {
-		t.Errorf("binary_preview=%q want to contain 'hi'", prev)
-	}
-	if strings.ContainsAny(prev, "\x00\x01\x7f\x80\xff") { //nolint:staticcheck // SA1011: intentional bad-UTF8 test fixture
-		t.Errorf("binary_preview=%q must scrub control bytes", prev)
 	}
 }
 
@@ -274,17 +228,13 @@ func TestExtractRequest_Malformed(t *testing.T) {
 }
 
 // TestExtractRequest_UnknownJSON pins ErrUnknownSchema when the body
-// is valid JSON but carries no recognised character.ai fields — the
-// response still includes Extra so hooks can see the foreign payload.
+// is valid JSON but carries no recognised character.ai fields.
 func TestExtractRequest_UnknownJSON(t *testing.T) {
 	body := []byte(`{"foo":"bar","baz":42}`)
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
+	_, err := a.ExtractRequest(context.Background(), body, "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Errorf("err=%v want ErrUnknownSchema", err)
-	}
-	if _, ok := nc.Extra["foo"]; !ok {
-		t.Errorf("Extra=%v missing foo on unknown-schema path", nc.Extra)
 	}
 }
 
@@ -649,60 +599,4 @@ func TestLooksLikeJSON(t *testing.T) {
 			t.Errorf("%s: looksLikeJSON(%q)=%v want %v", c.name, c.in, got, c.want)
 		}
 	}
-}
-
-// TestPreview pins the binary-safe sanitisation contract:
-//   - control bytes < 0x20 (except \n and \t) become '.'
-//   - bytes > 0x7e become '.'
-//   - printable ASCII passes through
-//   - inputs longer than 256 bytes are truncated to 256
-func TestPreview(t *testing.T) {
-	t.Run("short-printable-passthrough", func(t *testing.T) {
-		if got := preview([]byte("hello world")); got != "hello world" {
-			t.Errorf("got=%q want 'hello world'", got)
-		}
-	})
-	t.Run("preserves-newline-and-tab", func(t *testing.T) {
-		got := preview([]byte("a\nb\tc"))
-		if got != "a\nb\tc" {
-			t.Errorf("got=%q want 'a\\nb\\tc' (newline+tab preserved)", got)
-		}
-	})
-	t.Run("scrubs-control-bytes", func(t *testing.T) {
-		got := preview([]byte{'a', 0x07, 'b', 0x0d, 'c', 0x1b, 'd'})
-		if got != "a.b.c.d" {
-			t.Errorf("got=%q want 'a.b.c.d'", got)
-		}
-	})
-	t.Run("scrubs-high-bytes", func(t *testing.T) {
-		got := preview([]byte{'a', 0x7f, 'b', 0x80, 'c', 0xff, 'd'})
-		if got != "a.b.c.d" {
-			t.Errorf("got=%q want 'a.b.c.d' (>0x7e scrubbed)", got)
-		}
-	})
-	t.Run("truncates-over-256-bytes", func(t *testing.T) {
-		body := make([]byte, 300)
-		for i := range body {
-			body[i] = 'A'
-		}
-		got := preview(body)
-		if len(got) != 256 {
-			t.Errorf("len=%d want 256 (truncated)", len(got))
-		}
-	})
-	t.Run("exactly-256-bytes-passes-through", func(t *testing.T) {
-		body := make([]byte, 256)
-		for i := range body {
-			body[i] = 'B'
-		}
-		got := preview(body)
-		if len(got) != 256 {
-			t.Errorf("len=%d want 256", len(got))
-		}
-	})
-	t.Run("empty-input", func(t *testing.T) {
-		if got := preview(nil); got != "" {
-			t.Errorf("got=%q want empty", got)
-		}
-	})
 }

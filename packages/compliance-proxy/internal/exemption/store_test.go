@@ -404,7 +404,7 @@ func TestMatchSourceIP_InvalidInputsReturnFalse(t *testing.T) {
 
 // TestStore_OverBroadCIDR_Dropped verifies that zero-prefix CIDRs (0.0.0.0/0,
 // ::/0) combined with a blank/wildcard target host are rejected at Rebuild as
-// over-broad grants (F-0297). A grant with a specific target host is fine
+// over-broad grants. A grant with a specific target host is fine
 // even if the source is 0.0.0.0/0, since it scopes to one destination.
 func TestStore_OverBroadCIDR_Dropped(t *testing.T) {
 	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)

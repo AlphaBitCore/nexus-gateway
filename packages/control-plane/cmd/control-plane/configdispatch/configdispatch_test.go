@@ -2,7 +2,7 @@ package configdispatch
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"sort"
@@ -163,8 +163,8 @@ func TestRegisterCPLogLevel_MalformedJSON(t *testing.T) {
 	}
 }
 
-// TestRegisterCPLogLevel_EmptyPayloadDoesNotClobberLevel verifies the F-0127
-// fix: an empty/null/{} state payload (Hub occasionally sends empty bytes for
+// TestRegisterCPLogLevel_EmptyPayloadDoesNotClobberLevel verifies that
+// an empty/null/{} state payload (Hub occasionally sends empty bytes for
 // keys not yet materialised) is a NO-OP and must NOT reset the live level. We
 // boot at debug and assert it STAYS debug — the old code called
 // SetLevel("")→Info, silently clobbering a deliberate debug level.

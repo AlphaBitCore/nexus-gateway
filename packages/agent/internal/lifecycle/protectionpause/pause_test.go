@@ -132,7 +132,7 @@ func TestPauser_AutoResumeRaceWithManualResume(t *testing.T) {
 	p.Resume()
 }
 
-// F-0129 coverage: admin-engage survives user Resume.
+// Admin-engage survives user Resume.
 func TestPauser_AdminEngageSurvivesUserResume(t *testing.T) {
 	p, ks := newPauserForTest(t)
 
@@ -164,7 +164,7 @@ func TestPauser_AdminEngageSurvivesUserResume(t *testing.T) {
 	}
 }
 
-// F-0129 coverage: user-pause survives admin Disengage.
+// User-pause survives admin Disengage.
 func TestPauser_UserPauseSurvivesAdminDisengage(t *testing.T) {
 	p, ks := newPauserForTest(t)
 
@@ -193,7 +193,7 @@ func TestPauser_UserPauseSurvivesAdminDisengage(t *testing.T) {
 	p.Resume()
 }
 
-// F-0129 coverage: both clear = disengaged.
+// Both clear = disengaged.
 func TestPauser_BothClearLeadsToDisengage(t *testing.T) {
 	p, ks := newPauserForTest(t)
 

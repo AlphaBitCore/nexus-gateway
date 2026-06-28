@@ -53,7 +53,7 @@ func TestTokenAuth_InvalidToken(t *testing.T) {
 	}
 }
 
-// TestTokenAuth_EmptyToken_FailClosed verifies the F-0070/F-0142 invariant:
+// TestTokenAuth_EmptyToken_FailClosed verifies the invariant:
 // an empty token must never open the runtime API surface — it must return
 // 503 so the mutating break-glass verb is unreachable without a credential.
 func TestTokenAuth_EmptyToken_FailClosed(t *testing.T) {

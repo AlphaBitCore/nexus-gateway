@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"sync"
 	"testing"
 )
@@ -112,7 +112,7 @@ func TestCatBRegistry_Register_NilLoadersMap(t *testing.T) {
 	}
 }
 
-// TestCatBRegistry_StructKey_NoDelimiterCollision is the F-0257 regression.
+// TestCatBRegistry_StructKey_NoDelimiterCollision is the regression test.
 // With the previous string key thingType+"|"+configKey, the pairs
 // ("a", "b|c") and ("a|b", "c") both produced "a|b|c" and aliased to the same
 // loader — a registration under one would shadow the other. The struct key

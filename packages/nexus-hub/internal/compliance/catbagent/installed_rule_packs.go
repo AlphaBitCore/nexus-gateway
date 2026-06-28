@@ -97,9 +97,9 @@ func (l *AgentInstalledRulePacksLoader) Load(ctx context.Context, _ string) (any
 
 	var (
 		packs      []agentInstalledRulePackRow
-		packsByID  = make(map[string]int)
 		maxUpdated time.Time
 		packIDs    []string
+		installIDs []string
 	)
 	for rows.Next() {
 		var (
@@ -114,9 +114,9 @@ func (l *AgentInstalledRulePacksLoader) Load(ctx context.Context, _ string) (any
 		}
 		p.InstalledAt = installedAt.UTC().Format(time.RFC3339)
 		p.Rules = []agentPackRuleRow{}
-		packsByID[p.PackID] = len(packs)
 		packs = append(packs, p)
 		packIDs = append(packIDs, p.PackID)
+		installIDs = append(installIDs, p.ID)
 		if installedAt.After(maxUpdated) {
 			maxUpdated = installedAt
 		}
@@ -129,9 +129,15 @@ func (l *AgentInstalledRulePacksLoader) Load(ctx context.Context, _ string) (any
 		packs = []agentInstalledRulePackRow{}
 	}
 
-	// Load rules for every unique pack referenced by an install. One
-	// query keyed on packId IN (...) so we don't N+1 the DB.
+	// Load every pack's rules once (batch, keyed on packId IN (...)), then attach
+	// to each install with that install's per-rule overrides applied: disabled
+	// rules are dropped and severityOverride is swapped in. This mirrors
+	// rulepack.LoadForInstall (store.go), so the agent's read-only Policies view
+	// shows exactly the rules the scanner enforces — an install that disabled a
+	// rule must not display it as active. Attaching per-install (not per-pack)
+	// also lets the same pack bound to two hooks carry distinct overrides.
 	if len(packIDs) > 0 {
+		rulesByPack := make(map[string][]agentPackRuleRow, len(packIDs))
 		ruleRows, err := l.db.Query(ctx, `
 			SELECT id, "packId", "ruleId", category, severity, pattern,
 			       COALESCE(flags, ''), COALESCE(description, ''), labels
@@ -142,7 +148,6 @@ func (l *AgentInstalledRulePacksLoader) Load(ctx context.Context, _ string) (any
 		if err != nil {
 			return nil, 0, fmt.Errorf("catb: query rule: %w", err)
 		}
-		defer ruleRows.Close()
 		for ruleRows.Next() {
 			var (
 				r      agentPackRuleRow
@@ -151,14 +156,66 @@ func (l *AgentInstalledRulePacksLoader) Load(ctx context.Context, _ string) (any
 			)
 			if err := ruleRows.Scan(&r.ID, &packID, &r.RuleID, &r.Category,
 				&r.Severity, &r.Pattern, &r.Flags, &r.Description, &labels); err != nil {
+				ruleRows.Close()
 				return nil, 0, fmt.Errorf("catb: scan rule: %w", err)
 			}
 			r.Labels = labels
-			packs[packsByID[packID]].Rules = append(packs[packsByID[packID]].Rules, r)
-			packs[packsByID[packID]].RuleCount++
+			rulesByPack[packID] = append(rulesByPack[packID], r)
 		}
 		if err := ruleRows.Err(); err != nil {
+			ruleRows.Close()
 			return nil, 0, fmt.Errorf("catb: iterate rule: %w", err)
+		}
+		ruleRows.Close()
+
+		// Per-install overrides, keyed installId -> ruleLocalId (== rule.ruleId).
+		type ruleOverride struct {
+			disabled bool
+			severity string
+		}
+		ovByInstall := make(map[string]map[string]ruleOverride)
+		ovRows, err := l.db.Query(ctx, `
+			SELECT "installId", "ruleLocalId", disabled, COALESCE("severityOverride", '')
+			FROM rule_override
+			WHERE "installId" = ANY($1)
+		`, installIDs)
+		if err != nil {
+			return nil, 0, fmt.Errorf("catb: query rule_override: %w", err)
+		}
+		for ovRows.Next() {
+			var installID, ruleLocalID, sev string
+			var disabled bool
+			if err := ovRows.Scan(&installID, &ruleLocalID, &disabled, &sev); err != nil {
+				ovRows.Close()
+				return nil, 0, fmt.Errorf("catb: scan rule_override: %w", err)
+			}
+			m := ovByInstall[installID]
+			if m == nil {
+				m = make(map[string]ruleOverride)
+				ovByInstall[installID] = m
+			}
+			m[ruleLocalID] = ruleOverride{disabled: disabled, severity: sev}
+		}
+		if err := ovRows.Err(); err != nil {
+			ovRows.Close()
+			return nil, 0, fmt.Errorf("catb: iterate rule_override: %w", err)
+		}
+		ovRows.Close()
+
+		for i := range packs {
+			ov := ovByInstall[packs[i].ID]
+			for _, r := range rulesByPack[packs[i].PackID] {
+				if o, ok := ov[r.RuleID]; ok {
+					if o.disabled {
+						continue
+					}
+					if o.severity != "" {
+						r.Severity = o.severity
+					}
+				}
+				packs[i].Rules = append(packs[i].Rules, r)
+				packs[i].RuleCount++
+			}
 		}
 	}
 

@@ -1,9 +1,9 @@
 package anthropic
 
 import (
-	"encoding/json"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
+	"github.com/goccy/go-json"
 	"github.com/tidwall/gjson"
 	"testing"
 )

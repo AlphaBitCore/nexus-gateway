@@ -2,9 +2,9 @@ package assistant
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 
 	"github.com/jackc/pgx/v5"

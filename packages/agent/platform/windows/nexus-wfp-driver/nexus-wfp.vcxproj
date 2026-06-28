@@ -60,8 +60,14 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
-      <PreprocessorDefinitions>NEXUS_WFP_DRIVER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NEXUS_WFP_DRIVER;NDIS60;NDIS_SUPPORT_NDIS6;BINARY_COMPATIBLE=0;NT;UNICODE;_UNICODE;POOL_NX_OPTIN_AUTO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Link>
+      <!-- WFP kernel client (Fwps*/Fwpm* APIs) + NDIS (NET_BUFFER_LIST surface).
+           Not uuid.lib: INITGUID in Callouts.c already instantiates the well-known
+           GUIDs, so linking uuid.lib would duplicate them. -->
+      <AdditionalDependencies>fwpkclnt.lib;ndis.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
     <DriverSign>
       <FileDigestAlgorithm>SHA256</FileDigestAlgorithm>
     </DriverSign>

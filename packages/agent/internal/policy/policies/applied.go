@@ -14,7 +14,7 @@
 package policies
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
 )

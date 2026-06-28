@@ -45,13 +45,9 @@ func TestExtractRequest_MalformedJSON(t *testing.T) {
 func TestExtractRequest_JSONWithoutKnownFields(t *testing.T) {
 	body := []byte(`{"foo":"bar","baz":42}`)
 	a := &Adapter{}
-	nc, err := a.ExtractRequest(context.Background(), body, "/api/x")
+	_, err := a.ExtractRequest(context.Background(), body, "/api/x")
 	if !errors.Is(err, traffic.ErrUnknownSchema) {
 		t.Fatalf("err=%v want ErrUnknownSchema", err)
-	}
-	// Extra surfaces unknown top-level fields for offline analysis.
-	if _, ok := nc.Extra["foo"]; !ok {
-		t.Errorf("Extra=%v missing foo", nc.Extra)
 	}
 }
 
@@ -291,7 +287,7 @@ func TestDetectRequestMeta_EmptyBearer(t *testing.T) {
 	}
 }
 
-// looksLikeJSON / preview — fill the small gaps.
+// looksLikeJSON — fill the small gaps.
 
 func TestLooksLikeJSON(t *testing.T) {
 	cases := []struct {
@@ -311,41 +307,6 @@ func TestLooksLikeJSON(t *testing.T) {
 		if got != c.want {
 			t.Errorf("looksLikeJSON(%q)=%v want %v", c.in, got, c.want)
 		}
-	}
-}
-
-func TestPreview_Truncates(t *testing.T) {
-	body := make([]byte, 1024)
-	for i := range body {
-		body[i] = 'a'
-	}
-	p := preview(body)
-	if len(p) > 256 {
-		t.Errorf("preview length=%d > 256", len(p))
-	}
-}
-
-func TestPreview_StripsControlChars(t *testing.T) {
-	body := []byte{'a', 0x00, 'b', 0x01, 'c'}
-	p := preview(body)
-	if p != "a.b.c" {
-		t.Errorf("preview=%q want a.b.c", p)
-	}
-}
-
-func TestPreview_StripsHighBytes(t *testing.T) {
-	body := []byte{'a', 0xff, 'b', 0x80, 'c'}
-	p := preview(body)
-	if p != "a.b.c" {
-		t.Errorf("preview=%q want a.b.c", p)
-	}
-}
-
-func TestPreview_PreservesTabsAndNewlines(t *testing.T) {
-	body := []byte{'a', '\t', 'b', '\n', 'c'}
-	p := preview(body)
-	if p != "a\tb\nc" {
-		t.Errorf("preview=%q want a\\tb\\nc", p)
 	}
 }
 

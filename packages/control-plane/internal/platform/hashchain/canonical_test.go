@@ -1,8 +1,8 @@
 package hashchain
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 )
@@ -21,7 +21,7 @@ func TestCanonicalize_SortsKeysAtEveryLevel(t *testing.T) {
 
 func TestCanonicalize_MapIterationIndependence(t *testing.T) {
 	// The same logical document presented with different physical key orders
-	// must canonicalize identically (the memo-identity property, FR-16).
+	// must canonicalize identically (the memo-identity property).
 	a := `{"one":1,"two":2,"three":3,"four":4,"five":5}`
 	b := `{"five":5,"four":4,"three":3,"two":2,"one":1}`
 	ca, err1 := Canonicalize(json.RawMessage(a))
@@ -62,7 +62,7 @@ func TestCanonicalize_NumberStability(t *testing.T) {
 func TestCanonicalize_EqualNumbersIdentical(t *testing.T) {
 	// 1, 1.0, 1e0 are equal numbers → identical canonical bytes (so a node
 	// that emits 1.0 on one run and 1 on the next does not look "changed" to
-	// the FR-27 backpressure decision).
+	// the backpressure decision).
 	forms := []string{`{"n":1}`, `{"n":1.0}`, `{"n":1e0}`}
 	var first string
 	for i, f := range forms {

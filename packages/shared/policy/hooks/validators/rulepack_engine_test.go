@@ -77,7 +77,9 @@ func TestRulePackEngine_HardMatch_RejectsWithBlockingRule(t *testing.T) {
 	}
 }
 
-func TestRulePackEngine_SoftMatch(t *testing.T) {
+func TestRulePackEngine_SoftMatchBlocks(t *testing.T) {
+	// soft-severity was merged into the single block action: a soft rule now
+	// rejects hard and stamps result.Action=block.
 	cfg := buildEngineConfig([]rulePackInstall{{
 		InstallID:   "inst-2",
 		PackName:    "soft-pack",
@@ -101,8 +103,11 @@ func TestRulePackEngine_SoftMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if res.Decision != BlockSoft {
-		t.Fatalf("Decision = %s, want BLOCK_SOFT", res.Decision)
+	if res.Decision != RejectHard {
+		t.Fatalf("Decision = %s, want REJECT_HARD (soft merged into block)", res.Decision)
+	}
+	if res.Action != ActionBlock {
+		t.Errorf("result.Action = %q, want block", res.Action)
 	}
 	if res.BlockingRule == nil || res.BlockingRule.RuleID != "profanity-1" {
 		t.Errorf("BlockingRule = %+v", res.BlockingRule)
@@ -152,7 +157,7 @@ func TestRulePackEngine_DisabledInstallIsSkipped(t *testing.T) {
 }
 
 func TestRulePackEngine_InvalidRegex_SkippedNotFatal(t *testing.T) {
-	// F-0274 availability-first: a rule whose pattern fails to compile is
+	// Availability-first: a rule whose pattern fails to compile is
 	// skipped at construction time, not fatal. The factory still returns a
 	// usable engine so one bad rule degrades to "that rule off" rather than
 	// taking the entire pack (and therefore the pipeline) offline.

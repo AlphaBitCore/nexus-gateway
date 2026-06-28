@@ -10,7 +10,7 @@ import (
 // Get deletes the entry.
 //
 // Nonce, Email and AMR are carried through to the token endpoint so ID-token
-// construction (Task 1.11) can include the RFC 7519 claims without a second
+// construction can include the RFC 7519 claims without a second
 // DB roundtrip. Nonce mirrors the OIDC authorize-request parameter; Email and
 // AMR are captured from the IdP authentication result.
 type AuthCodeEntry struct {

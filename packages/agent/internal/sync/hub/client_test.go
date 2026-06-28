@@ -2,8 +2,8 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -168,7 +168,7 @@ func TestRenewDeviceToken_AuthenticatesAndReturnsRotatedToken(t *testing.T) {
 	defer srv.Close()
 
 	// The current token + thing id must ride on the rotation call (the call
-	// authenticates with the still-valid token — F-0202 refresh-while-valid).
+	// authenticates with the still-valid token — refresh-while-valid).
 	c, err := NewClient(Config{
 		HubURL:        srv.URL,
 		Timeout:       5 * time.Second,

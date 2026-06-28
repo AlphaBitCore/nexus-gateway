@@ -10,7 +10,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )
 
-// dlq_malformed_test.go — F-0198: the admin-audit consumer must route an
+// dlq_malformed_test.go: the admin-audit consumer must route an
 // undeserializable message to a durable on-disk DLQ and Ack it, never silently
 // Ack-DROP it (which would lose an admin-audit ledger row, since the Control
 // Plane is the sole producer). On an on-disk write failure the message is Nak'd

@@ -11,7 +11,7 @@
 // br by default) stays compressed in resp.Body. Audit / normalize /
 // usage-extract callers that try to JSON-parse those bytes directly
 // see ErrUnsupported / decode errors and silently lose the row's
-// content. The 2026-05-24 incident (#76) traced exactly this — Hub
+// content. A real incident traced exactly this — Hub
 // received the decompressed payload via decompressForCapture but
 // agent's runtimeNormalize fed raw brotli bytes to the registry.
 //

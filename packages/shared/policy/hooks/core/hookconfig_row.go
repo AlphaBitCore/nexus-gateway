@@ -1,8 +1,8 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // HookConfigRow is the raw row shape from the HookConfig table. Used by

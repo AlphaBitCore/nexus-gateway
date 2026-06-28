@@ -1,7 +1,7 @@
 package consumer
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
@@ -33,6 +33,13 @@ type TrafficEventMessage struct {
 	// Empty for non-classified forwards (compliance-proxy / agent). Persisted
 	// verbatim onto traffic_event.endpoint_type by the db-writer.
 	EndpointType string `json:"endpointType,omitempty"`
+	// IngressFormat is the client-facing wire shape (provcore.Format key:
+	// "openai" / "openai-responses" / "anthropic" / "gemini" / …) stamped by the
+	// producer (ai-gateway). The stored request + response bodies are in this
+	// frame, so the control-plane view-time normalize decodes them with it.
+	// Empty for compliance-proxy / agent transparent forwards. Persisted verbatim
+	// onto traffic_event.ingress_format by the db-writer.
+	IngressFormat string `json:"ingressFormat,omitempty"`
 	// TargetMethod / TargetPath are the HTTP method and path actually sent to
 	// upstream. Differs from Method/Path on AI gateway cross-format routes;
 	// same as Method/Path for compliance-proxy and agent transparent traffic.
@@ -170,7 +177,7 @@ type TrafficEventMessage struct {
 
 	// Transform spans relocated to their offsets in the post-redact normalized
 	// payload, so the UI can mark each redaction inline. Set only when
-	// storageAction=="redact"; persisted on traffic_event_normalized.
+	// action=="redact"; persisted on traffic_event_normalized.
 	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`
 	ResponseRedactionSpans json.RawMessage `json:"responseRedactionSpans,omitempty"`
 

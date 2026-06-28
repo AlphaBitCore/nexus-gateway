@@ -250,7 +250,7 @@ func TestAttestationKeyCache_NilLoggerSafe(t *testing.T) {
 	}
 }
 
-// TestAttestationKeyCache_CertExpiresAtRoundTrips locks the SEC-M4-01 contract:
+// TestAttestationKeyCache_CertExpiresAtRoundTrips locks the contract:
 // the loader's CertExpiresAt is surfaced unchanged through Get (and on the
 // cached hit), so the verifier can enforce expiry.
 func TestAttestationKeyCache_CertExpiresAtRoundTrips(t *testing.T) {

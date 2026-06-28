@@ -24,8 +24,8 @@ package configloader
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"

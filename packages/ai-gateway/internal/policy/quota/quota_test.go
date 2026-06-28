@@ -44,7 +44,7 @@ func TestActualUsage_ActualCost(t *testing.T) {
 	// ActualUsage now carries the single canonical cache-aware cost the gateway
 	// already computed (rec.EstimatedCostUsd) rather than re-deriving it from
 	// tokens × price — so the reconcile, the rollup, and the Backfill seed all
-	// charge the identical number (F-0163).
+	// charge the identical number.
 	u := ActualUsage{CostUSD: 3.5}
 	if got := u.ActualCost(); abs(got-3.5) > 1e-9 {
 		t.Errorf("got %v want 3.5", got)
@@ -239,11 +239,11 @@ func TestSelectCheapestIndex_ZeroCostIsValid(t *testing.T) {
 	}
 }
 
-// TestSelectCheapestIndex_SkipsUnpricedCandidate is the F-0348 regression: an
+// TestSelectCheapestIndex_SkipsUnpricedCandidate is the regression: an
 // unpriced downgrade candidate prices to $0 and would otherwise win the
 // cheapest-fits comparison, then re-price to 0 and bypass the cost cap that
 // triggered the downgrade. The selector must skip it and pick the priced
-// model, exactly like the primary-model F-0154 guard fails closed.
+// model, exactly like the primary-model guard fails closed.
 func TestSelectCheapestIndex_SkipsUnpricedCandidate(t *testing.T) {
 	estimate := CostEstimate{EstimatedInputTokens: 1_000_000, MaxOutputTokens: 1_000_000}
 	targets := []TargetPricing{
@@ -537,7 +537,7 @@ func TestEngine_Reconcile_ZeroCost_NoOp(t *testing.T) {
 	}
 }
 
-// TestEngine_Reconcile_MixedPeriodChain_EachLevelOwnPeriod pins F-0144: a
+// TestEngine_Reconcile_MixedPeriodChain_EachLevelOwnPeriod pins: a
 // chain whose levels enforce different periods (VK monthly + org daily) must
 // advance EACH level's counter under its OWN stamped period key. Before the
 // fix Reconcile wrote every level under the first enforcing level's period
@@ -581,7 +581,7 @@ func TestEngine_Reconcile_MixedPeriodChain_EachLevelOwnPeriod(t *testing.T) {
 	}
 }
 
-// TestEngine_Reconcile_SubCentAccumulates pins F-0145: a $0.009 (0.9 cent)
+// TestEngine_Reconcile_SubCentAccumulates pins: a $0.009 (0.9 cent)
 // call truncated to 0 cents every reconcile, so the live counter never moved
 // for sub-cent-per-call models. The remainder carry must accumulate sub-cent
 // costs into whole cents across calls — a positive sub-cent cost is never
@@ -618,7 +618,7 @@ func TestEngine_Reconcile_SubCentAccumulates(t *testing.T) {
 	}
 }
 
-// TestEngine_SubCentAccumulation_TripsSmallLimit is the end-to-end F-0145
+// TestEngine_SubCentAccumulation_TripsSmallLimit is the end-to-end
 // guard: repeated sub-cent reconciles must eventually push the counter over a
 // small cost cap so Check rejects. Before the fix the counter stayed at 0 and
 // the cap was never tripped — unbounded intra-period under-enforcement.
@@ -670,7 +670,7 @@ func TestEngine_Reconcile_PeriodRolloverResetsCarry(t *testing.T) {
 	}
 }
 
-// TestEngine_Check_BlankCostOverride_InheritsPolicyCap pins F-0146: an
+// TestEngine_Check_BlankCostOverride_InheritsPolicyCap pins: an
 // override whose cost limit is blank (zero) must inherit the matching policy's
 // cost cap rather than shadowing it. Before the fix limitCents=0 → skip → the
 // policy cost cap was silently disabled at this level (contradicting doc §7).
@@ -699,7 +699,7 @@ func TestEngine_Check_BlankCostOverride_InheritsPolicyCap(t *testing.T) {
 }
 
 // TestEngine_VKLimit_BlankCostOverride_InheritsPolicyCap pins the VKLimit half
-// of F-0146 so /v1/usage + the request-time headers report the inherited cap
+// of the blank-cost-override case so /v1/usage + the request-time headers report the inherited cap
 // instead of hasLimit=false (doc §10 consistency with Check).
 func TestEngine_VKLimit_BlankCostOverride_InheritsPolicyCap(t *testing.T) {
 	policyCache := NewPolicyCache(nil, testLogger())

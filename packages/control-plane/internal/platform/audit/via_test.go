@@ -8,7 +8,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/subagentmark"
 )
 
-// TestViaFor pins the audit via composition (E91 S12 T4): the bare initiator
+// TestViaFor pins the audit via composition: the bare initiator
 // channel for an ordinary call, and the channel suffixed with the sub-agent marker
 // for a child agent's in-process tool call ("assistant ▸ subagent 2"). An empty
 // channel with a marker (defensive) returns the bare label; an empty context

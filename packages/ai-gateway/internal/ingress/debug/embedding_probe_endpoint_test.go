@@ -1,8 +1,8 @@
 package debug
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"

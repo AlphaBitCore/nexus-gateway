@@ -1,12 +1,12 @@
 package routing
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"sync"
 	"testing"
 )
 
-// TestParseMatchConditions_MemoizesByContent proves the F-6 cache: identical
+// TestParseMatchConditions_MemoizesByContent proves the cache: identical
 // conditions bytes parse once and return the SAME pointer thereafter, distinct
 // bytes return distinct results, and malformed JSON is cached as nil (callers
 // treat nil as "no match"). This is the per-request hot path — ruleMatches runs

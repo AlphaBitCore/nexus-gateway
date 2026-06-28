@@ -2,8 +2,8 @@ package strategies
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"strings"
 	"time"
 

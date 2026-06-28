@@ -1,7 +1,7 @@
 package wirerewrite
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 )
@@ -61,26 +61,6 @@ func TestNormalizeKey_CchStrip_TwoRequests_SameKey(t *testing.T) {
 
 	if string(key1) != string(key2) {
 		t.Fatalf("expected same key body after cch= strip\ngot1: %s\ngot2: %s", key1, key2)
-	}
-}
-
-func TestNormalizeKey_FieldOrder_OpenAI(t *testing.T) {
-	// openai field-order rule is enabled by default — keys should be sorted.
-	eng := New(nil)
-
-	body1 := []byte(`{"messages":[],"model":"gpt-4o","temperature":0.7}`)
-	body2 := []byte(`{"temperature":0.7,"model":"gpt-4o","messages":[]}`)
-
-	key1 := eng.NormalizeKey(AdapterOpenAI, body1)
-	key2 := eng.NormalizeKey(AdapterOpenAI, body2)
-
-	if string(key1) != string(key2) {
-		t.Fatalf("expected same key after field-order normalize\ngot1: %s\ngot2: %s", key1, key2)
-	}
-	// Verify output is valid JSON with sorted keys.
-	var v any
-	if err := json.Unmarshal(key1, &v); err != nil {
-		t.Fatalf("normalized key is not valid JSON: %v", err)
 	}
 }
 
@@ -199,39 +179,6 @@ func TestNormalizeUpstream_PanicFailsOpen(t *testing.T) {
 		t.Fatalf("expected original body, got %s", out)
 	}
 	_ = result
-}
-
-func TestApplyFieldOrderRule_EmptyBody(t *testing.T) {
-	got, c, r := applyFieldOrderRule(nil)
-	if len(got) != 0 || c != 0 || r != 0 {
-		t.Errorf("nil body: got %d bytes, c=%d r=%d", len(got), c, r)
-	}
-}
-
-func TestApplyFieldOrderRule_MalformedBodyReturnsOriginal(t *testing.T) {
-	// Fail-open contract: malformed JSON must NOT block the request —
-	// return original body so upstream still sees the bytes.
-	body := []byte(`{not-json`)
-	got, c, r := applyFieldOrderRule(body)
-	if string(got) != string(body) {
-		t.Errorf("malformed: should fail-open with original; got %s", got)
-	}
-	if c != 0 || r != 0 {
-		t.Errorf("counts on fail: c=%d r=%d, want 0/0", c, r)
-	}
-}
-
-func TestApplyFieldOrderRule_SortsKeys(t *testing.T) {
-	// JSON key ordering normalised — Go's json.Marshal of a map produces
-	// alphabetically-sorted keys. Two requests with the same content
-	// but different field orderings must produce the same bytes here.
-	a := []byte(`{"b":2,"a":1}`)
-	b := []byte(`{"a":1,"b":2}`)
-	gotA, _, _ := applyFieldOrderRule(a)
-	gotB, _, _ := applyFieldOrderRule(b)
-	if string(gotA) != string(gotB) {
-		t.Errorf("field order not normalised: a=%s b=%s", gotA, gotB)
-	}
 }
 
 func TestItoa_AllCases(t *testing.T) {
@@ -472,5 +419,41 @@ func TestNormalizeUpstream_L4_Inject_PerProvider(t *testing.T) {
 	}
 	if result2.MarkersInjected != 0 {
 		t.Fatalf("expected MarkersInjected=0 for prov-2, got %d", result2.MarkersInjected)
+	}
+}
+
+// TestNormalizeUpstream_RuntimeToggle_HotReload proves the global normaliser_enabled
+// switch takes effect at RUNTIME on a live engine — a second and third Reload on the
+// SAME engine re-apply the changed value without recreating it. This is the regression
+// guard for the "toggling normaliser_enabled requires a gateway restart" bug: it would
+// fail if NormalizeUpstream captured the flag once instead of reading the atomic
+// compiled snapshot on every call.
+func TestNormalizeUpstream_RuntimeToggle_HotReload(t *testing.T) {
+	enabled := true
+	withSwitch := func(on bool) Config {
+		return Config{
+			NormaliserEnabled: on,
+			Rules: map[string]map[string]RuleOverride{
+				"anthropic": {RuleAnthropicCchStrip: {Enabled: &enabled}},
+			},
+		}
+	}
+	body := []byte(`{"system":[{"type":"text","text":"prompt cch=deadbeef; end"}]}`)
+	eng := New(nil)
+
+	// Start OFF: body passes through unchanged.
+	eng.Reload(withSwitch(false))
+	if out, _ := eng.NormalizeUpstream(AdapterAnthropic, "", body); string(out) != string(body) {
+		t.Fatal("switch OFF: expected original body")
+	}
+	// Hot-enable: the SAME engine must now strip, no restart.
+	eng.Reload(withSwitch(true))
+	if out, r := eng.NormalizeUpstream(AdapterAnthropic, "", body); strings.Contains(string(out), "cch=") || r.StripCount == 0 {
+		t.Fatalf("hot-enable: expected cch= stripped after runtime Reload(true), got %s (strip=%d)", out, r.StripCount)
+	}
+	// Hot-disable: flip back OFF at runtime, pass-through restored.
+	eng.Reload(withSwitch(false))
+	if out, r := eng.NormalizeUpstream(AdapterAnthropic, "", body); string(out) != string(body) || r.StripCount != 0 {
+		t.Fatalf("hot-disable: expected original body after runtime Reload(false), got %s (strip=%d)", out, r.StripCount)
 	}
 }

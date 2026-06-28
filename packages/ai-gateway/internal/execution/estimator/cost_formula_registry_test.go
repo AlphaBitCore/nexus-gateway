@@ -155,7 +155,7 @@ func TestLookup_chatCostMatchesEstimatedCostUSD(t *testing.T) {
 	}
 }
 
-// TestLookup_unregisteredEndpoint_WarnsOnce is the F-0234 visibility
+// TestLookup_unregisteredEndpoint_WarnsOnce is the visibility
 // assertion: an unregistered endpoint must (a) still resolve to a usable
 // (chat) formula and (b) emit exactly one WARN log naming the endpoint, no
 // matter how many times it is looked up — so the silent token-mispricing
@@ -196,7 +196,7 @@ func TestLookup_unregisteredEndpoint_WarnsOnce(t *testing.T) {
 	}
 }
 
-// TestBillableUnits_OnlyTokenFields locks the F-0234 trim: BillableUnits
+// TestBillableUnits_OnlyTokenFields locks the trim: BillableUnits
 // carries exactly the two live token fields and the chat formula prices from
 // both. If a dead unit field is re-added without a live setter, this test's
 // surrounding contract (and the doc comment on BillableUnits) flags it.

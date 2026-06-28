@@ -22,7 +22,7 @@ func (s *countingSituation) Snapshot(context.Context) (agent.Situation, error) {
 }
 
 // TestSituationCache_HitWithinTTL: the second turn within the TTL reuses the snapshot
-// and makes NO inner call (the ~8 admin reads are skipped) — the NFR-11 win.
+// and makes NO inner call (the ~8 admin reads are skipped) — the cache win.
 func TestSituationCache_HitWithinTTL(t *testing.T) {
 	inner := &countingSituation{health: "ok"}
 	cache := newSituationCache(time.Minute)

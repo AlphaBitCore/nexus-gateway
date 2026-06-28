@@ -14,3 +14,22 @@ func TestJetstreamDurableName_distinctPerSubject(t *testing.T) {
 		t.Fatalf("empty group must not produce same durable as hub-db-writer for same queue: %q", emptyGroup)
 	}
 }
+
+func TestMaxAckPending_defaultAndEnv(t *testing.T) {
+	t.Setenv("NEXUS_MQ_MAX_ACK_PENDING", "")
+	if got := maxAckPending(); got != defaultMaxAckPending {
+		t.Fatalf("empty env: got %d want default %d", got, defaultMaxAckPending)
+	}
+	t.Setenv("NEXUS_MQ_MAX_ACK_PENDING", "12345")
+	if got := maxAckPending(); got != 12345 {
+		t.Fatalf("valid env: got %d want 12345", got)
+	}
+	// Non-positive and unparseable values must fall back to the default, never 0
+	// (a 0 MaxAckPending means "unlimited" in JetStream — a footgun we refuse).
+	for _, bad := range []string{"0", "-5", "abc", "  "} {
+		t.Setenv("NEXUS_MQ_MAX_ACK_PENDING", bad)
+		if got := maxAckPending(); got != defaultMaxAckPending {
+			t.Fatalf("bad env %q: got %d want default %d", bad, got, defaultMaxAckPending)
+		}
+	}
+}

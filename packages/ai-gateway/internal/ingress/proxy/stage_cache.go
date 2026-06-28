@@ -50,20 +50,34 @@ func (st cacheStage) run() bool {
 	if pt := s.resolvedReq.Passthrough(); pt.AnyBypassActive() && pt.BypassCache {
 		passthroughBypassCache = true
 	}
+	// L1 (extract / exact-match) and L2 (semantic) are INDEPENDENT tiers, each
+	// with its own enable flag. The cache stage is active when EITHER is on;
+	// each lookup is gated on its own flag below. This decouples them — an admin
+	// can run L2 with L1 off (or the reverse) and the stage no longer
+	// short-circuits on L1 alone. freshness rules (apply_freshness_rules) apply
+	// across both tiers; a freshness match skips ALL cache operations.
+	l1Enabled := h.deps.Cache != nil && h.deps.Cache.IsEnabled()
+	l2Enabled := h.deps.SemanticReader != nil &&
+		h.deps.SemanticConfigCache != nil && h.deps.SemanticConfigCache.EffectiveEnabled()
+	cacheEnabled := l1Enabled || l2Enabled
 	// Project canonical NormalizedPayload messages → freshness.ChatMessage
-	// for the time-sensitivity detector. Nil canonical payload or empty
-	// messages list = nil slice → detector returns false (fail-open).
+	// for the time-sensitivity detector. Computed ONLY when a cache tier is
+	// active — pulling rctxFull.Normalized() materializes the lazy canonical,
+	// and the freshness detector is meaningless when all tiers are off. On the
+	// lean (cache-off) path this leaves canonicalMsgs nil and the canonical
+	// uncomputed. Nil canonical / empty messages → nil slice → detector returns
+	// false (fail-open).
 	var canonicalMsgs []freshness.ChatMessage
-	if np := s.rctxFull.Normalized(); np != nil {
-		canonicalMsgs = normMessagesToFreshness(np.Messages)
+	if cacheEnabled {
+		if np := s.rctxFull.Normalized(); np != nil {
+			canonicalMsgs = normMessagesToFreshness(np.Messages)
+		}
 	}
-	// cacheEnabled reads the runtime enabled flag set by Hub pushes
-	// (response_cache.extract_config), not just "is *Cache wired".
 	// skipTimeSensitivePolicy reads the apply_freshness_rules gate
 	// so freshness-rule matches actually skip cache.
 	preLookupStatus, preLookupSkipReason := classifyCachePreLookup(
 		typology.KindFromWireShape(s.resolved.WireShape),
-		h.deps.Cache != nil && h.deps.Cache.IsEnabled(),
+		cacheEnabled,
 		s.r.Header.Get("x-nexus-aigw-no-cache") != "",
 		len(s.routeResult.Targets) > 0,
 		passthroughBypassCache,
@@ -103,44 +117,50 @@ func (st cacheStage) run() bool {
 		}
 		primary := s.routeResult.Targets[0]
 
-		// L0 (E38): key normalisation — strip volatile fields (e.g. cch=
-		// billing nonce) from the body ONLY for cache key computation.
-		// Never mutates cachePreparedBody; fail-open.
-		keyBody := s.cachePreparedBody
-		if h.deps.Normaliser != nil {
-			keyBody = h.deps.Normaliser.NormalizeKey(primary.AdapterType, s.cachePreparedBody)
-		}
-		// L1 tenant isolation: fold the same vary_by
-		// scope the L2 semantic tier uses into the L1 exact-match key.
-		// Empty scope (vary_by=none / unset) preserves fleet-wide dedup.
-		l1Scope := resolveL1CacheScope(h.deps.SemanticConfigCache, s.rec)
-		s.cacheKey = h.deps.Cache.BuildScopedKey(primary.ProviderName, primary.ProviderModelID, keyBody, allowlistVersionFromDeps(h.deps), l1Scope)
-		s.rec.CacheKey = s.cacheKey
-
-		if s.isStream {
-			if entry := h.deps.Cache.LookupStream(s.r.Context(), s.cacheKey); entry != nil {
-				s.rec.GatewayCacheStatus = audit.GatewayCacheHit
-				s.rec.GatewayCacheKind = audit.GatewayCacheKindExtract
-				s.rec.ProviderCacheStatus = audit.ProviderCacheNA
-				h.deps.Cache.RecordHit(s.r.Context())
-				h.deps.CacheMetrics.RecordLookup("hit")
-				h.handleStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
-				return false
-			}
-		} else {
-			if entry := h.deps.Cache.LookupResponse(s.r.Context(), s.cacheKey); entry != nil {
-				s.rec.GatewayCacheStatus = audit.GatewayCacheHit
-				s.rec.GatewayCacheKind = audit.GatewayCacheKindExtract
-				s.rec.ProviderCacheStatus = audit.ProviderCacheNA
-				h.deps.Cache.RecordHit(s.r.Context())
-				h.deps.CacheMetrics.RecordLookup("hit")
-				h.handleNonStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
-				return false
-			}
-		}
-		h.deps.Cache.RecordMiss(s.r.Context())
-		h.deps.CacheMetrics.RecordLookup("miss")
+		// Cache stage is active (L1 and/or L2). Default the status to MISS; a HIT
+		// branch below overrides and returns. When L1 is disabled the stage skips
+		// straight to L2.
 		s.gatewayCacheStatus = audit.GatewayCacheMiss
+
+		if l1Enabled {
+			// L0: key normalisation — strip volatile fields (e.g. cch=
+			// billing nonce) from the body ONLY for cache key computation.
+			// Never mutates cachePreparedBody; fail-open.
+			keyBody := s.cachePreparedBody
+			if h.deps.Normaliser != nil {
+				keyBody = h.deps.Normaliser.NormalizeKey(primary.AdapterType, s.cachePreparedBody)
+			}
+			// L1 tenant isolation: fold the same vary_by
+			// scope the L2 semantic tier uses into the L1 exact-match key.
+			// Empty scope (vary_by=none / unset) preserves fleet-wide dedup.
+			l1Scope := resolveL1CacheScope(h.deps.SemanticConfigCache, s.rec)
+			s.cacheKey = h.deps.Cache.BuildScopedKey(primary.ProviderName, primary.ProviderModelID, keyBody, allowlistVersionFromDeps(h.deps), l1Scope)
+			s.rec.CacheKey = s.cacheKey
+
+			if s.isStream {
+				if entry := h.deps.Cache.LookupStream(s.r.Context(), s.cacheKey); entry != nil {
+					s.rec.GatewayCacheStatus = audit.GatewayCacheHit
+					s.rec.GatewayCacheKind = audit.GatewayCacheKindExtract
+					s.rec.ProviderCacheStatus = audit.ProviderCacheNA
+					h.deps.Cache.RecordHit(s.r.Context())
+					h.deps.CacheMetrics.RecordLookup("hit")
+					h.handleStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
+					return false
+				}
+			} else {
+				if entry := h.deps.Cache.LookupResponse(s.r.Context(), s.cacheKey); entry != nil {
+					s.rec.GatewayCacheStatus = audit.GatewayCacheHit
+					s.rec.GatewayCacheKind = audit.GatewayCacheKindExtract
+					s.rec.ProviderCacheStatus = audit.ProviderCacheNA
+					h.deps.Cache.RecordHit(s.r.Context())
+					h.deps.CacheMetrics.RecordLookup("hit")
+					h.handleNonStreamHit(s.r, s.w, s.rec, primary, s.routeResult, s.reqHookResult, entry, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger)
+					return false
+				}
+			}
+			h.deps.Cache.RecordMiss(s.r.Context())
+			h.deps.CacheMetrics.RecordLookup("miss")
+		}
 
 		// L2 semantic cache lookup on L1 miss.
 		// tryL2Lookup is a no-op (returns false) when SemanticReader is nil

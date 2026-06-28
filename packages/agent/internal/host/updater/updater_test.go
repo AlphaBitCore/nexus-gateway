@@ -418,9 +418,11 @@ func TestApplyUpdate_DispatchByOS(t *testing.T) {
 }
 
 func TestPkgInstallDarwin_LaunchesInstaller(t *testing.T) {
-	// Override the installer command with a harmless /usr/bin/true so the happy
-	// path (Stat OK → launch detached → Release → return nil) runs without ever
-	// invoking the real /usr/sbin/installer on the test host.
+	// Override the installer command with a harmless always-succeeding process so
+	// the happy path (Stat OK → launch detached → Release → return nil) runs
+	// without ever invoking the real /usr/sbin/installer on the test host. The
+	// stand-in must exist on the host running the test: `cmd /c exit 0` on
+	// Windows, `/usr/bin/true` elsewhere.
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "update.pkg")
 	_ = os.WriteFile(pkg, []byte("PKG"), 0644)
@@ -429,6 +431,9 @@ func TestPkgInstallDarwin_LaunchesInstaller(t *testing.T) {
 	orig := installerCommand
 	installerCommand = func(p string) *exec.Cmd {
 		gotPkg = p
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/c", "exit", "0")
+		}
 		return exec.Command("/usr/bin/true")
 	}
 	defer func() { installerCommand = orig }()

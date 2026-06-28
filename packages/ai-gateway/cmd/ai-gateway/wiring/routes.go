@@ -180,12 +180,20 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 	guard := metricsGuard
 	mux.HandleFunc("POST /internal/provider-test",
 		guard.require(debug.ProviderTestHandler(deps.ProviderReg, deps.Logger)))
+	mux.HandleFunc("POST /internal/provider-discover-models",
+		guard.require(debug.ProviderDiscoverModelsHandler(deps.ProviderReg, deps.Logger)))
 	mux.HandleFunc("POST /internal/routing-simulate",
 		guard.require(debug.RoutingSimulateHandler(deps.RouterResolver, deps.FormatBridge, deps.Logger)))
 	mux.HandleFunc("POST /internal/v1/credentials/{id}/probe",
 		guard.require(debug.CredentialProbeHandler(deps.CacheLayer, deps.ProviderReg, deps.CredManager, deps.Logger)))
 	mux.HandleFunc("POST /internal/hooks-test",
 		guard.require(debug.HooksTestHandler(deps.GWHookRegistry, rulePackLister, deps.Logger)))
+	// Pattern perf test: called by the CP BFF when an author clicks "Test
+	// performance" on a rule-pack or hook regex. Measures the pattern on the real
+	// Vectorscan engine (the CP has no libhs) so a prefilter-defeating regex is
+	// caught at authoring time. INTERNAL_SERVICE_TOKEN-gated like the siblings.
+	mux.HandleFunc("POST /internal/pattern-perf-test",
+		guard.require(debug.PatternPerfHandler()))
 	// Embedding probe: called by CP BFF when admin clicks "Test Embedding" on
 	// the Cache Settings page. Embeddings are request/response only (no stream).
 	mux.HandleFunc("POST /internal/embedding-probe",

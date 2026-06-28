@@ -2,8 +2,8 @@ package ws
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"log/slog"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/fleet/manager"

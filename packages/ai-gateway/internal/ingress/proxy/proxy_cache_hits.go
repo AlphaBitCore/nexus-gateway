@@ -23,7 +23,6 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 	"github.com/tidwall/gjson"
 )
@@ -198,7 +197,7 @@ func (h *Handler) handleNonStreamHit(
 	//     upstream to canonical OpenAI before caching. Re-encode canonical → the
 	//     CURRENT reader's ingress shape via ResponseCanonicalToIngress:
 	//     identity for OpenAI-family, content[]/candidates[] for anthropic/
-	//     gemini, output[] for a /v1/responses reader (E57 cross-shape). The
+	//     gemini, output[] for a /v1/responses reader (cross-shape). The
 	//     empty/legacy tag is also canonical → handled here.
 	//   - openai-responses origin stores RESPONSES-shape (native passthrough is
 	//     not canonicalised). Serve verbatim to a /v1/responses reader; for a
@@ -216,7 +215,7 @@ func (h *Handler) handleNonStreamHit(
 			// canonical), and cross-format /v1/responses canonicalises before
 			// caching too. Reshape canonical → the CURRENT reader's ingress:
 			// identity for OpenAI-family, content[]/candidates[] for anthropic/
-			// gemini, output[] for a /v1/responses reader (E57 cross-shape).
+			// gemini, output[] for a /v1/responses reader (cross-shape).
 			shaped, err := h.deps.CanonicalBridge.ResponseCanonicalToIngress(ingress.BodyFormat, respBody)
 			if err != nil {
 				logger.Warn("cache HIT: ingress reshape failed; serving canonical bytes", "error", err)
@@ -251,7 +250,7 @@ func (h *Handler) handleNonStreamHit(
 	// Response-stage hooks: identical to handleNonStream's response
 	// hook block. On Reject we write the rejection and return; on
 	// Modify we swap respBody.
-	// Pre-rewrite snapshot for the audit record under storageAction=redact
+	// Pre-rewrite snapshot for the audit record under action=redact
 	// (span offsets address the original text; see handleNonStream).
 	origRespBody := respBody
 	{
@@ -296,21 +295,16 @@ func (h *Handler) handleNonStreamHit(
 			if br := mapBlockingRule(hookResult.BlockingRule); br != nil {
 				rec.BlockingRule = br
 			}
-			// Propagate spans + storage policy so the audit writer can
-			// redact (or drop) the persisted response copies.
-			rec.ResponseTransformSpans = hookResult.TransformSpans
-			rec.ResponseStorageAction = string(hookResult.StorageAction)
-			rec.ResponseRedactRuleIDs = redact.CollectRuleIDs(hookResult.TransformSpans)
-			rec.ResponseRedetect = hookResult.Redetect
+			// Carry the single hook action so the audit writer persists the
+			// redacted response copy under redact/block. Derived from the
+			// Decision so a no-match approve still stamps ActionApprove.
+			rec.ResponseAction = hookcore.ActionFromDecision(hookResult.Decision)
 			if h.deps.Metrics != nil {
 				h.deps.Metrics.RecordHookRequest(ingressFormat, "response", string(hookResult.Decision))
 			}
 			switch hookResult.Decision {
 			case hookcore.RejectHard:
 				h.writeError(w, rec, http.StatusForbidden, hookResult.Reason)
-				return
-			case hookcore.BlockSoft:
-				h.writeError(w, rec, 246, hookResult.Reason)
 				return
 			case hookcore.Modify:
 				if len(hookResult.ModifiedContent) > 0 {
@@ -330,7 +324,7 @@ func (h *Handler) handleNonStreamHit(
 						h.writeError(w, rec, http.StatusInternalServerError, "response rewrite failed")
 						return
 					default:
-						// Storage-safe raw copy under storageAction=redact.
+						// Storage-safe raw copy under a redact/block action.
 						rec.ResponseBodyRedacted = rewritten
 						respBody = rewritten
 						rec.ResponseHookRewriteCount = n
@@ -341,11 +335,11 @@ func (h *Handler) handleNonStreamHit(
 		}
 	}
 
-	// Under storageAction=redact the audit record carries the pre-rewrite
-	// bytes (the writer applies the spans itself; raw storage comes from
-	// ResponseBodyRedacted) — otherwise it mirrors the client bytes.
+	// Under a redact/block action the audit record carries the pre-rewrite
+	// bytes (raw storage comes from ResponseBodyRedacted via the writer's
+	// StorageRawBody) — otherwise it mirrors the client bytes.
 	respBodyForAudit := respBody
-	if rec.ResponseStorageAction == string(hookcore.StorageRedact) {
+	if rec.ResponseAction == hookcore.ActionRedact || rec.ResponseAction == hookcore.ActionBlock {
 		respBodyForAudit = origRespBody
 	}
 	pcCfg := h.payloadCaptureConfig()

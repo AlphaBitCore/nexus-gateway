@@ -31,7 +31,7 @@ func mergePGTestPool(t *testing.T) *pgxpool.Pool {
 
 const mergePGTestPrefix = "merge-pg-test-"
 
-// TestUpdateShadowReport_PerKeyMerge_PreservesSiblings is the F-0120/F-0122
+// TestUpdateShadowReport_PerKeyMerge_PreservesSiblings is the per-key merge
 // end-to-end semantic check against real Postgres: a Thing that reports ONLY a
 // single changed key must update that key's reported state while leaving every
 // sibling key's reported state intact, and a stale (older-version) report must

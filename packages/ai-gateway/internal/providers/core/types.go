@@ -9,11 +9,13 @@
 package core
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -364,6 +366,25 @@ func LimitedReadAll(r io.Reader) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r, ReadAllLimit))
 }
 
+// respReadBufPool reuses the scratch buffer LimitedReadAllN reads the upstream
+// non-streaming response into. io.ReadAll starts at 512 B and regrows
+// geometrically, allocating ~2x the body size in throwaway intermediate slices
+// per response (measured churn on the hot path); a pooled buffer pre-grown to a
+// typical body size absorbs that growth and is reused. The body still escapes to
+// the decoder + async audit, so a single right-sized copy is taken out and the
+// scratch is returned to the pool — the same pattern as the request-side
+// readBody pool.
+var respReadBufPool = sync.Pool{New: func() any {
+	b := new(bytes.Buffer)
+	b.Grow(64 << 10)
+	return b
+}}
+
+// respReadBufPoolCap bounds the capacity a buffer may have and still be returned
+// to the pool: one oversized response must not inflate every pooled scratch
+// thereafter.
+const respReadBufPoolCap = 1 << 20 // 1 MiB
+
 // LimitedReadAllN is the runtime-cap variant used on the response hot
 // path. The cap is plumbed from Request.MaxResponseBytes; values <= 0
 // fall back to ReadAllLimit so a malformed or unset payload-capture row
@@ -378,14 +399,22 @@ func LimitedReadAllN(r io.Reader, max int64) (data []byte, truncated bool, err e
 	if max <= 0 {
 		max = ReadAllLimit
 	}
-	data, err = io.ReadAll(io.LimitReader(r, max+1))
-	if err != nil {
-		return data, false, err
+	buf := respReadBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer func() {
+		// Do not pool back a buffer that ballooned on an oversized response.
+		if buf.Cap() <= respReadBufPoolCap {
+			respReadBufPool.Put(buf)
+		}
+	}()
+	if _, err = buf.ReadFrom(io.LimitReader(r, max+1)); err != nil {
+		return nil, false, err
 	}
-	if int64(len(data)) > max {
-		return data[:max], true, nil
+	// Right-sized escaping copy; the pooled scratch is reused next response.
+	if int64(buf.Len()) > max {
+		return append([]byte(nil), buf.Bytes()[:max]...), true, nil
 	}
-	return data, false, nil
+	return append([]byte(nil), buf.Bytes()...), false, nil
 }
 
 // EmbeddingsInput is the canonical embedding input discriminator.

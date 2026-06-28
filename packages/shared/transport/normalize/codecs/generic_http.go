@@ -6,10 +6,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
+	"github.com/goccy/go-json"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -360,122 +360,4 @@ func (n *GenericHTTPNormalizer) binaryRef(raw []byte, mediaType string) core.Nor
 			},
 		},
 	}
-}
-
-// looksLikeText reports whether the media type is one we are willing to
-// inline as a text projection even when its bytes don't pass the UTF-8
-// sniff (e.g. text/csv with embedded \r\n is fine).
-func looksLikeText(mediaType string) bool {
-	if strings.HasPrefix(mediaType, "text/") {
-		return true
-	}
-	if mediaType == "application/json" || strings.HasSuffix(mediaType, "+json") {
-		return true
-	}
-	if mediaType == "application/x-www-form-urlencoded" {
-		return true
-	}
-	return false
-}
-
-// looksLikeUTF8Text inspects up to the first 512 bytes and reports
-// whether they appear to be UTF-8 text (no control bytes other than
-// \t \n \r). Used when the producer didn't set a Content-Type so we can
-// still differentiate "text" from "binary blob".
-func looksLikeUTF8Text(raw []byte) bool {
-	probe := raw
-	if len(probe) > 512 {
-		probe = probe[:512]
-	}
-	for _, b := range probe {
-		switch {
-		case b == '\t' || b == '\n' || b == '\r':
-			// whitespace OK
-		case b < 0x20:
-			return false
-		}
-	}
-	return true
-}
-
-// looksLikeSSE reports whether the leading lines match a Server-Sent
-// Events stream: the first non-whitespace, non-comment line opens with
-// `event:` or `data:`. SSE comment lines (leading `:`) are skipped —
-// real-world streams open with keep-alive comments like `:ok`
-// (stream.wikimedia.org) or `: ping`, and a probe that only looked at
-// the first line dumped those streams into the text projection. The
-// probe window is 256 bytes so a few comment lines cannot push the
-// first frame header out of view.
-func looksLikeSSE(raw []byte) bool {
-	probe := raw
-	if len(probe) > 256 {
-		probe = probe[:256]
-	}
-	s := strings.TrimLeft(string(probe), " \r\n\t")
-	for strings.HasPrefix(s, ":") {
-		nl := strings.IndexByte(s, '\n')
-		if nl < 0 {
-			return false
-		}
-		s = strings.TrimLeft(s[nl+1:], " \r\n\t")
-	}
-	return strings.HasPrefix(s, "event:") || strings.HasPrefix(s, "data:")
-}
-
-// looksLikeJSONDocument reports whether the body IS one complete JSON
-// document: the first non-whitespace byte opens an object or array AND
-// the whole (trimmed) body validates. The full json.Valid scan — not
-// just a prefix probe — is deliberate: this sniff overrides the
-// declared Content-Type, so it must never claim a body that would then
-// fail the JSON decode (an HTML error page starting with a brace, a
-// truncated capture). The scan is a single O(n) pass over bytes the
-// JSON path would parse anyway.
-func looksLikeJSONDocument(raw []byte) bool {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
-		return false
-	}
-	return json.Valid(trimmed)
-}
-
-// looksLikeNDJSON reports whether the body is plausibly newline-
-// delimited JSON: at least two non-empty lines, the first one
-// starts with `{` or `[`, and the whole body does NOT start with
-// `[` followed by a newline (which would be a real JSON array
-// printed with one element per line). Conservative on purpose —
-// we'd rather route a real JSON document through the JSON path
-// and have it render correctly than mis-classify it as NDJSON.
-func looksLikeNDJSON(raw []byte) bool {
-	trimmed := bytes.TrimLeft(raw, " \r\n\t")
-	if len(trimmed) < 4 {
-		return false
-	}
-	if trimmed[0] != '{' && trimmed[0] != '[' {
-		return false
-	}
-	// A real JSON array spans multiple lines but its outer shape is
-	// `[ ... ]` — when we scan the bytes and find the array bracket
-	// closing before EOF, treat it as JSON, not NDJSON. The cheapest
-	// disambiguation: count the first line; if it ends with `,` or
-	// is itself parse-incomplete (an open `{` with no closing `}`
-	// before the newline), it's a JSON array printed multi-line, not
-	// NDJSON. NDJSON lines are individually complete documents.
-	scanner := bufio.NewScanner(bytes.NewReader(trimmed))
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	completeLines := 0
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var probe any
-		if err := json.Unmarshal([]byte(line), &probe); err != nil {
-			return false
-		}
-		completeLines++
-		if completeLines >= 2 {
-			return true
-		}
-	}
-	return false
 }

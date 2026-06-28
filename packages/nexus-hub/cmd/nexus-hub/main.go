@@ -22,6 +22,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/bootenv"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/logging"
 	sharedops "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/profiling"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/runtimemem"
 )
 
 var buildVersion = "dev"
@@ -30,6 +32,7 @@ func main() { os.Exit(run()) }
 
 func run() int {
 	_, _ = bootenv.LoadFromRepoRoot(slog.Default())
+	runtimemem.AutoSetMemoryLimit(slog.Default())
 	configPath := flag.String("config", "nexus-hub.config.yaml", "path to config file")
 	flag.Parse()
 
@@ -47,6 +50,8 @@ func run() int {
 		return 1
 	}
 	slog.SetDefault(logger)
+	// Opt-in profiler: SIGUSR1 dumps to NEXUS_PPROF_DIR / HTTP on NEXUS_PPROF_ADDR. No-op unless set.
+	profiling.Start("nexus-hub")
 	logger.Info("starting nexus-hub", "id", cfg.Hub.ID, "port", cfg.Server.Port,
 		"version", buildVersion, "scheduler", cfg.Scheduler.Enabled)
 

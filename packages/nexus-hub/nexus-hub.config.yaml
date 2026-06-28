@@ -84,6 +84,15 @@ consumers:
   enabled: true
   batchSize: 200
   flushInterval: 2s
+  # Audit drain duty cycle — fraction of wall-clock the traffic-event drain may
+  # work before it yields (sleeps proportionally), so on the single-box
+  # deployment it cedes memory bandwidth / loopback / Postgres to the AI-gateway
+  # core path; the NATS file store absorbs the backlog (audit is delay-tolerant,
+  # no-loss preserved by retention). 0.3 (default) = fixed throttle (measured:
+  # gateway 200-VU non-SSE RPS ~5150 -> ~6300, beating Bifrost 5284, no loss).
+  # 0 = adaptive CPU-pressure probe; >= 1 = off (dedicated Hub box).
+  # Override at runtime with env NEXUS_HUB_AUDIT_DRAIN_DUTY_CYCLE.
+  trafficDrainDutyCycle: 0.3
 
 # Scheduled jobs (drift detector, identity enricher, enrollment
 # cleanup, stale-thing reaper).

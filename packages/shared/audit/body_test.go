@@ -2,8 +2,10 @@ package audit_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
 )
@@ -59,11 +61,87 @@ func TestBody_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestBody_CompressedRoundTripUnquoteFastPath locks the Hub-ingest decode
+// optimization: a large body marked for s2/zstd compression marshals to a
+// base64-of-frame JSON string, and UnmarshalJSON must recover the ORIGINAL bytes
+// exactly via the quote-stripping fast path (which skips json.Unmarshal's per-byte
+// unescape because base64 can never contain a JSON escape). Both codecs are
+// exercised; the assertion is byte-exact recovery, not merely "no error".
+func TestBody_CompressedRoundTripUnquoteFastPath(t *testing.T) {
+	// A body comfortably above the compression floor with high-entropy + repeating
+	// regions so the frame is non-trivial yet the wire string stays pure base64.
+	orig := make([]byte, 64*1024)
+	for i := range orig {
+		orig[i] = byte((i*31 + 7) % 251)
+	}
+	// Drive both codecs deterministically by constructing the Body with the target
+	// encoding directly — MarshalJSON compresses InlineBytes to a base64-of-frame
+	// string for s2/zstd, which is exactly the wire form the fast path must invert.
+	// (NewInlineBody's codec pick is process-global via sync.Once, so direct
+	// construction is the only way to exercise both codecs in one test run.)
+	for _, enc := range []audit.BodyEncoding{audit.EncodingZstd, audit.EncodingS2} {
+		t.Run(string(enc), func(t *testing.T) {
+			audit.SetInlineCompression(true, 1024, 3)
+			defer audit.SetInlineCompression(false, 0, 0)
+
+			body := audit.Body{Kind: audit.BodyInline, Encoding: enc, InlineBytes: orig, SizeBytes: int64(len(orig)), ContentType: "application/json"}
+			data, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var got audit.Body
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			// InlineBytes after UnmarshalJSON is the base64-of-frame string bytes
+			// (the Hub persists it verbatim into the BYTEA column). The column path
+			// (base64-decode to the raw frame, then decompress) must reproduce the
+			// original body byte-for-byte.
+			payload, enc := got.ColumnPayload()
+			decoded := audit.DecodeBodyForColumn(payload, enc)
+			if !bytes.Equal(decoded, orig) {
+				t.Fatalf("decoded body mismatch: got %d bytes want %d", len(decoded), len(orig))
+			}
+		})
+	}
+}
+
 func TestBody_RawEncodingRejectsInvalidJSON(t *testing.T) {
-	// Caller explicitly chose raw but bytes aren't valid JSON.
+	// Caller explicitly chose raw but bytes aren't valid JSON. This body is
+	// built by direct struct literal (no constructor), so rawValidated is false
+	// and MarshalJSON MUST still run the defensive json.Valid re-scan and error.
 	bad := audit.Body{Kind: audit.BodyInline, Encoding: audit.EncodingRaw, InlineBytes: []byte("not json")}
 	if _, err := json.Marshal(bad); err == nil {
 		t.Fatal("expected error when raw encoding has invalid JSON bytes")
+	}
+}
+
+// BenchmarkBody_MarshalJSON_RawLarge documents the constructor-trust win: a
+// large raw body built via NewInlineBody must marshal WITHOUT paying a second
+// O(len) json.Valid scan (the re-scan measured ~20% of gateway CPU under load).
+// Run with -benchmem; the win shows as flat ns/op as the body grows because the
+// marshal no longer walks every byte to re-validate.
+func BenchmarkBody_MarshalJSON_RawLarge(b *testing.B) {
+	// ~50 KB of valid JSON, the size of a typical captured chat body.
+	buf := make([]byte, 0, 50*1024)
+	buf = append(buf, '{')
+	for i := range 1500 {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf = append(buf, []byte(`"k0000000000":"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"`)...)
+	}
+	buf = append(buf, '}')
+	if !json.Valid(buf) {
+		b.Fatalf("benchmark fixture is not valid JSON")
+	}
+	body := audit.NewInlineBody(buf, int64(len(buf)), false, "application/json")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := json.Marshal(body); err != nil {
+			b.Fatalf("marshal: %v", err)
+		}
 	}
 }
 
@@ -156,7 +234,8 @@ func TestBody_UnmarshalBase64GarbledStringErrors(t *testing.T) {
 }
 
 func TestBody_AutoDetectEncoding(t *testing.T) {
-	// Auto-detected encoding: valid JSON ⇒ raw, anything else ⇒ base64.
+	// Auto-detected encoding (three-way): valid JSON ⇒ raw, valid UTF-8 non-JSON
+	// ⇒ text, binary / NUL-bearing ⇒ base64.
 	cases := []struct {
 		in   []byte
 		want audit.BodyEncoding
@@ -166,13 +245,91 @@ func TestBody_AutoDetectEncoding(t *testing.T) {
 		{[]byte(`[1,2,3]`), audit.EncodingRaw},
 		{[]byte(`true`), audit.EncodingRaw},
 		{[]byte(`null`), audit.EncodingRaw},
-		{[]byte("event: delta\n"), audit.EncodingBase64},
-		{[]byte{0x00, 0x01, 0x02}, audit.EncodingBase64},
+		{[]byte("event: delta\n"), audit.EncodingText},      // SSE line: UTF-8, not JSON
+		{[]byte("data: {\"x\":1}\n\n"), audit.EncodingText}, // SSE frame
+		{[]byte("café ☕"), audit.EncodingText},              // multibyte UTF-8
+		{[]byte("data: ab\x00cd"), audit.EncodingBase64},    // embedded NUL → base64
+		{[]byte{0xff, 0xfe, 0x01}, audit.EncodingBase64},    // invalid UTF-8 → base64
+		{[]byte{0x00, 0x01, 0x02}, audit.EncodingBase64},    // NUL bytes → base64
 	}
 	for _, c := range cases {
 		body := audit.NewInlineBody(c.in, int64(len(c.in)), false, "")
 		if body.Encoding != c.want {
 			t.Errorf("encoding for %q: got %q want %q", string(c.in), body.Encoding, c.want)
 		}
+	}
+}
+
+// TestNewInlineBody_ThreeWayClassification locks the json.Valid-gated hybrid:
+// valid JSON ⇒ raw (verbatim splice), valid UTF-8 non-JSON ⇒ text (escaped
+// string), binary / NUL ⇒ base64. The raw boundary is decided by stdlib
+// encoding/json.Valid (zero-alloc); a body mis-tagged raw would later fail to
+// round-trip, and a NUL mis-tagged text would be rejected by a PG text column.
+func TestNewInlineBody_ThreeWayClassification(t *testing.T) {
+	cases := [][]byte{
+		[]byte(`{"a":1}`), []byte(`[1,2,3]`), []byte(`"str"`), []byte(`123`),
+		[]byte(`true`), []byte(`null`), []byte(`{"nested":{"x":[1,2,{"y":null}]}}`),
+		[]byte(`{"unicode":"é😀"}`), []byte(`1.5e10`),
+		[]byte(`data: {"x":1}`),              // SSE line — UTF-8, not JSON → text
+		[]byte("\x1b[31mred\x1b[0m"),         // ANSI escape — UTF-8 control chars → text
+		[]byte("partial{"), []byte(`{"a":1`), // truncated → text
+		[]byte(`{"a":1}trailing`),              // trailing garbage → text
+		[]byte("\x00\x01\x02"),                 // NUL bytes → base64
+		[]byte{0xff, 0xfe},                     // invalid UTF-8 → base64
+		[]byte("ok\x00mid"),                    // UTF-8 with embedded NUL → base64
+		{}, []byte(` `), []byte(`  {"a":1}  `), // whitespace edges
+	}
+	for _, b := range cases {
+		if len(b) == 0 {
+			continue
+		}
+		wantEnc := audit.EncodingBase64
+		switch {
+		case json.Valid(b):
+			wantEnc = audit.EncodingRaw
+		case utf8.Valid(b) && bytes.IndexByte(b, 0) < 0:
+			wantEnc = audit.EncodingText
+		}
+		body := audit.NewInlineBody(b, int64(len(b)), false, "")
+		if body.Encoding != wantEnc {
+			t.Errorf("NewInlineBody(%q).Encoding=%v want %v", b, body.Encoding, wantEnc)
+		}
+		// Round-trip through Marshal→Unmarshal. text/base64 carry non-JSON bytes
+		// where every byte matters → byte-exact. raw is valid JSON embedded as a
+		// nested value; the envelope marshal compacts insignificant whitespace
+		// (same as the old JSONB storage), so raw is checked for JSON-semantic
+		// equality, not byte-identity.
+		raw, err := body.MarshalJSON()
+		if err != nil {
+			t.Fatalf("MarshalJSON(%q): %v", b, err)
+		}
+		var rt audit.Body
+		if err := rt.UnmarshalJSON(raw); err != nil {
+			t.Fatalf("UnmarshalJSON(%q): %v", b, err)
+		}
+		if wantEnc == audit.EncodingRaw {
+			if !json.Valid(rt.InlineBytes) {
+				t.Errorf("raw round-trip produced invalid JSON for %q: %q", b, rt.InlineBytes)
+			}
+		} else if !bytes.Equal(rt.InlineBytes, b) {
+			t.Errorf("round-trip mismatch for %q: got %q", b, rt.InlineBytes)
+		}
+	}
+}
+
+// BenchmarkNewInlineBody_ValidLarge proves the validity check is now zero-alloc
+// (goccy json.Valid decoded the whole body into interface{}, ~4x body alloc).
+func BenchmarkNewInlineBody_ValidLarge(b *testing.B) {
+	body := []byte(`{"model":"m","messages":[`)
+	for i := range 200 {
+		if i > 0 {
+			body = append(body, ',')
+		}
+		body = append(body, []byte(`{"role":"user","content":"the quick brown fox jumps over the lazy dog"}`)...)
+	}
+	body = append(body, []byte(`]}`)...)
+	b.ReportAllocs()
+	for range b.N {
+		_ = audit.NewInlineBody(body, int64(len(body)), false, "")
 	}
 }

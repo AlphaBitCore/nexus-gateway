@@ -41,8 +41,8 @@ type ActualUsage struct {
 // price. There is therefore NO per-token recomputation here that could charge
 // cache-read tokens at full InputPricePM — the reconcile counter tracks the
 // same discounted cost the caller is billed, so cache-heavy traffic is not
-// over-throttled. (Re-introducing a tokens × price formula in this package is
-// exactly the divergence that was removed.)
+// over-throttled. (Re-introducing a tokens × price formula in this package
+// would re-create exactly that divergence.)
 func (u ActualUsage) ActualCost() float64 {
 	return u.CostUSD
 }

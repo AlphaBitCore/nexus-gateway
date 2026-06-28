@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -67,7 +68,7 @@ func (d AuthorizeDeps) logger() *slog.Logger {
 // (untrusted) redirect target.
 //
 // On success the handler mints an opaque authctx, stashes the parsed
-// request in PendingAuthzStore, and 302s to /login?authctx=<authctx>.
+// request in PendingAuthzStore, and 302s to {X-Forwarded-Prefix}/login?authctx=<authctx>.
 func AuthorizeHandler(d AuthorizeDeps) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		q := c.QueryParams()
@@ -181,8 +182,9 @@ func AuthorizeHandler(d AuthorizeDeps) echo.HandlerFunc {
 			ExpiresAt:     time.Now().Add(pendingAuthzHandleTTL),
 		})
 
+		prefix := strings.TrimRight(c.Request().Header.Get("X-Forwarded-Prefix"), "/")
 		loginURL := (&url.URL{
-			Path:     "/login",
+			Path:     prefix + "/login",
 			RawQuery: url.Values{"authctx": []string{authctx}}.Encode(),
 		}).String()
 		return c.Redirect(http.StatusFound, loginURL)

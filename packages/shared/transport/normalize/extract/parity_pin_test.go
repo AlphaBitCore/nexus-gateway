@@ -2,7 +2,7 @@
 // PatternNormalizer alone and the full Tier 1+2+3 registry, per input.
 //
 // This is the safety gate for deleting the Tier-2 standard-API specs
-// (normalize-unification Task 1.4): before any spec is removed we need
+// during the normalize unification: before any spec is removed we need
 // on-record proof of what Tier 2 extracts today versus what the full
 // registry produces, so the deletion provably loses nothing. The file
 // is an external test package (extract_test) because it imports the
@@ -12,7 +12,7 @@ package extract_test
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"math"
 	"os"
 	"path/filepath"
@@ -25,8 +25,8 @@ import (
 
 // knownPhase1Gaps lists corpus cases where the "registry is never worse
 // than Tier 2 alone" invariant currently FAILS. Each entry maps the
-// corpus case directory name to the reason the gap exists. The Phase 1
-// gate (Task 1.6) requires this map to shrink to empty: every entry is
+// corpus case directory name to the reason the gap exists. This map
+// must shrink to empty: every entry is
 // a regression the decoder unification must close before the Tier-2
 // standard-API specs can be deleted. Failures on cases NOT listed here
 // fail the test immediately.
@@ -132,7 +132,7 @@ func assertObs(t *testing.T, side string, got, want observation) {
 	}
 }
 
-// TestCodecParityWithTier2Specs is the Task 0.4 behavior-pin test.
+// TestCodecParityWithTier2Specs is the behavior-pin test.
 //
 // Part 1 (always runs — never vacuous): the two committed browser-capture
 // fixtures are pinned to EXACT current values on both sides, Tier-2 alone
@@ -148,8 +148,8 @@ func assertObs(t *testing.T, side string, got, want observation) {
 //  3. registry Usage present whenever Tier-2 Usage present.
 //
 // Violations are failures unless the case is listed in knownPhase1Gaps,
-// in which case the gap is logged; the map must be empty by the Phase 1
-// gate (Task 1.6).
+// in which case the gap is logged; the map must be empty before the
+// Tier-2 standard-API specs can be deleted.
 func TestCodecParityWithTier2Specs(t *testing.T) {
 	tier2 := extract.NewPatternNormalizer()
 	registry := normalize.BuildRegistry()
@@ -330,7 +330,7 @@ func TestCodecParityWithTier2Specs(t *testing.T) {
 			})
 		}
 		// Surface the live gap list in every run so its size is visible
-		// in CI logs; it must reach zero by the Phase 1 gate.
+		// in CI logs; it must reach zero before the Tier-2 specs are deleted.
 		t.Logf("knownPhase1Gaps hit this run: %d of %d listed", len(gapsHit), len(knownPhase1Gaps))
 		for name, reason := range knownPhase1Gaps {
 			if _, hit := gapsHit[name]; !hit {

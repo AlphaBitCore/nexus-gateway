@@ -426,7 +426,7 @@ func TestMapAnthropicStreamError_invalidRequestError(t *testing.T) {
 }
 
 func TestMapAnthropicStreamError_notFoundError(t *testing.T) {
-	// F-0227: not_found_error maps to invalid_request, unified with the unary
+	// not_found_error maps to invalid_request, unified with the unary
 	// HTTP normaliser (a 404 is a client error, not a retryable upstream one).
 	err := antstream.MapAnthropicStreamError("not_found_error", "not found")
 	pe := func() *provcore.ProviderError {

@@ -6,8 +6,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,13 +22,15 @@ import (
 )
 
 func TestCertPaths_FormsPathsUnderCertDir(t *testing.T) {
-	mgr := NewManager("/foo/bar")
+	dir := "/foo/bar"
+	mgr := NewManager(dir)
 	cert, key := mgr.CertPaths()
-	if cert != "/foo/bar/device.pem" {
-		t.Errorf("certFile: %q", cert)
+	// filepath.Join keeps the expectation separator-agnostic (\ on Windows).
+	if cert != filepath.Join(dir, "device.pem") {
+		t.Errorf("certFile: %q (want under %q)", cert, dir)
 	}
-	if key != "/foo/bar/device-key.pem" {
-		t.Errorf("keyFile: %q", key)
+	if key != filepath.Join(dir, "device-key.pem") {
+		t.Errorf("keyFile: %q (want under %q)", key, dir)
 	}
 }
 
@@ -162,8 +164,8 @@ func (failingReader) Read(_ []byte) (int, error) {
 }
 
 func TestPersistHubEnrollment_WritesAttestationArtifactsWhenPresent(t *testing.T) {
-	// SEC-M4-02: the attestation CERT (public) is written under certDir as
-	// before, but the attestation PRIVATE KEY goes to the platform keystore,
+	// The attestation CERT (public) is written under certDir, but the
+	// attestation PRIVATE KEY goes to the platform keystore,
 	// NOT a plaintext PEM on disk. An in-memory store keeps the test off the
 	// real Keychain.
 	dir := t.TempDir()
@@ -186,9 +188,9 @@ func TestPersistHubEnrollment_WritesAttestationArtifactsWhenPresent(t *testing.T
 	if data, err := os.ReadFile(filepath.Join(dir, "attestation.pem")); err != nil || len(data) == 0 {
 		t.Errorf("attestation.pem should be present+non-empty: data=%d err=%v", len(data), err)
 	}
-	// The private key MUST NOT be on disk (the SEC-M4-02 invariant).
+	// The private key MUST NOT be on disk.
 	if _, err := os.Stat(filepath.Join(dir, "attestation-key.pem")); !os.IsNotExist(err) {
-		t.Errorf("attestation-key.pem MUST NOT be on disk (SEC-M4-02); stat err = %v", err)
+		t.Errorf("attestation-key.pem MUST NOT be on disk; stat err = %v", err)
 	}
 	// The private key MUST be in the keystore, byte-for-byte.
 	got, err := store.Get(keystore.AttestationKeyName)
@@ -390,7 +392,7 @@ func TestHubUnenroll_DeregistersViaHub(t *testing.T) {
 			t.Errorf("expected %s to be deleted after unenroll", f)
 		}
 	}
-	// SEC-M4-02: unenroll must delete the attestation key from the keystore
+	// Unenroll must delete the attestation key from the keystore
 	// so a decommission leaves no usable signing key behind.
 	if got, _ := store.Get(keystore.AttestationKeyName); got != nil {
 		t.Errorf("attestation key must be deleted from keystore on unenroll; got %d bytes", len(got))
@@ -405,8 +407,8 @@ func TestMarkNeedsReenroll(t *testing.T) {
 	}
 }
 
-// TestEnrollment_AttestationKeyRoundTripsThroughKeystore is the SEC-M4-02
-// regression: the enrollment manager persists the Ed25519 attestation
+// TestEnrollment_AttestationKeyRoundTripsThroughKeystore verifies that
+// the enrollment manager persists the Ed25519 attestation
 // private key to the platform keystore (never a plaintext PEM under
 // certDir), and the attestation signer loads that SAME key back from the
 // keystore and produces a header whose signature verifies against the

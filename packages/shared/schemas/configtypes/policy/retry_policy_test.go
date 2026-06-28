@@ -1,7 +1,7 @@
 package policy
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"reflect"
 	"testing"
 	"time"
@@ -9,8 +9,8 @@ import (
 
 func TestDefaultRetryPolicy_Values(t *testing.T) {
 	p := DefaultRetryPolicy()
-	if p.MaxAttemptsPerTarget != 1 {
-		t.Errorf("MaxAttemptsPerTarget: got %d, want 1", p.MaxAttemptsPerTarget)
+	if p.MaxAttemptsPerTarget != 2 {
+		t.Errorf("MaxAttemptsPerTarget: got %d, want 2 (one same-target retry)", p.MaxAttemptsPerTarget)
 	}
 	if got := len(p.RetryOn); got != 4 {
 		t.Errorf("RetryOn: got %d classes, want 4", got)

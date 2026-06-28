@@ -3,7 +3,7 @@
 package event
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"time"
 
 	sharedaudit "github.com/AlphaBitCore/nexus-gateway/packages/shared/audit"
@@ -117,7 +117,7 @@ type Event struct {
 	// RequestRedactionSpans / ResponseRedactionSpans — redaction spans
 	// relocated to their offsets inside the (storage-redacted) normalized
 	// payloads above. Stamped by the shared audit emitter when a hook's
-	// storageAction=redact governed the copies; nil for unredacted rows.
+	// action=redact governed the copies; nil for unredacted rows.
 	// Stored as TEXT alongside the normalized columns and uploaded to Hub
 	// so traffic_event_normalized.*_redaction_spans populate for agent rows.
 	RequestRedactionSpans  json.RawMessage `json:"requestRedactionSpans,omitempty"`

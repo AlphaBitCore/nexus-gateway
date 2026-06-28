@@ -19,7 +19,7 @@ import (
 // is fail-closed AND references a factory that errors, so that under the
 // connection stage's strictFailClosed=true the BuildPipeline call returns an
 // error (an unbuildable fail-closed hook). This is the precondition for the
-// SEC-W3-01 refusal path.
+// refusal path.
 func erroringFailClosedResolver(t *testing.T) *compliance.PolicyResolver {
 	t.Helper()
 	reg := core.NewHookRegistry()
@@ -39,12 +39,11 @@ func erroringFailClosedResolver(t *testing.T) *compliance.PolicyResolver {
 	}, reg, discardLogger())
 }
 
-// TestServeHTTP_ConnectionStage_FailClosedUnbuildable_Refuses403 is the
-// SEC-W3-01 regression. The compliance-proxy is a DEDICATED forward proxy, not
-// the host outbound packet path, so an unbuildable FAIL-CLOSED connection-stage
-// hook MUST refuse the CONNECT (403) rather than "fail open" and establish an
-// uninspected tunnel — the exact gap the G6 verify round found (the strict
-// build error was generated and then logged-and-ignored).
+// TestServeHTTP_ConnectionStage_FailClosedUnbuildable_Refuses403: the
+// compliance-proxy is a DEDICATED forward proxy, not the host outbound packet
+// path, so an unbuildable FAIL-CLOSED connection-stage hook MUST refuse the
+// CONNECT (403) rather than "fail open" and establish an uninspected tunnel —
+// the strict build error must not be logged-and-ignored.
 //
 // Contrast: a fail-OPEN hook that cannot build is skipped and the CONNECT
 // proceeds (covered by TestServeHTTP_ConnectionStage_*_FailOpen). The

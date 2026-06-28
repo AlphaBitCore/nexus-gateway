@@ -26,5 +26,5 @@
 // result. There is no second EndpointTypeFromPath function in the tree.
 //
 // See docs/developers/specs/e87-endpoint-typology-unification.md for the
-// epic plan that owns this package.
+// design of this package.
 package typology

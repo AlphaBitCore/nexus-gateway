@@ -3,7 +3,7 @@ package login
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"

@@ -9,8 +9,8 @@ import (
 	echomw "github.com/labstack/echo/v4/middleware"
 )
 
-// TestSetupRoutes_ConfigTokenAuthoritySplit is the SEC-W2-02 (FIX-5/C C1)
-// regression. It pins the closed invariant: the Hub config-WRITE authority
+// TestSetupRoutes_ConfigTokenAuthoritySplit is the regression test. It pins the
+// closed invariant: the Hub config-WRITE authority
 // (/api/hub) is gated by the dedicated HubConfigToken, NOT the fleet-wide
 // InternalServiceToken; and the device-API group (/api/internal/things) is
 // gated by the InternalServiceToken, NOT the HubConfigToken. Before the fix one

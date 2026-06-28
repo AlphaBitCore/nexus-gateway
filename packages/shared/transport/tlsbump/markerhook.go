@@ -75,8 +75,8 @@ func stampMarkers(ctx context.Context, h http.Header, identity string) {
 // to the client. Delegates to stampMarkers so that both the non-streaming
 // (responseio.Copy) and SSE paths use identical stamping logic.
 //
-// The hook fires after static + dynamic hop-by-hop stripping (per Task 0.3
-// hook ordering), so marker headers will not be accidentally removed.
+// The hook fires after static + dynamic hop-by-hop stripping in the hook
+// ordering, so marker headers will not be accidentally removed.
 func markerHook(ctx context.Context, identity string) responseio.HeaderHook {
 	return func(resp *http.Response) {
 		stampMarkers(ctx, resp.Header, identity)

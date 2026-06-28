@@ -258,8 +258,9 @@ func TestLivePipeline_OnStreamRewriteFiresOnSuccessfulModify(t *testing.T) {
 	}
 }
 
-// BlockSoft decision must flush the buffer and continue (not blocked).
-// Pins the BlockSoft case-arm previously uncovered.
+// A BlockSoft decision must flush the buffer and continue (not blocked).
+// Soft-block is no longer a distinct streaming arm — it falls through the
+// switch default (flush + continue), which this test pins.
 func TestLivePipeline_BlockSoftContinuesWithFlush(t *testing.T) {
 	input := makeSSEStream(
 		`{"choices":[{"delta":{"content":"soft-blocked content goes through"}}]}`,
@@ -413,10 +414,9 @@ func TestLivePipeline_ModifyAfterReleasedSkipsRewrite(t *testing.T) {
 // closableBlockingReader is an io.Reader + io.Closer that yields
 // `first` on the first Read then BLOCKS until Close. Drives the
 // CloseUpstreamOnExit invocation on ai-gateway LivePipeline's
-// error / reject branches (R-3 coverage fix from the 2nd-round
-// architect review — every prior test used strings.Reader which has
-// no Close method, so the type-assertion branch never fired in the
-// ai-gateway call sites).
+// error / reject branches (a strings.Reader has no Close method, so
+// the type-assertion branch never fires in the ai-gateway call sites
+// without a closer like this).
 type closableBlockingReader struct {
 	first   []byte
 	yielded bool
@@ -447,9 +447,9 @@ func (b *closableBlockingReader) Close() error {
 	return nil
 }
 
-// TestLivePipeline_RejectHard_ClosesUpstream pins the R-3 coverage
-// fix: ai-gateway's CloseUpstreamOnExit invocation at the RejectHard
-// branch (live.go:285) was previously code-covered (count=1) but the
+// TestLivePipeline_RejectHard_ClosesUpstream pins the behavior:
+// ai-gateway's CloseUpstreamOnExit invocation at the RejectHard
+// branch was previously code-covered (count=1) but the
 // inner Close call inside CloseUpstreamOnExit never fired because
 // every test upstream was strings.Reader (not an io.Closer). This
 // test passes a closableBlockingReader so the type-assertion branch
@@ -510,12 +510,11 @@ func (f *flushCountingWriter) WriteHeader(_ int) {}
 func (f *flushCountingWriter) Flush()            { f.events = append(f.events, "f") }
 
 // Asserts the overflow path flushes the error frame before cancel.
-// PR #24 follow-up R4: previously the compliance-block path flushed
-// after WriteError but the buffer-overflow path did not, so on
-// overflow the client could see a silent disconnect with the error
-// frame stuck in the response buffer. The fix added a flush call;
-// this test pins that fix by requiring at least one Flush event
-// after the overflow Write.
+// The buffer-overflow path must flush after WriteError the same way
+// the compliance-block path does; otherwise on overflow the client
+// could see a silent disconnect with the error frame stuck in the
+// response buffer. This test pins that by requiring at least one
+// Flush event after the overflow Write.
 func TestLivePipeline_MaxBufferSize_FlushesBeforeCancel(t *testing.T) {
 	big := strings.Repeat("x", 200)
 	input := makeSSEStream(

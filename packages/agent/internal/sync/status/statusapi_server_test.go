@@ -1,9 +1,8 @@
 package status
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -24,7 +23,7 @@ func dialServer(t *testing.T, socketPath string) net.Conn {
 	var conn net.Conn
 	var err error
 	for range 20 {
-		conn, err = net.Dial("unix", socketPath)
+		conn, err = dialEndpoint(socketPath)
 		if err == nil {
 			return conn
 		}
@@ -50,7 +49,7 @@ func sendCmd(t *testing.T, conn net.Conn, cmd string) map[string]any {
 }
 
 func TestServer_GetStatus(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newServerTestCollector(), nil, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer srv.Stop()
@@ -69,7 +68,7 @@ func TestServer_GetStatus(t *testing.T) {
 }
 
 func TestServer_CheckUpdate(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := testEndpoint(t)
 	checkFn := func() (bool, string, error) { return true, "2.0.0", nil }
 	srv := NewServer(socketPath, newServerTestCollector(), checkFn, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
@@ -88,7 +87,7 @@ func TestServer_CheckUpdate(t *testing.T) {
 }
 
 func TestServer_SyncConfig(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := testEndpoint(t)
 	syncFn := func() (bool, string, error) { return true, "v42", nil }
 	srv := NewServer(socketPath, newServerTestCollector(), nil, syncFn, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
@@ -107,7 +106,7 @@ func TestServer_SyncConfig(t *testing.T) {
 }
 
 func TestServer_Shutdown(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := testEndpoint(t)
 	shutdownCalled := make(chan struct{}, 1)
 	shutdownFn := func() { shutdownCalled <- struct{}{} }
 	srv := NewServer(socketPath, newServerTestCollector(), nil, nil, shutdownFn, nil, func() bool { return true }, nil)
@@ -129,7 +128,7 @@ func TestServer_Shutdown(t *testing.T) {
 }
 
 func TestServer_QueryEvents(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := testEndpoint(t)
 	queryFn := func(search, action string, offset, limit int) ([]audit.Event, int, error) {
 		return []audit.Event{{ID: "e1", SourceProcess: "curl", TargetHost: "api.openai.com", Action: "inspect"}}, 1, nil
 	}
@@ -147,7 +146,7 @@ func TestServer_QueryEvents(t *testing.T) {
 }
 
 func TestServer_UnknownCommand(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := testEndpoint(t)
 	srv := NewServer(socketPath, newServerTestCollector(), nil, nil, nil, nil, nil, nil)
 	go func() { _ = srv.Start() }()
 	defer srv.Stop()

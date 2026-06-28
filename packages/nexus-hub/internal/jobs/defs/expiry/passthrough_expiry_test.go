@@ -56,7 +56,7 @@ func TestPassthroughExpiry_Run_AllTiersClean(t *testing.T) {
 }
 
 // TestPassthroughExpiry_Run_GlobalReturnsCount asserts the global tier reports
-// rows-reverted-this-tick via RowsAffected (F-0134) — not a count of all
+// rows-reverted-this-tick via RowsAffected — not a count of all
 // currently-disabled rows.
 func TestPassthroughExpiry_Run_GlobalReturnsCount(t *testing.T) {
 	mock, err := pgxmock.NewPool()
@@ -82,8 +82,8 @@ func TestPassthroughExpiry_Run_GlobalReturnsCount(t *testing.T) {
 }
 
 // TestPassthroughExpiry_Run_GlobalFails asserts a global-tier DB error is
-// returned, not swallowed (F-0134 — the old code set gCount=0 "as no-op" and
-// hid the failure).
+// returned, not swallowed — the old code set gCount=0 "as no-op" and
+// hid the failure.
 func TestPassthroughExpiry_Run_GlobalFails(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {

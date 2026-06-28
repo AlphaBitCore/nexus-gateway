@@ -3,9 +3,9 @@ package wiring
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
 
@@ -160,8 +160,8 @@ func InitPayloadCaptureStore(ctx context.Context, db *store.DB) *payloadcapture.
 }
 
 // InitStreamingPolicyStore seeds the streaming compliance policy Store
-// from system_metadata['streaming_compliance.config']. #115
-// three-service alignment — agent, compliance-proxy, and ai-gateway
+// from system_metadata['streaming_compliance.config']. Three-service
+// alignment — agent, compliance-proxy, and ai-gateway
 // all wire their Store through the shared streampolicy.BootStore
 // helper. ai-gateway uses pgxpool (not the stdlib *sql.DB that
 // streampolicy.LoadGlobalDefault expects) so the loader closure routes

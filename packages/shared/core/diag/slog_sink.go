@@ -44,7 +44,7 @@ type LocalBufferInserter interface {
 // Level is the slog level threshold; defaults to slog.LevelError.
 // Source defaults to "service" — subsystems can wrap the sink in their own
 // slog.Logger with a "source" attribute to override per-call.
-// IncludeInfo defaults to false (spec §3 Decision #6); flip to true only
+// IncludeInfo defaults to false; flip to true only
 // in diagnostic mode when the operator wants the firehose.
 //
 // ReconnectBuffer + IsWSConnected together implement spec §7.4 reconnect
