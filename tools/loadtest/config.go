@@ -71,6 +71,7 @@ type Config struct {
 	Scenarios        []Scenario  `json:"scenarios"`
 	DisableHTTP2     bool        `json:"disable_http2"`
 	DisableKeepAlive bool        `json:"disable_keepalive"`
+	Insecure         bool        `json:"insecure_skip_verify"` // skip TLS cert verification — for gateways behind a self-signed cert (e.g. an appliance on a bare IP)
 	Timeout          string      `json:"timeout"`
 	ThinkTime        string      `json:"think_time"`
 	CaptureErr       bool        `json:"capture_error_body"`

@@ -61,6 +61,10 @@ own dependency wiring (RDS / ElastiCache / managed MQ).
 9.  nexus-gateway.service     →  After=nexus-hub
 10. nexus-proxy.service       →  After=nexus-hub
 11. nginx.service             →  After=nexus-control-plane (reverse proxy)
+12. nexus-reconcile-url.service → every boot (NOT marker-gated), After=first-boot
+                                  + postgresql + the four nexus services; re-syncs
+                                  all IP-derived config to the CURRENT public IP
+                                  (see §4a) and restarts services only on change
 ```
 
 `/etc/nexus/.initialized` is the idempotency marker. Removing it triggers a
@@ -127,6 +131,51 @@ tokens with this issuer and the Hub pins the same value via
 stamped, every remote agent enrollment would fail with an issuer-mismatch
 401). `DATABASE_URL` is appended to all four env files by
 `first-boot-db.sh` once the role + database exist.
+
+## 4a. Public-IP reconciliation (`reconcile-public-url.sh`)
+
+`first-boot.sh` detects the instance's public IP **once** (it is gated by the
+`.initialized` marker). EC2 hands out a **new** public IPv4 on every stop/start,
+and again when an Elastic IP is associated — so after any address change the
+once-baked values go stale. **Four** artifacts are IP-derived:
+
+| # | Artifact | Stamped by (first boot) | Symptom when stale |
+|---|---|---|---|
+| 1 | `publicURL:` in the four service yamls | `first-boot.sh` (sed) | service config / advertised URLs wrong |
+| 2 | `AUTH_SERVER_ISSUER=` in `control-plane.env` | `first-boot.sh` | token `iss` / OIDC discovery mismatch |
+| 3 | `cp-ui` `OAuthClient.redirectUris` (Postgres) | `first-boot.sh` (SQL) | `/oauth/authorize` → `redirect_uri not registered`; login page never proceeds |
+| 4 | nginx TLS cert SAN (`/etc/nexus/tls.crt`) — covers **public IP + inner/private IP + loopback** | `first-boot-ca.sh` | CP's JWKS fetch fails `x509: valid for <old>, not <new>` → `/api/admin/me` 401 → **SPA bounces back to /login after a successful password submit** |
+
+`reconcile-public-url.sh` (installed as `/usr/local/sbin/nexus-reconcile-url`)
+is the single operation that re-syncs all four to the **current** IP. It is run
+on **every boot** by `nexus-reconcile-url.service` (NOT marker-gated) and is also
+runnable by hand. Properties:
+
+- **No-op fast path** — exits without touching anything only when the public IP
+  is unchanged **and** the cert SAN already covers every current IP (so a normal
+  reboot causes no restart blip).
+- **Two independent triggers** — the public-facing config (1–3) reconciles on a
+  **public-IP** change; the **cert (4)** reconciles on **SAN coverage** (the
+  desired set = public IP + inner IP + loopback). Coverage-based detection means
+  a changed **inner/private IP** re-issues the cert even when the public IP is
+  unchanged.
+- **Fail-safe** — if the IP cannot be resolved, or resolves only to loopback
+  while a real address is baked, it does nothing (never downgrades a working
+  config to `127.0.0.1`).
+- **Change path** — sed the old IP → new in the four yamls + `control-plane.env`,
+  `array_replace` the `cp-ui` redirect, regenerate the nginx cert with the new
+  SAN + re-anchor it in the system CA trust store, then restart hub / CP /
+  gateway / proxy and reload nginx. The compliance-proxy MITM CA is **not**
+  re-issued (CN-based, not IP-bound; re-issuing would break enrolled agents).
+
+Commands: `nexus-reconcile-url` (reconcile if changed), `--status` (print baked
+vs current, no change), `--force` (re-stamp even if unchanged).
+
+> **Operational guidance — Elastic IP.** Attaching an EIP changes the public IP
+> *without a reboot*, so the boot-time service will not pick it up until the next
+> reboot. After associating an EIP either reboot, or run `sudo nexus-reconcile-url`
+> once. For production, attach the EIP (or a DNS name + real cert) **first** so
+> the OIDC issuer / redirect address is stable and this churn stops entirely.
 
 ## 5. Database initialisation (`first-boot-db.sh`)
 
