@@ -2,10 +2,10 @@ package agent
 
 import "testing"
 
-// These tests prove the R1 seams (MemoryStore / SessionStore) are genuinely
+// These tests prove the seams (MemoryStore / SessionStore) are genuinely
 // substitutable AND that per-user isolation can be enforced entirely inside an
 // implementation — the design the web face relies on (a per-caller instance whose
-// backend filters by the bound userId). They are the AC-3 evidence: a store bound
+// backend filters by the bound userId): a store bound
 // to user A can never read user B's data.
 
 // --- MemoryStore seam ---

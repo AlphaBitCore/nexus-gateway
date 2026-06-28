@@ -86,7 +86,7 @@ func (b *schemaBuilder) namedSchema(n *types.Named) *omap {
 		return newOMap().Set("type", "string").Set("format", "date-time")
 	case pkgPath == "time" && name == "Duration":
 		return newOMap().Set("type", "integer").Set("description", "nanoseconds")
-	case pkgPath == "encoding/json" && name == "RawMessage":
+	case pkgPath == "github.com/goccy/go-json" && name == "RawMessage":
 		return newOMap().Set("description", "arbitrary JSON value")
 	}
 

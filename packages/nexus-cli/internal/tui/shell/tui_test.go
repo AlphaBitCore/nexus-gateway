@@ -3,10 +3,10 @@ package shell
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
-	"encoding/json"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/kit"
 	viewpkg "github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/views"
+	"github.com/goccy/go-json"
 	"io"
 	"net/url"
 	"strings"

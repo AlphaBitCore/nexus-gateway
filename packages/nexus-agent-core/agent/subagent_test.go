@@ -2,8 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +38,7 @@ func TestRunSubagent_FinalAnswer(t *testing.T) {
 	}
 }
 
-// TestRunSubagent_DepthOneRejectsDispatchTool pins FR-51 depth-1: a child registry
+// TestRunSubagent_DepthOneRejectsDispatchTool pins depth-1: a child registry
 // containing the dispatch tool is rejected — a subagent can never spawn another.
 func TestRunSubagent_DepthOneRejectsDispatchTool(t *testing.T) {
 	reg := childRegistry(&stubTool{name: DispatchToolName})

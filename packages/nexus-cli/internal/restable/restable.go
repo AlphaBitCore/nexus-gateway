@@ -8,8 +8,8 @@ package restable
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 	"sort"
 	"strconv"
 	"strings"

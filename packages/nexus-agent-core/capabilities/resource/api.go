@@ -132,7 +132,7 @@ type SearchResult struct {
 }
 
 // searchCardK / searchCardKMax bound the card window. K=5 comes from the
-// 2026-06-05 eval baseline: ranks 6-8 had zero additional hits, so larger
+// eval baseline: ranks 6-8 had zero additional hits, so larger
 // windows pay card bytes for no recall.
 const (
 	searchCardK    = 5

@@ -2,18 +2,18 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// R2 confirm seam (AC-4). The kernel propagates ctx to Confirm and treats both a
+// Confirm seam. The kernel propagates ctx to Confirm and treats both a
 // ctx-cancel and a Confirm error as a fail-safe DENY. Confirm-timeout policy lives
 // in the Confirm IMPLEMENTATION (web: a pending-confirm deadline; CLI: the turn
-// ctx) — the kernel's contract is only "honor ctx, error == deny". These tests are
-// the missing AC-4 evidence: out-of-band async approval runs; ctx timeout denies
+// ctx) — the kernel's contract is only "honor ctx, error == deny". These tests
+// cover: out-of-band async approval runs; ctx timeout denies
 // without leaking the turn goroutine; a Confirm error denies.
 
 // A Confirm that errors must be treated as deny — a confirm-backend failure must

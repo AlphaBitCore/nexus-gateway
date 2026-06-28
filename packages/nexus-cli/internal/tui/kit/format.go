@@ -1,8 +1,8 @@
 package kit
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/goccy/go-json"
 )
 
 // Dash renders an em dash for an empty string, else the string unchanged — the

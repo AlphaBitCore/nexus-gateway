@@ -6,7 +6,7 @@ package resource
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 	"net/url"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-cli/internal/tui/kit"

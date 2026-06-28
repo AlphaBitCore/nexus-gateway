@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestSanitizeTerminal covers the terminal-injection defense (F-0293): control
+// TestSanitizeTerminal covers the terminal-injection defense: control
 // sequences a server could embed in a cell or error body must be stripped, while
 // legitimate printable text plus tab/newline survive.
 func TestSanitizeTerminal(t *testing.T) {

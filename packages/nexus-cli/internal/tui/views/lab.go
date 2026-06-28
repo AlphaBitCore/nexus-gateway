@@ -2,10 +2,12 @@ package views
 
 import (
 	"context"
-	"encoding/json"
+	stdjson "encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -222,7 +224,7 @@ func (l *labView) waitGen() tea.Cmd {
 // into a labResultMsg.
 func (l *labView) sendLab() tea.Cmd {
 	body := strings.TrimSpace(l.editor.Value())
-	if !json.Valid([]byte(body)) {
+	if !stdjson.Valid([]byte(body)) {
 		return func() tea.Msg {
 			return labResultMsg{err: fmt.Errorf("editor body is not valid JSON")}
 		}

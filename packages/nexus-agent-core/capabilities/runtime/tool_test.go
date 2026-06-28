@@ -2,8 +2,8 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"testing"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core/agent"

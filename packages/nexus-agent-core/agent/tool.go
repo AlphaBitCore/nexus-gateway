@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/goccy/go-json"
 )
 
 // Tier classifies a tool by side effect. The permission Gate uses it as the

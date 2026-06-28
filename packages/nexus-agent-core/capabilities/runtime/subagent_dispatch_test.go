@@ -2,8 +2,8 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/goccy/go-json"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -288,7 +288,7 @@ func TestDispatch_ExplicitValidToolSubset(t *testing.T) {
 	}
 }
 
-// TestDispatch_AuthoringOffloadToolExposure pins the FR-53 carrier contract on
+// TestDispatch_AuthoringOffloadToolExposure pins the carrier contract on
 // the dispatch chassis, using the production build-tool names and tiers: an
 // authoring-offload child can reach the auto-tier iteration tools
 // (workflow_draft_save, workflow_freeze — draft→freeze→repair runs inside the

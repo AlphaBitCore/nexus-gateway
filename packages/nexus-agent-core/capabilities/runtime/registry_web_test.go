@@ -2,7 +2,7 @@ package runtime
 
 import "testing"
 
-// TestWebRegistryExcludesHostTools is the code-enforced AC-5 guard: the web/server
+// TestWebRegistryExcludesHostTools is the code-enforced guard: the web/server
 // profile (EnableSystem/EnableCanvas false — the zero value) must NEVER register
 // the host shell/file tools or the TUI canvas. run_command is TierAuto (no confirm
 // gate), so leaking it server-side is a direct RCE on the CP host. This test is the

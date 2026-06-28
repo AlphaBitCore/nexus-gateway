@@ -1,6 +1,6 @@
 package agent
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 // Role is the author of a message. The kernel models conversations as Claude
 // Code does: a role plus an ordered list of typed content blocks.
